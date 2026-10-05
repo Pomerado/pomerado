@@ -57,8 +57,10 @@ protected form owns them.
 
 During the session:
 
-- Before the commit step, run a step that reads the review page and lists every
-  selected option and total.
+- Before a committing step, read the selected options and total from the current
+  page or an available read-only summary. Use a review page when the site has one;
+  a separate review page is not required, and submitting a form is never a way to
+  discover whether one exists.
 - Make the commit step check that no option the input does not settle is selected,
   and fail before clicking commit if one is.
 - If a step meets an option the input does not settle, stop that step before choosing
@@ -78,15 +80,22 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   the site origin page first, with fresh page state (a signed-in build
   keeps the session saved right after sign-in), so that step starts the flow there.
 - Later steps continue on the page exactly as the previous step left it. Keep steps
-  small: fill and continue, then commit, then read the result. A step that saves or
-  advances a form page is part of the task, not a second write.
+  small and read the actual state after each submission. On multi-step forms, a
+  button named Continue, Next or Save may save a draft, persist that page, or finish
+  the task immediately; its label does not establish that another review or final
+  submit follows. A step that saves or advances a form page is part of the task,
+  not a second write.
 - Report a confirm popup to `decideDialog` with a literal `step` name, and keep that
   literal in the helper the composed script imports. Runs accept a popup without
   asking only at the step the session accepted it at, so the host refuses to publish
   a composed script that drops one.
-- Mark every step that can commit. Call `enteringCommit("place-order")` right
-  before the execute call whose code clicks Place order (or sends the commit
-  request), and declare the names in order as `write.commits`. The host cannot see a
+- Mark every step that can change saved state, including an autosave, a saved form
+  step and a payment submission whose next screen is unknown. Call
+  `enteringCommit("place-order")` right before the execute call that can send that
+  change, and declare the names in order as `write.commits`. Use the same marked
+  helper in the session and the composed script. If the call returns an unexpected
+  page or fails while waiting for an assumed review, read back before another
+  submission: the task may already be complete. The host cannot see a
   commit sent as a GET link or over a websocket, so the mark is its evidence of
   whether the commit step ran.
 - The host refuses an `act` step whose source is unchanged since it ran and sent
@@ -145,8 +154,12 @@ input, output, write: { confirmation: "message", commits: ["place-order"] } }, r
 same commit steps as the session. A script declared `unverifiable` cannot call
 `verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
 and one that declares a mark no `act` step of the session entered is refused as
-`commit_marks_unentered`: mark the commit in the session's steps with the same call,
-since the session cannot be run again to add it.
+`commit_marks_unentered`. If the declaration names the wrong marks, correct it to
+match the marks the session actually entered. If the completed session entered no
+marks, it cannot publish: changing its source or entering a mark in a later read
+cannot show that the earlier commit was marked. End the build and explain that
+the task completed but its commit steps were not marked; never repeat the write
+to add them.
 pomerado:hosted:end -->
 
 Every option the session met on its path is an input of the script, add-ons and
@@ -217,6 +230,10 @@ See `references/write-session.ts` for two steps and the composed script, and
 
 Perform the authorized task once through live `act` steps, preserving the shared effect journal and caller choices. Wait for actual confirmation and read back committed state. Declare `verified`, `unverifiable`, and their confirmation behavior accurately using the existing SDK; a missing result alone never proves the write absent.
 
+Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark every step that can change saved state, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
+
 Compose `src/tool.mjs` from the original reviewed steps and confirming observation. You may check source/schema and pure helpers offline, but never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
+
+If the composed contract names the wrong commit marks, correct it to match the marks the session actually entered. If the completed session entered no marks, it cannot finish: changing its source or entering a mark in a later read cannot show that the earlier commit was marked. End the build and explain that the task completed but its commit steps were not marked; never repeat the write to add them.
 
 pomerado:standalone:end -->
