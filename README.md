@@ -248,7 +248,7 @@ This repository owns the portable tests for its shared core and local runtime, w
 
 Open shared core and local adapter pull requests here. Shared changes land here first.
 
-Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions.
+Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions. CI enforces this with a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you open a pull request. Link a public issue by its full URL.
 
 - Build and test the package before publishing an explicit versioned release. The release workflow validates the packed artifact before npm publication.
 - Adopt a tested release in Cloud through an exact dependency pin and locked integrity. Update the controller and sandbox images together.

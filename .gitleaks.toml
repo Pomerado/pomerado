@@ -1,0 +1,19 @@
+# Secret scan for this public repository, run by the `secret-scan` job in check.yml.
+# It uses gitleaks' default rules. The only exceptions are the fake credentials that the redaction
+# tests use as canaries. Each one is allowed by its exact value, anchored at both ends.
+# To add a canary, make it obviously fake and add its exact value here. Never allow a pattern or a
+# path: in `gitleaks dir` an allowlisted path skips the whole file, whatever `condition` says.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake credential canaries in the redaction tests"
+regexTarget = "secret"
+regexes = [
+  '''^YmluYXJ5LXNlY3JldA==$''',
+  '''^SEKRET0123456789abcdef$''',
+  '''^SEKRETzZ9xQ2wL7vN4kP1r$''',
+  '''^sk_live_FAKEabcdefghijkl$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJmYWtlIn0\.ZmFrZXNpZ25hdHVyZQ$''',
+]
