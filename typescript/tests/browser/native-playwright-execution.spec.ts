@@ -399,15 +399,15 @@ test("unchanged authored operations run through schema validation and native exe
     expect(
       await Effect.runPromise(
         Effect.scoped(
-          executeKernelOperation(detailNavigation, { recordId: "alpha" }, browser).pipe(
+          executeKernelOperation(detailNavigation, { record_id: "alpha" }, browser).pipe(
             Effect.provideService(ExecutionContext, execution),
           ),
         ),
       ),
-    ).toEqual({ recordId: "alpha", title: "Requested record" });
+    ).toEqual({ record_id: "alpha", title: "Requested record" });
     const refusedInput = await Effect.runPromise(
       Effect.scoped(
-        executeKernelOperation(detailNavigation, { recordId: "bad/id" }, browser).pipe(
+        executeKernelOperation(detailNavigation, { record_id: "bad/id" }, browser).pipe(
           Effect.provideService(ExecutionContext, execution),
           Effect.either,
         ),
