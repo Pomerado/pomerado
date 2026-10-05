@@ -23,8 +23,11 @@ export default defineOperation(
   {
     name: "set_departure",
     input: Schema.Struct({
-      date: DateOnly.annotations({ description: "Departure date, YYYY-MM-DD" }),
-      cabin: Cabin.annotations({ description: "Cabin class to search" }),
+      date: DateOnly.annotations({
+        description: "Departure date, YYYY-MM-DD",
+        examples: ["2026-11-14"],
+      }),
+      cabin: Cabin.annotations({ description: "Cabin class to search", examples: ["economy"] }),
     }),
     output: Schema.Struct({
       date: DateOnly.annotations({ description: "Departure date the form now holds, YYYY-MM-DD" }),

@@ -13,20 +13,20 @@ export const OrderInput = Schema.Struct({
   quantity: Schema.Int.pipe(Schema.between(1, 99)).annotations({
     description: "How many to order, 1 to 99",
   }),
-  giftWrap: Schema.Boolean.annotations({ description: "Whether to add gift wrap" }),
+  gift_wrap: Schema.Boolean.annotations({ description: "Whether to add gift wrap" }),
 });
 type OrderInput = typeof OrderInput.Type;
 const Placed = Schema.Struct({
-  orderNumber: Schema.NonEmptyString.annotations({
+  order_number: Schema.NonEmptyString.annotations({
     description: "Order number from the confirmation",
   }),
 });
 const Filled = Schema.Union(
-  Schema.Struct({ reviewShown: Schema.Literal(true) }),
+  Schema.Struct({ review_shown: Schema.Literal(true) }),
   Schema.Struct({ failure: Schema.Literal("checkout_changed") }),
 );
 const Confirmed = Schema.Union(
-  Schema.Struct({ orderNumber: Schema.NonEmptyString }),
+  Schema.Struct({ order_number: Schema.NonEmptyString }),
   Schema.Struct({ failure: Schema.Literal("review_missing", "not_confirmed") }),
 );
 type Context = KernelOperationContext<OrderInput>;
@@ -48,10 +48,10 @@ const fillCheckout = async ({ kernel, sessionId, siteOrigin, input, errors }: Co
       if ((await form.count()) !== 1) return { failure: "checkout_changed" };
       await form.getByLabel("Item", { exact: true }).fill(input.item, { timeout: 5000 });
       await form.getByLabel("Quantity", { exact: true }).fill(String(input.quantity), { timeout: 5000 });
-      await form.getByLabel("Gift wrap", { exact: true }).setChecked(input.giftWrap, { timeout: 5000 });
+      await form.getByLabel("Gift wrap", { exact: true }).setChecked(input.gift_wrap, { timeout: 5000 });
       await form.getByRole("button", { name: "Continue", exact: true }).click({ timeout: 5000 });
       await page.getByRole("button", { name: "Place order", exact: true }).waitFor({ timeout: 10000 });
-      return { reviewShown: true };
+      return { review_shown: true };
     `,
   });
   if (!answer.success)
@@ -82,7 +82,7 @@ const placeAndConfirm = async ({
       const confirmation = page.getByRole("status", { name: "Order confirmation", exact: true });
       try { await confirmation.waitFor({ timeout: 15000 }); } catch { return { failure: "not_confirmed" }; }
       const number = /^Order (ORD-[0-9]+)/.exec(await confirmation.innerText())?.[1];
-      return number === undefined ? { failure: "not_confirmed" } : { orderNumber: number };
+      return number === undefined ? { failure: "not_confirmed" } : { order_number: number };
     `,
   });
   // A failure after the click leaves the write uncertain. Nothing here resubmits it.
@@ -104,12 +104,12 @@ export const fillStep = defineOperation(
     name: "fill_checkout",
     input: OrderInput,
     output: Schema.Struct({
-      reviewShown: Schema.Boolean.annotations({ description: "True once the review step shows" }),
+      review_shown: Schema.Boolean.annotations({ description: "True once the review step shows" }),
     }),
   },
   async (context) => {
     await fillCheckout(context);
-    return { reviewShown: true };
+    return { review_shown: true };
   },
 );
 

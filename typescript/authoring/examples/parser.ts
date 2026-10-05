@@ -3,7 +3,7 @@ import { defineOperation } from "../../src/browser/index.js";
 
 const Invoice = Schema.Struct({
   id: Schema.NonEmptyString.annotations({ description: "The site's invoice ID" }),
-  totalMinor: Schema.Int.annotations({ description: "Invoice total in cents" }),
+  total_minor: Schema.Int.annotations({ description: "Invoice total in minor units (cents)" }),
   currency: Schema.Literal("USD").annotations({ description: "Currency of the total" }),
 });
 const Body = Schema.Struct({

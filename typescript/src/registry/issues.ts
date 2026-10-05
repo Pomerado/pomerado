@@ -13,4 +13,6 @@ export type RegistryIssue =
   | "variant_removed"
   | "variant_contract_changed"
   | "generation_moved"
-  | "revision_exists";
+  | "revision_exists"
+  /** Another enabled tool in the integration has the same tool name. */
+  | "tool_name_taken";

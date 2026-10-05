@@ -74,6 +74,11 @@ const feedback: Readonly<
     instruction:
       "The published tool changed while this build ran: another publication advanced it, and the host did not commit this build over it. If this build should still replace that version, call finish_build again with the same executionId; the host reads the current version and reviews the publication afresh. Otherwise end the build.",
   },
+  tool_name_taken: {
+    fixable: true,
+    instruction:
+      'Another tool on this site already has this name: tool names are unique within a site\'s integration, and callers pick a tool by its name. Give this tool a name that says what it does differently, a 2–5 word verb phrase such as "Search award flights" beside "Search flights", in finish_build\'s metadata, and call finish_build again with the same executionId.',
+  },
   revision_exists: {
     fixable: false,
     instruction: "The registry already holds a different revision under this build's revision id.",

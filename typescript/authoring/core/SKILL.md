@@ -140,6 +140,18 @@ request and the flow, never from one caller's account or example.
   schema, inside `Schema.optional(...)` for an optional one; a `Schema.Date` keeps it only on
   `Schema.optional(Schema.Date)` or `Schema.propertySignature(Schema.Date)`. Callers see each
   beside its name.
+- Shape inputs and outputs like Pomerado's own API, so every tool reads alike: field names in
+  snake_case; dates as `YYYY-MM-DD` and timestamps as ISO 8601 with an offset; money as an
+  integer in minor units with an ISO 4217 `currency` beside it, such as `total_minor` 12999 and
+  `currency` `"USD"`; enum values in lowercase snake_case (`"premium_economy"`); booleans named
+  as statements (`refundable`, not `is_refundable_flag`); lists named in the plural; and the
+  unit in the field name or its description (`duration_minutes`). Convert between these and the
+  site's own formats in code.
+- Give every input field one `examples` annotation value, which callers, the docs and the Try it
+  form use to assemble a sample request: public, generic data such as a well-known airport code
+  (`examples: ["SFO"]`), a date a few weeks ahead or a common product category. Never use a value
+  from this session: not the caller's input, the owner's answers or anything the site showed
+  this account.
 - Descriptions, titles, examples and defaults are published and reviewed for private data,
   and an annotation never declares its contents public. Explain constraints without copying private input
   or unneeded numeric identifiers; for a nonnegative safe integer,

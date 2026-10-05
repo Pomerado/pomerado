@@ -20,17 +20,20 @@ export const detailNavigation = defineOperation(
   {
     name: "read_record_detail",
     input: Schema.Struct({
-      recordId: RecordId.annotations({ description: "ID of the record to read, as in its URL" }),
+      record_id: RecordId.annotations({
+        description: "ID of the record to read, as in its URL",
+        examples: ["record_42"],
+      }),
     }),
     output: Schema.Struct({
-      recordId: RecordId.annotations({ description: "ID of the record read" }),
+      record_id: RecordId.annotations({ description: "ID of the record read" }),
       title: Schema.NonEmptyString.annotations({ description: "The record's title" }),
     }),
   },
   async ({ kernel, sessionId, siteOrigin, siteDomain, input, errors }) => {
     if (siteOrigin === undefined)
       throw new errors.OperationFailure("No site origin for a live run", { dispatch: "not_sent" });
-    const target = new URL(`/records/${input.recordId}`, siteOrigin);
+    const target = new URL(`/records/${input.record_id}`, siteOrigin);
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 90,
       code: `
@@ -40,7 +43,7 @@ export const detailNavigation = defineOperation(
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
-        const recordId = ${JSON.stringify(input.recordId)};
+        const recordId = ${JSON.stringify(input.record_id)};
         const detail = page.getByRole("region", { name: "Record details", exact: true });
         const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
         const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
@@ -92,7 +95,7 @@ export const detailNavigation = defineOperation(
       throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
     const result = Schema.decodeUnknownSync(Detail)(answer.result);
     if ("failure" in result) throw new errors.OperationFailure(result.failure);
-    return { recordId: input.recordId, title: result.title };
+    return { record_id: input.record_id, title: result.title };
   },
 );
 

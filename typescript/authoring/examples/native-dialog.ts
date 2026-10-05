@@ -10,7 +10,7 @@ export default defineOperation(
   {
     name: "delete_invoice",
     input: Schema.Struct({
-      invoiceId: InvoiceId.annotations({ description: "ID of the invoice to delete" }),
+      invoice_id: InvoiceId.annotations({ description: "ID of the invoice to delete" }),
     }),
     output: Schema.Struct({
       deleted: Schema.Boolean.annotations({
@@ -22,7 +22,7 @@ export default defineOperation(
     const raised = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 30,
       code: `
-        const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoiceId)}, { exact: true }) });
+        const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoice_id)}, { exact: true }) });
         if ((await row.count()) !== 1) return { failure: "invoice_missing" };
         const shown = new Promise((resolve) => page.once("dialog", (dialog) => {
           globalThis.dialog = dialog;
@@ -64,7 +64,7 @@ export default defineOperation(
             : "await globalThis.dialog.dismiss();"
         }
         delete globalThis.dialog;
-        const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoiceId)}, { exact: true }) });
+        const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoice_id)}, { exact: true }) });
         // Read the result back: the row is gone only if the site deleted it.
         await row.waitFor({ state: ${JSON.stringify(decision.choice === "accept" ? "detached" : "visible")}, timeout: 10000 });
         return { deleted: (await row.count()) === 0 };

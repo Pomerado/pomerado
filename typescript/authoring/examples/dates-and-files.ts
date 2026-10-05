@@ -76,10 +76,10 @@ export default defineOperation(
       name: Schema.NonEmptyString.annotations({
         description: "File name for the document, with its extension",
       }),
-      mimeType: Schema.NonEmptyString.annotations({
+      mime_type: Schema.NonEmptyString.annotations({
         description: "The document's media type, such as application/pdf",
       }),
-      contentBase64: Schema.String.annotations({ description: "The document's bytes, base64" }),
+      content_base64: Schema.String.annotations({ description: "The document's bytes, base64" }),
     }),
     output: Schema.Struct({
       name: Schema.String.annotations({ description: "Name of the file the field now holds" }),
@@ -97,8 +97,8 @@ export default defineOperation(
         await field.setInputFiles(
           {
             name: ${JSON.stringify(input.name)},
-            mimeType: ${JSON.stringify(input.mimeType)},
-            buffer: Buffer.from(${JSON.stringify(input.contentBase64)}, "base64"),
+            mimeType: ${JSON.stringify(input.mime_type)},
+            buffer: Buffer.from(${JSON.stringify(input.content_base64)}, "base64"),
           },
           { timeout: 30000 },
         );
@@ -118,7 +118,7 @@ export default defineOperation(
     if ("failure" in result)
       throw new errors.OperationFailure(result.failure, { dispatch: "not_sent" });
     const file = result.files[0];
-    const size = Buffer.from(input.contentBase64, "base64").byteLength;
+    const size = Buffer.from(input.content_base64, "base64").byteLength;
     // Selection is not proof the site accepted the upload; this reads back only the choice.
     if (result.files.length !== 1 || file?.name !== input.name || file.size !== size)
       throw new errors.OperationFailure("The chosen file did not read back", { dispatch: "sent" });

@@ -2470,6 +2470,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       "Not published: the source this repair would publish is byte for byte the registered revision's, so there is nothing to publish. A new name or description alone is not a repair. The registered revision stays current and this repair ends here; do not call finish_build again.",
                   });
                 }
+                if (error.reason === "tool_name_taken")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    {},
+                    `Not published and not reviewed: ${registryRefusal("tool_name_taken").instruction}`,
+                  );
+                if (error.reason === "site_metadata_required")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    {},
+                    "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Google Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
+                  );
                 if (error.reason === "variants_unsupported")
                   return notPublished(
                     error.code,
@@ -2505,7 +2519,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     { ...error.publicationFeedback },
-                    "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name or description, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
+                    "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
                   );
                 if (error.reason === "secret_handle") {
                   const path = error.screening?.path ?? "the source";

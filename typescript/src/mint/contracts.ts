@@ -40,6 +40,7 @@ import type {
 } from "./recovery-contracts.js";
 
 import type { CurrentInvocation } from "./invocation.js";
+import { SiteNaming } from "../registry/site-naming.js";
 import { SupportedOperationVariant } from "../registry/operation-variants.js";
 import type { RegistryIssue } from "../registry/issues.js";
 import type { ExecutionBoundaryError } from "../execution/boundary.js";
@@ -271,8 +272,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "login_url_one_time"
     /** The login URL to publish carries a registered credential; refused every time. */
     | "login_url_contains_credential"
-    /** The name or description to publish carries a registered credential; refused every time. */
+    /** The name, description, site name or summary to publish carries a registered credential. */
     | "metadata_contains_credential"
+    /** The site's integration has no name yet, and the metadata names no `siteName` and `siteSummary`. */
+    | "site_metadata_required"
+    /** Another enabled tool in the integration this would join has the same tool name. */
+    | "tool_name_taken"
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
@@ -281,7 +286,7 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly publicationFeedback?: {
     readonly oneTimeParameters?: readonly string[];
     readonly parts?: readonly {
-      readonly part: "loginUrl" | "name" | "description";
+      readonly part: "loginUrl" | "name" | "description" | "siteName" | "siteSummary";
       readonly credentialKinds: readonly string[];
     }[];
   };
@@ -586,6 +591,17 @@ export const PublicationRequest = Schema.Struct({
   metadata: Schema.Struct({
     name: Schema.String,
     description: Schema.String,
+    /** Required only while the site's integration has no name yet; a later one is ignored. */
+    siteName: Schema.optional(
+      SiteNaming.fields.name.annotations({
+        description: "The site's everyday name, as people say it, such as Google Flights",
+      }),
+    ),
+    siteSummary: Schema.optional(
+      SiteNaming.fields.summary.annotations({
+        description: "One sentence on what the site is, not what this tool does",
+      }),
+    ),
     supportedVariants: Schema.optional(
       Schema.Array(SupportedOperationVariant).pipe(Schema.minItems(1), Schema.maxItems(32)),
     ),

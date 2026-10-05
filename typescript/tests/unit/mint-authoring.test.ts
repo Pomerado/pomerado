@@ -62,12 +62,12 @@ it("validates dialog picker request fields before browser work", async () => {
 it("validates detail identifiers and rejects traversal before browser work", async () => {
   expect(
     await Effect.runPromise(
-      Schema.decodeUnknown(detailNavigation.input)({ recordId: "record_42" }),
+      Schema.decodeUnknown(detailNavigation.input)({ record_id: "record_42" }),
     ),
-  ).toEqual({ recordId: "record_42" });
+  ).toEqual({ record_id: "record_42" });
   expect(
     await Effect.runPromise(
-      Effect.either(Schema.decodeUnknown(detailNavigation.input)({ recordId: "../other-record" })),
+      Effect.either(Schema.decodeUnknown(detailNavigation.input)({ record_id: "../other-record" })),
     ),
   ).toMatchObject({ _tag: "Left" });
 });

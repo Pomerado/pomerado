@@ -34,10 +34,11 @@ const matched = (block: PublicationFileBlock) => {
  */
 const definitionFeedback = (block: PublicationFileBlock) => {
   const file = "publication/definition.json";
-  const part = block.section ?? "its name, description, schemas or supported variants";
+  const part = block.section ?? "its name, description, site, schemas or supported variants";
   const metadata =
     block.section === "name" ||
     block.section === "description" ||
+    block.section === "site" ||
     block.section === "supportedVariants";
   const fix = metadata
     ? "Change it in finish_build's metadata, then call finish_build again with the same executionId."

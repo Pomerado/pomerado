@@ -2,7 +2,7 @@ import { Schema } from "effect";
 import { defineOperation } from "../../src/browser/index.js";
 
 const Picked = Schema.Union(
-  Schema.Struct({ selectedKey: Schema.NonEmptyString }),
+  Schema.Struct({ selected_key: Schema.NonEmptyString }),
   Schema.Struct({
     failure: Schema.Literal("query_mismatch", "option_identity_mismatch", "committed_key_mismatch"),
   }),
@@ -20,7 +20,7 @@ export default defineOperation(
       }),
     }),
     output: Schema.Struct({
-      selectedKey: Schema.NonEmptyString.annotations({
+      selected_key: Schema.NonEmptyString.annotations({
         description: "Catalog key the page now shows as selected",
       }),
     }),
@@ -52,7 +52,7 @@ export default defineOperation(
         const committed = page.getByRole("textbox", { name: "Selected catalog key", exact: true });
         const until = Date.now() + 30000;
         while (Date.now() < until) {
-          if ((await committed.inputValue({ timeout: 1000 })) === key) return { selectedKey: key };
+          if ((await committed.inputValue({ timeout: 1000 })) === key) return { selected_key: key };
           await page.waitForTimeout(100);
         }
         return { failure: "committed_key_mismatch" };
