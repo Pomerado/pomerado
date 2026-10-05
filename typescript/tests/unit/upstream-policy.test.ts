@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { UpstreamPolicySlotInvalid, withTenantPolicy } from "../../src/guardian/upstream-policy.js";
 import { markedUpstreamPolicy } from "../support/tenant-policy.js";
+
+const slot = "{{ tenant_policy_config }}";
+// sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
+const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
   new URL("../../src/guardian/upstream-policy.md", import.meta.url),
@@ -25,11 +31,41 @@ describe("upstream Guardian policy", () => {
     expect(instructions.split("TENANT POLICY")).toHaveLength(2);
   });
 
+  it("sends the reviewer the same policy bytes as before the notice", () => {
+    // Filling the slot with itself returns the policy exactly as the model would see it.
+    expect(sha256(withTenantPolicy(shippedPolicy, slot))).toBe(policyBodySha256);
+  });
+
   it("fills a commented policy exactly as the same policy without the comment", () => {
     const commented = `<!--\nNotice for readers.\n-->\n\n${markedUpstreamPolicy}`;
     expect(withTenantPolicy(commented, "TENANT")).toBe(
       withTenantPolicy(markedUpstreamPolicy, "TENANT"),
     );
+  });
+
+  it("drops the notice from a policy with CRLF line endings", () => {
+    const body = markedUpstreamPolicy.replaceAll("\n", "\r\n");
+    const commented = `<!--\r\nNotice for readers.\r\n-->\r\n\r\n${body}`;
+    expect(withTenantPolicy(commented, "TENANT")).toBe(withTenantPolicy(body, "TENANT"));
+  });
+
+  it("drops the notice after a leading byte order mark", () => {
+    const commented = `\uFEFF<!--\nNotice for readers.\n-->\n\n${markedUpstreamPolicy}`;
+    expect(withTenantPolicy(commented, "TENANT")).toBe(
+      withTenantPolicy(markedUpstreamPolicy, "TENANT"),
+    );
+  });
+
+  it("drops the notice after leading whitespace", () => {
+    const commented = ` \n\t\n<!-- Notice for readers. -->\n${markedUpstreamPolicy}`;
+    expect(withTenantPolicy(commented, "TENANT")).toBe(
+      withTenantPolicy(markedUpstreamPolicy, "TENANT"),
+    );
+  });
+
+  it("leaves a policy without a leading notice byte-identical", () => {
+    const policy = `\uFEFF \n${markedUpstreamPolicy}`;
+    expect(withTenantPolicy(policy, slot)).toBe(policy);
   });
 
   it("does not count a slot inside the leading notice", () => {

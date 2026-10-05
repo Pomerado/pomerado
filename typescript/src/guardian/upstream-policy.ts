@@ -11,8 +11,11 @@ export class UpstreamPolicySlotInvalid extends Data.TaggedError("UpstreamPolicyS
   }
 }
 
-/** The policy file's opening licence notice, which is for readers and never reaches the model. */
-const leadingNotice = /^<!--[\s\S]*?-->\s*/;
+/**
+ * The policy file's opening licence notice, which is for readers and never reaches the model. A
+ * byte order mark or whitespace before it, and any line endings after it, go with it.
+ */
+const leadingNotice = /^\uFEFF?\s*<!--[\s\S]*?-->\s*/;
 
 /**
  * Puts Pomerado's policy in the upstream policy's one slot. An adapter calls it when it is built,
