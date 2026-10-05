@@ -254,7 +254,7 @@ Public tests use synthetic sites and data. Keep customer-specific incidents, pri
 - Adopt a tested release in Cloud through an exact dependency pin and locked integrity. Update the controller and sandbox images together.
 - Roll Cloud back by restoring its previous package pin and matching image versions. Public commits do not update Cloud automatically.
 
-The first registry release still needs npm publishing authorization. The clone and build quickstart above works before that release is published.
+The clone and build quickstart works independently of npm releases. Contributors can test Cloud against a locally built package before publishing a new version.
 
 ---
 
