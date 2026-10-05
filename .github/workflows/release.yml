@@ -35,4 +35,4 @@ jobs:
           name: pomerado-package
           path: package-artifact
       - name: Publish tested artifact using npm trusted publishing
-        run: npm publish package-artifact/*.tgz --provenance --access public
+        run: npm publish ./package-artifact/*.tgz --provenance --access public
