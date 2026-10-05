@@ -1,0 +1,254 @@
+import { existsSync, readFileSync } from "node:fs";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { serialize } from "node:v8";
+import { randomUUID } from "node:crypto";
+import { Cause, Effect, Exit, Schema } from "effect";
+
+// Source-mode entry follows the existing lease/screening workers; compiled packages need no hook.
+if (import.meta.url.endsWith(".ts"))
+  registerHooks({
+    resolve: (specifier, context, nextResolve) => {
+      if (context.parentURL?.startsWith("file:") && /^\.\.?\/.*\.js$/.test(specifier)) {
+        const source = new URL(`${specifier.slice(0, -3)}.ts`, context.parentURL);
+        if (existsSync(fileURLToPath(source))) return nextResolve(source.href, context);
+      }
+      return nextResolve(specifier, context);
+    },
+    load: (url, context, nextLoad) =>
+      url.startsWith("file:") && url.endsWith(".ts")
+        ? {
+            format: "module",
+            shortCircuit: true,
+            source: stripTypeScriptTypes(readFileSync(fileURLToPath(url), "utf8"), {
+              mode: "transform",
+              sourceUrl: url,
+            }),
+          }
+        : nextLoad(url, context),
+  });
+const { LocalOperationStart, LocalOperationReply } = await import("./local-operation-protocol.js");
+const { localError, localOutputLimit } = await import("./local-path.js");
+const { isKernelOperation, runKernelScript } = await import("../runtime/kernel-operation.js");
+const { decodeKernelOperationInput, validateKernelOperationOutput } =
+  await import("../runtime/kernel-operation-validation.js");
+const { contractJsonSchema } = await import("../runtime/operation.js");
+const { makeEffectJournal } = await import("../runtime/context.js");
+const { Deadline } = await import("../runtime/deadline.js");
+const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
+const { InvalidOutput } = await import("../runtime/errors.js");
+const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
+const { makeScriptInput, ScriptInputFailure } = await import("../runtime/script-input.js");
+const { InputAnswers } = await import("../runtime/input-request.js");
+const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
+const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
+const send = (message: unknown) =>
+  Effect.try({
+    try: () => {
+      if (process.send === undefined || !process.connected)
+        throw new Error("Local operation IPC unavailable");
+      if (serialize(message).byteLength > localOutputLimit)
+        throw new Error("Local operation IPC exceeds output limit");
+      if (typeof message !== "object" || message === null)
+        throw new Error("Local IPC message must be an object");
+      process.send(message);
+    },
+    catch: localError,
+  });
+const call = (payload: object) =>
+  Effect.async<unknown, Error>((resume) => {
+    const id = randomUUID();
+    replies.set(id, resume);
+    Effect.runCallback(send({ id, ...payload }), {
+      onExit: (exit) => {
+        if (Exit.isFailure(exit)) {
+          replies.delete(id);
+          resume(Effect.fail(localError(Cause.squash(exit.cause))));
+        }
+      },
+    });
+    return Effect.sync(() => {
+      replies.delete(id);
+    }).pipe(Effect.zipRight(send({ kind: "cancel", id })), Effect.orDie);
+  });
+const start = await Effect.runPromise(
+  Effect.async<typeof LocalOperationStart.Type, Error>((resume) => {
+    process.on("message", (message: unknown) => {
+      const initial = Schema.decodeUnknownEither(LocalOperationStart)(message);
+      if (initial._tag === "Right") {
+        resume(Effect.succeed(initial.right));
+        return;
+      }
+      const reply = Schema.decodeUnknownEither(LocalOperationReply)(message);
+      if (reply._tag === "Left") {
+        resume(Effect.fail(new Error("Malformed local IPC message")));
+        return;
+      }
+      const complete = replies.get(reply.right.id);
+      replies.delete(reply.right.id);
+      if (reply.right.kind === "reply") complete?.(Effect.succeed(reply.right.value));
+      else
+        complete?.(
+          Effect.fail(Object.assign(new Error(reply.right.error), { code: reply.right.code })),
+        );
+    });
+    process.on("disconnect", () => {
+      const failure = new Error("Local operation host disconnected; completion uncertain");
+      for (const resumeReply of replies.values()) resumeReply(Effect.fail(failure));
+      replies.clear();
+    });
+  }),
+);
+const baseJournal = await Effect.runPromise(makeEffectJournal);
+const journalState = Effect.gen(function* () {
+  const confirmation = yield* baseJournal.confirmation;
+  return {
+    effect: yield* baseJournal.state,
+    commits: yield* baseJournal.commits,
+    ...(confirmation === undefined ? {} : { confirmation }),
+  };
+});
+const publishJournal = journalState.pipe(
+  Effect.flatMap((metadata) => send({ kind: "journal", ...metadata })),
+  Effect.orDie,
+);
+const journal: typeof baseJournal = {
+  ...baseJournal,
+  enteringDispatch: baseJournal.enteringDispatch.pipe(Effect.tap(() => publishJournal)),
+  enteringCommit: (name) => baseJournal.enteringCommit(name).pipe(Effect.tap(() => publishJournal)),
+  confirmed: (confirmation) =>
+    baseJournal.confirmed(confirmation).pipe(Effect.tap(() => publishJournal)),
+  verified: baseJournal.verified.pipe(Effect.tap(() => publishJournal)),
+  declareCommits: (names) =>
+    baseJournal.declareCommits(names).pipe(Effect.tap(() => publishJournal)),
+};
+const runAuthoredOperation = (operation: Parameters<typeof runKernelScript>[0]) =>
+  Effect.gen(function* () {
+    const deadline = Deadline.after(start.timeoutMs);
+    const kernel = makeKernelCompatibility(start.sessionId, (code, timeoutSec) =>
+      journal.enteringDispatch.pipe(
+        Effect.zipRight(
+          call({
+            kind: "execute",
+            sessionId: start.sessionId,
+            body: { code, timeout_sec: timeoutSec ?? 60 },
+          }),
+        ),
+        Effect.flatMap((value) => Schema.decodeUnknown(BrowserExecuteResponse)(value)),
+        Effect.mapError(localError),
+      ),
+    );
+    const scriptInput = makeScriptInput(
+      operation.questions,
+      (request) =>
+        call({ kind: "ask", request }).pipe(
+          Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
+          Effect.mapError(
+            (error) =>
+              new ScriptInputFailure({
+                code: "code" in error && error.code === "NoResponse" ? "NoResponse" : "Unavailable",
+              }),
+          ),
+        ),
+      deadline,
+    );
+    yield* journal.declareCommits(operation.write?.commits ?? []);
+    const input = yield* decodeKernelOperationInput(operation, start.input);
+    return yield* runKernelScript(operation, input, {
+      kernel,
+      sessionId: start.sessionId,
+      deadline,
+      journal,
+      scriptInput,
+      ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
+      ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
+      dialogs: (report) =>
+        call({ kind: "dialog", report }).pipe(
+          Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
+          Effect.mapError(() => new DialogFailure({ reason: "unavailable" })),
+        ),
+    }).pipe(Effect.flatMap((result) => validateKernelOperationOutput(operation, result)));
+  });
+const extractCurrentContract = (
+  operation: Parameters<typeof runKernelScript>[0],
+  schemas: { inputSchema: unknown; outputSchema: unknown },
+) =>
+  Effect.gen(function* () {
+    if (start.validateInput === true || start.retainedOutput !== undefined)
+      yield* decodeKernelOperationInput(operation, start.input);
+    if (start.retainedOutput !== undefined) {
+      yield* Schema.decodeUnknown(operation.output)(start.retainedOutput.value).pipe(
+        Effect.mapError(
+          (cause) =>
+            new InvalidOutput({
+              operation: operation.name,
+              cause,
+              output: start.retainedOutput?.value,
+            }),
+        ),
+      );
+    }
+    yield* send({
+      kind: "result",
+      ...schemas,
+      effect: "not_started",
+      commits: [],
+      ...(operation.write === undefined ? {} : { write: operation.write }),
+      ...(start.validateInput === true || start.retainedOutput !== undefined
+        ? { inputDecodes: true }
+        : {}),
+    });
+  });
+
+await Effect.runPromise(
+  Effect.gen(function* () {
+    const imported: unknown = yield* Effect.tryPromise({
+      try: () => import(pathToFileURL(start.entrypoint).href),
+      catch: localError,
+    });
+    const operation: unknown =
+      typeof imported === "object" && imported !== null
+        ? Reflect.get(imported, "default")
+        : undefined;
+    if (!isKernelOperation(operation))
+      return yield* Effect.fail(
+        new Error("Local execution requires an original defineOperation Kernel script"),
+      );
+    const schemas = {
+      inputSchema: contractJsonSchema(operation.input),
+      outputSchema: contractJsonSchema(operation.output),
+    };
+    if (start.mode === "contract") return yield* extractCurrentContract(operation, schemas);
+    const output = yield* runAuthoredOperation(operation);
+    const confirmation = yield* journal.confirmation;
+    yield* send({
+      kind: "result",
+      output,
+      ...schemas,
+      ...(operation.write === undefined ? {} : { write: operation.write }),
+      inputDecodes: true,
+      effect: yield* journal.state,
+      commits: yield* journal.commits,
+      ...(confirmation === undefined ? {} : { confirmation }),
+    });
+  }).pipe(
+    Effect.catchAll((error) =>
+      journalState.pipe(
+        Effect.flatMap((metadata) =>
+          send({
+            kind: "error",
+            error: error.message || error.name,
+            ...metadata,
+            ...("_tag" in error && typeof error._tag === "string" ? { tag: error._tag } : {}),
+            ...("code" in error && typeof error.code === "string"
+              ? { code: error.code }
+              : "_tag" in error && typeof error._tag === "string"
+                ? { code: error._tag }
+                : {}),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+process.disconnect?.();

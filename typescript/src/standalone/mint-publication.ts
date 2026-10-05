@@ -1,0 +1,81 @@
+import { Effect } from "effect";
+import { runLocalOperation } from "../execution/local-operation.js";
+import { MintFailure, type MintDependencies } from "../mint/contracts.js";
+import { publishedHandlePath } from "../mint/secret-handles.js";
+import type { MintState } from "./mint-state.js";
+import { validateStandaloneWrite } from "./write-completion.js";
+import { publicationError } from "./errors.js";
+
+/** Bind completion to the actual retained example or confirmed write step. */
+const retainedPublicationSample = (
+  state: MintState,
+  evidence: Parameters<MintDependencies["publish"]>[1],
+  entrypoint: string,
+) =>
+  Effect.suspend(() => {
+    const { runs } = state;
+    const sample = runs.get(evidence.executionId);
+    if (
+      sample === undefined ||
+      !(
+        (sample.purpose === "act" && evidence.confirmation !== undefined) ||
+        (evidence.status === "completed" && evidence.resultRef === `local:${evidence.executionId}`)
+      ) ||
+      (sample.purpose !== "act" && sample.entrypoint !== entrypoint)
+    )
+      return Effect.fail(new MintFailure({ code: "ScopeDenied" }));
+    return Effect.succeed(sample);
+  });
+export const mintPublication =
+  (state: MintState): MintDependencies["publish"] =>
+  (publication, evidence) =>
+    Effect.gen(function* () {
+      const { runs, workspace, request, context } = state;
+      const { secrets, browser } = state.session;
+      const sample = yield* retainedPublicationSample(state, evidence, publication.entrypoint);
+      const sources = (yield* workspace.snapshot).filter(([path]) =>
+        /^(src|explore|test|scratch)\//u.test(path),
+      );
+      for (const [, text] of sources) yield* secrets.assertAbsent(text);
+      if (publishedHandlePath(new Map(sources), [publication.entrypoint]) !== undefined)
+        return yield* Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "secret_handle",
+          }),
+        );
+      yield* context.review(
+        `operation/${publication.entrypoint}`,
+        new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
+        request.input ?? {},
+        "contract",
+        "pureFiles",
+      );
+      const result = yield* runLocalOperation({
+        workspace,
+        entrypoint: publication.entrypoint,
+        sources,
+        input: sample.input,
+        validateInput: true,
+        ...(sample.purpose === "act" ? {} : { retainedOutput: { value: sample.output } }),
+        browser,
+        mode: "contract",
+        target: "pureFiles",
+      });
+      if (sample.purpose === "act")
+        yield* validateStandaloneWrite(result, {
+          named: sample.journal,
+          steps: [...runs.values()]
+            .filter((run) => run.purpose === "act")
+            .map((run) => run.journal),
+        });
+      return {
+        artifact: {
+          files: sources.map(([path, content]) => ({ path, content })),
+          entrypoint: publication.entrypoint,
+          inputSchema: result.schemas.input,
+          outputSchema: result.schemas.output,
+        },
+        diagnostics: [],
+      };
+    }).pipe(Effect.mapError(publicationError));

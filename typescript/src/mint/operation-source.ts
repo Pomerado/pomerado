@@ -1,0 +1,239 @@
+import { posix } from "node:path";
+import { parseSync } from "oxc-parser";
+import { sourceSyntax } from "../runtime/source-syntax.js";
+
+/** Inert syntax only: no imports, dependency resolution or generated code execution. */
+export const mintSourceSyntaxFailure = (source: string, path: string): string | undefined => {
+  try {
+    const lang = sourceSyntax(path) === "typescript" ? "ts" : "js";
+    const error = parseSync(`operation.${lang}`, source, { lang, sourceType: "module" }).errors[0];
+    if (!error) return undefined;
+    // Parser excerpts may contain secrets. Retain only the position and a fixed reason.
+    const offset = error.labels[0]?.start ?? 0;
+    const prefix = source.slice(0, offset);
+    const line = prefix.split("\n").length;
+    const column = offset - prefix.lastIndexOf("\n");
+    return `Submitted entrypoint has invalid source syntax at line ${line}, column ${column}. Correct the source before execution. No code was executed.`;
+  } catch {
+    return "Submitted entrypoint source could not be parsed. Correct the source before execution. No code was executed.";
+  }
+};
+
+const publishableSourcePath = /^(src|explore|test|scratch)\/.+\.(?:m?js|ts|json)$/;
+/** A file the agent authors and an execution may import: operation source, never skills or captures. */
+export const isAuthoredSourcePath = (path: string) => publishableSourcePath.test(path);
+
+/**
+ * Names whose use lets module code load or run a file its import statements do not name:
+ * `require`, `eval`, the `Function` constructor (reached as any function's `constructor`), a
+ * worker, the process or global object, or reflection over them.
+ */
+const loaderNames = new Set([
+  "require",
+  "createRequire",
+  "eval",
+  "Function",
+  "constructor",
+  "Worker",
+  "SharedWorker",
+  "globalThis",
+  "global",
+  "process",
+  "Reflect",
+]);
+/** Node built-ins that run, spawn or read and load code. */
+const loaderModules = new Set([
+  "child_process",
+  "cluster",
+  "fs",
+  "fs/promises",
+  "inspector",
+  "inspector/promises",
+  "module",
+  "process",
+  "repl",
+  "test",
+  "vm",
+  "wasi",
+  "worker_threads",
+]);
+
+/** A relative specifier Node resolves to exactly its own path: no query, fragment or escape. */
+const plainRelative = (request: string) =>
+  (request.startsWith("./") || request.startsWith("../")) && !/[?#%\\]/u.test(request);
+/** A package or built-in that cannot name a workspace file or load one. */
+const plainPackage = (request: string) => {
+  const name = request.replace(/^node:/u, "");
+  return /^(?:@[\w.-]+\/)?[\w.-][\w./-]*$/u.test(name) && !loaderModules.has(name);
+};
+
+const keyedMembers = new Set(["MethodDefinition", "Property", "PropertyDefinition"]);
+const field = (node: object, key: string): unknown =>
+  key in node ? Reflect.get(node, key) : undefined;
+/**
+ * Whether the syntax tree uses a loader name: as an identifier or a property name, or as the
+ * string of a computed key (`x["constructor"]`). A class's own `constructor` method, another
+ * plain key it or an object literal declares, and any other string, the page code a template
+ * literal holds included, are not uses.
+ */
+/** Whether a node is a loader name itself: an identifier, or a computed key's string. */
+const loaderName = (node: object, type: unknown): boolean => {
+  if (type === "Identifier") {
+    const name = field(node, "name");
+    return typeof name === "string" && loaderNames.has(name);
+  }
+  if (type !== "MemberExpression" || field(node, "computed") !== true) return false;
+  const property = field(node, "property");
+  const key =
+    typeof property === "object" && property !== null ? field(property, "value") : undefined;
+  return typeof key === "string" && loaderNames.has(key);
+};
+const usesLoader = (node: unknown): boolean => {
+  if (Array.isArray(node)) return node.some(usesLoader);
+  if (typeof node !== "object" || node === null) return false;
+  const type = field(node, "type");
+  if (typeof type === "string" && keyedMembers.has(type) && field(node, "computed") === false)
+    return usesLoader(field(node, "value"));
+  if (loaderName(node, type)) return true;
+  if (type === "Identifier" || type === "Literal") return false;
+  return Object.values(node).some(usesLoader);
+};
+
+/**
+ * A module's module requests, or undefined when a dynamic import's request is not a string
+ * literal. `loader` also answers undefined for a module that could load a file those requests do
+ * not name: a request with a query, fragment or percent escape, a package import (`#name`), an
+ * absolute or URL request, a loader built-in, or a loader name in its code.
+ */
+const moduleRequests = (
+  source: string,
+  path: string,
+  loader: boolean,
+): readonly string[] | undefined => {
+  try {
+    const lang = sourceSyntax(path) === "typescript" ? "ts" : "js";
+    const parsed = parseSync(`module.${lang}`, source, { lang, sourceType: "module" });
+    if (parsed.errors.length > 0) return undefined;
+    const requests = [
+      ...parsed.module.staticImports.map((entry) => entry.moduleRequest.value),
+      ...parsed.module.staticExports.flatMap((entry) =>
+        entry.entries.flatMap((exported) =>
+          exported.moduleRequest === null ? [] : [exported.moduleRequest.value],
+        ),
+      ),
+    ];
+    for (const dynamic of parsed.module.dynamicImports) {
+      const literal = source.slice(dynamic.moduleRequest.start, dynamic.moduleRequest.end);
+      const request: unknown = /^(["'])[^"'\\]*\1$/.test(literal)
+        ? literal.slice(1, -1)
+        : undefined;
+      if (typeof request !== "string") return undefined;
+      requests.push(request);
+    }
+    if (!loader) return requests;
+    return requests.every((request) => plainRelative(request) || plainPackage(request)) &&
+      !usesLoader(parsed.program)
+      ? requests
+      : undefined;
+    // error-reporting-allow: parse-predicate an unparseable module keeps every candidate file
+  } catch {
+    return undefined;
+  }
+};
+
+/** Relative module requests, or undefined when a request cannot be resolved statically. */
+const relativeModuleRequests = (source: string, path: string): readonly string[] | undefined =>
+  moduleRequests(source, path, false)?.filter(
+    (request) => request.startsWith("./") || request.startsWith("../"),
+  );
+
+/**
+ * The workspace files a published operation can load: all of src/, the named entrypoints, and
+ * any explore, test or scratch module they import. Probes nothing imports stay out of the bundle
+ * and its screening. A module whose imports cannot be resolved statically keeps every candidate.
+ */
+export const operationSourceFiles = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoints: readonly string[],
+): Map<string, string> => {
+  const candidates = [...workspace].filter(([path]) => publishableSourcePath.test(path));
+  const included = new Map<string, string>();
+  const pending = [
+    ...candidates.filter(([path]) => path.startsWith("src/")).map(([path]) => path),
+    ...entrypoints,
+  ];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const source = workspace.get(path);
+    if (included.has(path) || source === undefined) continue;
+    included.set(path, source);
+    if (path.endsWith(".json")) continue;
+    const requests = relativeModuleRequests(source, path);
+    if (requests === undefined) return new Map([...candidates, ...included]);
+    for (const request of requests) {
+      const resolved = posix.normalize(posix.join(posix.dirname(path), request));
+      if (publishableSourcePath.test(resolved)) pending.push(resolved);
+    }
+  }
+  return included;
+};
+
+/**
+ * One entrypoint and the workspace modules it imports, transitively; unlike the published bundle
+ * it leaves out unrelated `src/` files. A module whose imports cannot be resolved statically keeps
+ * every candidate file. The write-step digests and checks read this closure: a file the step
+ * loads another way is not in it.
+ */
+export const entrypointImportClosure = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoint: string,
+): Map<string, string> => {
+  const included = new Map<string, string>();
+  const pending = [entrypoint];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const source = workspace.get(path);
+    if (included.has(path) || source === undefined) continue;
+    included.set(path, source);
+    if (path.endsWith(".json")) continue;
+    const requests = relativeModuleRequests(source, path);
+    if (requests === undefined)
+      return new Map([...workspace].filter(([candidate]) => publishableSourcePath.test(candidate)));
+    for (const request of requests)
+      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+  }
+  return included;
+};
+
+/**
+ * The operation files Guardian is told an execution loads: the entrypoint's static import closure,
+ * a lower bound. A module that could load a file its imports do not name (see `moduleRequests`),
+ * or a workspace package manifest, which can map a bare or `#` specifier to any file, keeps every
+ * candidate file beside what was reached.
+ */
+export const executedSourceClosure = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoint: string,
+): ReadonlyMap<string, string> => {
+  const included = new Map<string, string>();
+  const everyCandidate = () =>
+    new Map([
+      ...included,
+      ...[...workspace].filter(([candidate]) => publishableSourcePath.test(candidate)),
+    ]);
+  const pending = [entrypoint];
+  if ([...workspace.keys()].some((path) => posix.basename(path) === "package.json")) {
+    const entry = workspace.get(entrypoint);
+    if (entry !== undefined) included.set(entrypoint, entry);
+    return everyCandidate();
+  }
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const source = workspace.get(path);
+    if (included.has(path) || source === undefined) continue;
+    included.set(path, source);
+    if (path.endsWith(".json")) continue;
+    const requests = moduleRequests(source, path, true);
+    if (requests === undefined) return everyCandidate();
+    for (const request of requests.filter(plainRelative))
+      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+  }
+  return included;
+};

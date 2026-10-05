@@ -1,0 +1,222 @@
+<!-- pomerado:hosted:start
+---
+name: writes
+description: Do a write build's requested task once as a live act session, confirm it, then compose and publish its script without running it again.
+---
+pomerado:hosted:end -->
+
+# Do the task once, then compose its script
+
+<!-- pomerado:hosted:start
+A write build changes something real on the caller's account: an order, a booking,
+a submitted form, a saved profile. There is no practice run. The write is the whole
+task the request asks for, done once, live, with the caller's own values, as a series
+of `act` steps. It may take several write steps: filling in and advancing a
+multi-step form, choosing options, saving, then submitting. Drafts, autosaves and the
+saves a site makes at each step along the way are part of that one task. You never
+redo the whole task, and never redo a step that finished; run a step again only when
+a fresh read of the page shows it did not finish, or the task cannot complete without it. Then you compose the
+published script from what those steps did and publish it. Nothing runs again.
+pomerado:hosted:end -->
+
+A read build may search, filter and query, but may not fill in or advance a form that
+saves data on the site, save or submit anything; a task that needs that is a write build.
+
+## When a read build finds it needs to write
+
+When a read build's task turns out to need that (a form that saves each step, a search
+that is really a booking), ask the owner once with `request_input` and `writeUpgrade: true`:
+one `choice` question with the option ids `read` and `write`, whose prompt says in one or
+two plain sentences what the build would change and why the task needs it. Ask as soon as
+exploration shows it, and before any live `example`: a job that ran a live read example
+cannot become a write. The host writes the two answers' labels. Guardian reviews it first.
+A `write` answer makes this a write build in place: every later step is reviewed under
+write authority and the rules below, what you explored stays valid evidence, and the first
+`act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
+can do, or end and say the task needs a write build.
+
+## Before the session
+
+Sign in first when the site needs it (the auth skill: read-only `explore` to find
+the login, then `authenticate`). Before the first `act` step you may still explore
+read-only, for example to read the first page's options, but never fill, select,
+add, save or submit anything there.
+
+Read the path's options with read-only exploration where you can, then ask with
+`request_input` about each add-on, pre-selected paid option and saved payment you saw
+that the caller's input does not settle, and about any other option that is relevant or
+important to the request (delivery, seat or insurance choices, which saved card or
+address to use). An optional field that matters little keeps the page's default, and is
+still an optional input of the script. Ask only about options the site actually shows. A control with
+exactly one possible value (a select or radio group with a single option) is not a
+question, and neither is one the input or an earlier answer already settles; an add-on
+toggle, a pre-selected checkbox or a lone saved payment method is still a yes-or-no
+choice to ask about. Never keep, clear,
+accept or decline one of these unasked. Credentials never go through a question; the host's
+protected form owns them.
+
+During the session:
+
+- Before the commit step, run a step that reads the review page and lists every
+  selected option and total.
+- Make the commit step check that no option the input does not settle is selected,
+  and fail before clicking commit if one is.
+- If a step meets an option the input does not settle, stop that step before choosing
+  it and ask. A `request_input` question during the session waits in place; a choice
+  that exists only on the page mid-flow, such as a seat on the flight just chosen, is
+  a declared `ask` in the next `act` step's script (the caller-input skill). An
+  answered question settles the option. Check the page again before continuing.
+
+## The session
+
+Author each step as a Kernel script under `src/` with the caller's input schema (the
+core skill), and keep the flow's calls in a module the composed script will import
+too. Run each step with `execute` purpose `act`, target `liveBrowser`.
+
+<!-- pomerado:hosted:start
+- The first `act` step claims the build's write. The host resets the browser to
+  the site origin page first, with fresh page state (a signed-in build
+  keeps the session saved right after sign-in), so that step starts the flow there.
+- Later steps continue on the page exactly as the previous step left it. Keep steps
+  small: fill and continue, then commit, then read the result. A step that saves or
+  advances a form page is part of the task, not a second write.
+- Report a confirm popup to `decideDialog` with a literal `step` name, and keep that
+  literal in the helper the composed script imports. Runs accept a popup without
+  asking only at the step the session accepted it at, so the host refuses to publish
+  a composed script that drops one.
+- Mark every step that can commit. Call `enteringCommit("place-order")` right
+  before the execute call whose code clicks Place order (or sends the commit
+  request), and declare the names in order as `write.commits`. The host cannot see a
+  commit sent as a GET link or over a websocket, so the mark is its evidence of
+  whether the commit step ran.
+- The host refuses an `act` step whose source is unchanged since it ran and sent
+  state-changing requests: submitting it again could commit twice.
+- Read `stateChangingRequests` on every step. It lists the commit your step caused
+  and any autosave or draft save. That is the evidence for the `http` version; any
+  other write is unintended and must not be in the script.
+- The step that reads the site's confirmation ends the session. Prefer a
+  confirmation the site shows for this commit (an order, booking or reference
+  number), read it in the same call as the click that commits, and record it with
+  `verified({ confirmation: "message" })` just before returning. Without one, read
+  back the saved state (the orders page, the booking list, the updated profile),
+  match it to the caller's values and call `verified()`, which records a read-back.
+  Make no execute call after either: a later call reopens the effect. A generic
+  toast or a 200 response is not a confirmation. After the confirming step, further
+  `act` steps are refused.
+- Only if the site offers neither, the write is `unverifiable`: do not call
+  `verified`. It publishes flagged, and its runs report the write as possibly
+  completed. A session in which any step recorded a confirmation is never
+  `unverifiable`; publish against the confirming step.
+- Never repeat a step blindly. If an `act` step fails after the page sent a
+  state-changing request or opened a socket, after it entered a commit mark, or
+  without returning a result at all (its page was lost), the write may already be
+  committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
+  further write, run an `act` step that only reads the page or the account. If the
+  write happened, call `verified()` there and publish against that step, never
+  submitting it again. If nothing happened, do the write with the
+  caller's values and read its confirmation. The host refuses only an unchanged
+  commit step run again straight after it sent state-changing requests, and never
+  resubmits for you. Make the composed script match what actually worked end to end.
+- A failed step that sent no state-changing request changes nothing: the next `act`
+  step reads the page as it is and continues, finishing what is still missing.
+  A step that never calls `verified` does not end a session.
+pomerado:hosted:end -->
+
+<!-- pomerado:hosted:start
+Once the session has started, a live `explore` or `test` is refused, and a write
+build never runs a live `example`. Offline checks stay available: `pureFiles` for
+helpers, `savedDOM` against the session's captures.
+pomerado:hosted:end -->
+
+## Compose and publish
+
+<!-- pomerado:hosted:start
+Write `src/tool.mjs`, the `playwright` version: a Kernel script running the whole
+flow from the site origin page and the caller's input, with the same calls, the commit
+exactly once, and the same confirmation or read-back the session recorded. The call
+that reads it, the commit call or a read-only call after it as in the session, reads
+only what the session's confirming step read and returns it; the script matches those
+values to the input and calls `verified()`, as the references do. Nothing runs live
+before publishing, so a read the session never made, added to that call, can fail
+after the write has landed, and a run that hits it reports a successful write as
+possibly completed. Declare the script's contract, `defineOperation({ name,
+input, output, write: { confirmation: "message", commits: ["place-order"] } }, run)`
+(or `"readback"`, or `"unverifiable"` when the site offers neither), marking the
+same commit steps as the session. A script declared `unverifiable` cannot call
+`verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
+and one that declares a mark no `act` step of the session entered is refused as
+`commit_marks_unentered`: mark the commit in the session's steps with the same call,
+since the session cannot be run again to add it.
+pomerado:hosted:end -->
+
+Every option the session met on its path is an input of the script, add-ons and
+pre-selected defaults included: required when the site requires a choice, optional
+otherwise. The script sets each option from its input. An unset optional input leaves the
+page's default, as in a read. The exception is an add-on, a pre-selected paid option or
+a saved payment: each must be explicit, so the script never keeps, clears, accepts or
+declines one the input leaves open, and fails before the commit instead. An
+account-specific value, such as a passenger, loyalty number, saved card, address or
+account ID, is a free-form input, never an enum member, example or default in the
+public schema (core's input schema rules).
+
+<!-- pomerado:hosted:start
+Also write `src/tool-http.mjs`, the `http` version, from `captures/routes.json` and
+the session's state-changing requests (the http-mcp skill). Test it offline only,
+with `savedHTTP` against the session's recorded exchanges. Never run either version
+live: the write already happened, and a second run would be a second write. When an
+HTTP version is impossible, for example because page code signs every request, delete
+`src/tool-http.mjs` and say why in coverage; never ship a stub that always fails.
+pomerado:hosted:end -->
+
+<!-- pomerado:hosted:start
+Call `finish_build` with entrypoint `src/tool.mjs` and the confirming step's
+`executionId` (for an `unverifiable` write, the step that committed). The host reads
+the script's contract offline, checks that the caller's own input decodes against it
+and that the named step recorded the declared confirmation, then publishes. A
+`not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
+`contract_input_mismatch` means correct the source and call `finish_build` again;
+never run the write again. So does `input_feedback`, Guardian's findings on the input
+schema; the host re-reads the corrected schema offline. `write_not_submitted` means no
+`act` step recorded a confirmation, sent a non-read request or entered a commit mark;
+an unmarked GET or websocket commit is invisible to that check. Read back first. If
+the write happened, publish with `readback`. If the read-back shows it did not, do the
+write once, marking its commit step, and read its confirmation. If no read-back can tell,
+never submit again: publish it as `unverifiable`. Filling a form or an offline example
+is not the write. An unreadable step output never justifies a run either: the write
+publishes with its output recorded as unavailable.
+pomerado:hosted:end -->
+
+After a `not_published`, live `act` steps are open again while the write session is still
+open (a commit that recorded its confirmation stays done), on a fresh browser on a new,
+empty profile: read `page.url()` first and sign in again when the build signs in. Before
+running a commit again, run an `act` step that only reads the site or the account to see
+whether the earlier commit landed, and never resubmit one that did. If no read-back can
+tell, never submit again. Guardian reviews every
+`act` step and denies one that would repeat a finished commit.
+
+## What runs do with it
+
+<!-- pomerado:hosted:start
+A run of the published write ends one of three ways. A recorded confirmation makes
+it a result. A failure the host can prove sent nothing (its marks show no commit
+step entered and the page sent only reads) may retry on a new browser, and a retry
+that fails too goes to maintenance. Anything
+else, including a run that finished without its confirmation or lost its page
+before reporting its marks, returns `possibly_completed` with any unconfirmed
+result, and maintenance reads the site back and finishes the write at most once.
+An `unverifiable` write reports `possibly_completed` too, and nothing repairs it.
+A script that throws `errors.InvalidInput` (core skill) fails as the caller's input and
+nothing repairs it. Before any commit mark is entered, the run reports that it changed nothing.
+pomerado:hosted:end -->
+
+See `references/write-session.ts` for two steps and the composed script, and
+`references/write-readback.ts` for a read-back confirmation tied to its submission.
+<!-- pomerado:standalone:start
+
+## Standalone write completion
+
+Perform the authorized task once through live `act` steps, preserving the shared effect journal and caller choices. Wait for actual confirmation and read back committed state. Declare `verified`, `unverifiable`, and their confirmation behavior accurately using the existing SDK; a missing result alone never proves the write absent.
+
+Compose `src/tool.mjs` from the original reviewed steps and confirming observation. You may check source/schema and pure helpers offline, but never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
+
+pomerado:standalone:end -->

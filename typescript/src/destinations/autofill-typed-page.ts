@@ -1,0 +1,53 @@
+import { Effect } from "effect";
+import { judgedOrigins } from "./autofill-refusal.js";
+import type {
+  AutofillInspection,
+  AutofillRefusal,
+  AutofillStep,
+  AutofillStepReport,
+} from "./autofill-step.js";
+
+/**
+ * A browser's autofill inspections and fills, which remember while this worker holds the browser
+ * whether the host typed into its page: a refund, a corrected login or a relogin on that browser
+ * never forgets it, nor does a field the page emptied after typing. A worker that
+ * rejoins a browser its predecessor held cannot know what that one typed, so it starts as typed
+ * (`typed`). Until something was typed,
+ * each inspection's judged origins hold no typed value; from then on, an inspection may name only
+ * those (`judgedBeforeTyping`) besides the site's and configured sign-in origins, since the page
+ * may have put a typed value in any other, such as a form action's host.
+ */
+export const rememberTyping = <
+  Fill extends { readonly inspection: AutofillInspection },
+  EI,
+  EF,
+>(calls: {
+  readonly inspect: (request: {
+    readonly step: AutofillStep;
+    readonly judgedBeforeTyping: readonly string[] | undefined;
+  }) => Effect.Effect<AutofillRefusal | AutofillInspection, EI>;
+  readonly fill: (input: Fill) => Effect.Effect<AutofillStepReport, EF>;
+  readonly typed?: boolean;
+}) => {
+  let typed = calls.typed === true;
+  const judged = new Set<string>();
+  return {
+    inspect: (step: AutofillStep) =>
+      calls.inspect({ step, judgedBeforeTyping: typed ? [...judged] : undefined }).pipe(
+        Effect.tap((inspected) =>
+          Effect.sync(() => {
+            if (!typed && !("outcome" in inspected))
+              for (const origin of judgedOrigins(inspected)) judged.add(origin);
+          }),
+        ),
+      ),
+    fill: (input: Fill) =>
+      calls.fill(input).pipe(
+        Effect.tap((report) =>
+          Effect.sync(() => {
+            if (report.outcome !== "refused" && report.typed === true) typed = true;
+          }),
+        ),
+      ),
+  };
+};

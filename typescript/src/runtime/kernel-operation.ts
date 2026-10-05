@@ -1,0 +1,504 @@
+import {
+  decodeKernelOperationInput,
+  validateKernelOperationOutput,
+} from "./kernel-operation-validation.js";
+import { BrowserActionTimeout, nativeActionTimeout } from "./browser-action-timeout.js";
+import { Effect, Either, Option, Schema } from "effect";
+import type { Context, Scope } from "effect";
+import { DialogChoice, DialogFailure, DialogType } from "./dialogs.js";
+import { ChallengeFailure, challengeSolverWaitMs } from "./challenge.js";
+import { ScriptInput, ScriptInputFailure } from "./script-input.js";
+import type {
+  AskSpecOf,
+  ScriptAnswer,
+  ScriptAnswerOf,
+  ScriptQuestionDeclarations,
+} from "./script-input.js";
+import { ExecutionContext, finishCaptureAsEvidence } from "./context.js";
+import type { EffectJournal, WriteConfirmation } from "./context.js";
+import type { Deadline } from "./deadline.js";
+import {
+  DeadlineExceeded,
+  WriteConfirmationRefused,
+  type Dispatch,
+  type InvalidInput,
+  type InvalidOutput,
+  type CaptureUnavailable,
+  type EventUnavailable,
+} from "./errors.js";
+import type { WriteDeclaration } from "./operation.js";
+import { kernelTimeoutSec } from "./kernel-execute-client.js";
+import type { KernelExecuteClient } from "./kernel-execute-client.js";
+import { inspectSignInRejection } from "./sign-in-rejection.js";
+import type { SignInRejectionMarker } from "./sign-in-rejection.js";
+import {
+  OperationFailure,
+  operationErrors,
+  scriptFailure,
+  type ScriptFailure,
+} from "./operation-failure.js";
+
+export { OperationFailure, operationErrors };
+
+/** Longest dialog message the host is sent. */
+export const dialogMessageLimit = 16_384;
+
+/**
+ * A native dialog a call left open on Kernel's page, as the script reports it to the host.
+ * `step` is the script's name for the step that raised it, the same on every run, and `url` is
+ * the page's URL when it showed.
+ */
+export const DialogReport = Schema.Struct({
+  step: Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,100}$/)),
+  type: DialogType,
+  message: Schema.String,
+  url: Schema.String.pipe(Schema.maxLength(8_192)),
+});
+export type DialogReport = typeof DialogReport.Type;
+
+/** The host's side of a dialog decision, over the sandbox channel. */
+export type DialogDecider = (
+  request: DialogReport & { readonly interactionId: string },
+) => Effect.Effect<DialogChoice, DialogFailure>;
+
+/** Runs a host exchange and throws its own typed failure, not Effect's wrapper. */
+const settle = async <A, E extends Error>(effect: Effect.Effect<A, E>): Promise<A> => {
+  const outcome = await Effect.runPromise(Effect.either(effect));
+  if (Either.isLeft(outcome)) throw outcome.left;
+  return outcome.right;
+};
+
+export { kernelTimeoutSec } from "./kernel-execute-client.js";
+export type { KernelExecuteClient } from "./kernel-execute-client.js";
+
+/**
+ * What a Kernel script receives. Its browser work is its own calls to
+ * `kernel.browsers.playwright.execute(sessionId, { code, timeout_sec })`; each call's code is plain
+ * Playwright code that Kernel runs on its own `page`, with outside values written into it.
+ */
+/**
+ * The context's `ask`, typed by the contract's declared questions: `ask("id")` returns that
+ * answer, `ask(["a", "b"])` and `ask({ seat: { options }, code: {} })` return one per id.
+ */
+export interface ScriptAsk<Questions extends ScriptQuestionDeclarations> {
+  <Id extends keyof Questions & string>(id: Id): Promise<ScriptAnswerOf<Questions[Id]>>;
+  <const Ids extends ReadonlyArray<keyof Questions & string>>(
+    ids: Ids,
+  ): Promise<{ readonly [Id in Ids[number]]: ScriptAnswerOf<Questions[Id]> }>;
+  <Id extends keyof Questions & string>(questions: {
+    readonly [Asked in Id]: AskSpecOf<Questions[Asked]>;
+  }): Promise<{ readonly [Asked in Id]: ScriptAnswerOf<Questions[Asked]> }>;
+}
+
+export interface KernelOperationContext<
+  Input,
+  Questions extends ScriptQuestionDeclarations = ScriptQuestionDeclarations,
+> {
+  /** Kernel's SDK client, `new Kernel({ maxRetries: 0 })` with the sandbox's `KERNEL_API_KEY`. */
+  readonly kernel: KernelExecuteClient;
+  /** The job's own browser. Every call uses this session and no other. */
+  readonly sessionId: string;
+  /** The site's primary origin from the host's plan. Code never embeds the site hostname. */
+  readonly siteOrigin: string | undefined;
+  /**
+   * The site's registrable domain, which the host computed from `siteOrigin` with the public
+   * suffix list, private suffixes included: every https host equal to it or ending in "." plus it
+   * is the site. Undefined when the site has none (an IP address, localhost, a bare suffix) or no
+   * live browser; then only `siteOrigin` itself is the site. Never derive it from `siteOrigin`.
+   */
+  readonly siteDomain: string | undefined;
+  readonly input: Input;
+  /**
+   * Asks the host to decide a native dialog a call left open. Kernel keeps a dialog open between
+   * calls, and the deadline pauses while the host decides. The raising call keeps the dialog and
+   * returns what it showed, without awaiting the action that raised it:
+   *
+   *     const shown = new Promise((resolve) => page.once("dialog", (dialog) => {
+   *       globalThis.dialog = dialog;
+   *       resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
+   *     }));
+   *     void page.click("#delete").catch(() => {});
+   *     return await shown;
+   *
+   * The script passes that with its step name, and the next call applies the choice with
+   * `await globalThis.dialog.accept(promptText)` or `await globalThis.dialog.dismiss()`.
+   */
+  readonly decideDialog: (report: DialogReport) => Promise<DialogChoice>;
+  /**
+   * Asks the job's caller between two calls: a choice only the page offers now (its options
+   * passed here), a code the site just sent, or anything else only the caller knows. Each id is
+   * declared with its type and prompt in the contract's `questions`. The browser stays open and
+   * the deadline pauses while the caller decides; the next call gets the answers written into
+   * its code. It throws `ScriptInputFailure` when no usable answer comes, such as `NoResponse`.
+   */
+  readonly ask: ScriptAsk<Questions>;
+  /**
+   * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
+   * polling `ready`, a code body that returns true once the page is usable. It throws
+   * `ChallengeFailure` with the time waited when the challenge stays, so the host can climb.
+   */
+  readonly waitPastChallenge: (options: { readonly ready: string }) => Promise<void>;
+  /**
+   * Marks the run's write as landed, once a call has read it back from the site: the saved
+   * record or the confirmation with its reference, tied to this submission. Call it just before
+   * returning. A later execute call makes the effect possible again. Never call it for a missing
+   * or generic confirmation. An offline run ignores it. A write reads back its saved state before
+   * `verified()`; one proven by the confirmation the site showed for this submission instead calls
+   * `verified({ confirmation: "message" })`. The run reports which, and a write declared
+   * `unverifiable` throws `WriteConfirmationRefused`, since its declaration says there is none.
+   */
+  readonly verified: (options?: { readonly confirmation?: WriteConfirmation }) => void;
+  /**
+   * Marks the write's named commit step, one of its contract's `write.commits`, as sent. Call it
+   * right before the execute call whose code can send that step, such as the click on Place
+   * order. The mark reads `sent` from then on, even if the call fails, because the site may
+   * already have the request. An offline run ignores it. During maintenance, a step the original
+   * confirmed, or sent without this run's read-back finding it missing, throws `CommitAlreadySent`
+   * before its execute call.
+   */
+  readonly enteringCommit: (name: string) => void;
+  /** Time left before the operation's deadline, for choosing `timeout_sec`. */
+  readonly remainingMs: () => number;
+  /** Inspect a value-free marker on the authorized page; throw only when it is visible. */
+  readonly rejectedSignIn: (options: SignInRejectionMarker) => Promise<void>;
+  readonly errors: typeof operationErrors;
+}
+
+export interface KernelOperation<Input, EncodedInput, Output, EncodedOutput> {
+  readonly kind: "kernel";
+  readonly name: string;
+  readonly input: Schema.Schema<Input, EncodedInput>;
+  readonly output: Schema.Schema<Output, EncodedOutput>;
+  /** The questions `ask` may put to the caller during a run, by id. */
+  readonly questions?: ScriptQuestionDeclarations;
+  /** Present on every write script. */
+  readonly write?: WriteDeclaration;
+  readonly run: (context: KernelOperationContext<Input>) => Promise<Output>;
+}
+
+/** An offline run, such as a parser, has no browser: any call fails at once, having sent nothing. */
+export const offlineKernel: KernelExecuteClient = {
+  browsers: {
+    playwright: {
+      execute: () =>
+        Promise.reject(
+          new OperationFailure("An offline run has no browser", { dispatch: "not_sent" }),
+        ),
+    },
+  },
+};
+
+const WaitResult = Schema.Struct({ cleared: Schema.Boolean, waitedMs: Schema.Number });
+
+/** The solver wait as one call on Kernel's page, polling the script's own readiness check. */
+const waitPastChallengeCode = (ready: string, limitMs: number) =>
+  `const started = Date.now();
+const ready = async () => {
+${ready}
+};
+while (true) {
+  try { if (await ready()) return { cleared: true, waitedMs: Date.now() - started }; } catch {}
+  if (Date.now() - started >= ${limitMs}) return { cleared: false, waitedMs: Date.now() - started };
+  await new Promise((resolve) => setTimeout(resolve, 250));
+}`;
+
+/** Kernel's client with each call marked as a possible dispatch, so no call follows `verified`. */
+const journaledKernel = (
+  kernel: KernelExecuteClient,
+  journal: EffectJournal,
+): KernelExecuteClient => ({
+  browsers: {
+    playwright: {
+      execute: (sessionId, body, options) => {
+        Effect.runSync(journal.enteringDispatch);
+        return kernel.browsers.playwright.execute(sessionId, body, options);
+      },
+    },
+  },
+});
+
+/**
+ * A live run's browser: every call goes through the journal, so the effect after `verified` stays
+ * verified only while no call follows it. An offline run's stays as it is.
+ */
+const liveBrowser = <
+  Browser extends { readonly kernel: KernelExecuteClient; readonly offline?: boolean },
+>(
+  browser: Browser,
+  journal: EffectJournal,
+) =>
+  browser.offline === true
+    ? browser
+    : { ...browser, kernel: journaledKernel(browser.kernel, journal), journal };
+
+type Declared = ScriptQuestionDeclarations[string];
+/**
+ * The context's `ask` over the runner's script input. The runtime checks every id and option
+ * against the contract's declarations; the declared types only guide the script's author.
+ */
+const scriptAsk = (
+  scriptInput: Context.Tag.Service<ScriptInput> | undefined,
+): ScriptAsk<ScriptQuestionDeclarations> => {
+  function ask(id: string): Promise<ScriptAnswerOf<Declared>>;
+  function ask<const Ids extends ReadonlyArray<string>>(
+    ids: Ids,
+  ): Promise<{ readonly [Id in Ids[number]]: ScriptAnswerOf<Declared> }>;
+  function ask<Id extends string>(questions: {
+    readonly [Asked in Id]: AskSpecOf<Declared>;
+  }): Promise<{ readonly [Asked in Id]: ScriptAnswerOf<Declared> }>;
+  function ask(
+    input: Parameters<Context.Tag.Service<ScriptInput>["ask"]>[0],
+  ): Promise<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>> {
+    return settle(
+      scriptInput === undefined
+        ? Effect.fail(new ScriptInputFailure({ code: "Unavailable" }))
+        : scriptInput.ask(input),
+    );
+  }
+  return ask;
+};
+
+/** The job's browser a Kernel script runs on, as the runner binds it. */
+interface ScriptBrowser {
+  readonly kernel: KernelExecuteClient;
+  readonly sessionId: string;
+  readonly siteOrigin?: string;
+  /** The host's registrable domain for `siteOrigin`; the sandbox has no public suffix list. */
+  readonly siteDomain?: string;
+  readonly dialogs?: DialogDecider;
+  /** Hosted HTTP authoring diagnostics; native browser scripts use the portable errors. */
+  readonly scriptError?: (error: unknown, dispatch: Dispatch) => OperationFailure;
+}
+
+/** Builds the context the runtime hands a Kernel script. */
+const makeKernelOperationContext = <Input>(
+  options: ScriptBrowser & {
+    readonly input: Input;
+    readonly deadline: Deadline;
+    /** The runner's caller questions; the login hooks get none, so they can never ask. */
+    readonly scriptInput?: Context.Tag.Service<ScriptInput>;
+    /** A live run's journal. An offline run has none, so its effect stays not started. */
+    readonly journal?: EffectJournal;
+    /** The script's write declaration; the login hooks get none. */
+    readonly write?: WriteDeclaration;
+  },
+): KernelOperationContext<Input> => ({
+  kernel: options.kernel,
+  sessionId: options.sessionId,
+  siteOrigin: options.siteOrigin,
+  siteDomain: options.siteDomain,
+  input: options.input,
+  // Records how the run proved its effect, a read-back unless the site's message says so.
+  verified: (proof) => {
+    const kind = proof?.confirmation ?? "readback";
+    if (options.write?.confirmation === "unverifiable")
+      throw new WriteConfirmationRefused({ declared: "unverifiable", recorded: kind });
+    if (options.journal !== undefined) Effect.runSync(options.journal.confirmed(kind));
+  },
+  // Marks a named commit step sent just before the execute call that dispatches it.
+  enteringCommit: (name) => {
+    if (options.journal === undefined) return;
+    const entered = Effect.runSync(Effect.either(options.journal.enteringCommit(name)));
+    if (entered._tag === "Left") throw entered.left;
+  },
+  remainingMs: () => options.deadline.remainingMs(),
+  errors: operationErrors,
+  rejectedSignIn: (request) => settle(inspectSignInRejection(options, request)),
+  decideDialog: async (shown) => {
+    const decide = options.dialogs;
+    if (decide === undefined) throw new DialogFailure({ reason: "unavailable" });
+    const report = Schema.decodeUnknownEither(DialogReport)(shown);
+    if (Either.isLeft(report)) throw new DialogFailure({ reason: "invalid_request" });
+    const resume = options.deadline.suspend();
+    try {
+      const choice = await settle(
+        decide({
+          interactionId: crypto.randomUUID(),
+          ...report.right,
+          message: report.right.message.slice(0, dialogMessageLimit),
+        }),
+      );
+      return Schema.decodeUnknownSync(DialogChoice)(choice, { onExcessProperty: "error" });
+    } finally {
+      resume();
+    }
+  },
+  // The runtime checks every id and option against the declarations; the types only guide.
+  ask: scriptAsk(options.scriptInput),
+  waitPastChallenge: async ({ ready }) => {
+    // The SDK accepts only a whole-millisecond request timeout.
+    const limitMs = Math.floor(Math.min(challengeSolverWaitMs, options.deadline.remainingMs()));
+    const answer = await options.kernel.browsers.playwright.execute(
+      options.sessionId,
+      {
+        code: waitPastChallengeCode(ready, limitMs),
+        timeout_sec: kernelTimeoutSec(Math.min(limitMs + 10_000, options.deadline.remainingMs())),
+      },
+      { maxRetries: 0, timeout: limitMs + 20_000 },
+    );
+    if (answer.success !== true)
+      throw new OperationFailure(`waitPastChallenge failed: ${String(answer.error)}`, {
+        stderr: answer.stderr,
+      });
+    const result = Schema.decodeUnknownSync(WaitResult)(answer.result);
+    if (!result.cleared)
+      throw new ChallengeFailure({
+        code: "Unavailable",
+        solverWaitMs: Math.max(0, Math.round(result.waitedMs)),
+      });
+  },
+});
+
+/** The write's declared commit step names, only strings, in order. */
+const declaredCommits = (write: WriteDeclaration | undefined): readonly string[] => {
+  const declared: unknown = write?.commits;
+  return Array.isArray(declared) ? declared.filter((n): n is string => typeof n === "string") : [];
+};
+
+export const isKernelOperation = (
+  value: unknown,
+): value is KernelOperation<unknown, unknown, unknown, unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  Reflect.get(value, "kind") === "kernel" &&
+  typeof Reflect.get(value, "run") === "function";
+
+/**
+ * One run of a script's function against a Kernel client: Kernel's own, or the saved-DOM stand-in.
+ * A throw that is not one of its typed errors becomes an `OperationFailure`.
+ */
+export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
+  operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
+  input: Input,
+  browser: ScriptBrowser & {
+    readonly deadline: Deadline;
+    readonly scriptInput?: Context.Tag.Service<ScriptInput>;
+    readonly journal?: EffectJournal;
+  },
+): Effect.Effect<Output, ScriptFailure> =>
+  Effect.suspend(() => {
+    let actionTimeout: string | undefined;
+    let calls = 0;
+    const kernel: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: (sessionId, body, options) =>
+            settle(
+              Effect.sync(() => {
+                actionTimeout = undefined;
+                calls += 1;
+              }).pipe(
+                Effect.flatMap(() =>
+                  Effect.tryPromise({
+                    try: () => browser.kernel.browsers.playwright.execute(sessionId, body, options),
+                    catch: (error) =>
+                      error instanceof Error ? error : new Error(String(error), { cause: error }),
+                  }),
+                ),
+                Effect.tap((answer) =>
+                  Effect.sync(() => {
+                    actionTimeout = nativeActionTimeout(answer);
+                  }),
+                ),
+              ),
+            ),
+        },
+      },
+    };
+    return Effect.tryPromise({
+      try: async () => {
+        const output = await operation.run(
+          makeKernelOperationContext({
+            ...browser,
+            kernel,
+            input,
+            ...(operation.write === undefined ? {} : { write: operation.write }),
+          }),
+        );
+        // A returned Effect never ran, so only the script's own execute calls may have sent.
+        if (Effect.isEffect(output))
+          throw scriptFailure(output, browser.scriptError, calls === 0 ? "not_sent" : "unknown");
+        return output;
+      },
+      catch: (error) => {
+        const failure = scriptFailure(error, browser.scriptError);
+        return failure instanceof OperationFailure &&
+          actionTimeout !== undefined &&
+          failure.message === actionTimeout.slice(0, 4096)
+          ? new BrowserActionTimeout(failure)
+          : failure;
+      },
+    });
+  });
+
+/**
+ * Runs a Kernel script under the execution deadline: input decoded, capture bracketed, output
+ * validated. The whole run may have dispatched, so the journal is marked before it starts and
+ * again at each execute call, and only the script's `verified` after its read-back settles it.
+ * `first`, a registered run's HTTP version, runs after the login hooks in place of the script and
+ * gets the script's run as its fallback.
+ */
+export const executeKernelOperation = <
+  Input,
+  EncodedInput,
+  Output,
+  EncodedOutput,
+  FirstError = never,
+  FirstServices = never,
+>(
+  operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
+  rawInput: unknown,
+  browser: ScriptBrowser & {
+    /** An offline run cannot reach a site, so it never marks a possible website effect. */
+    readonly offline?: boolean;
+  },
+  first?: (
+    script: Effect.Effect<Output, ScriptFailure>,
+    input: Input,
+  ) => Effect.Effect<Output, FirstError, FirstServices>,
+): Effect.Effect<
+  Output,
+  | ScriptFailure
+  | InvalidInput
+  | InvalidOutput
+  | DeadlineExceeded
+  | CaptureUnavailable
+  | EventUnavailable
+  | FirstError,
+  ExecutionContext | Scope.Scope | FirstServices
+> =>
+  Effect.gen(function* () {
+    const execution = yield* ExecutionContext;
+    // Declared first, so every exit reports which commit steps were never reached.
+    yield* execution.journal.declareCommits(declaredCommits(operation.write));
+    const input = yield* decodeKernelOperationInput(operation, rawInput);
+    if (execution.deadline.remainingMs() <= 0)
+      return yield* new DeadlineExceeded({ phase: "execution", dispatch: "not_sent" });
+    return yield* Effect.gen(function* () {
+      yield* Effect.acquireRelease(execution.capture.start, () =>
+        finishCaptureAsEvidence(execution),
+      );
+      yield* execution.events.emit("operation.started", { operation: operation.name });
+      const live = liveBrowser(browser, execution.journal);
+      if (browser.offline !== true) yield* execution.journal.enteringDispatch;
+      // The runner provides the caller's questions; only the script itself may ask.
+      const scriptInput = yield* Effect.serviceOption(ScriptInput);
+      const script = runKernelScript(operation, input, {
+        ...live,
+        deadline: execution.deadline,
+        ...(Option.isSome(scriptInput) ? { scriptInput: scriptInput.value } : {}),
+      });
+      const output = yield* first === undefined ? script : first(script, input);
+      const validated = yield* validateKernelOperationOutput(operation, output);
+      yield* execution.events.emit("operation.output_validated", { operation: operation.name });
+      return validated;
+    }).pipe(
+      Effect.raceFirst(
+        execution.deadline.awaitExpiry.pipe(
+          Effect.zipRight(
+            Effect.fail(new DeadlineExceeded({ phase: "execution", dispatch: "unknown" })),
+          ),
+        ),
+      ),
+    );
+  });

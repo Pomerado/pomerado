@@ -1,0 +1,68 @@
+name: Check
+on: [push, pull_request, workflow_call]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm typecheck
+      - run: corepack pnpm build
+      - run: corepack pnpm test
+      - name: Validate packed package outside the checkout
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pomerado-artifact" "$RUNNER_TEMP/pomerado-consumer"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+          cd "$RUNNER_TEMP/pomerado-consumer"
+          npm init -y
+          npm install --ignore-scripts "$RUNNER_TEMP/pomerado-artifact/"*.tgz @types/node@24.13.4 vitest@5.0.2
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import * as runtime from "pomerado/runtime";
+          import * as errors from "pomerado/core/runtime/errors";
+          import { getAuthoringDirectory, getGuardianPolicyPath } from "pomerado/assets";
+          const require = createRequire(import.meta.url);
+          const manifest = require("pomerado/package.json");
+          const packageRequire = createRequire(require.resolve("pomerado/package.json"));
+          for (const dependency of ["effect", "@openai/agents"]) {
+            assert.equal(packageRequire.resolve(dependency), require.resolve(dependency));
+          }
+          for (const key of Object.keys(manifest.exports).filter((key) => key.startsWith("./core/"))) {
+            await import(`pomerado/${key.slice(2)}`);
+          }
+          assert.equal(runtime.BrowserFailure, errors.BrowserFailure);
+          assert.ok(readFileSync(getGuardianPolicyPath(), "utf8").includes("{{ tenant_policy_config }}"));
+          assert.ok(readFileSync(`${getAuthoringDirectory()}/workspace/AGENTS.md`, "utf8").length > 0);
+          JS
+          cat > consumer.mts <<'TS'
+          import { MintServices } from "pomerado/core/mint/contracts";
+          import type { MintDependencies } from "pomerado/core/mint/contracts";
+          import { runMint } from "pomerado/core/mint/harness";
+          import type { HostExecute } from "pomerado/core/runtime/host-execute";
+          import { getAuthoringDirectory } from "pomerado/assets";
+          import { expectFailure } from "pomerado/testing/expect-failure";
+          declare const dependencies: MintDependencies;
+          declare const execute: HostExecute;
+          MintServices.of(dependencies);
+          execute("return 1");
+          runMint({});
+          getAuthoringDirectory();
+          void expectFailure;
+          TS
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck --target ES2024 --module NodeNext --moduleResolution NodeNext consumer.mts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pomerado-package
+          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
+      - run: corepack pnpm exec playwright install --with-deps chromium
+      - run: corepack pnpm test:browser --workers=2

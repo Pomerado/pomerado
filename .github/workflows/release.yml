@@ -1,0 +1,38 @@
+name: Release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          registry-url: https://registry.npmjs.org
+      - name: Verify versioned release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+          assert.equal(process.env.RELEASE_TAG, `v${manifest.version}`);
+          JS
+      - uses: actions/download-artifact@v4
+        with:
+          name: pomerado-package
+          path: package-artifact
+      - name: Publish tested artifact using npm trusted publishing
+        run: npm publish package-artifact/*.tgz --provenance --access public

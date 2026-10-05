@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+import { parseArgs } from "node:util";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { Effect, Exit, Scope } from "effect";
+import { localError, localPromise } from "../execution/local-path.js";
+import { readIntegration } from "./artifact-files.js";
+import { prepareIntegration } from "./mcp-package.js";
+import { makeIntegrationMcp, makePomeradoMcp } from "./mcp-server.js";
+import type { PomeradoOptions } from "./contracts.js";
+
+const usage = `Pomerado MCP
+
+  pomerado-mcp mint [--root DIRECTORY]
+  pomerado-mcp serve --artifact DIRECTORY
+
+Options
+  --endpoint URL     Attach to native Playwright
+  --headed           Show local Chromium
+
+The mint root defaults to ./integrations. Supply model credentials in the environment.
+Stdout is reserved for MCP. Human questions use provide_input through your MCP client.
+`;
+
+const waitForDisconnect = Effect.async<void>((resume) => {
+  const done = () => resume(Effect.void);
+  process.stdin.once("end", done);
+  process.stdin.once("close", done);
+  process.stdin.once("error", done);
+  process.once("SIGINT", done);
+  process.once("SIGTERM", done);
+  if (process.stdin.readableEnded || process.stdin.destroyed) done();
+  return Effect.sync(() => {
+    process.stdin.off("end", done);
+    process.stdin.off("close", done);
+    process.stdin.off("error", done);
+    process.off("SIGINT", done);
+    process.off("SIGTERM", done);
+  });
+});
+
+export const runMcpCli = (
+  args: readonly string[] = process.argv.slice(2),
+  options: Omit<PomeradoOptions, "ask"> = {},
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { values, positionals } = yield* Effect.try({
+        try: () =>
+          parseArgs({
+            args: [...args],
+            allowPositionals: true,
+            options: {
+              help: { type: "boolean", short: "h" },
+              root: { type: "string" },
+              artifact: { type: "string" },
+              endpoint: { type: "string" },
+              headed: { type: "boolean" },
+            },
+          }),
+        catch: localError,
+      });
+      if (values.help) {
+        process.stderr.write(usage);
+        return;
+      }
+      const mode = positionals[0];
+      if (positionals.length !== 1 || (mode !== "mint" && mode !== "serve"))
+        return yield* Effect.fail(new Error("Choose mint or serve. See --help."));
+      const pomerado = {
+        ...options,
+        browser: {
+          ...options.browser,
+          ...(values.headed === undefined ? {} : { headless: !values.headed }),
+          ...(values.endpoint === undefined ? {} : { endpoint: values.endpoint }),
+        },
+      };
+      const integration =
+        mode === "serve"
+          ? yield* values.artifact === undefined
+              ? Effect.fail(new Error("--artifact is required."))
+              : readIntegration(resolve(values.artifact))
+          : undefined;
+      const scope = yield* Effect.scope;
+      const create = () =>
+        integration === undefined
+          ? makePomeradoMcp({
+              pomerado,
+              prepare: (request, name) =>
+                prepareIntegration({
+                  root: resolve(values.root ?? "integrations"),
+                  name,
+                  request,
+                }),
+            })
+          : makeIntegrationMcp({ ...integration, pomerado });
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          serveStdio(() => Effect.runPromise(Effect.provideService(create(), Scope.Scope, scope)), {
+            onerror: () => process.stderr.write("Pomerado MCP transport failed.\n"),
+          }),
+        ),
+        (server) => localPromise(() => server.close()).pipe(Effect.orDie),
+      );
+      yield* waitForDisconnect;
+    }),
+  );
+
+export const startMcpCli = (
+  args: readonly string[] = process.argv.slice(2),
+  options: Omit<PomeradoOptions, "ask"> = {},
+): void => {
+  Effect.runCallback(runMcpCli(args, options), {
+    onExit: (result) => {
+      if (Exit.isFailure(result)) {
+        process.stderr.write("Pomerado MCP failed. Check its local configuration.\n");
+        process.exitCode = 1;
+      }
+    },
+  });
+};
+
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+)
+  startMcpCli();
