@@ -121,7 +121,11 @@ const patch = (authentication = false): ModelResponse["output"] =>
     [
       "src/tool.mjs",
       authentication
-        ? operation.replace("await page.locator('h1').textContent()", "await page.title()")
+        ? // A live example starts at the site root, so the script opens its own page.
+          operation.replace(
+            "return await page.locator('h1').textContent();",
+            "await page.goto(new URL('/account', page.url()).href); return await page.title();",
+          )
         : operation,
     ],
     ["src/heading.mjs", "export const heading = (value) => String(value).trim();"],

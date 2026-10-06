@@ -7,6 +7,19 @@
 - `pomerado run` no longer requires `--intent`, and it ignores `--intent` and `--effect`.
 - A failed run that has no more specific message now reads "Operation failed. Check the local browser and integration configuration." Minting keeps its message.
 
+### Breaking changes
+
+- A run, through `run` or a served integration MCP, starts at the site root of its URL and keeps the browser's cookies and storage. It closes other tabs first and no longer loads the URL's path.
+  - Migrate by having an operation that needs a deeper page navigate there itself, as its example already starts at the root.
+- A live example, a live test and a write session's first `act` step start at the site root after other tabs close. A build that hasn't signed in clears the cookies and site storage exploration left. A signed-in build restores the session saved right after sign-in, or keeps its session when none was saved. Later `act` steps, explorations and inspections continue the current page, and the first live step still loads the request's URL.
+  - Migrate by writing example, test and first-step source that runs its flow from the root, as the authoring guide already asks.
+- `MintDependencies.priorAttemptMayHaveChanged` is removed. No host set it.
+  - Migrate by dropping the field.
+
+### Other changes
+
+- `pomerado/core/runtime/start-state` holds the start-state decision (`startStateFor`, `shouldSaveSession`, `isFirstWriteStep`), the per-build `makeStartTracker`, and the page reset: `startPage` with its required `StartPageHooks`, `localStartHooks`, and the `resetPageCode`, `stopLoadingCode` and `saveSessionCode` browser code.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.

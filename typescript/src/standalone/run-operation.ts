@@ -4,6 +4,7 @@ import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { siteDomain } from "../runtime/same-site.js";
+import { localStartHooks, startPage } from "../runtime/start-state.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
@@ -19,11 +20,18 @@ export const runOperation = (
 ) =>
   Effect.gen(function* () {
     const { options, browser, ask, secrets } = session;
-    const { siteOrigin, navigate } = yield* requestSite(session, request);
+    const { siteOrigin } = yield* requestSite(session, request);
     const workspace = yield* createLocalWorkspace();
     yield* seedLocalRuntime(workspace);
     const sources = artifact.files.map(({ path, content }) => [path, content] as const);
-    yield* navigate;
+    // A run starts as its example did: at the site root, keeping the browser's session.
+    yield* startPage(
+      browser.execute,
+      browser.targetId,
+      siteOrigin,
+      { siteData: "keep", origins: [] },
+      localStartHooks(browser.execute, browser.targetId),
+    );
     const result = yield* runLocalOperation({
       workspace,
       entrypoint: artifact.entrypoint,

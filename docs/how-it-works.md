@@ -6,6 +6,8 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 - The minter is a model agent with a local workspace and a real Chromium browser, driven through native Playwright.
 - It reads the site, writes operation modules under `src/`, and runs them against the live site to check them.
+- Its first live step opens the URL you gave. Explorations then continue on whatever page the last step left.
+- A live example, a live test and a write's first step start over at the site's root, after other tabs close. A build that hasn't signed in starts without the cookies and site storage exploration left. A signed-in build starts from the session saved right after sign-in.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
@@ -23,6 +25,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+- Each run starts at the site's root, as the integration's example did, and keeps the browser's session. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
@@ -110,7 +113,7 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas and browser call contract |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract and the page each live step starts from |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |

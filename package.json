@@ -487,6 +487,11 @@
       "import": "./dist/typescript/tests/browser/autofill-date-fixture.js",
       "default": "./dist/typescript/tests/browser/autofill-date-fixture.js"
     },
+    "./core/runtime/start-state": {
+      "types": "./dist/typescript/src/runtime/start-state.d.ts",
+      "import": "./dist/typescript/src/runtime/start-state.js",
+      "default": "./dist/typescript/src/runtime/start-state.js"
+    },
     "./core/runtime/variants": {
       "types": "./dist/typescript/src/runtime/variants.d.ts",
       "import": "./dist/typescript/src/runtime/variants.js",

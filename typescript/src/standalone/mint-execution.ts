@@ -57,11 +57,11 @@ const executeAuthentication = (
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { navigate, auth, mintAsk, context } = state;
+    const { start, auth, mintAsk, context } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
-    yield* navigate;
+    yield* start.before({ purpose: "authenticate", target: "liveBrowser" });
 
     let result: unknown;
     let authenticated = false;
@@ -69,6 +69,7 @@ const executeAuthentication = (
     else if ("signedIn" in signIn) {
       const checked = yield* auth.signedIn(signIn.signedIn);
       authenticated = checked.signedIn;
+      if (authenticated) start.verified();
       result = checked;
     } else if ("rejected" in signIn) {
       auth.rejected(signIn.rejected.slot);
@@ -261,7 +262,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, navigate, mintAsk } = state;
+    const { workspace, context, request, handles, start, mintAsk } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -285,7 +286,7 @@ const authoredExecution = (
     )
       return yield* Effect.fail(new MintFailure({ code: "ScopeDenied" }));
     yield* beforeDispatch ?? Effect.void;
-    if (execution.target === "liveBrowser") yield* navigate;
+    yield* start.before(execution);
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
     const executed = yield* Effect.either(

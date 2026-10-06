@@ -35,9 +35,6 @@ const requestInput: ModelResponse = {
 const FirstInput = Schema.parseJson(
   Schema.Struct({
     screenedRequest: Schema.Unknown,
-    priorAttempt: Schema.optional(
-      Schema.Struct({ websiteMayHaveChanged: Schema.Literal(true), instruction: Schema.String }),
-    ),
     hostEntryNavigation: Schema.optional(
       Schema.Struct({
         state: Schema.String,
@@ -120,20 +117,16 @@ const attempt = async (overrides: Partial<MintDependencies>) => {
 
 const entryUrl = "https://example.test/apply";
 
-// A new attempt of a write build whose earlier attempt may have changed the website starts
-// without opening the entry page, and its agent is told both, so it reads back before writing.
-it("tells a new attempt that an earlier one may have changed the website", async () => {
+// A host that skipped the entry page because an earlier attempt already ran on the website says
+// so, so the agent reads back before it writes.
+it("tells the agent the host skipped the entry page after an earlier attempt", async () => {
   const skipped: MintEntryNavigation = {
     state: "not_opened",
     outcome: "skipped",
     reason: "prior_effect",
     requestedUrl: entryUrl,
   };
-  const input = await attempt({
-    priorAttemptMayHaveChanged: true,
-    entryNavigation: () => skipped,
-  });
-  expect(input.priorAttempt?.websiteMayHaveChanged).toBe(true);
+  const input = await attempt({ entryNavigation: () => skipped });
   expect(input.hostEntryNavigation).toMatchObject({
     state: "not_opened",
     outcome: "skipped",
@@ -142,14 +135,13 @@ it("tells a new attempt that an earlier one may have changed the website", async
   });
 });
 
-it("says nothing about an earlier attempt to a first attempt", async () => {
+it("gives no earlier-attempt reason for an entry page that failed to load", async () => {
   const failed: MintEntryNavigation = {
     state: "not_opened",
     outcome: "failed",
     requestedUrl: entryUrl,
   };
   const input = await attempt({ entryNavigation: () => failed });
-  expect(input.priorAttempt).toBeUndefined();
   expect(input.hostEntryNavigation).toMatchObject({ state: "not_opened", outcome: "failed" });
   expect(input.hostEntryNavigation?.reason).toBeUndefined();
 });

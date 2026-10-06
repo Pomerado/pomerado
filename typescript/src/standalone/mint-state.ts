@@ -3,15 +3,72 @@ import { Effect } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
+import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
 import type { ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import {
+  localStartHooks,
+  makeStartTracker,
+  saveSessionCode,
+  startPage,
+} from "../runtime/start-state.js";
 import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
+/**
+ * Where a build's live steps start. The first step that is not reset loads the request's URL once.
+ * A live example, a live test and a write session's first step reset the page and load the site
+ * root; see `startStateFor`. Sign-in steps drop the session saved after the last sign-in.
+ */
+export const makeBuildStart = (
+  browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
+  siteOrigin: string,
+  enterRequest: Effect.Effect<void, Error>,
+  origins: readonly string[],
+) => {
+  const tracker = makeStartTracker();
+  const hooks = localStartHooks(browser.execute, browser.targetId);
+  let entered = false;
+  const enter = Effect.suspend(() =>
+    entered
+      ? Effect.void
+      : enterRequest.pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              entered = true;
+            }),
+          ),
+        ),
+  );
+  return {
+    /** The site showed the build signed in. */
+    verified: tracker.verified,
+    /** Saves the session when due, then resets the page or enters the site, before `step` runs. */
+    before: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
+      Effect.gen(function* () {
+        const live = step.target === "liveBrowser";
+        if (step.purpose === "authenticate") tracker.invalidate();
+        const plan = tracker.plan({ purpose: step.purpose, live });
+        if (plan.save) tracker.save(yield* browser.execute(saveSessionCode, 60));
+        if (plan.start === "none") {
+          if (live) yield* enter;
+          return;
+        }
+        yield* startPage(
+          browser.execute,
+          browser.targetId,
+          siteOrigin,
+          { siteData: plan.start, session: tracker.saved, origins },
+          hooks,
+        );
+        entered = true;
+      }),
+  };
+};
 export const mintState = (
   session: StandaloneSession,
   context: RequestContext,
@@ -67,17 +124,11 @@ export const mintState = (
     let claimed = false;
     let buildEffect: "read" | "write" | undefined =
       request.effect === "read" || request.effect === "write" ? request.effect : undefined;
-    let navigationStarted = false;
-    const navigate = Effect.suspend(() =>
-      navigationStarted
-        ? Effect.void
-        : context.navigate.pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                navigationStarted = true;
-              }),
-            ),
-          ),
+    const start = makeBuildStart(
+      browser,
+      context.siteOrigin,
+      context.navigate,
+      request.authenticationOrigins ?? [],
     );
     return {
       session,
@@ -90,7 +141,7 @@ export const mintState = (
       mintAsk,
       runs,
       auth,
-      navigate,
+      start,
       get claimed() {
         return claimed;
       },

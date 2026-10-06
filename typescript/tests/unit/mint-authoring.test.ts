@@ -129,7 +129,7 @@ it("renders the pinned standalone authoring", async () => {
     ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
     ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
     ["1403bba009fd19871a30250576cbba6cb93368905d877a7269b6b3ec5cd7b680", "caller-input"],
-    ["ba325fa85de88cfcfd1421cccf76be5a71487e5266bc6c61d9bf24611812ab44", "workspace/AGENTS.md"],
+    ["3ace984df3d5e4170b2698d41abd6cce5798aafd16d47308846b38bc8e74103f", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });

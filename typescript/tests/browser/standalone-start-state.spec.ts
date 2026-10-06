@@ -364,7 +364,7 @@ const readSteps = (signIn: boolean) => [
   finish,
 ];
 
-test("a signed-out build's example and run continue the page exploration left", async () => {
+test("a signed-out build's example starts clean at the site root, and a run starts at the root", async () => {
   test.setTimeout(90_000);
   const site = await startSite();
   const built = await build(
@@ -374,20 +374,21 @@ test("a signed-out build's example and run continue the page exploration left", 
     `${site.origin}/entry`,
   );
   expect(built.build).toBe("published");
-  // The first live step loads the request's URL.
-  expect(site.visits[0]).toBe("/entry");
+  // The first live step still loads the request's URL. The reset's blank root sends no request,
+  // so the example and the run each load the root once.
+  expect(site.visits).toEqual(["/entry", "/deep", "/", "/"]);
   const [example, run] = site.probes;
   expect(example).toMatchObject({
-    path: "/deep",
-    cookies: ["explored"],
-    explored: "yes",
-    tab: "yes",
-    tabs: 2,
+    path: "/",
+    cookies: [],
+    explored: null,
+    tab: null,
+    tabs: 1,
   });
-  expect(run).toMatchObject({ path: "/entry", cookies: ["explored"], tabs: 2 });
+  expect(run).toMatchObject({ path: "/", cookies: [], tabs: 1 });
 });
 
-test("a signed-in build's example and run continue the page exploration left", async () => {
+test("a signed-in build's example starts at the root with the session saved after sign-in", async () => {
   test.setTimeout(90_000);
   const site = await startSite();
   const built = await build(
@@ -397,20 +398,22 @@ test("a signed-in build's example and run continue the page exploration left", a
     `${site.origin}/deep`,
   );
   expect(built.build).toBe("published");
-  expect(site.visits[0]).toBe("/login");
+  expect(site.visits).toEqual(["/login", "/account", "/deep", "/", "/"]);
   const [example, run] = site.probes;
+  // The sign-in's cookie and storage come back; exploration's do not.
   expect(example).toMatchObject({
-    path: "/deep",
-    cookies: ["explored", "member"],
-    explored: "yes",
+    path: "/",
+    cookies: ["member"],
+    explored: null,
     token: "member",
-    tab: "yes",
-    tabs: 2,
+    tab: null,
+    tabs: 1,
   });
-  expect(run).toMatchObject({ path: "/deep", cookies: ["explored", "member"], tabs: 2 });
+  // A run keeps the browser's session and loads the root, whatever the request's path.
+  expect(run).toMatchObject({ path: "/", cookies: ["member"], token: "member", tabs: 1 });
 });
 
-test("a write session's first step continues the page exploration left", async () => {
+test("a write session's first step starts clean at the root, and the next continues", async () => {
   test.setTimeout(90_000);
   const site = await startSite();
   await build(site, { url: `${site.origin}/entry`, effect: "write" }, [
@@ -429,12 +432,40 @@ test("a write session's first step continues the page exploration left", async (
   ]);
   expect(site.visits[0]).toBe("/entry");
   expect(site.probe("first")).toMatchObject({
-    path: "/deep",
-    cookies: ["explored"],
-    explored: "yes",
-    tab: "yes",
-    tabs: 2,
+    path: "/",
+    cookies: [],
+    explored: null,
+    tab: null,
+    tabs: 1,
   });
   // A later step continues the page the previous step left.
-  expect(site.probe("next")).toMatchObject({ path: "/form", cookies: ["explored"], tabs: 2 });
+  expect(site.probe("next")).toMatchObject({ path: "/form", cookies: [], tabs: 1 });
+});
+
+test("each live test starts clean at the root, as the example does", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const built = await build(site, { url: `${site.origin}/entry`, effect: "read" }, [
+    () =>
+      patch({
+        "explore/look.mjs": explore,
+        // The test leaves state of its own, which the example must not see either.
+        "test/check.mjs": operation("check", probe("test")),
+        "src/tool.mjs": operation("probe", probe("example")),
+      }),
+    () => [execution("explore", "explore/look.mjs")],
+    () => [execution("test", "test/check.mjs")],
+    () => [execution("test", "explore/look.mjs", {}, "test_leaves_state")],
+    () => [execution("example", "src/tool.mjs")],
+    finish,
+  ]);
+  expect(built.build).toBe("published");
+  expect(site.probe("test")).toMatchObject({ path: "/", cookies: [], explored: null, tabs: 1 });
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: [],
+    explored: null,
+    tab: null,
+    tabs: 1,
+  });
 });
