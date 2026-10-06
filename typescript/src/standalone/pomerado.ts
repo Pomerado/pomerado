@@ -28,13 +28,6 @@ export const createPomerado = (
         ),
       );
     const run: Pomerado["run"] = (artifact, request) =>
-      session.mutex.withPermits(1)(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* requestContext(session, request);
-            return yield* runOperation(session, context, artifact, request);
-          }),
-        ),
-      );
+      session.mutex.withPermits(1)(Effect.scoped(runOperation(session, artifact, request)));
     return { mint, run };
   });
