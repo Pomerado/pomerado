@@ -4,7 +4,7 @@
 <p align="center">Describe what you want to do on a website. Pomerado builds an integration your agent can use.</p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue?style=for-the-badge" alt="License AGPL-3.0-only"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License MIT"></a>
   <img src="https://img.shields.io/badge/node-24.21%2B%20%3C25-339933?style=for-the-badge&amp;logo=nodedotjs&amp;logoColor=white" alt="Node 24.21 or later in Node 24">
   <img src="https://img.shields.io/badge/pnpm-10.34.5-F69220?style=for-the-badge&amp;logo=pnpm&amp;logoColor=white" alt="pnpm 10.34.5">
 </p>
@@ -246,7 +246,7 @@ corepack pnpm test:browser
 
 This repository owns the portable tests for its shared core and local runtime, with synthetic fixtures and the existing Vitest and Playwright runners. Browser tests exercise native Playwright, minting through MCP, generated integration MCPs, authentication and autofill using local fixture sites and scripted model responses. They need no Cloud account or model API key. Tests for hosted services stay in the application repository.
 
-Outside pull requests are not accepted until a Contributor License Agreement is in place. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
+Outside pull requests are not accepted yet. They open once the review and approval gate described in [CONTRIBUTING.md](CONTRIBUTING.md) is live. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
 
 Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions. CI enforces this with a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push. Link a public issue by its full URL.
 
@@ -258,6 +258,8 @@ The clone and build quickstart works independently of npm releases. Contributors
 
 ---
 
-Copyright (c) 2026 Pomerado. Licensed under GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+Copyright (c) 2026 Pomerado AI, Inc. Licensed under the MIT License (`MIT`). See [LICENSE](LICENSE).
+
+Versions 0.1.2 and earlier were published under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`).
 
 Third-party code keeps its own license. The Guardian policy in `typescript/src/guardian/upstream-policy.md` is adapted from [OpenAI Codex](https://github.com/openai/codex) under the Apache License 2.0. Its license and notice are in [third-party/codex/](third-party/codex/) and ship with the npm package.
