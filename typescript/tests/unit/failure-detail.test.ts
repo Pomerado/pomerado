@@ -8,6 +8,7 @@ import {
   failureDetailOf,
   redactDiagnosticText,
 } from "../../src/runtime/failure-detail.js";
+import { MintFailure } from "../../src/mint/contracts.js";
 
 class StorageFailure extends Data.TaggedError("StorageFailure")<{
   readonly code: string;
@@ -503,5 +504,47 @@ describe("failure detail", () => {
     const revalidated = failureDetailMetadata({ failureDetail: detail })?.failureDetail;
     expect(revalidated?.subCause).toBe("browser_page_call_failed");
     expect(revalidated?.operation).toBe("page_reset");
+  });
+});
+
+describe("a failure that carries detail", () => {
+  it("keeps a built detail out of JSON serialization of the failure that carries it", () => {
+    const failure = new MintFailure({
+      code: "Unavailable",
+      failureDetail: failureDetail("mint_host_dependency_failed", {
+        error: new Error("RAW_PROVIDER_TEXT"),
+      }),
+    });
+    expect(JSON.stringify(failure)).not.toContain("RAW_PROVIDER_TEXT");
+    expect(JSON.stringify(failureDetailMetadata(failure))).toContain("RAW_PROVIDER_TEXT");
+  });
+
+  it("keeps a wrapped failure's own evidence and records the mapping site", () => {
+    const inner = new MintFailure({
+      code: "Unavailable",
+      failureDetail: failureDetail("executor_boundary_failed", {
+        operation: "local.execute",
+        error: Object.assign(new Error("socket hang up"), { code: "ECONNRESET", syscall: "read" }),
+        context: { allocation: "pool-a" },
+      }),
+    });
+    const outer = failureDetail("mint_host_dependency_failed", { error: inner });
+    expect(outer.underlying).toMatchObject({
+      name: "MintFailure",
+      code: "Unavailable",
+      subCause: "executor_boundary_failed",
+    });
+    expect(outer.causeChain?.[0]).toMatchObject({ source: "node", code: "ECONNRESET" });
+    expect(outer.context).toMatchObject({ allocation: "pool-a" });
+    expect(outer.site).toContain("failure-detail.test.ts");
+  });
+
+  it("projects a failure without detail as unclassified with its own stack", () => {
+    const bare = new MintFailure({ code: "ScopeDenied" });
+    expect(failureDetailOf(bare)?.failureDetail).toMatchObject({
+      subCause: "unclassified",
+      underlying: { source: "effect", name: "MintFailure", code: "ScopeDenied" },
+    });
+    expect(failureDetailOf(bare)?.failureDetail.stack?.[0]).toContain("failure-detail.test.ts");
   });
 });

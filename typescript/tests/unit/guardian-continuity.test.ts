@@ -4,11 +4,16 @@ import { GuardianSessionSnapshot } from "../../src/guardian/session.js";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Either, Fiber, Schema } from "effect";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
-import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
-import type { PendingExecution } from "../../src/guardian/review.js";
+import { GuardianDecision, ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
+import type { GuardianDiagnostics, PendingExecution } from "../../src/guardian/review.js";
+import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
+import type { ModelObserverFactory } from "../../src/models/model-observer.js";
+import { makeSourceInspector } from "../../src/guardian/source.js";
+import type { SourceProjection } from "../../src/guardian/source.js";
+import { makeRunSecrets } from "../../src/inputs/secrets.js";
 
 const native = { executionEnvironment: nativeExecutionEnvironment };
 
@@ -23,7 +28,10 @@ const pending: PendingExecution = {
   allowedOrigins: ["https://travel.example.test"],
   allowedEffects: ["read"],
 };
-afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+afterEach(() => {
+  setDefaultModelProvider(new OpenAIProvider());
+  vi.restoreAllMocks();
+});
 const reason: ModelResponse["output"][number] = {
   type: "reasoning",
   id: "rs_first",
@@ -42,13 +50,13 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
         return {
           usage: new Usage(),
           output:
-            call % 2 === 1
+            call === 1
               ? [
                   {
                     type: "function_call" as const,
                     callId: `read_${call}`,
                     name: "read_source",
-                    arguments: JSON.stringify({ path: pending.entrypoint, offset: 0 }),
+                    arguments: JSON.stringify({ path: "operation/helper.mjs", offset: 0 }),
                     status: "completed" as const,
                   },
                 ]
@@ -94,10 +102,12 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
   await Effect.runPromise(guardian.review({ ...pending, screenedInput: '{"day":2}' }, read));
   const other = makeGuardian(reviewer, undefined, {});
   await Effect.runPromise(other.review({ ...pending, invocationId: "other_mint" }, read));
-  expect(sourceReads).toBe(3);
+  // Each review's request carries its current entrypoint; the first review also read a helper.
+  expect(sourceReads).toBe(4);
+  expect(requests).toHaveLength(4);
   expect(JSON.stringify(requests[2]?.input)).toContain("opaque-first-review-reasoning");
   expect(JSON.stringify(requests[2]?.input)).toContain("read_1");
-  expect(JSON.stringify(requests[4]?.input)).not.toContain("opaque-first-review-reasoning");
+  expect(JSON.stringify(requests[3]?.input)).not.toContain("opaque-first-review-reasoning");
 });
 
 const message = (outcome: "allow" | "deny" = "allow"): ModelResponse["output"][number] => ({
@@ -142,7 +152,243 @@ const readCurrent = () =>
     }),
   );
 
-it("restores a completed review checkpoint but requires a fresh source read", async () => {
+it("observes a private session review's model timing and permit wait without retaining its transcript", async () => {
+  vi.spyOn(performance, "now").mockReturnValue(100);
+  // A private host kind that reads the entrypoint, then an ordinary execution review on the same
+  // session whose entrypoint is already in its request.
+  provide([[call("timed")], [message()], [message()]], []);
+  const modelTiming: ModelDiagnosticTiming = {
+    phase: "model_returned",
+    sequence: 0,
+    occurredAtUtc: "2000-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 5,
+    startedMonotonicMs: 2,
+    queueMs: 0,
+    elapsedMs: 3,
+  };
+  /** A host observer that reports one finite timing and passes model and tool calls through. */
+  const observerFactory: ModelObserverFactory = (persist) => {
+    let persisted: Promise<void> = Promise.resolve();
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => {
+        persisted = persist({ phase: "started" }, modelTiming);
+      },
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => undefined,
+      failed: () => undefined,
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing: modelTiming, value: {} }),
+      flush: () => persisted,
+    };
+  };
+  const observed: unknown[] = [];
+  const transcripts: { reviewId?: string; modelTiming?: ModelDiagnosticTiming }[] = [];
+  const started: unknown[] = [];
+  const diagnostics: GuardianDiagnostics = {
+    emit: (name, details) =>
+      Effect.sync(() => {
+        if (name === "guardian.started") started.push(details);
+      }),
+    retainModelTranscript: (_name, _details, correlation) =>
+      Effect.sync(() => {
+        transcripts.push({
+          ...(correlation?.reviewId === undefined ? {} : { reviewId: correlation.reviewId }),
+          ...(correlation?.modelTiming === undefined
+            ? {}
+            : { modelTiming: correlation.modelTiming }),
+        });
+      }),
+    retainScreenedSource: () => Effect.void,
+    observeModelTrace: (name, timing, correlation) =>
+      Effect.sync(() => {
+        observed.push({ name, timing, correlation });
+      }),
+  };
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+      observerFactory,
+    }),
+    diagnostics,
+    {},
+  );
+  const reviewed = await Effect.runPromise(
+    guardian.reviewHostKind(
+      pending,
+      {
+        kind: "synthetic_private_check",
+        policy: "Allow when the synthetic evidence is consistent; otherwise deny.",
+        evidence: { note: "Synthetic private evidence" },
+        outcomes: ["allow", "deny"],
+        private: true,
+      },
+      readCurrent,
+    ),
+  );
+  expect(observed).toEqual([
+    {
+      name: "guardian.model",
+      timing: modelTiming,
+      correlation: { reviewId: reviewed.reviewId, reviewKind: "host" },
+    },
+  ]);
+  expect(transcripts).toEqual([]);
+  const timing = (started[0] as { details: { timing: Record<string, number> } }).details.timing;
+  expect(timing).toMatchObject({
+    attempt: 1,
+    startOffsetMs: 100,
+    permitWaitStartOffsetMs: 100,
+    permitWaitEndOffsetMs: 100,
+  });
+  // An ordinary session review keeps its whole record, timing included, so its timing is not
+  // observed a second time.
+  const execution = await Effect.runPromise(guardian.review(pending, readCurrent));
+  expect(observed).toHaveLength(1);
+  expect(transcripts).toEqual([{ reviewId: execution.reviewId, modelTiming }]);
+});
+
+it("keeps a publication's permit wait separate from the mint review holding the session", async () => {
+  let now = 100;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const records: {
+    name: string;
+    details: unknown;
+    reviewId?: string;
+    reviewKind?: string;
+  }[] = [];
+  const record: GuardianDiagnostics["emit"] = (name, details, correlation) =>
+    Effect.sync(() => {
+      records.push({ name, details, ...correlation });
+    });
+  const results = await Effect.runPromise(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const guardian = makeGuardian(
+        {
+          run: (turn) =>
+            Effect.gen(function* () {
+              if (turn.pending.publication === undefined) {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+                yield* turn.readSource(pending.entrypoint, 0);
+              } else {
+                now += 4;
+              }
+              return {
+                outcome: "allow" as const,
+                rationale: "Approved synthetic source.",
+              };
+            }),
+        },
+        {
+          emit: record,
+          retainModelTranscript: record,
+          retainScreenedSource: () => Effect.void,
+        },
+        {},
+        {
+          decodePublication: (_scope, raw) =>
+            Schema.decodeUnknown(GuardianDecision)(raw).pipe(
+              Effect.mapError(() => new ReviewFailure({ code: "InvalidDecision" })),
+            ),
+        },
+      );
+      const mint = yield* Effect.fork(guardian.review(pending, readCurrent));
+      yield* Deferred.await(entered);
+      const publication = yield* Effect.fork(
+        guardian.review({ ...pending, publication: { files: [] } }, readCurrent),
+      );
+      yield* Effect.yieldNow();
+      now += 30;
+      yield* Deferred.succeed(release, undefined);
+      return {
+        mint: yield* Fiber.join(mint),
+        publication: yield* Fiber.join(publication),
+      };
+    }),
+  );
+  const details = (name: string, reviewId: string) =>
+    (
+      records.find((record) => record.name === name && record.reviewId === reviewId)?.details as {
+        details: { timing: Record<string, number> };
+      }
+    ).details.timing;
+  expect(results.mint.reviewId).not.toBe(results.publication.reviewId);
+  expect(details("guardian.started", results.publication.reviewId)).toMatchObject({
+    attempt: 1,
+    permitWaitStartOffsetMs: 100,
+    permitWaitEndOffsetMs: 130,
+    startOffsetMs: 130,
+  });
+  expect(details("guardian.completed", results.mint.reviewId)).toMatchObject({
+    startOffsetMs: 100,
+    endOffsetMs: 130,
+    elapsedMs: 30,
+  });
+  expect(details("guardian.completed", results.publication.reviewId)).toMatchObject({
+    startOffsetMs: 130,
+    endOffsetMs: 134,
+    elapsedMs: 4,
+  });
+  expect(
+    records.find((record) => record.reviewId === results.publication.reviewId)?.reviewKind,
+  ).toBe("publication");
+});
+
+const InlinedEntrypoint = Schema.Struct({
+  submitted_call: Schema.Struct({
+    entrypointSource: Schema.optional(
+      Schema.Struct({
+        kind: Schema.Literal("untrusted_source"),
+        path: Schema.String,
+        byteOffset: Schema.Number,
+        nextOffset: Schema.Number,
+        hasMore: Schema.Boolean,
+        source: Schema.String,
+      }),
+    ),
+  }),
+});
+/** The entrypoint source carried in a request's own review message, as the model saw it. */
+const inlinedEntrypoint = (request: ModelRequest | undefined) => {
+  const input = request?.input;
+  const review =
+    typeof input === "string"
+      ? undefined
+      : input?.findLast(
+          (item) =>
+            "role" in item &&
+            item.role === "user" &&
+            typeof item.content === "string" &&
+            item.content.startsWith("{"),
+        );
+  const content =
+    typeof input === "string"
+      ? input
+      : review !== undefined && "content" in review
+        ? review.content
+        : undefined;
+  return Schema.decodeUnknownSync(Schema.parseJson(InlinedEntrypoint))(content).submitted_call
+    .entrypointSource;
+};
+/** The host's own source reader over in-memory files, with the host's source projection. */
+const inspector = (
+  files: Record<string, string>,
+  project: SourceProjection = (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
+) =>
+  makeSourceInspector((path) => {
+    const text = files[path];
+    return text === undefined
+      ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+      : Effect.succeed(new TextEncoder().encode(text));
+  }, project);
+
+it("gives a restored conversation's next review the current entrypoint source, so an allow needs no new read", async () => {
   const requests: ModelRequest[] = [];
   provide([[call("first")], [reason, message()], [message()]], requests);
   let saved: typeof GuardianSessionSnapshot.Type | undefined;
@@ -155,16 +401,88 @@ it("restores a completed review checkpoint but requires a fresh source read", as
         );
       }),
   });
-  await Effect.runPromise(first.review(pending, readCurrent));
+  await Effect.runPromise(
+    first.review(pending, inspector({ [pending.entrypoint]: "export default 1" })),
+  );
   expect(saved?.incomplete).toBe(false);
   const replacement = makeGuardian(reviewer, undefined, {
     initial: Schema.decodeUnknownSync(GuardianSessionSnapshot)(saved),
   });
-  const result = await Effect.runPromise(
-    Effect.either(replacement.review({ ...pending, attemptId: "takeover" }, readCurrent)),
+  const edited = "export default 'edited since the first review'";
+  const reviewed = await Effect.runPromise(
+    replacement.review(
+      { ...pending, attemptId: "takeover" },
+      inspector({ [pending.entrypoint]: edited }),
+    ),
   );
-  expect(result).toMatchObject({ _tag: "Left", left: { code: "SourceUnavailable" } });
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(3);
   expect(JSON.stringify(requests[2]?.input)).toContain("opaque-first-review-reasoning");
+  expect(inlinedEntrypoint(requests[2])).toEqual({
+    kind: "untrusted_source",
+    path: pending.entrypoint,
+    byteOffset: 0,
+    nextOffset: edited.length,
+    hasMore: false,
+    source: edited,
+  });
+});
+
+it("masks a registered secret in the entrypoint source the request carries", async () => {
+  const secret = "synthetic-registered-entrypoint-secret";
+  const secrets = makeRunSecrets();
+  secrets.register(secret);
+  const requests: ModelRequest[] = [];
+  provide([[message()]], requests);
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const reviewed = await Effect.runPromise(
+    guardian.review(
+      pending,
+      inspector({ [pending.entrypoint]: `export const token = "${secret}";` }, (_path, bytes) =>
+        Effect.sync(() => secrets.redact(new TextDecoder().decode(bytes))),
+      ),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(inlinedEntrypoint(requests[0])?.source).toBe('export const token = "[private]";');
+  expect(JSON.stringify(requests)).not.toContain(secret);
+});
+
+it("carries only the first page of a large entrypoint, and later pages come through read_source", async () => {
+  const requests: ModelRequest[] = [];
+  provide(
+    [
+      [
+        {
+          type: "function_call",
+          callId: "second_page",
+          name: "read_source",
+          status: "completed",
+          arguments: JSON.stringify({ path: pending.entrypoint, offset: 64 * 1024 }),
+        },
+      ],
+      [message()],
+    ],
+    requests,
+  );
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const reviewed = await Effect.runPromise(
+    guardian.review(
+      pending,
+      inspector({ [pending.entrypoint]: `${"a".repeat(70_000)}second-page-marker` }),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  const firstPage = inlinedEntrypoint(requests[0]);
+  expect(firstPage).toMatchObject({ byteOffset: 0, nextOffset: 64 * 1024, hasMore: true });
+  expect(firstPage?.source).toBe("a".repeat(64 * 1024));
+  expect(JSON.stringify(requests[0])).not.toContain("second-page-marker");
+  // The model's own read of the next page returns the rest of the file.
+  const nextInput = requests[1]?.input;
+  const pageResult = (Array.isArray(nextInput) ? nextInput : []).find(
+    (item) => item.type === "function_call_result" && item.callId === "second_page",
+  );
+  expect(JSON.stringify(pageResult)).toContain("second-page-marker");
 });
 
 it("keeps an interrupted model response and closes an unreturned source call on takeover", async () => {
@@ -215,7 +533,10 @@ it("continues from provider compaction after takeover without replaying the olde
     id: "cmp_one",
     encrypted_content: "opaque-compacted-context",
   };
-  provide([[call("first")], [reason, compact, message()], [call("second")], [message()]], requests);
+  provide(
+    [[call("first")], [reason, compact, call("after_compaction")], [message()], [message()]],
+    requests,
+  );
   const reviewer = makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native);
   const first = makeGuardian(reviewer, undefined, {});
   await Effect.runPromise(first.review(pending, readCurrent));
@@ -223,13 +544,13 @@ it("continues from provider compaction after takeover without replaying the olde
     initial: Schema.decodeUnknownSync(GuardianSessionSnapshot)(first.session?.snapshot()),
   });
   await Effect.runPromise(replacement.review({ ...pending, attemptId: "takeover" }, readCurrent));
-  expect(requests[2]?.input[0]).toMatchObject({
+  expect(requests[3]?.input[0]).toMatchObject({
     type: "compaction",
     encrypted_content: "opaque-compacted-context",
   });
-  expect(JSON.stringify(requests[2]?.input)).not.toContain("opaque-first-review-reasoning");
-  expect(requests[2]?.modelSettings.reasoning?.context).toBe("all_turns");
-  expect(requests[2]?.modelSettings.providerData).toMatchObject({
+  expect(JSON.stringify(requests[3]?.input)).not.toContain("opaque-first-review-reasoning");
+  expect(requests[3]?.modelSettings.reasoning?.context).toBe("all_turns");
+  expect(requests[3]?.modelSettings.providerData).toMatchObject({
     context_management: [{ type: "compaction", compact_threshold: 240000 }],
   });
 });

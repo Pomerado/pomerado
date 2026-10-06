@@ -1,5 +1,72 @@
-import type { SpentSignIn } from "./contracts.js";
+import type { HostRefusal } from "../destinations/autofill-refusal.js";
+import { MintFailure, type SpentSignIn } from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
+
+/**
+ * How many identical host refusals in a row while typing into a sign-in screen (`HostRefusal`)
+ * end sign-in in the build: the agent could not correct the step past them. A different refusal,
+ * or an authenticate that ends any other way, starts the count again.
+ */
+export const maximumHostRefusals = 3;
+
+/** Why each check refuses a field, and what may get past it; value-free. */
+const refusalNotices: Readonly<Record<string, { readonly why: string; readonly next: string }>> = {
+  typing_refused: {
+    why: "the field took the focus, but the value the host inserted did not land in it, so the page's own code blocks inserted text or replaces the field as it is typed",
+    next: "Inspect the field read-only: name the control that holds the typed text itself, not a wrapper, a mask or a decoy, and send the signInStep again.",
+  },
+  not_focused: {
+    why: "the field did not take the focus: another element holds it, such as an overlay, a dialog or a field the page moves the focus to",
+    next: "Inspect read-only what covers the field or holds the focus. Dismiss a covering cookie or consent control in an explore if it is one, or name the field that takes the focus, then send the signInStep again.",
+  },
+  not_editable: {
+    why: "the field is disabled or read-only, so it takes no typing",
+    next: "The site may enable it only after an earlier control, such as a Next or a chosen method: send that screen first, or name the editable field.",
+  },
+  change: {
+    why: "page code moved the field or changed where or how its form submits after the host judged it, and the host never types into a control it has not judged",
+    next: "Wait for the screen to settle, read it read-only, then send the signInStep again.",
+  },
+  destination: {
+    why: "the field sits or submits off the site and its configured sign-in origins",
+    next: "Inspect the site's own sign-in page and correct the screen's signInStep. Another authentication origin requires operator configuration.",
+  },
+  not_found: {
+    why: "the field's selector matched no visible control when the host went to type",
+    next: "Read the screen again read-only and correct the selector so it matches the one visible field.",
+  },
+  ambiguous_match: {
+    why: "the field's selector matched more than one visible control when the host went to type",
+    next: "Read the screen again read-only and correct the selector so it matches the one visible field.",
+  },
+};
+const otherRefusal = {
+  why: "a host check refused the field",
+  next: "Inspect the current browser read-only, then correct the screen's signInStep.",
+};
+
+/** What the host refused to type and where, value-free. */
+const refusedField = (refusal: HostRefusal) =>
+  `the host refused to type the ${refusal.slot} into field ${refusal.field + 1} of the sign-in screen (${refusal.check})`;
+
+/**
+ * The failed sign-in the host reports when its fill refused a field of the screen
+ * (`typingRefusal`). `nothingSubmitted` says no earlier screen of this sign-in sent anything
+ * either: the refused screen itself submitted nothing.
+ */
+export const autofillRefusalFailure = (
+  refusal: HostRefusal,
+  options: { readonly nothingSubmitted: boolean },
+) =>
+  new MintFailure({
+    code: "Unavailable",
+    authentication: {
+      phase: "credential_submit",
+      code: "AutofillRefused",
+      hostRefusal: refusal,
+      ...(options.nothingSubmitted ? { nothingSubmitted: true as const } : {}),
+    },
+  });
 
 /**
  * The failure's own code: Kernel's, when the orchestration only labels a provider failure
@@ -14,7 +81,7 @@ export const signInRootCode = (failure: SignInDiagnostic) =>
       : failure.code;
 
 const cause = (failure: SignInDiagnostic) =>
-  `${signInRootCode(failure)} during ${failure.phase}${failure.providerReason === undefined ? "" : `: ${failure.providerReason}`}`;
+  `${signInRootCode(failure)} during ${failure.phase}${failure.hostRefusal === undefined ? "" : `: ${refusedField(failure.hostRefusal)}`}${failure.providerReason === undefined ? "" : `: ${failure.providerReason}`}`;
 
 const retryInstruction = (failure: SignInDiagnostic) =>
   failure.code === "CredentialTargetRefused"
@@ -28,6 +95,7 @@ const spentReason: Record<SpentSignIn, string> = {
   relogin_spent: "the attempt's one sign-in again on this browser is spent",
   fresh_profile_sign_ins_spent:
     "the sign-ins the attempt allows on a recovery's new profile are spent",
+  host_refusals_repeated: `the host refused the same field of the same screen the same way ${maximumHostRefusals} times in a row, and no correction of the step got past it`,
 };
 
 /**
@@ -88,6 +156,9 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
           ? `This login conflicts with the Personal login locked to this site (${cause(failure)}). Report that the build needs the site's locked login.`
           : `No further sign-in can run in this attempt (${cause(failure)}). Report that the site could not be signed in.`,
     };
+  // An unconfirmed cleanup may have left the site signed in, so its own advice below wins.
+  if (failure.hostRefusal !== undefined && failure.cleanupCode === undefined)
+    return refusalFeedback(failure, failure.hostRefusal);
   const unknown = signInOutcomeUnknown(failure);
   return {
     signInOutcome: unknown ? ("unknown" as const) : ("signed_out" as const),
@@ -100,6 +171,21 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
       failure.cleanupCode !== undefined
         ? `The sign-in's cleanup is unconfirmed (${cause(failure)}), so live work ends. Report the unresolved sign-in.`
         : `The sign-in failed (${cause(failure)}) ${unknown ? "and may have completed on the site" : "and has not verified the site signed in"}. ${failure.nothingSubmitted === true ? unsentRetry : "No credential is automatically submitted again."} ${retryInstruction(failure)} Writes, examples and tests wait for the host's signed-in check and identity verification.`,
+  };
+};
+
+/**
+ * A refused field while the attempt may still sign in again: what was refused and why, by the
+ * check that refused it, and what may get past it.
+ */
+const refusalFeedback = (failure: SignInDiagnostic, refusal: HostRefusal) => {
+  const notice = refusalNotices[refusal.check] ?? otherRefusal;
+  const field = refusedField(refusal);
+  return {
+    signInOutcome: "signed_out" as const,
+    nextStep: "authenticate" as const,
+    ...sentFields(failure),
+    notice: `The sign-in did not complete: ${field}, because ${notice.why}. It submitted nothing of this screen. ${failure.nothingSubmitted === true ? "No credential was sent, so this does not count toward the sign-in limit." : "No credential is automatically submitted again."} ${notice.next} The same refusal of this field on this screen ${maximumHostRefusals} times in a row ends sign-in in this build. Writes, examples and tests wait for the host's signed-in check and identity verification.`,
   };
 };
 

@@ -2,7 +2,11 @@ import { Effect, Exit, Layer, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { CaptureUnavailable } from "../../src/runtime/errors.js";
+import {
+  CaptureUnavailable,
+  maximumInputIssuePath,
+  maximumInputIssues,
+} from "../../src/runtime/errors.js";
 import { defineOperation, executeOperation } from "../../src/runtime/operation.js";
 import { leftOf } from "../support/expect-failure.js";
 
@@ -193,5 +197,71 @@ describe("operation host", () => {
     expect(exit._tag).toBe("Failure");
     expect(lifecycle).toEqual(["start", "finish"]);
     expect(await Effect.runPromise(context.journal.state)).toBe("may_have_dispatched");
+  });
+});
+
+/** The issues an operation's input decode reports for `input`, through the operation host. */
+const issuesFor = async <A, I>(input: Schema.Schema<A, I>, value: unknown) => {
+  const operation = defineOperation({
+    name: "issues",
+    input,
+    output: Schema.Void,
+    run: () => Effect.void,
+  });
+  const context = await Effect.runPromise(makeContext());
+  const failure = leftOf(
+    await Effect.runPromise(
+      Effect.scoped(executeOperation(operation, value)).pipe(
+        Effect.provide(Layer.succeed(ExecutionContext, context)),
+        Effect.either,
+      ),
+    ),
+  );
+  if (failure._tag !== "InvalidInput")
+    throw new Error(`Expected InvalidInput, got ${failure._tag}`);
+  return failure.issues;
+};
+
+describe("input issues", () => {
+  it("reports every rejected property, not only the first", async () => {
+    expect(
+      await issuesFor(
+        Schema.Struct({ item: Schema.String, quantity: Schema.Number, note: Schema.String }),
+        { quantity: "two", note: "ok" },
+      ),
+    ).toEqual([
+      { path: "item", issue: "missing" },
+      { path: "quantity", issue: "invalid" },
+    ]);
+  });
+
+  it("names a record's key, which the caller chose, only as a placeholder", async () => {
+    const issues = await issuesFor(
+      Schema.Struct({ totals: Schema.Record({ key: Schema.String, value: Schema.Number }) }),
+      { totals: { "person@example.test": "bad" } },
+    );
+    expect(issues).toEqual([{ path: "totals[key]", issue: "invalid" }]);
+    expect(JSON.stringify(issues)).not.toContain("example.test");
+  });
+
+  it("keeps array indexes and quotes a declared name that is not an identifier", async () => {
+    expect(
+      await issuesFor(
+        Schema.Struct({
+          "line.items": Schema.Array(Schema.Struct({ "": Schema.String })),
+        }),
+        { "line.items": [{ "": "ok" }, {}] },
+      ),
+    ).toEqual([{ path: '["line.items"][1][""]', issue: "missing" }]);
+  });
+
+  it("bounds how many issues and how long a path go back", async () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: maximumInputIssues + 5 }, (_, index) => [`f${index}`, Schema.String]),
+    );
+    expect(await issuesFor(Schema.Struct(fields), {})).toHaveLength(maximumInputIssues);
+    const long = "a".repeat(maximumInputIssuePath);
+    const [issue] = (await issuesFor(Schema.Struct({ [long]: Schema.String }), {})) ?? [];
+    expect(issue?.path.length).toBe(maximumInputIssuePath);
   });
 });

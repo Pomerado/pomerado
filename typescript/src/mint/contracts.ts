@@ -5,6 +5,7 @@ import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
+import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { DestinationReason } from "./destination-reason.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
@@ -47,9 +48,9 @@ import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import type { QuestionDecision } from "../guardian/question.js";
 import {
-  ChoiceQuestion,
   ConfirmQuestion,
-  MultiChoiceQuestion,
+  ProposedChoiceQuestion,
+  ProposedMultiChoiceQuestion,
   SecretQuestion,
   TextQuestion,
 } from "../runtime/input-request.js";
@@ -80,10 +81,12 @@ export interface RunnerChannels {
 }
 
 /**
- * What spent an attempt's sign-ins: its one sign-in again on the same browser, or the sign-ins
- * it allows on a recovery's new profile.
+ * What spent an attempt's sign-ins: its one sign-in again on the same browser, the sign-ins it
+ * allows on a recovery's new profile, or the host's identical refusals in a row while typing into
+ * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
  */
-export type SpentSignIn = "relogin_spent" | "fresh_profile_sign_ins_spent";
+export type SpentSignIn =
+  "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
@@ -122,6 +125,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly modelOutage?: "unavailable" | "quota_exhausted";
   /** The session's `decideDialog` step names a `confirm_action_unmatched` refusal names. */
   readonly confirmActionIds?: readonly string[];
+  /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
+  readonly inputIssues?: readonly InputIssue[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
   readonly destinationEvidenceGap?:
     | "no_route_evidence"
@@ -449,8 +454,10 @@ export const ExecutionRequest = Schema.Struct({
   /** Only on authenticate, and only where the host offers autofill sign-in. */
   signInStep: Schema.optional(SignInStep),
   /**
-   * Only on a read build's example when the caller's input is empty (`{}`): the tool's input as
-   * JSON text, which the agent writes from the request and the owner's answers. The example runs it.
+   * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
+   * act step: the tool's input as JSON text, which the agent writes from the request and the
+   * owner's answers. The example, or each act step that passes it, runs it. A host that keeps a
+   * write session's input also runs it on the session's later act steps.
    */
   exampleInput: Schema.optional(Schema.String),
 });
@@ -745,12 +752,14 @@ export interface BuildAssumption {
 /**
  * What the agent may ask with request_input: typed questions of every kind but a login, which
  * only the host raises. The request's own checks (unique ids, bounds) run when the host asks it.
+ * The caller may answer any choice in their own words, so the agent never decides it
+ * (`withOwnWords`).
  */
 export const AgentRequest = Schema.Struct({
   questions: Schema.Array(
     Schema.Union(
-      ChoiceQuestion,
-      MultiChoiceQuestion,
+      ProposedChoiceQuestion,
+      ProposedMultiChoiceQuestion,
       TextQuestion,
       ConfirmQuestion,
       SecretQuestion,
@@ -774,6 +783,16 @@ export const AgentRequest = Schema.Struct({
 export type AgentInputRequest = Pick<InputRequest, "notice" | "questions">;
 
 /**
+ * A question as the host asks it for the minting agent: the caller may answer every choice and
+ * multiple choice in their own words, with their own text instead of an option (or beside a
+ * multiple choice's picks) or a note beside the options they pick, whatever the agent proposed.
+ */
+export const withOwnWords = <Q extends { readonly type: string }>(question: Q): Q =>
+  question.type === "choice" || question.type === "multi_choice"
+    ? { ...question, allowOther: true, allowNote: true }
+    : question;
+
+/**
  * One choice question whose only options are `read` and `write`, with no notice: the shape of
  * the effect question and of a write upgrade.
  */
@@ -783,7 +802,6 @@ export const isReadOrWriteChoice = (submitted: AgentInputRequest): boolean => {
     only?.type === "choice" &&
     submitted.questions.length === 1 &&
     submitted.notice === undefined &&
-    only.allowOther !== true &&
     only.options
       .map((option) => option.id)
       .sort()

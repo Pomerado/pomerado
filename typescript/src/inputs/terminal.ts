@@ -91,12 +91,35 @@ const answerChoices = (question: Extract<Question, { readonly type: "choice" | "
       question.type === "multi_choice" ? "Numbers separated by commas: " : "> ",
     )).trim();
     const selected = (part: string) => question.options[Number(part) - 1]?.id ?? part;
-    if (question.type === "multi_choice")
-      return reply === "" ? [] : reply.split(",").map((part) => selected(part.trim()));
-    const id = selected(reply);
-    return question.options.some((option) => option.id === id) || !question.allowOther
-      ? id
-      : { other: reply };
+    const offered = (id: string) => question.options.some((option) => option.id === id);
+    const ownWords = question.allowOther === true;
+    const parts =
+      question.type === "multi_choice"
+        ? reply === ""
+          ? []
+          : reply.split(",").map((part) => selected(part.trim()))
+        : [selected(reply)];
+    // Anything but an option's number or id is the caller's own text, where it is allowed.
+    const picks = ownWords ? parts.filter(offered) : parts;
+    const own =
+      ownWords && picks.length < parts.length
+        ? question.type === "choice"
+          ? reply
+          : parts.filter((id) => !offered(id)).join(", ")
+        : undefined;
+    if (question.type === "choice" && own !== undefined) return { other: own };
+    const note =
+      question.allowNote === true
+        ? (yield* line("Add a note (optional, Enter to skip): ")).trim()
+        : "";
+    if (question.type === "choice") return note === "" ? picks[0] : { option: picks[0], note };
+    return own === undefined && note === ""
+      ? picks
+      : {
+          options: picks,
+          ...(own === undefined ? {} : { other: own }),
+          ...(note === "" ? {} : { note }),
+        };
   });
 
 const answerQuestion = (question: Question): Effect.Effect<unknown, InputRequestFailure> =>

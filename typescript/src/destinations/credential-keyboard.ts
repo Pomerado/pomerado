@@ -11,9 +11,41 @@ interface CredentialTarget {
   readonly documentOrigin: string;
 }
 
-/** Inserts only into the original field; false means its document, origin or focus changed. */
+/** Why native insertion inserted nothing, as one finite cause: never the binding key, a selector or a value. */
+export const InsertionRefusal = Schema.Literal(
+  /** No node in the target's sessions carries the binding's marker. */
+  "binding_not_found",
+  /** More than one node carries it, in one session or across sessions. */
+  "binding_ambiguous",
+  /** The marked node no longer resolves in the private world. */
+  "binding_unresolved",
+  /** The marked node holds no binding in the private world: page code copied the marker. */
+  "binding_not_in_world",
+  /** The bound field left its document. */
+  "detached",
+  /** The bound field moved to another document. */
+  "document_changed",
+  /** The bound document no longer fills the frame it was bound in. */
+  "frame_changed",
+  /** That frame's origin is no longer the approved one. */
+  "origin_changed",
+  /** Another element holds the document's focus. */
+  "focus_moved",
+  /** The document itself does not hold the browser's focus. */
+  "document_unfocused",
+  /** The browser's native insertion inserted nothing. */
+  "insertion_rejected",
+);
+export type InsertionRefusal = typeof InsertionRefusal.Type;
+/** A native insertion's answer: inserted, or why not. */
+export const CredentialInsertion = Schema.Union(Schema.Literal("inserted"), InsertionRefusal);
+
+/** Inserts only into the original field, or refuses with the finite cause. */
 export interface CredentialKeyboard {
-  readonly insertText: (target: CredentialTarget, text: string) => Effect.Effect<boolean, Error>;
+  readonly insertText: (
+    target: CredentialTarget,
+    text: string,
+  ) => Effect.Effect<typeof CredentialInsertion.Type, Error>;
 }
 
 /**
@@ -69,7 +101,10 @@ const nativeDescendants = (node: typeof NativeNode.Type, frameId: string | undef
 };
 
 /** Ephemeral, bounded native traversal: exactly one opaque marker, never a selector fallback. */
-const findMarkedNode = (value: unknown, key: string) => {
+const findMarkedNode = (
+  value: unknown,
+  key: string,
+): { backendNodeId: number; frameId: string | undefined } | "binding_ambiguous" | undefined => {
   const document = Schema.decodeUnknownOption(NativeDocument)(value);
   if (document._tag === "None") throw new Error("Credential target document unavailable");
   const { root } = document.value;
@@ -88,7 +123,7 @@ const findMarkedNode = (value: unknown, key: string) => {
     const attributes = node.attributes ?? [];
     for (let index = 0; index < attributes.length; index += 2) {
       if (attributes[index] !== key) continue;
-      if (found !== undefined) throw new Error("Credential target binding ambiguous");
+      if (found !== undefined) return "binding_ambiguous";
       found = { backendNodeId: node.backendNodeId, frameId: next.frameId };
     }
     pending.push(...nativeDescendants(node, next.frameId));
@@ -106,12 +141,15 @@ const atomicInsert = `function(key, origin, text) {
   const binding = field[key];
   field.removeAttribute(key);
   delete field[key];
-  if (!binding) return false;
+  if (!binding) return "binding_not_in_world";
   const { document, frame } = binding;
-  if (!field.isConnected || field.ownerDocument !== document || document.defaultView !== frame ||
-      frame.document !== document || frame.origin !== origin ||
-      document.activeElement !== field || !document.hasFocus()) return false;
-  return document.execCommand("insertText", false, text);
+  if (!field.isConnected) return "detached";
+  if (field.ownerDocument !== document) return "document_changed";
+  if (document.defaultView !== frame || frame.document !== document) return "frame_changed";
+  if (frame.origin !== origin) return "origin_changed";
+  if (document.activeElement !== field) return "focus_moved";
+  if (!document.hasFocus()) return "document_unfocused";
+  return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
 }`;
 
 const command = (
@@ -149,10 +187,10 @@ const findBinding = (
           error instanceof Error ? error : new Error("Credential target binding unavailable"),
       });
       if (node === undefined) continue;
-      if (found !== undefined) return undefined;
+      if (node === "binding_ambiguous" || found !== undefined) return "binding_ambiguous" as const;
       found = { sessionId, ...node };
     }
-    if (found === undefined) return undefined;
+    if (found === undefined) return "binding_not_found" as const;
     let executionContextId: number | undefined;
     if (bindingWorld !== undefined)
       executionContextId = yield* bindingWorld(cdp, {
@@ -173,7 +211,7 @@ const findBinding = (
         error instanceof Error ? error : new Error("Credential target binding unavailable"),
     });
     return object.objectId === undefined
-      ? undefined
+      ? ("binding_unresolved" as const)
       : { sessionId: found.sessionId, objectId: object.objectId };
   });
 
@@ -191,7 +229,7 @@ export const makeCredentialKeyboard = (
   insertText: (target, text) =>
     Effect.gen(function* () {
       const bound = yield* findBinding(cdp, target, bindingWorld);
-      if (bound === undefined) return false;
+      if (typeof bound === "string") return bound;
       const value = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
         objectId: bound.objectId,
         functionDeclaration: atomicInsert,
@@ -208,12 +246,14 @@ export const makeCredentialKeyboard = (
           ),
         ),
       );
-      return (
-        (yield* Effect.try({
-          try: () => resultOf(value),
-          catch: (error) =>
-            error instanceof Error ? error : new Error("Credential insertion unavailable"),
-        })).value === true
+      const answer = yield* Effect.try({
+        try: () => resultOf(value).value,
+        catch: (error) =>
+          error instanceof Error ? error : new Error("Credential insertion unavailable"),
+      });
+      // An answer outside the finite set leaves whether the value landed unknown.
+      return yield* Schema.decodeUnknown(CredentialInsertion)(answer).pipe(
+        Effect.mapError((cause) => new Error("Credential insertion unavailable", { cause })),
       );
     }),
 });

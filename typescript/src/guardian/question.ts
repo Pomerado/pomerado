@@ -133,11 +133,13 @@ export const questionForReview = <E>(
  * One question the owner answered through the host's question flow, as every later Guardian
  * review sees it: the screened prompt and the screened answer. A choice is its option's label (an
  * account-specific option's masked label, as the API shows it) or the owner's own text, a multiple
- * choice its labels, a confirm whether the owner confirmed. `typed` marks an answer whose text the
- * owner wrote: a text answer, a choice's own text that repeats no offered option, or a confirm's
- * text other than the offered default. An option label is the minting model's wording even when
- * the owner picks it or types it back, so it never names where the owner's work lives
- * (`ownerNamedOrigins`).
+ * choice its labels with `other`, an option of the owner's own, and either may carry `note`, the
+ * owner's clarification of their pick. A confirm is whether the owner confirmed. `typed` marks an
+ * answer whose own text the owner wrote: a text answer, a choice's own text or a multiple choice's
+ * `other` that repeats no offered option, or a confirm's text other than the offered default. An
+ * option label is the minting model's wording even when the owner picks it or types it back, so it
+ * never names where the owner's work lives (`ownerNamedOrigins`). A note is the owner's own words;
+ * one that only repeats an offered option is left out, as the agent's wording.
  */
 export const AnsweredQuestion = Schema.Struct({
   question: Schema.String,
@@ -149,6 +151,8 @@ export const AnsweredQuestion = Schema.Struct({
       text: Schema.optionalWith(Schema.String, { exact: true }),
     }),
   ),
+  other: Schema.optionalWith(Schema.String, { exact: true }),
+  note: Schema.optionalWith(Schema.String, { exact: true }),
   typed: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export type AnsweredQuestion = typeof AnsweredQuestion.Type;
@@ -158,15 +162,23 @@ export type AnsweredQuestion = typeof AnsweredQuestion.Type;
  * `validateAnswer` already takes own text that repeats one option as that pick; text that repeats
  * several (options sharing a label) stays the owner's text but is still the agent's wording.
  */
-const ownerTyped = (question: Question, given: ValidAnswers[string]) =>
-  given.type === "text" ||
-  (given.type === "choice" &&
-    typeof given.value !== "string" &&
-    (question.type !== "choice" ||
-      optionsRepeatedBy(question.options, given.value.other).length === 0)) ||
-  (given.type === "confirm" &&
-    given.value.text !== undefined &&
-    (question.type !== "confirm" || given.value.text !== question.followUp?.defaultText));
+const ownerTyped = (question: Question, given: ValidAnswers[string]) => {
+  const own =
+    given.type === "choice" && typeof given.value !== "string" && "other" in given.value
+      ? given.value.other
+      : given.type === "multi_choice" && "options" in given.value
+        ? given.value.other
+        : undefined;
+  return (
+    given.type === "text" ||
+    (own !== undefined &&
+      ((question.type !== "choice" && question.type !== "multi_choice") ||
+        optionsRepeatedBy(question.options, own).length === 0)) ||
+    (given.type === "confirm" &&
+      given.value.text !== undefined &&
+      (question.type !== "confirm" || given.value.text !== question.followUp?.defaultText))
+  );
+};
 
 /**
  * The answers to one request as Guardian sees them, screening every string through `screen`.
@@ -195,15 +207,36 @@ export const answersForReview = <E>(
               : undefined;
           return screen(option === undefined ? id : publicOptionLabel(option));
         };
+        // The owner's own option beside a multiple choice's picks, and their note beside a pick.
+        const beside =
+          given.type === "multi_choice" && "options" in given.value
+            ? given.value
+            : given.type === "choice" && typeof given.value !== "string" && "note" in given.value
+              ? { note: given.value.note }
+              : {};
+        const other = "other" in beside ? beside.other : undefined;
+        // A note that only repeats an offered option is the agent's wording, never the owner's.
+        const note =
+          "note" in beside &&
+          beside.note !== undefined &&
+          (question.type === "choice" || question.type === "multi_choice") &&
+          optionsRepeatedBy(question.options, beside.note).length === 0
+            ? beside.note
+            : undefined;
         const answer: AnsweredQuestion["answer"] | undefined =
           given.type === "text"
             ? yield* screen(given.value)
             : given.type === "choice"
               ? yield* typeof given.value === "string"
                   ? label(given.value)
-                  : screen(given.value.other)
+                  : "other" in given.value
+                    ? screen(given.value.other)
+                    : label(given.value.option)
               : given.type === "multi_choice"
-                ? yield* Effect.forEach(given.value, label)
+                ? yield* Effect.forEach(
+                    "options" in given.value ? given.value.options : given.value,
+                    label,
+                  )
                 : given.type === "confirm"
                   ? {
                       confirmed: given.value.confirmed,
@@ -218,6 +251,8 @@ export const answersForReview = <E>(
               {
                 question: yield* screen(question.prompt),
                 answer,
+                ...(other === undefined ? {} : { other: yield* screen(other) }),
+                ...(note === undefined ? {} : { note: yield* screen(note) }),
                 ...(ownerTyped(question, given) ? { typed: true as const } : {}),
               },
             ];

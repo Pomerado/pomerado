@@ -1,23 +1,30 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createServer as createTlsServer } from "node:https";
+import { promisify } from "node:util";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { startShop, shopAccount } from "./shop-fixture.js";
+import { startShop, shopAccount, shopHelpLinks } from "./shop-fixture.js";
 import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
+import { CalendarDate } from "../../src/browser/index.js";
+import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
+import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/page-controls.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 import { loadStandaloneAuthoring } from "../../src/mint/skills.js";
@@ -228,8 +235,12 @@ const minter = (requests: ModelRequest[], authentication = false) =>
     return [message("Built the fixture integration.")];
   }, requests);
 
-for (const authentication of [false, true]) {
-  test(`original SDKs mint a multi-file ${authentication ? "authenticated" : "public"} integration and run it`, async () => {
+for (const [authentication, submitAfterInput] of [
+  [false, false],
+  [true, false],
+  [true, true],
+] as const) {
+  test(`original SDKs mint a multi-file ${authentication ? "authenticated" : "public"} integration${submitAfterInput ? " whose sign-in button enables only after input" : ""} and run it`, async () => {
     test.info().annotations.push({
       type: "slow",
       description:
@@ -253,6 +264,7 @@ for (const authentication of [false, true]) {
     const fixtureURL = `http://127.0.0.1:${address.port}/`;
     const directory = await mkdtemp(join(tmpdir(), "pomerado-standalone-"));
     const shop = authentication ? await startShop(directory) : undefined;
+    if (shop !== undefined && submitAfterInput) shop.state.loginSubmit = "after_input";
     const url = shop === undefined ? fixtureURL : `${shop.origin}/login`;
     const remote =
       shop === undefined
@@ -332,7 +344,19 @@ for (const authentication of [false, true]) {
       expect(asked).toHaveLength(1);
       expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
       expect(JSON.stringify(reviewRequests)).not.toContain(shopAccount.password);
-      if (shop !== undefined) expect(shop.state.loginPosts).toBe(1);
+      if (shop !== undefined) {
+        expect(shop.state.loginPosts).toBe(1);
+        // Guardian judged the sign-in step against the screen the host observed: the page's
+        // origin and what the submit is, never whether the page has enabled it yet.
+        const reviewed = objects(reviewRequests.map((request) => request.input)).find(
+          (item) => "step" in item && "screen" in item,
+        );
+        expect(reviewed?.["screen"]).toMatchObject({
+          origin: shop.origin,
+          submit: { tag: "button", text: "Sign in" },
+        });
+        expect(JSON.stringify(reviewed)).not.toContain("enabled");
+      }
     } finally {
       await remote?.close();
       await shop?.close();
@@ -636,6 +660,178 @@ async ({kernel,sessionId,enteringCommit,verified}) => {
   }
 });
 
+test("a write runs the values the request gives, asks only the missing choice, and names the rejected input path without a second write", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original model SDKs, native write, a script question and the offline contract child; a real POST proves no write replay",
+  });
+  test.setTimeout(60_000);
+  const saved: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.method === "POST" && request.url === "/save") {
+      let body = "";
+      request.on("data", (chunk: Buffer) => (body += chunk.toString()));
+      request.on("end", () => {
+        saved.push(body);
+        response.end("saved");
+      });
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end(
+      `<button id="save" onclick="fetch('/save',{method:'POST',body:document.body.dataset.order}).then(() => document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No write fixture address");
+  // The request gives the item and quantity; the delivery speed is the caller's to choose.
+  const supplied = { item: "lamp", quantity: 2 };
+  const act = (quantity: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"order_fixture",input:Schema.Struct({item:Schema.String,quantity:${quantity}}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:"choice",prompt:"Which delivery speed?"}},write:{confirmation:"message",commits:["save"]}},
+async ({kernel,sessionId,input,ask,enteringCommit,verified}) => {
+  const answer = await ask({delivery:{options:[{value:"standard",label:"Standard"},{value:"express",label:"Express"}]}});
+  const order = JSON.stringify({item:input.item,quantity:input.quantity,delivery:answer.delivery});
+  enteringCommit("save");
+  const result = await kernel.browsers.playwright.execute(sessionId,{code:"await page.evaluate((order) => { document.body.dataset.order = order; }, " + JSON.stringify(order) + "); await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:10});
+  if(!result.success || result.result !== true) throw new Error("Save not confirmed");
+  verified({confirmation:"message"});
+  return {saved:true};
+});`;
+  const requests: ModelRequest[] = [];
+  const results: unknown[] = [];
+  const patchSource = (path: string, content: string, id: string): ModelResponse["output"] => [
+    {
+      type: "apply_patch_call",
+      callId: id,
+      status: "completed",
+      operation: {
+        type: "create_file",
+        path,
+        diff:
+          content
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n") + "\n",
+      },
+    },
+  ];
+  const finish = (request: ModelRequest): ModelResponse["output"] => {
+    const receipt = objects(request.input)
+      .filter((item) => typeof item["executionId"] === "string")
+      .find((item) => item["effect"] === "verified");
+    if (receipt === undefined) throw new Error("Confirmed act receipt missing");
+    return [
+      call(
+        "finish_build",
+        {
+          intent: "Return the composed write without executing it",
+          entrypoint: "src/final.mjs",
+          executionId: receipt["executionId"],
+          metadata: { name: "order_fixture", description: "Order an item once" },
+          coverage: "One live confirmed act on the values the request gave",
+        },
+        `finish_${requests.length}`,
+      ),
+    ];
+  };
+  const lastResult = (request: ModelRequest) =>
+    objects(request.input)
+      .filter((item) => item["type"] === "function_call_result")
+      .at(-1);
+  const model = provider((request, index) => {
+    if (index === 0) return patchSource("src/act.mjs", act("Schema.Number"), "act_source");
+    if (index === 1)
+      return [
+        call(
+          "execute",
+          {
+            ...execution,
+            purpose: "act",
+            entrypoint: "src/act.mjs",
+            intent: "Order the requested item exactly once",
+            exampleInput: JSON.stringify(supplied),
+          },
+          "act_once",
+        ),
+      ];
+    // The composed script declares the quantity as text, which the session's input is not.
+    if (index === 2) return patchSource("src/final.mjs", act("Schema.String"), "composed_source");
+    if (index === 3) return finish(request);
+    if (index === 4) {
+      results.push(lastResult(request));
+      return [
+        {
+          type: "apply_patch_call",
+          callId: "corrected_source",
+          status: "completed",
+          operation: {
+            type: "update_file",
+            path: "src/final.mjs",
+            diff: "@@\n-export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n+export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.Number}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n",
+          },
+        },
+      ];
+    }
+    if (index === 5) return finish(request);
+    return [message("Return the confirmed write artifact.")];
+  }, requests);
+  const asked: InputRequest[] = [];
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            minterProvider: model,
+            guardianProvider: guardian([]),
+            ask: makeInputAsker((request) =>
+              Effect.sync(() => {
+                asked.push(request);
+                return Object.fromEntries(
+                  request.questions.map((question) => [
+                    question.id,
+                    question.type === "choice" ? (question.options[0]?.id ?? "") : "",
+                  ]),
+                );
+              }),
+            ),
+          });
+          const built = yield* service.mint({
+            url: `http://127.0.0.1:${address.port}/`,
+            intent: "Order 2 brass lamps, delivered at the speed I choose",
+            effect: "write",
+            input: {},
+          });
+          expect(built.build, JSON.stringify(built)).toBe("published");
+          expect(built.artifact?.inputSchema).toMatchObject({
+            required: expect.arrayContaining(["item", "quantity"]),
+          });
+        }),
+      ),
+    );
+    // The first finish_build names the rejected path and reruns nothing.
+    expect(objects(results[0]).find((item) => "inputIssues" in item)).toMatchObject({
+      status: "not_published",
+      reason: "contract_input_mismatch",
+      inputIssues: [{ path: "quantity", issue: "invalid" }],
+    });
+    // Only the delivery speed was asked; the request's values ran as the session's input.
+    expect(asked.flatMap((request) => request.questions.map((question) => question.id))).toEqual([
+      "delivery",
+    ]);
+    expect(saved.map((body) => JSON.parse(body))).toEqual([
+      { item: "lamp", quantity: 2, delivery: "standard" },
+    ]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 // A tiny runtime override supplies recorded providers to the actual compiled stdio entrypoint.
 // Saved launchers import the same module through their existing runtime-URL argument.
 const mcpRuntime = async (
@@ -900,12 +1096,13 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
   }
 });
 
+/** Saves an integration as `pomerado-mcp mint` writes it, from `src/tool.mjs` or a set of files. */
 const saveMcpFixture = (
   root: string,
   name: string,
   url: string,
   effect: "read" | "write",
-  source: string,
+  source: string | Readonly<Record<string, string>>,
   inputSchema: unknown = { type: "object", properties: {}, additionalProperties: false },
 ) =>
   Effect.runPromise(
@@ -918,7 +1115,9 @@ const saveMcpFixture = (
         });
         yield* publish({
           entrypoint: "src/tool.mjs",
-          files: [{ path: "src/tool.mjs", content: source }],
+          files: Object.entries(
+            typeof source === "string" ? { "src/tool.mjs": source } : source,
+          ).map(([path, content]) => ({ path, content })),
           inputSchema,
           outputSchema: {
             type: "object",
@@ -1093,6 +1292,74 @@ test("MCP malformed saved schema fails before models and a served run calls no m
   }
 });
 
+test("MCP refuses an impossible calendar date and the tool's own date rule before its search", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Actual stdio SDK over one invalid and two native runs",
+  });
+  test.setTimeout(60_000);
+  const searches: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith("/search") === true) searches.push(request.url);
+    response.end("<h1>Stays</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing stays address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-dates-"));
+  const url = `http://127.0.0.1:${address.port}/`;
+  // A synthetic stay search: CalendarDate checks each date is real, and the tool checks the
+  // task's own rule, that the stay ends after it starts, before it sends the search.
+  const source = `import { Schema } from "effect";
+import { CalendarDate, defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"search_stays",input:Schema.Struct({check_in:CalendarDate,check_out:CalendarDate}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId,input,errors}) => {
+  if (input.check_out <= input.check_in) throw new errors.InvalidInput("check_out must be after check_in");
+  const query = new URLSearchParams(input).toString();
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/search?" + query + "', page.url()).href); return await page.locator('h1').textContent();",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result)};
+});`;
+  try {
+    const saved = await saveMcpFixture(
+      directory,
+      "search_stays",
+      url,
+      "read",
+      source,
+      contractJsonSchema(Schema.Struct({ check_in: CalendarDate, check_out: CalendarDate })),
+    );
+    const fixture = await mcpRuntime(directory);
+    const connection = await stdioMcp([join(saved, "mcp.mjs"), pathToFileURL(fixture.file).href]);
+    const search = (input: Record<string, string>) =>
+      connection.client
+        .callTool({ name: "search_stays", arguments: { input } })
+        .catch((error: unknown) => ({ isError: true, content: [{ text: String(error) }] }));
+    try {
+      const impossible = await search({ check_in: "2026-02-30", check_out: "2026-03-02" });
+      expect(impossible.isError).toBe(true);
+      expect(JSON.stringify(impossible)).toMatch(/check_in.*format.*date/);
+      await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+      const reversed = viewOf(await search({ check_in: "2026-03-05", check_out: "2026-03-01" }));
+      expect(reversed.status, connection.stderr()).toBe("failed");
+      expect(reversed.error).toContain("check_out must be after check_in");
+
+      const valid = await search({ check_in: "2026-03-01", check_out: "2026-03-05" });
+      expect(objects(valid).find((value) => value["heading"] === "Stays")).toBeDefined();
+      expect(searches).toEqual(["/search?check_in=2026-03-01&check_out=2026-03-05"]);
+    } finally {
+      await connection.client.close();
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a generated integration serves and runs with no model key or provider", async () => {
   const server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html");
@@ -1164,6 +1431,71 @@ test("a generated integration serves and runs with no model key or provider", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+/*
+ * A saved integration imports the SDK at `sdk` from src/ and at `nested` from a module in src/lib/.
+ * Under 0.2.0's executor, an entrypoint in src/ reached the SDK one level up and a nested module two
+ * levels up; the workspace guide documents one level more. Integrations saved either way run
+ * through `pomerado run` and serve through their saved `mcp.mjs`.
+ */
+for (const { title, sdk, nested } of [
+  {
+    title: "an integration saved with 0.2.0's one-level-up SDK imports still runs and serves",
+    sdk: "../runtime/index.js",
+    nested: "../../runtime/index.js",
+  },
+  {
+    title: "an integration saved with the documented SDK import runs and serves",
+    sdk: "../../runtime/index.js",
+    nested: "../../../runtime/index.js",
+  },
+])
+  test(title, async () => {
+    test.setTimeout(60_000);
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "text/html");
+      response.end("<h1>  Saved fixture  </h1>");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("No fixture address");
+    const url = `http://127.0.0.1:${address.port}/`;
+    const root = await mkdtemp(join(tmpdir(), "pomerado-saved-imports-"));
+    try {
+      const directory = await saveMcpFixture(root, "read_saved", url, "read", {
+        "src/tool.mjs": operation
+          .replace('"../runtime/index.js"', JSON.stringify(sdk))
+          .replace('"./heading.mjs"', '"./lib/heading.mjs"'),
+        "src/lib/heading.mjs": `import { defineOperation } from ${JSON.stringify(nested)};
+export const heading = (value) => (typeof defineOperation === "function" ? String(value).trim() : "");`,
+      });
+      const ran = await terminal(["run", "--artifact", directory, "--url", url]);
+      expect(ran.code, ran.stderr).toBe(0);
+      expect(JSON.parse(ran.stdout)).toEqual({ heading: "Saved fixture" });
+      const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href;
+      const served = await stdioMcp([join(directory, "mcp.mjs"), runtime]);
+      try {
+        expect((await served.client.listTools()).tools.map((tool) => tool.name)).toContain(
+          "read_saved",
+        );
+        const result = await served.client.callTool({
+          name: "read_saved",
+          arguments: { input: {} },
+        });
+        expect(result, served.stderr()).toMatchObject({
+          structuredContent: { heading: "Saved fixture" },
+        });
+      } finally {
+        await served.client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
 test("MCP concurrent original input callbacks remain answerable", async () => {
   await Effect.runPromise(
@@ -1415,4 +1747,473 @@ test("a local mint sends Guardian the native policy and the minter the rendered 
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
+});
+
+test("a sign-in code asked during sign-in is typed into the code screen; a later action code is not marked", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs drive a two-screen native sign-in and two explores in Chromium",
+  });
+  test.setTimeout(60_000);
+  const codesReceived: string[] = [];
+  const body = async (request: AsyncIterable<unknown>) => {
+    let text = "";
+    for await (const chunk of request) text += String(chunk);
+    return new URLSearchParams(text);
+  };
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-code-"));
+  await promisify(execFile)("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-keyout",
+    join(directory, "key.pem"),
+    "-out",
+    join(directory, "cert.pem"),
+    "-subj",
+    "/CN=www.codes.test",
+    "-days",
+    "1",
+  ]);
+  const tls = {
+    key: await readFile(join(directory, "key.pem")),
+    cert: await readFile(join(directory, "cert.pem")),
+  };
+  const server = createTlsServer(tls, (request, response) => {
+    void (async () => {
+      const cookie = request.headers.cookie ?? "";
+      if (request.method === "POST" && request.url === "/login") {
+        await body(request);
+        response.writeHead(303, { "Set-Cookie": "stage=code; Path=/", Location: "/" });
+        return response.end();
+      }
+      if (request.method === "POST" && request.url === "/code") {
+        const code = (await body(request)).get("code") ?? "";
+        codesReceived.push(code);
+        response.writeHead(303, {
+          ...(code === "135790" ? { "Set-Cookie": "signed=yes; Path=/" } : {}),
+          Location: "/",
+        });
+        return response.end();
+      }
+      response.setHeader("Content-Type", "text/html");
+      response.end(
+        cookie.includes("signed=yes")
+          ? `<title>Account</title><h1>Account</h1><div id="account">Your orders</div><form><label>Confirmation code<input name="confirm" autocomplete="one-time-code"></label></form>`
+          : cookie.includes("stage=code")
+            ? `<title>Verify</title><form method="post" action="/code"><label>We texted you a code<input name="code" autocomplete="one-time-code" inputmode="numeric"></label><button>Verify</button></form>`
+            : `<title>Sign in</title><form method="post" action="/login"><label>User<input name="username" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>`,
+      );
+    })();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const remote = await chromium.launchServer({
+    args: [
+      "--host-resolver-rules=MAP www.codes.test 127.0.0.1",
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  /** A probe whose one browser call runs `code`. */
+  const probe = (code: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(code)},timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return response.result;
+});`;
+  const files: readonly (readonly [string, string])[] = [
+    [
+      "explore/code.mjs",
+      probe(
+        "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.getByRole('button', { name: 'Verify' }).click(); await page.locator('#account').waitFor({ timeout: 3000 }); return page.url();",
+      ),
+    ],
+  ];
+  // Written once its handle is issued: a handle the attempt never issued refuses every execution.
+  const confirm = probe(
+    "await page.locator('input[name=confirm]').fill('{{secret.s2}}'); return null;",
+  );
+  const created = (entries: readonly (readonly [string, string])[]): ModelResponse["output"] =>
+    entries.map(([path, content]) => ({
+      type: "apply_patch_call",
+      callId: `patch_${path}`,
+      status: "completed",
+      operation: {
+        type: "create_file",
+        path,
+        diff:
+          content
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n") + "\n",
+      },
+    }));
+  const secretQuestion = (id: string, prompt: string) =>
+    call(
+      "request_input",
+      {
+        intent: prompt,
+        questions: [{ id, type: "secret", secretKind: "one_time_code", prompt }],
+      },
+      id,
+    );
+  const explore = (entrypoint: string) =>
+    call("execute", { ...execution, purpose: "explore", entrypoint }, entrypoint);
+  const steps: ModelResponse["output"][] = [
+    created(files),
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+        },
+        "sign_in",
+      ),
+    ],
+    [secretQuestion("code", "Enter the code the site texted you to finish signing in.")],
+    [explore("explore/code.mjs")],
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: { signedIn: { selector: "#account" } },
+        },
+        "signed_in",
+      ),
+    ],
+    [secretQuestion("confirm", "Enter the confirmation code the site sent for this action.")],
+    created([["explore/confirm.mjs", confirm]]),
+    [explore("explore/confirm.mjs")],
+  ];
+  const mintRequests: ModelRequest[] = [];
+  // The scenario ends after the second probe; final text without a tool call ends the attempt.
+  const minterProvider = provider(
+    (_request, index) => steps[index] ?? [message("Stopping after the probes.")],
+    mintRequests,
+  );
+  /** The trusted context of each execution review, by the entrypoint it reviewed. */
+  const contexts = new Map<string, Record<string, unknown>>();
+  const reviewRequests: ModelRequest[] = [];
+  const guardianProvider = guardian(reviewRequests, (request) => {
+    const current = objects(request.input)
+      .filter((item) => "submitted_call" in item)
+      .at(-1);
+    const entrypoint = objects(current?.["submitted_call"]).at(0)?.["entrypoint"];
+    const context = objects(current?.["trusted_execution_context"]).at(0) ?? {};
+    if (typeof entrypoint === "string") contexts.set(entrypoint, context);
+    // The recorded Guardian follows the policy: typing a handle into the sign-in form is allowed
+    // only for a code the host lists as asked during this sign-in.
+    if (entrypoint !== "operation/explore/code.mjs") return "allow";
+    const listed = context["signInCodes"];
+    return Array.isArray(listed) && listed.includes("{{secret.s1}}") ? "allow" : "deny";
+  });
+  const answers: Record<string, string> = {
+    username: "ada@example.test",
+    password: "fixture-password-4417",
+    code: "135790",
+    confirm: "246802",
+  };
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider,
+            guardianProvider,
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, answers[question.id] ?? ""]),
+                ),
+              ),
+            ),
+            timeoutMs: 45_000,
+          });
+          yield* service.mint({
+            url: `https://www.codes.test:${address.port}/`,
+            intent: "Read my account page title",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    // The site took the code the caller supplied for this sign-in, typed by the agent's probe.
+    expect(codesReceived).toEqual(["135790"]);
+    expect(contexts.get("operation/explore/code.mjs")?.["signInCodes"]).toEqual([
+      "{{secret.s1}}",
+    ]);
+    // A code asked after the sign-in was verified is an action's code, reviewed as before.
+    expect(contexts.get("operation/explore/confirm.mjs")).toBeDefined();
+    expect(contexts.get("operation/explore/confirm.mjs")?.["signInCodes"]).toBeUndefined();
+    for (const value of Object.values(answers).slice(1))
+      expect(JSON.stringify([mintRequests, reviewRequests])).not.toContain(value);
+  } finally {
+    await remote.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const SavedControls = Schema.parseJson(
+  Schema.Struct({
+    controls: Schema.Array(
+      Schema.Struct({
+        role: Schema.String,
+        name: Schema.NullOr(Schema.String),
+        type: Schema.NullOr(Schema.String),
+        required: Schema.Boolean,
+        visible: Schema.Boolean,
+        enabled: Schema.Boolean,
+      }),
+    ),
+    total: Schema.Number,
+  }),
+);
+const LastScreen = Schema.Struct({
+  lastScreen: Schema.Struct({
+    path: Schema.Literal("captures/after-submit/1.json"),
+    controls: Schema.Array(Schema.Unknown),
+    truncated: Schema.optional(Schema.String),
+  }),
+});
+
+/**
+ * A synthetic 169-character identifier, longer than a control's shown name, so cutting a name
+ * before screening would leave a long piece of it.
+ */
+const longIdentifier = `${Array.from({ length: 156 }, (_, index) => "abcdefghijklmnopqrstuvwxyz0123456789"[(index * 7) % 36]).join("")}@example.test`;
+/** Every 12-character piece of `value` that `text` contains. */
+const piecesIn = (text: string, value: string) =>
+  Array.from({ length: value.length - 11 }, (_, at) => value.slice(at, at + 12)).filter((piece) =>
+    text.includes(piece),
+  );
+
+/**
+ * A mint that signs in on the shop's two-screen sign-in: the identifier step, a read of the saved
+ * controls, then (with `failNext`) a step whose field the next screen lacks. It answers every
+ * sign-in question with `identifier` and returns the file as saved on disk after the first submit,
+ * and each tool result by call id.
+ */
+const twoScreenSignIn = async (options: {
+  readonly identifier: string;
+  readonly loginPath: string;
+  readonly failNext: boolean;
+}) => {
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-after-submit-"));
+  const shop = await startShop(directory);
+  // Marks this sign-in's help links, so the test finds its own saved file among parallel tests'.
+  const tag = `tag${randomUUID().slice(0, 8)}`;
+  const remote = await chromium.launchServer({
+    args: [
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  // The minter reads the saved file on its next turn; the test reads it from disk then.
+  const savedFile = () =>
+    readdirSync(tmpdir())
+      .filter((entry) => entry.startsWith("pomerado-workspace-"))
+      .map((entry) => join(tmpdir(), entry, "captures/after-submit/1.json"))
+      .filter((path) => existsSync(path))
+      .map((path) => readFileSync(path, "utf8"))
+      .find((text) => text.includes(tag));
+  let saved: string | undefined;
+  const mintRequests: ModelRequest[] = [];
+  const signInStep = (step: unknown, callId: string) =>
+    call("execute", { ...execution, purpose: "authenticate", signInStep: step }, callId);
+  const minter = provider((_request, index) => {
+    if (index === 0)
+      return [
+        signInStep(
+          { fields: [{ selector: "#username", accepts: ["email"] }], submit: "#next" },
+          "identifier",
+        ),
+      ];
+    if (index === 1) {
+      saved = savedFile();
+      return [
+        call(
+          "read_source",
+          { path: "captures/after-submit/1.json", offset: null, limit: null },
+          "read_controls",
+        ),
+      ];
+    }
+    if (index === 2 && options.failNext)
+      return [
+        signInStep(
+          { fields: [{ selector: "#pin", slot: "password" }], submit: "#sign-in" },
+          "wrong_screen",
+        ),
+      ];
+    return [message("Stopping here.")];
+  }, mintRequests);
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider: minter,
+            guardianProvider: guardian([]),
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, options.identifier]),
+                ),
+              ),
+            ),
+            timeoutMs: 30_000,
+          });
+          yield* service.mint({
+            url: `${shop.origin}${options.loginPath}${options.loginPath.includes("?") ? "&" : "?"}tag=${tag}`,
+            intent: "Read the account heading",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+  } finally {
+    await remote.close();
+    await shop.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+  const toolResult = (callId: string) => {
+    const result = objects(mintRequests.at(-1)?.input).find(
+      (item) => item["type"] === "function_call_result" && item["callId"] === callId,
+    );
+    if (result === undefined) throw new Error(`No ${callId} result`);
+    return result;
+  };
+  return { saved, toolResult, mintRequests };
+};
+
+test("a two-screen sign-in saves the next screen's controls and inlines them when the next step fails", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const email = shopAccount.username;
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: email,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  // The file is saved after the first submit, with the next screen's controls and no value.
+  expect(saved).toBeDefined();
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(saved).not.toContain(email);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ role: "button", name: "Trouble signing in", enabled: false }),
+  );
+  expect(file.controls).toContainEqual(expect.objectContaining({ name: "Code", visible: false }));
+  expect(file.total).toBe(shopHelpLinks + 4);
+  // The step result names the file and adds no control list.
+  const identifier = JSON.stringify(toolResult("identifier"));
+  expect(identifier).toContain("captures/after-submit/1.json");
+  expect(identifier).not.toContain("Help topic");
+  // The minter reads it like any other workspace file.
+  const read = JSON.stringify(toolResult("read_controls"));
+  expect(read).toContain("Help topic 0");
+  expect(read).not.toContain(email);
+  // A step that cannot find its screen carries the saved controls inline, capped.
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  const lastScreen = Schema.decodeUnknownSync(LastScreen)(failed).lastScreen;
+  expect(lastScreen.controls).toHaveLength(30);
+  expect(lastScreen.truncated).toBeDefined();
+  expect(JSON.stringify(mintRequests)).not.toContain(email);
+});
+
+test("a long typed identifier the next screen echoes in a label never appears in its saved or inline controls, even in part", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const identifier = longIdentifier;
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  expect(saved).toBeDefined();
+  const failed = JSON.stringify(
+    objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item),
+  );
+  expect(failed).toContain("Password for");
+  for (const text of [saved ?? "", failed, JSON.stringify(mintRequests)])
+    expect(piecesIn(text, identifier)).toEqual([]);
+});
+
+test("a label padded so a typed identifier crosses the text limit leaves the field unnamed, with no piece of the identifier", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  // Only the identifier's first 64 characters fit under the limit.
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: longIdentifier,
+    loginPath: `/sign-in?pad=${pageControlTextLimit - 64}`,
+    failNext: true,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null, visible: true }),
+  );
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  expect(Schema.decodeUnknownSync(LastScreen)(failed).lastScreen.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null }),
+  );
+  for (const text of [saved ?? "", JSON.stringify(failed), JSON.stringify(mintRequests)])
+    expect(piecesIn(text, longIdentifier)).toEqual([]);
+});
+
+test("a next screen whose first hundred controls are hidden still saves its visible sign-in field", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and a host autofill step through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const { saved } = await twoScreenSignIn({
+    identifier: shopAccount.username,
+    loginPath: `/sign-in?hidden=${pageControlsLimit}`,
+    failNext: false,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.total).toBe(pageControlsLimit + shopHelpLinks + 4);
+  expect(file.controls).toHaveLength(pageControlsLimit);
+  expect(file.controls[0]).toEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
 });

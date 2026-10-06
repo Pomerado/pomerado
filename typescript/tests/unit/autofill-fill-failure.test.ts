@@ -9,7 +9,7 @@ const inspection: AutofillInspection = {
   targets: { fields: [], submit: null },
   siteOrigin: "https://member.example.com",
   authenticationOrigins: [],
-  screen: { fields: [], submit: null, buttons: [] },
+  screen: { origin: "https://member.example.com", fields: [], submit: null, buttons: [] },
 };
 
 const lostReply = (step: AutofillStep, values: readonly string[], siteMutation: () => void) =>
@@ -26,7 +26,7 @@ const lostReply = (step: AutofillStep, values: readonly string[], siteMutation: 
             return Effect.fail(new Error("The page executed, but its reply was lost"));
           }),
       },
-      keyboard: { insertText: () => Effect.succeed(true) },
+      keyboard: { insertText: () => Effect.succeed("inserted" as const) },
     }),
   );
 
@@ -168,3 +168,62 @@ it("types nothing when a host's binding world fails", async () => {
   );
   expect(sent.map(({ method }) => method)).toEqual(["DOM.getDocument"]);
 });
+
+// A page that keeps changing a control while the host waits for it to enable the submit is
+// refused on the third change of the whole wait, not let off because each retry starts a new call.
+it("refuses a page that keeps changing its controls while the submit stays disabled", async () => {
+  const site = "https://member.example.com";
+  const target = {
+    ownerUrl: site,
+    documentOrigin: site,
+    actions: [`${site}/session`],
+    methods: ["post"],
+    submitMethod: "post",
+    editable: true,
+    control: "text" as const,
+  };
+  const submit = { ...target, editable: false, control: "other" as const };
+  const step: AutofillStep = {
+    fields: [{ slot: "password", selector: "#password" }],
+    submit: "#continue",
+  };
+  let readOnly = false;
+  let submitCalls = 0;
+  const started = Date.now();
+  const report = await Effect.runPromise(
+    fillAutofillStep({
+      step,
+      values: ["synthetic-password"],
+      inspection: {
+        ...inspection,
+        targets: { fields: [target], submit },
+        screen: { ...inspection.screen, origin: site },
+      },
+      page: {
+        targetId: "primary",
+        execute: (code: string) =>
+          Effect.sync(() => {
+            if (!code.includes("guardKey")) return { focused: true, url: inspection.page };
+            // Each retry first finds the password field toggled, then the submit still disabled.
+            submitCalls++;
+            if (submitCalls % 2 === 0) return { submit: "disabled", url: inspection.page };
+            readOnly = !readOnly;
+            return {
+              changed: { fields: [{ ...target, editable: !readOnly }], submit },
+              url: inspection.page,
+            };
+          }),
+      },
+      keyboard: { insertText: () => Effect.succeed("inserted" as const) },
+      settleMs: 0,
+    }),
+  );
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [{ slot: "password", status: "filled" }],
+    submit: "refused",
+    failureDetail: { phase: "change", context: { check: "change" } },
+  });
+  expect(submitCalls).toBe(5);
+  expect(Date.now() - started).toBeLessThan(4_000);
+}, 10_000);

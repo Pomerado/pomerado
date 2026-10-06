@@ -386,3 +386,137 @@ it("gives a review every plain answer, screened and masked, and no secret, login
   );
   expect(notice).toEqual([]);
 });
+
+it("gives a review the owner's own option and note beside their picks, as the owner's own words", async () => {
+  const request: Pick<InputRequest, "questions"> = {
+    questions: [
+      {
+        id: "store",
+        type: "choice",
+        prompt: "Which store?",
+        allowOther: true,
+        allowNote: true,
+        options: [{ id: "main", label: "Main store at https://main.example.test" }],
+      },
+      {
+        id: "regions",
+        type: "multi_choice",
+        prompt: "Which regions?",
+        minSelections: 0,
+        maxSelections: 1,
+        allowOther: true,
+        allowNote: true,
+        options: [{ id: "north", label: "North" }],
+      },
+    ],
+  };
+  const reviewed = await Effect.runPromise(
+    answersForReview(
+      request,
+      {
+        store: {
+          type: "choice",
+          value: { option: "main", note: "Orders live at https://orders.tenant.example.org" },
+        },
+        regions: {
+          type: "multi_choice",
+          value: {
+            options: ["north"],
+            other: "Islands at https://islands.example.net",
+            note: "Weekdays only",
+          },
+        },
+      },
+      (text) => Effect.succeed(`<${text}>`),
+    ),
+  );
+  expect(reviewed).toEqual([
+    {
+      question: "<Which store?>",
+      answer: "<Main store at https://main.example.test>",
+      note: "<Orders live at https://orders.tenant.example.org>",
+    },
+    {
+      question: "<Which regions?>",
+      answer: ["<North>"],
+      other: "<Islands at https://islands.example.net>",
+      note: "<Weekdays only>",
+      typed: true,
+    },
+  ]);
+  // A later review carries both to Guardian, and their links name where the owner's work lives.
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+      { ...pending, answeredQuestions: reviewed },
+      question,
+      unreadable,
+    ),
+  );
+  const input: unknown = JSON.parse(userText(requests[0]));
+  expect(input).toMatchObject({
+    trusted_authority: {
+      answeredQuestions: [
+        { answer: "<Main store at https://main.example.test>", note: reviewed[0]?.note },
+        { answer: ["<North>"], other: reviewed[1]?.other, note: "<Weekdays only>" },
+      ],
+      ownerNamedOrigins: ["https://orders.tenant.example.org", "https://islands.example.net"],
+    },
+  });
+});
+
+it("never takes an option label the owner typed back as a note or an own option for the owner's words", async () => {
+  const label = "Main store at https://main.example.test";
+  const reviewed = await Effect.runPromise(
+    answersForReview(
+      {
+        questions: [
+          {
+            id: "store",
+            type: "choice",
+            prompt: "Which store?",
+            allowOther: true,
+            allowNote: true,
+            options: [
+              { id: "main", label },
+              { id: "outlet", label: "Outlet" },
+            ],
+          },
+          {
+            id: "stores",
+            type: "multi_choice",
+            prompt: "Which stores?",
+            minSelections: 0,
+            maxSelections: 2,
+            allowOther: true,
+            allowNote: true,
+            options: [
+              { id: "main", label },
+              { id: "outlet", label: "Outlet" },
+            ],
+          },
+        ],
+      },
+      {
+        store: { type: "choice", value: { option: "outlet", note: ` ${label.toUpperCase()} ` } },
+        stores: { type: "multi_choice", value: { options: ["outlet"], other: label } },
+      },
+      Effect.succeed,
+    ),
+  );
+  expect(reviewed).toEqual([
+    { question: "Which store?", answer: "Outlet" },
+    { question: "Which stores?", answer: ["Outlet"], other: label },
+  ]);
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+      { ...pending, answeredQuestions: reviewed },
+      question,
+      unreadable,
+    ),
+  );
+  const input: unknown = JSON.parse(userText(requests[0]));
+  expect(input).toMatchObject({ trusted_authority: { answeredQuestions: reviewed } });
+  expect(input).not.toMatchObject({ trusted_authority: { ownerNamedOrigins: expect.anything() } });
+});

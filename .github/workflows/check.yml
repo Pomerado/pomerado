@@ -1,8 +1,8 @@
 # Runners. Trusted runs use Blacksmith runners, which are faster. Every run in this repository is
-# trusted except a pull request from a fork: pushes to main, the release workflow's call, whose
-# event is the tag push, and pull requests from branches here, which only people with write access
-# can push. A fork's pull request runs on a free GitHub-hosted runner by default. That default is
-# not a boundary: a fork's pull request runs its own copy of this file, so it can name any runner.
+# trusted except a pull request from a fork: the release workflow's call on each push to main, and
+# pull requests from branches here, which only people with write access can push. A fork's pull
+# request runs on a free GitHub-hosted runner by default. That default is not a boundary: a fork's
+# pull request runs its own copy of this file, so it can name any runner.
 # Every outside contributor's runs wait for a maintainer, who checks workflow edits first.
 # Forks of this repository run on GitHub-hosted runners too. Approved outside code can still reach
 # a Blacksmith runner, and release publishes the tarball the check job builds, so no job here
@@ -10,11 +10,15 @@
 # Blacksmith sticky disk. Publish runs on a GitHub-hosted runner, which npm provenance needs.
 name: Check
 on:
-  # Only main: pull requests run below, so other pushes would only run the same commit twice.
-  push:
-    branches: [main]
+  # Pushes to main run this through the release workflow, which publishes the tarball it tests.
   pull_request:
   workflow_call:
+    inputs:
+      version:
+        description: Version to set in package.json before the build, such as a canary's
+        required: false
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -97,6 +101,11 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
+      - name: Set the release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: npm pkg set version="$VERSION"
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck

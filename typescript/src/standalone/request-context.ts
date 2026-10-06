@@ -43,6 +43,7 @@ const executionReviewer = (
   pending: (entrypoint: string, input: unknown) => PendingExecution,
   readSources: (sources: ReadonlyMap<string, string>) => ReturnType<typeof makeSourceInspector>,
   executions: NonNullable<PendingExecution["mintContext"]>["executions"][number][],
+  signInCodes: () => readonly string[],
 ) => {
   const review = (
     entrypoint: string,
@@ -61,6 +62,7 @@ const executionReviewer = (
             executedSources: [...sources.keys()],
             currentExecution: { purpose, target },
             browser: "active",
+            ...(signInCodes().length === 0 ? {} : { signInCodes: [...signInCodes()] }),
             executions: [...executions],
           },
         },
@@ -106,6 +108,11 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let allowedEffect = request.effect === "write" ? "write" : "read";
     const executions: NonNullable<PendingExecution["mintContext"]>["executions"][number][] = [];
     const answeredQuestions = new Map<string, AnsweredQuestion>();
+    /** Handles of codes the agent asked for during this attempt's unverified sign-in. */
+    const signInCodeHandles = new Set<string>();
+    const signedIn = () =>
+      executions.some((execution) => execution.authentication?.state === "authenticated");
+    const signInCodes = () => (signedIn() ? [] : [...signInCodeHandles]);
     const guardian = makeGuardian(
       makeOpenAIReviewer(policy, false, {
         executionEnvironment: nativeExecutionEnvironment,
@@ -130,7 +137,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       answeredQuestions: [...answeredQuestions.values()],
     });
     const readSources = (sources: ReadonlyMap<string, string>) => sourceInspector(session, sources);
-    const review = executionReviewer(guardian, pending, readSources, executions);
+    const review = executionReviewer(guardian, pending, readSources, executions, signInCodes);
     return {
       siteOrigin,
       guardian,
@@ -161,6 +168,24 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           ),
           Effect.asVoid,
         ),
+      /**
+       * Notes the handles the agent received for one-time or authenticator code questions it
+       * asked after an authenticate step and before any verified sign-in: codes the site sent as
+       * part of that sign-in, which the agent may type into its code screen.
+       */
+      askedByAgent: (candidate: Pick<InputRequest, "questions">, issued: ValidAnswers) => {
+        if (signedIn() || !executions.some((execution) => execution.purpose === "authenticate"))
+          return;
+        for (const question of candidate.questions) {
+          const answer = issued[question.id];
+          if (
+            question.type === "secret" &&
+            (question.secretKind === "one_time_code" || question.secretKind === "totp") &&
+            answer?.type === "secret"
+          )
+            signInCodeHandles.add(answer.value);
+        }
+      },
       setEffect: (value: "read" | "write") => {
         allowedEffect = value;
       },
