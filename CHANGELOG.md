@@ -29,6 +29,28 @@
   - Migrate by giving the agent your own notice through `drainStartIncidents` if a restarted write build must read back before it writes again.
 - In `pomerado/core/destinations/autofill-step`, `AutofillInspection.screen` adds a required `origin`, which `inspectAutofillStep` sets. A filled `AutofillStepReport`'s `submit` adds `"stayed_disabled"`: the fields were filled, but the submit stayed disabled through the wait, so the host never clicked it.
   - Migrate by setting `origin` on any inspection you build yourself, and by handling `"stayed_disabled"` in any exhaustive check on `submit`.
+- The package now holds only code the local host runs, plus the hook interfaces another host implements. The changes from here to the end of this list follow from that, and local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for them.
+- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
+  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
+  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
+  - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
+- `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
+  - Migrate by creating your isolated world in that function and returning its context ID.
+- Modules and exports nothing in the package used are removed.
+  - `pomerado/core/browser/promise`, with `browserPromise`. The local host never ran it.
+  - `pomerado/core/destinations/cdp-contracts`, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
+  - `pomerado/core/privacy/common-values`, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
+  - `TargetPageMismatch`, `TargetNotFound`, `TargetAmbiguous`, `TargetGuardMismatch`, `TargetGuardUnavailable`, `ConditionTimeout`, `ConditionObservation` and `ConditionState` from `pomerado/runtime` and `pomerado/core/runtime/errors`. Nothing in the package raised them.
+  - `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` and `KnownDialog` from `pomerado/core/browser/dialogs/contracts`. `ExpectedConfirm` stays.
+  - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
+  - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
+  - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
+  - `boundaryError` from `pomerado/core/execution/boundary`
+  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
+  - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
+  - `refusalEvidence` and `callFailure` from `pomerado/core/destinations/autofill-refusal`. A refused step's evidence is still its report's `failureDetail.context`.
+  - Migrate by keeping your own copy of what you use in your host.
 
 ### Other changes
 
@@ -52,31 +74,6 @@
 - A local edit the minter can't apply now says the edit was not applied and why. That covers a patch that doesn't match, a file that already exists or is missing, and a file past the size or file-count limit. The file is unchanged, and no new folder is left behind. These edits no longer report "Workspace edit outcome unknown".
 - The minter's `read_source` now reads local workspace files. Through 0.2.0 every local read failed as unavailable, because the local workspace refused the one extra byte the minter asks for to detect an oversized file. A file past 8 MiB is still refused.
 - Local runs stage authored source a level below the SDK, as the workspace guide describes. The documented `../../runtime/index.js` import from `src/` and the skill references' imports now load. Integrations saved with `../runtime/index.js` still run unchanged.
-
-### Breaking changes
-
-The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
-
-- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
-  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
-  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
-- `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
-  - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
-- `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
-  - Migrate by creating your isolated world in that function and returning its context ID.
-- `pomerado/core/browser/promise` is removed. The local host never ran `browserPromise`.
-- `pomerado/core/destinations/cdp-contracts` is removed, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
-- `pomerado/core/privacy/common-values` is removed, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
-- `pomerado/runtime` and `pomerado/core/runtime/errors` no longer export `TargetPageMismatch`, `TargetNotFound`, `TargetAmbiguous`, `TargetGuardMismatch`, `TargetGuardUnavailable`, `ConditionTimeout`, `ConditionObservation` or `ConditionState`. Nothing in the package raised them.
-- `pomerado/core/browser/dialogs/contracts` no longer exports `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` or `KnownDialog`. `ExpectedConfirm` stays.
-- Exports nothing in the package used are removed.
-  - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
-  - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
-  - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
-  - `boundaryError` from `pomerado/core/execution/boundary`
-  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
-  - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
-- Migrate from any removed module or export by keeping your own copy in your host.
 
 ## 0.2.0
 
