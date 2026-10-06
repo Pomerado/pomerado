@@ -4,7 +4,7 @@ import type { Deadline } from "./deadline.js";
 import {
   ConfirmQuestion,
   InputRequest,
-  QuestionId,
+  questionIdPattern,
   SecretQuestion,
   TextQuestion,
   validateAnswer,
@@ -57,9 +57,16 @@ export const ScriptQuestionDeclaration = Schema.Union(
 );
 export type ScriptQuestionDeclaration = typeof ScriptQuestionDeclaration.Type;
 export const ScriptQuestionDeclarations = Schema.Record({
-  key: QuestionId,
+  key: Schema.String,
   value: ScriptQuestionDeclaration,
-});
+}).pipe(
+  // A Record with a patterned key silently discards nonmatching keys during ordinary decode.
+  // Keep every key until the whole declaration is validated so none vanish before review.
+  Schema.filter((questions) => Object.keys(questions).every((id) => questionIdPattern.test(id)), {
+    message: () =>
+      "question ids must start with a lowercase letter and contain only lowercase letters, digits, or underscores (up to 64 characters)",
+  }),
+);
 export type ScriptQuestionDeclarations = Readonly<Record<string, ScriptQuestionDeclaration>>;
 
 /** One option the page offers now. */

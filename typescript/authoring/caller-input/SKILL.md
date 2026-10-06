@@ -31,7 +31,9 @@ pomerado:hosted:end -->
    literal inside the entrypoint's own `defineOperation` call: during the build the host
    reads it from that source, not from the running script, and a computed or imported
    declaration declares nothing, so every question is refused as `Undeclared`. Each question
-   the example asks is also reviewed before the build's owner sees it.
+   the example asks is also reviewed before the build's owner sees it. Question ids start with a
+   lowercase letter and use only lowercase letters, digits and underscores, up to 64 characters;
+   use `page_title`, not `pageTitle`. An invalid id is refused before execution.
    - `{ type: "choice", prompt, allowOther? }`: one option; `allowOther` lets the caller
      type their own answer, returned as `{ other }`. Own text that repeats exactly one
      offered option's label (or its listed form entry, `id (label)`) returns that option.

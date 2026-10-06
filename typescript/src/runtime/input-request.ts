@@ -8,7 +8,8 @@ import { Data, Either, Schema, type Effect } from "effect";
  */
 
 /** A question's key in the request and in the answer. */
-export const QuestionId = Schema.String.pipe(Schema.pattern(/^[a-z][a-z0-9_]{0,63}$/));
+export const questionIdPattern = /^[a-z][a-z0-9_]{0,63}$/;
+export const QuestionId = Schema.String.pipe(Schema.pattern(questionIdPattern));
 /** The host's opaque name for an offered option; a script's or provider's own value stays private. */
 const OptionId = Schema.String.pipe(Schema.pattern(/^[a-z0-9_]{1,64}$/));
 
