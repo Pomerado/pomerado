@@ -289,7 +289,7 @@ const asked = (...slots: readonly AutofillSlot[]): AutofillStepRequest["fields"]
 /** What a host fill reports: each field's slot and status, and its submit. */
 const filled = (
   fields: readonly (readonly [AutofillSlot, AutofillFieldStatus])[],
-  submit: "clicked" | "failed" | "not_attempted" | "refused" | "none" = "clicked",
+  submit: "clicked" | "failed" | "not_attempted" | "refused" | "stayed_disabled" | "none" = "clicked",
 ): AutofillStepReport => ({
   outcome: "filled",
   fields: fields.map(([slot, status]) => ({ slot, status })),
@@ -429,7 +429,7 @@ describe("makeBuildStart", () => {
     expect(build.calls).toEqual(["entry", "run", "reset:clear", "root", "run"]);
   });
 
-  it("counts what a fill typed, whatever became of its submit, and an uncertain step's fields", async () => {
+  it("counts what a fill typed, whatever became of a submit it could click, and an uncertain step's fields", async () => {
     const login = asked("username", "password");
     const uncertain = {
       outcome: "uncertain",
@@ -465,6 +465,17 @@ describe("makeBuildStart", () => {
           ["username", "filled"],
           ["password", "failed"],
         ]),
+        login,
+      ],
+      // A submit the page kept disabled was never clicked, so nothing went out.
+      [
+        filled(
+          [
+            ["username", "filled"],
+            ["password", "filled"],
+          ],
+          "stayed_disabled",
+        ),
         login,
       ],
       [
