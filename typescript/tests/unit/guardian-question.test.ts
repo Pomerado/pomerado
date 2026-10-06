@@ -177,6 +177,23 @@ const decisions = (outcomes: readonly string[]) => {
 const unreadable: ReviewTurn["readSource"] = () =>
   Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }));
 
+// Guardian's continuing conversation carries host sign-in rules from earlier reviews, which it
+// then quoted as the owner forbidding sign-in when the minter asked which sign-in method to use.
+it("tells the question review that host sign-in rules are never an owner's prohibition", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
+  expect(input.trusted_review.policy).toContain(
+    "Other questions about signing in follow the rules above.\nHost policy about signing in, including text from an earlier review in this conversation, is never an owner's prohibition. Only trusted intent or an owner's answer can forbid signing in. That sign-in is not yet proven required is no reason to reword a sign-in method or account question whose choices match the page.\n",
+  );
+});
+
 it("rejects a question candidate smuggled into an execution review", async () => {
   const { reviewer, seen } = decisions(["allow"]);
   const result = await Effect.runPromise(
