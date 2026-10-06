@@ -140,3 +140,31 @@ it("types a credential in the bound field's main world with four DevTools comman
     { value: "s3cret" },
   ]);
 });
+
+it("resolves the field in the execution context a host's binding world returns", async () => {
+  const { cdp, sent } = recordingCdp();
+  const bindings: unknown[] = [];
+  const keyboard = makeCredentialKeyboard(cdp, undefined, (_cdp, binding) =>
+    Effect.sync(() => {
+      bindings.push(binding);
+      return 42;
+    }),
+  );
+  expect(await Effect.runPromise(keyboard.insertText(target, "s3cret"))).toBe(true);
+  expect(bindings).toEqual([{ sessionId: "page", frameId: "child-frame" }]);
+  expect(sent[1]).toEqual({
+    method: "DOM.resolveNode",
+    params: { backendNodeId: 4, executionContextId: 42 },
+  });
+});
+
+it("types nothing when a host's binding world fails", async () => {
+  const { cdp, sent } = recordingCdp();
+  const keyboard = makeCredentialKeyboard(cdp, undefined, () =>
+    Effect.fail(new Error("World unavailable")),
+  );
+  expect(await Effect.runPromise(Effect.either(keyboard.insertText(target, "s3cret")))).toMatchObject(
+    { _tag: "Left", left: { message: "World unavailable" } },
+  );
+  expect(sent.map(({ method }) => method)).toEqual(["DOM.getDocument"]);
+});

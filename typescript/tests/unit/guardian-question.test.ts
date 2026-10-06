@@ -7,12 +7,15 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { answersForReview, questionForReview } from "../../src/guardian/question.js";
 import type { PendingQuestion } from "../../src/guardian/question.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
+
+const native = { executionEnvironment: nativeExecutionEnvironment };
 
 afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
 
@@ -126,7 +129,7 @@ it("reviews a question with the execution context and the bounded capture reader
     [message({ outcome: "allow_business", rationale: "Plan choice needs the user." })],
   ]);
   const result = await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       question,
       (path, offset) =>
@@ -266,7 +269,7 @@ it("reviews every string the caller will see, screened, but no host-held login d
   expect(JSON.stringify(screened)).not.toContain("PRIVATE_");
   const requests = scripted([[message({ outcome: "authentication", rationale: "Login." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       screened,
       unreadable,

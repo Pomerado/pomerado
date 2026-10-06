@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { Usage } from "@openai/agents";
+import type { ModelRequest } from "@openai/agents";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
+import type { GuardianExecutionEnvironment } from "../../src/guardian/execution-policy.js";
+import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { UpstreamPolicySlotInvalid, withTenantPolicy } from "../../src/guardian/upstream-policy.js";
 import { markedUpstreamPolicy } from "../support/tenant-policy.js";
 
@@ -77,5 +86,98 @@ describe("upstream Guardian policy", () => {
   it("keeps a comment that does not open the policy", () => {
     const policy = `Before.\n<!-- kept -->\n${markedUpstreamPolicy}`;
     expect(withTenantPolicy(policy, "TENANT")).toContain("<!-- kept -->");
+  });
+});
+
+/** Another host's text for every slot, each marked so the test can find it. */
+const otherHost: GuardianExecutionEnvironment = {
+  name: "other-host",
+  operations: "OTHER-OPERATIONS runs operations elsewhere.",
+  bypassTarget: "OTHER-BYPASS",
+  offlineTargets: "OTHER-OFFLINE stays offline.",
+  commands: "OTHER-COMMANDS runs commands elsewhere.",
+  signIn: "OTHER-SIGN-IN",
+  challenges: "OTHER-CHALLENGES waits elsewhere.",
+  executor: "OTHER-EXECUTOR",
+};
+const slots = [
+  "operations",
+  "bypassTarget",
+  "offlineTargets",
+  "commands",
+  "signIn",
+  "challenges",
+  "executor",
+] as const;
+
+describe("Guardian execution environment", () => {
+  it("puts each of the host's texts in its place in the execution policy", () => {
+    const policy = guardianExecutionPolicy(otherHost);
+    for (const slot of slots) expect(policy.split(otherHost[slot])).toHaveLength(2);
+    expect(policy).toContain("attempts to bypass OTHER-BYPASS.");
+    expect(policy).toContain("Sign-in is handled by the host OTHER-SIGN-IN");
+    expect(policy).toContain("confirms only OTHER-EXECUTOR cleanup");
+    for (const slot of ["operations", "offlineTargets", "commands", "signIn", "challenges"] as const)
+      expect(policy).not.toContain(nativeExecutionEnvironment[slot]);
+    const native = guardianExecutionPolicy(nativeExecutionEnvironment);
+    for (const slot of slots) expect(native).toContain(nativeExecutionEnvironment[slot]);
+  });
+
+  it("sends the model the host's policy and names the host in the review input", async () => {
+    const requests: ModelRequest[] = [];
+    const reviewer = makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+      executionEnvironment: otherHost,
+      modelProvider: {
+        getModel: () => ({
+          getResponse: async (request) => {
+            requests.push(request);
+            return {
+              usage: new Usage(),
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  status: "completed",
+                  content: [
+                    {
+                      type: "output_text",
+                      text: JSON.stringify({ outcome: "allow", rationale: "Synthetic review" }),
+                    },
+                  ],
+                },
+              ],
+            };
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+    });
+    await Effect.runPromise(
+      reviewer.run({
+        reviewId: "review_environment",
+        pending: {
+          invocationId: "job_environment",
+          attemptId: "attempt_environment",
+          entrypoint: "operation.mjs",
+          screenedIntent: "Read the title",
+          screenedInput: "{}",
+          screenedObservations: "No prior execution",
+          accountScope: "account_a",
+          allowedOrigins: ["https://example.test"],
+          allowedEffects: ["read"],
+        },
+        readSource: () => Effect.succeed("export default {};"),
+        reportDiagnostic: () => Effect.void,
+      }),
+    );
+    expect(requests).toHaveLength(1);
+    const instructions = String(requests[0]?.systemInstructions);
+    expect(instructions).toContain(guardianExecutionPolicy(otherHost));
+    // The review input is one JSON document inside the user message.
+    expect(JSON.stringify(requests[0]?.input)).toContain(
+      String.raw`\"trusted_execution_environment\":\"other-host\"`,
+    );
   });
 });

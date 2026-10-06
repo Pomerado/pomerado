@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { makeGuardian, ReviewFailure } from "../guardian/review.js";
 import type { PendingExecution } from "../guardian/review.js";
 import { makeOpenAIReviewer } from "../guardian/openai.js";
+import { nativeExecutionEnvironment } from "../guardian/execution-policy.js";
 import { answersForReview, type AnsweredQuestion } from "../guardian/question.js";
 import { makeSourceInspector } from "../guardian/source.js";
 import { MintFailure, type ExecutionRequest, type ExecutionEvidence } from "../mint/contracts.js";
@@ -108,7 +109,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const answeredQuestions = new Map<string, AnsweredQuestion>();
     const guardian = makeGuardian(
       makeOpenAIReviewer(policy, false, {
-        executionEnvironment: "native",
+        executionEnvironment: nativeExecutionEnvironment,
         ...(options.guardianProvider === undefined
           ? {}
           : { modelProvider: options.guardianProvider }),
