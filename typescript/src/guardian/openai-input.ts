@@ -25,11 +25,13 @@ export const guardianReviewInput = (
         return registrableDomain === undefined ? [] : [{ scheme: "https", registrableDomain }];
       }),
       allowedEffects: turn.pending.allowedEffects,
-      // The `typed` mark is the host's, for ownerNamedOrigins only.
+      // `typed: true` marks text the owner wrote; without it the answer is the agent's option
+      // label or default that the owner picked or approved.
       answeredQuestions: absentWhenEmpty(
-        (turn.pending.answeredQuestions ?? []).map(({ question, answer }) => ({
+        (turn.pending.answeredQuestions ?? []).map(({ question, answer, typed }) => ({
           question,
           answer,
+          ...(typed === true ? { typed: true } : {}),
         })),
       ),
       ownerNamedOrigins: absentWhenEmpty(ownerNamedOrigins(turn.pending)),

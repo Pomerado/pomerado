@@ -131,13 +131,13 @@ export const questionForReview = <E>(
 
 /**
  * One question the owner answered through the host's question flow, as every later Guardian
- * review sees it: the screened prompt and the screened answer. A choice is its option's label (an
- * account-specific option's masked label, as the API shows it) or the owner's own text, a multiple
- * choice its labels, a confirm whether the owner confirmed. `typed` marks an answer whose text the
- * owner wrote: a text answer, a choice's own text that repeats no offered option, or a confirm's
- * text other than the offered default. An option label is the minting model's wording even when
- * the owner picks it or types it back, so it never names where the owner's work lives
- * (`ownerNamedOrigins`).
+ * review sees it: the screened prompt, the screened answer and the `typed` mark. A choice is its
+ * option's label (an account-specific option's masked label, as the API shows it) or the owner's
+ * own text, a multiple choice its labels, a confirm whether the owner confirmed. `typed` marks an
+ * answer whose text the owner wrote: a text answer, a choice's own text that repeats no offered
+ * option, or a confirm's text other than the offered default. An option label is the minting
+ * model's wording even when the owner picks it or types it back, so it never names where the
+ * owner's work lives (`ownerNamedOrigins`).
  */
 export const AnsweredQuestion = Schema.Struct({
   question: Schema.String,

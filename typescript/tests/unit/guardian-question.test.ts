@@ -7,6 +7,7 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { guardianReviewInput } from "../../src/guardian/openai-input.js";
 import { answersForReview, questionForReview } from "../../src/guardian/question.js";
 import type { PendingQuestion } from "../../src/guardian/question.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
@@ -382,4 +383,43 @@ it("gives a review every plain answer, screened and masked, and no secret, login
     ),
   );
   expect(notice).toEqual([]);
+});
+
+it("shows a review which answers are the owner's own text and which are picked options", async () => {
+  const answered = await Effect.runPromise(
+    answersForReview(
+      {
+        questions: [
+          {
+            id: "scope",
+            type: "choice",
+            prompt: "How should the request go?",
+            allowOther: true,
+            options: [
+              { id: "full", label: "Run every requested step" },
+              { id: "short", label: "Skip the optional step and submit" },
+            ],
+          },
+          { id: "note", type: "text", prompt: "Anything to change?" },
+        ],
+      },
+      {
+        scope: { type: "choice", value: "short" },
+        note: { type: "text", value: "Leave out the optional step." },
+      },
+      Effect.succeed,
+    ),
+  );
+  const input = JSON.parse(
+    guardianReviewInput({
+      reviewId: "review_typed",
+      pending: { ...pending, answeredQuestions: answered },
+      readSource: () => Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })),
+    }),
+  ) as { trusted_authority: { answeredQuestions?: unknown } };
+  // Only the owner's own text carries the mark; the picked option label the agent wrote does not.
+  expect(input.trusted_authority.answeredQuestions).toEqual([
+    { question: "How should the request go?", answer: "Skip the optional step and submit" },
+    { question: "Anything to change?", answer: "Leave out the optional step.", typed: true },
+  ]);
 });
