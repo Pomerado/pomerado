@@ -1,260 +1,206 @@
 <h1 align="center"><a href="https://pomerado.ai">Pomerado</a></h1>
 
-<p align="center">Turn websites into MCP integrations.</p>
-<p align="center">Describe what you want to do on a website. Pomerado builds an integration your agent can use.</p>
+<p align="center">Turn websites into MCP integrations your agent can rely on.</p>
+<p align="center">Describe a task on a website. Pomerado builds a tested integration that any MCP client can call.</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License MIT"></a>
+  <a href="https://www.npmjs.com/package/pomerado"><img src="https://img.shields.io/npm/v/pomerado?style=for-the-badge&amp;logo=npm" alt="npm version"></a>
   <img src="https://img.shields.io/badge/node-24.21%2B%20%3C25-339933?style=for-the-badge&amp;logo=nodedotjs&amp;logoColor=white" alt="Node 24.21 or later in Node 24">
-  <img src="https://img.shields.io/badge/pnpm-10.34.5-F69220?style=for-the-badge&amp;logo=pnpm&amp;logoColor=white" alt="pnpm 10.34.5">
 </p>
 
 <p align="center">
-  <a href="#quickstart">Quickstart</a> ·
+  <a href="#get-started">Get started</a> ·
   <a href="#create-an-integration">Create an integration</a> ·
   <a href="#use-your-integration">Use your integration</a> ·
-  <a href="#repository-guide">Repository guide</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#documentation-for-humans-and-agents">Docs</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
 ---
 
-## How it works
+## What Pomerado does
 
-Pomerado helps agents use websites, including ones without APIs. Connect it to Codex, describe a task, and get a reusable MCP integration. Both Pomerado and the integrations you create run on your computer.
+Pomerado builds MCP integrations for websites, including sites without an API. Each integration is code you own, and it runs on your computer.
+
+- Each tool does what it says. Pomerado runs the task in a real browser while it builds, then validates every input and output against the tool's schema.
+- Guardian reviews each browser action before it runs and the finished source before it is saved. Write access always needs your choice.
+- Your agent calls the integration like any other MCP tool. It works with any MCP client and any model your agent runs on.
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│  website task → Pomerado MCP → integration MCP → Playwright  │
-└────────────────────────────────────────────────────────────┘
+"Read the main heading from example.com"     you describe a task
+                  │
+                  ▼
+Pomerado drives the site in Chromium          mint, get_job, provide_input
+                  │
+                  ▼
+pomerado-integrations/example_reader/         Pomerado saves an MCP integration
+                  │
+                  ▼
+your agent calls example_reader               validated output
 ```
 
-- Describe a task in Codex and let Pomerado build the integration.
-- Connect the generated MCP and call it whenever you need it.
-- Answer sign-in questions and other prompts in the same chat.
-- Use your own browser and model API key.
+## Get started
 
-This repository contains Pomerado's minter and Guardian, with native Playwright for browser execution. Both MCPs use stdio, so Codex starts them for you. Model requests go to your configured provider.
+You need these first.
 
-## Quickstart
+- macOS or Linux.
+- Node 24.21 or a later Node 24 release. Check with `node --version`.
+- An OpenAI API key. Pomerado calls OpenAI models to build and review integrations. Your agent can run on any model.
+- An MCP client that runs local servers, such as Claude Code, Codex, Cursor, VS Code, Claude Desktop or Gemini CLI.
 
-Use macOS or Linux, Node 24.21 or a later Node 24 release, and pnpm 10.34.5.
+Install Pomerado and its browser.
 
 ```sh
-git clone https://github.com/Pomerado/pomerado.git
-cd pomerado
-corepack enable
-corepack pnpm install --frozen-lockfile
-corepack pnpm exec playwright install chromium
-corepack pnpm build
-export OPENAI_API_KEY='your-model-api-key'
+npx -y -p pomerado pomerado-mcp --help
+npx -y -p pomerado playwright install chromium
 ```
 
-On Linux, install Chromium's system dependencies with `corepack pnpm exec playwright install --with-deps chromium` if needed.
+- The first command downloads Pomerado and prints its usage. Running it once lets your client start Pomerado from npm's cache.
+- The second command installs the Chromium build that Pomerado's Playwright expects. Playwright may warn about project dependencies. The browser installs anyway.
+- On Linux, add `--with-deps` after `install` if Chromium's system libraries are missing.
 
-The shared model configuration uses `gpt-6-sol` for minting and `gpt-6-luna` for Guardian. Your model account must have access to both. Local hosting still sends model requests to your configured provider. Library callers can inject Agents SDK `ModelProvider` implementations through `minterProvider` and `guardianProvider`.
+Pomerado is a standard MCP stdio server. This is its entry for clients that read an `mcpServers` file.
 
-### Connect Pomerado to Codex
-
-Find your Node executable and checkout paths.
-
-```sh
-node -p 'process.execPath'
-pwd
+```json
+{
+  "mcpServers": {
+    "pomerado": {
+      "command": "npx",
+      "args": ["-y", "-p", "pomerado", "pomerado-mcp", "mint", "--root", "/absolute/path/to/pomerado-integrations"]
+    }
+  }
+}
 ```
 
-Add this section to `~/.codex/config.toml`, replacing the paths with yours. Keep your other configuration sections.
+- `--root` is the folder where Pomerado saves integrations. Use an absolute path, because clients start servers from different folders.
+- The server needs `OPENAI_API_KEY` in its environment. Keep the key out of chat.
+- Starting the server and listing its tools launches no browser and calls no model.
 
-```toml
-[mcp_servers.pomerado]
-command = "/absolute/path/to/node"
-args = ["/absolute/path/to/pomerado/dist/typescript/src/standalone/mcp-cli.js", "mint", "--root", "/absolute/path/to/integrations"]
-env_vars = ["OPENAI_API_KEY"]
+Add Pomerado to your client.
+
+| Client | Add Pomerado | Checked |
+| --- | --- | --- |
+| Claude Code | `claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` | Verified |
+| Codex | `codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations`, then add `env_vars` | Verified |
+| Gemini CLI | `gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` | Verified |
+| Cursor | Add the entry to `~/.cursor/mcp.json` | From Cursor's docs |
+| VS Code | Add the entry to `.mcp.json` in your workspace, or run `code --add-mcp` with it | From VS Code's docs |
+| Claude Desktop | Add the entry to `claude_desktop_config.json` | From the MCP docs |
+
+Each client passes the key differently. Codex needs `env_vars = ["OPENAI_API_KEY"]` in its config. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client in the table.
+
+Ask your agent which Pomerado tools it has. It should list `mint`, `get_job`, `provide_input` and `cancel_job`.
+
+## Let your agent set it up
+
+Paste this into your agent.
+
+```text
+Set up Pomerado for me by following https://raw.githubusercontent.com/Pomerado/pomerado/main/docs/agent-setup.md
 ```
 
-Codex must have `OPENAI_API_KEY` in its environment so it can forward the value to the MCP. Keep that key out of chat and integration source. The configuration names the environment variable without writing its value. See the [Codex MCP configuration documentation](https://learn.chatgpt.com/docs/extend/mcp) for client setup.
-
-The configured root is where minted integrations are saved. Starting the MCP and listing tools do not launch Chromium or invoke a model.
+The agent checks Node, installs Chromium and adds Pomerado to the client it runs in. It asks before changing anything you didn't mention. It never asks for your key in chat.
 
 ## Create an integration
 
-Ask Codex to create an integration with Pomerado. We call this minting.
+Ask your agent to create an integration with Pomerado. We call this minting.
 
 > Use Pomerado to create an integration named example_reader that reads the main heading from https://example.com. Keep it read-only.
 
-- `mint` creates an integration from a name, URL, task description, optional input, and `read` or `write` permission. Names use lowercase letters, digits and underscores.
-- `get_job` checks progress and waits for a question or completion. Minting starts once and returns a job ID.
-- `provide_input` sends your answer to a question in the same chat. Pomerado checks that the answer matches the requested format.
-- `cancel_job` stops the job and cleans up its browser and child process. An action already sent to a website may have taken effect.
+Your agent uses four tools.
 
-Codex uses these tools to continue the same job. Checking progress or answering a question never starts the integration again. The default active mint budget is 20 minutes. Time spent answering a human question does not consume that budget.
+- `mint` starts a job from a name, a URL, a task, optional input and `read` or `write` authority. It returns a job ID right away.
+- `get_job` waits up to 30 seconds for progress, a question or the result. Checking never starts the work again.
+- `provide_input` sends your answer to a question. Pomerado checks the answer against the question's format.
+- `cancel_job` stops the job and closes its browser. An action already sent to a website may have taken effect.
 
-Choose write authority only when you intend to change the website. A write mint can perform the requested action while creating the integration. Its final source is checked without repeating that action. The standalone host requires write authority up front.
+Choose the authority before you start.
 
-The destination must be new. Pomerado reserves it before starting work, so a name collision cannot run the task and then fail to save it.
+- Choose `read` when the task only looks at the website.
+- Choose `write` only when the task changes something, such as submitting a form.
+- A write mint performs that action once while it builds, then checks the final source without repeating it.
+- A read mint that finds the task needs a change asks you before it switches to write.
+
+Names start with a lowercase letter and use lowercase letters, digits and underscores. The integration's folder must not exist yet. A mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count.
 
 ## Use your integration
 
-When minting finishes, Pomerado saves the integration and returns the paths you need to connect it.
+When minting finishes, Pomerado saves the integration and returns its paths.
 
 ```text
-integrations/example_reader/
+pomerado-integrations/example_reader/
 ├── src/                 Generated operation modules
-├── pomerado.json        Entrypoint and input/output schemas
-├── deployment.json      Tool name, description, URL, intent and authority
-├── mcp.mjs              Fixed launcher for the shared Pomerado runtime
-├── codex-mcp.toml       Local Codex server configuration
-└── README.md            Commands and usage for this integration
+├── pomerado.json        Entrypoint and input and output schemas
+├── deployment.json      Tool name, description, URL, task and authority
+├── mcp.mjs              Launcher for the shared Pomerado runtime
+├── mcp.json             Standard MCP server entry, with no key
+└── README.md            Add commands for each MCP client
 ```
 
-1. Open the generated `README.md` and `codex-mcp.toml`.
-2. Copy the generated MCP section into `~/.codex/config.toml`. It already contains your local Node, launcher and runtime paths.
-3. Make sure Codex can forward `OPENAI_API_KEY`. Generated integrations still use Guardian.
-4. Reload the MCP configuration in your client and ask it to use the integration.
+1. Open the integration's `README.md`. It has the add command for each major client, with your paths filled in.
+2. Add the server and give it `OPENAI_API_KEY` the same way as Pomerado. Guardian reviews every run.
+3. Reload your client and ask your agent to use the integration.
 
 > Use example_reader to read the page heading.
 
-The integration MCP exposes a tool named after your integration, with its arguments nested under `input`. It also provides `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time.
+- The integration has one tool named after it, with its arguments under `input`.
+- It also has `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time.
+- A call returns output that matches the schema in `pomerado.json`, or a job ID to continue.
+- Calling the tool again starts a new run. With write authority that means another write.
+- The integration runs on the Pomerado installation that minted it. For a fixed path, install with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`.
 
-Ordinary calls return the validated operation output. A pending call returns a job ID to continue. Calling the business tool again starts a new execution, including another website write when the integration has write authority.
+## Questions, logins and safety
 
-The generated launcher imports your installed Pomerado runtime. Keep that installation available. The launcher source is portable, but its local configuration contains installation paths. Update those paths if you move the integration, Node or Pomerado.
+- Guardian reviews every browser action against your task and refuses actions outside it.
+- Pomerado asks for logins, codes and choices as job questions. Your agent answers them with `provide_input`.
+- A question expires after 10 minutes.
+- Answers sent through `provide_input`, passwords and codes included, are visible to your MCP client and its model provider. Your agent should tell you this before it collects a password.
+- Pomerado saves no logins. It has no credential vault, saved login recipe or submission ledger, and it reads no SMS or authenticator codes for you.
+- Each job gets a fresh browser context and closes it at the end. An integration doesn't inherit the signed-in session from its mint.
+- Website content reaches the model provider. Secrets you supply are masked in what the minting model sees and checked for in generated source.
+- Operation outputs come back without secret redaction. Error messages mask values that look like credentials.
+- Generated code runs with your user account's file and network access. Guardian review is not an operating system sandbox.
 
-## Questions and authentication
+## How it works
 
-When a task needs a login, Pomerado can inspect the sign-in form, ask for credentials in chat, and fill them into the browser. It uses the same sign-in and autofill helpers as the Pomerado application.
+Pomerado has three parts.
 
-Answers sent through `provide_input`, including passwords and codes, are visible to the MCP client and its model provider. Codex should explain this before collecting protected answers. There is no portal, credential vault, saved login recipe, submission ledger or automatic SMS/TOTP service.
+- The minter drives Chromium through Playwright and writes the integration's source.
+- Guardian reviews each action and the finished source.
+- The runtime runs a saved integration as its own MCP server.
 
-Each MCP job owns a fresh browser context and closes it when the job ends. A minted integration does not inherit the mint's signed-in browser. Authenticated runs need their own declared sign-in inputs and implementation. Automatic login replay is not included. The library can keep a signed-in session open across mint and run calls.
+[How it works](docs/how-it-works.md) covers jobs, the browser runtime, the library and the source layout. A hosted version of Pomerado runs at [pomerado.ai](https://pomerado.ai).
 
-Jobs and pending answers live in memory. Restarting the MCP loses active jobs but keeps saved integrations. The default server accepts one active job and retains at most 32 job records, with completed records expiring after 15 minutes.
+## Documentation for humans and agents
 
-Supplied secrets are masked in minting-model observations and checked in generated source. Operation outputs are returned without secret redaction. Error diagnostics mask credential-shaped values. Website content reaches the configured models. This package has no general privacy screening service.
-
-<details>
-<summary>Attach an existing Playwright browser</summary>
-
-By default, Pomerado launches local Chromium. Add `--headed` to the minting MCP arguments to see it. To use an existing browser server, add `--endpoint` and its native Playwright WebSocket URL to the MCP command arguments.
-
-```toml
-args = ["/absolute/path/to/pomerado/dist/typescript/src/standalone/mcp-cli.js", "mint", "--root", "/absolute/path/to/integrations", "--endpoint", "ws://your-browser-host/playwright-endpoint"]
-```
-
-The endpoint must support `chromium.connect()`, with a matching Playwright version. A Chromium remote debugging URL for `connectOverCDP()` uses a different protocol. For a local connection test, start a Playwright browser server and use its printed endpoint.
-
-```sh
-node --input-type=module -e 'import { chromium } from "playwright"; const server = await chromium.launchServer({ headless: true }); console.log(server.wsEndpoint());'
-```
-
-Pomerado owns its browser context. Closing a session closes that context and disconnects from a supplied server, leaving the server and other clients' contexts available. A failed browser transport is invalidated without replaying the request.
-
-</details>
-
----
+- [Getting started](docs/getting-started.md) covers install, client settings, a first integration and troubleshooting.
+- [Agent setup](docs/agent-setup.md) gives an AI agent the steps to install Pomerado for you.
+- [How it works](docs/how-it-works.md) covers the minter, Guardian, the runtime, jobs and the library.
+- [AGENTS.md](AGENTS.md) tells coding agents how to change this repository.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers building from source and how changes land.
+- [RELEASING.md](docs/RELEASING.md) covers how npm releases are built and verified.
 
 ## Repository guide
 
-This repository owns the shared minter, Guardian, operation runtime and live authentication helpers. Its local host supplies files, child processes and native Playwright. Pomerado Cloud installs the same core as a pinned library package.
+| Path | Contents |
+| --- | --- |
+| `typescript/src/` | Minter, Guardian, runtime, browser helpers and the local MCP host |
+| `typescript/authoring/` | Shared prompts and examples for local and hosted minting |
+| `typescript/tests/` | Unit tests and browser tests with local fixture sites |
+| `tools/` | Build helpers and the CI scans |
+| `docs/` | Guides for users, agents and maintainers |
+| `third-party/` | Licenses for adapted third-party code |
 
-| Path                           | Responsibility                                                   |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `typescript/src/mint/`         | Shared minter loop, source tools and completion                  |
-| `typescript/src/guardian/`     | Shared review loop, source inspection and policy                 |
-| `typescript/src/runtime/`      | Shared operation SDK, schemas and browser call contract          |
-| `typescript/src/browser/`      | Shared browser helpers used by authored operations               |
-| `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
-| `typescript/src/inputs/`       | Input validation, terminal collection and per-session secrets    |
-| `typescript/src/execution/`    | Local workspaces, child processes and native Playwright adapter  |
-| `typescript/src/standalone/`   | Local library, terminal and MCP composition                      |
-| `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP               |
-| `typescript/authoring/`        | Shared prompts and examples for local and hosted minting      |
-
-<details>
-<summary>Runtime boundaries and browser compatibility</summary>
-
-Generated code keeps the application's browser call shape.
-
-```js
-const response = await kernel.browsers.playwright.execute(sessionId, {
-  code: "return await page.title();",
-  timeout_sec: 30,
-});
-```
-
-Here `kernel` is a compatibility object forwarding calls to native Playwright over local process IPC. It does not load the Kernel SDK or call Kernel. Narrow credential-keyboard and browser-ownership checks still use Chromium's low-level CDP primitives where required.
-
-This public repository is the sole source for the shared core, portable tests, authoring assets and local MCP adapters. Cloud calls the installed library directly. Its hosted MCP frontend stays in the private repository with accounts, permissions and durable jobs.
-
-Cloud owns the REST backend, database, Kernel and hosted compute providers, recorder, evidence bundles, general privacy service, repair loop and credential storage. Cloud also owns Kernel CAPTCHA telemetry, antibot browser switching and proxy recovery notices.
-
-Integrations run through native Playwright. The local host does not mint HTTP variants, record network traffic, produce `captures/routes.json`, or provide the hosted `SiteHttp` transport and capture replay helpers. Website requests made inside the browser remain available.
-
-Authored operation processes, offline commands and native Playwright page-code workers run with your operating system user's filesystem and network privileges. Guardian review and file checks do not provide an OS sandbox. Clearing the worker's `process.env` hides environment variables from that API; it does not isolate host credentials or prevent access through operating system facilities.
-
-</details>
-
-<details>
-<summary>Library and terminal use</summary>
-
-The existing library and terminal interfaces remain available. A library session can mint and run while retaining the same signed-in browser context.
-
-```js
-import { Effect } from "effect";
-import { createPomerado, makeTerminalAsker } from "pomerado";
-
-await Effect.runPromise(
-  Effect.scoped(
-    Effect.gen(function* () {
-      const session = yield* createPomerado({ ask: makeTerminalAsker() });
-      const request = {
-        url: "https://example.com",
-        intent: "Read the main heading",
-        input: {},
-        effect: "read",
-      };
-      const result = yield* session.mint(request);
-      if (result.artifact === undefined) throw new Error(result.summary);
-      console.log(yield* session.run(result.artifact, request));
-    }),
-  ),
-);
-```
-
-Use `makeInputAsker` to adapt your own chat callback. Its callback receives an `InputRequest` and returns raw answers keyed by question ID. `makePomeradoMcp` and `makeIntegrationMcp` expose the same local MCP modes as library functions. Their Effect scopes own cleanup.
-
-The package exposes local APIs and direct core library entry points. Importing a core module does not start a browser, MCP listener or workspace.
-
-- Use `pomerado`, `pomerado/runtime` and `pomerado/mcp` for local sessions, the authored browser runtime and local MCP composition.
-- Use explicit `pomerado/core/*` subpaths such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute` for hosted library composition. The export map lists supported modules.
-- Use `pomerado/testing/*` for reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
-- Use `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` for installed prompt and policy paths. These paths resolve relative to the package.
-
-Run `corepack pnpm start --help` for the advanced terminal mint/run interface. Terminal mint retains its original source-artifact format. Use the MCP minting entrypoint for generated MCP packaging.
-
-</details>
+[How it works](docs/how-it-works.md#source-layout) lists each module under `typescript/src/`.
 
 ## Contributing
 
-```sh
-corepack pnpm typecheck
-corepack pnpm build
-corepack pnpm test
-corepack pnpm exec playwright install chromium
-corepack pnpm test:browser
-```
-
-This repository owns the portable tests for its shared core and local runtime, with synthetic fixtures and the existing Vitest and Playwright runners. Browser tests exercise native Playwright, minting through MCP, generated integration MCPs, authentication and autofill using local fixture sites and scripted model responses. They need no Cloud account or model API key. Tests for hosted services stay in the application repository.
-
-Outside pull requests are not accepted yet. They open once the review and approval gate described in [CONTRIBUTING.md](CONTRIBUTING.md) is live. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and how to report a vulnerability privately.
-
-Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions. CI enforces this with a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push. Link a public issue by its full URL.
-
-- Build and test the package before publishing an explicit versioned release. The release workflow validates the packed artifact before npm publication.
-- Adopt a tested release in Cloud through an exact dependency pin and locked integrity. Update the controller and sandbox images together.
-- Roll Cloud back by restoring its previous package pin and matching image versions. Public commits do not update Cloud automatically.
-
-The clone and build quickstart works independently of npm releases. Contributors can test Cloud against a locally built package before publishing a new version.
+- Issues are welcome.
+- Outside pull requests open once the review gate in [CONTRIBUTING.md](CONTRIBUTING.md) is live.
+- Security problems go privately through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security).
+- [CONTRIBUTING.md](CONTRIBUTING.md) has the clone, build and test steps.
 
 ---
 

@@ -4,9 +4,39 @@ Pomerado does not accept outside pull requests yet. We will open them once the r
 
 Issues are welcome. Open one for a bug, a question or an idea. Report security problems privately with **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security), never in a public issue.
 
-## Build and test
+## Build from source
 
 Use macOS or Linux, Node 24.21 or a later Node 24 release, pnpm 10.34.5, git 2.36 or later, and jq.
+
+```sh
+git clone https://github.com/Pomerado/pomerado.git
+cd pomerado
+corepack enable
+corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm build
+```
+
+On Linux, run `corepack pnpm exec playwright install --with-deps chromium` if Chromium's system libraries are missing.
+
+To run your build as an MCP server, point your client at the built entry with Node. Use absolute paths.
+
+```json
+{
+  "mcpServers": {
+    "pomerado": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/pomerado/dist/typescript/src/standalone/mcp-cli.js", "mint", "--root", "/absolute/path/to/integrations"]
+    }
+  }
+}
+```
+
+- `node -p 'process.execPath'` prints the Node path, and `pwd` in the checkout prints the repository path.
+- The server needs `OPENAI_API_KEY` in its environment to mint. [Client settings](docs/getting-started.md#client-settings) shows how each client passes it.
+- The clone and build route works without an npm release. Integrations minted by your build run on your build.
+
+## Build and test
 
 ```sh
 corepack enable
