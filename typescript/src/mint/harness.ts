@@ -196,6 +196,28 @@ const definitionFix = (section: string | undefined) =>
           : "Remove it from the metadata, the operation's schemas and questions, and the login URL, then call finish_build again with the same executionId.";
 
 /**
+ * Whether the agent's request sets whether the caller may answer in their own words, which is the
+ * host's to set on every choice.
+ */
+const setsOwnWords = (input: unknown) =>
+  Option.isSome(
+    Schema.decodeUnknownOption(
+      Schema.Struct({
+        questions: Schema.Array(Schema.Unknown).pipe(
+          Schema.filter((questions) =>
+            questions.some(
+              (question) =>
+                typeof question === "object" &&
+                question !== null &&
+                ("allowOther" in question || "allowNote" in question),
+            ),
+          ),
+        ),
+      }),
+    )(input),
+  );
+
+/**
  * The option the owner picked on a read-or-write choice (the effect question or a write upgrade),
  * undefined when they answered in their own words instead.
  */
@@ -2765,6 +2787,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // Asking needs no live execution: it stays open after execution closed and while a
               // write's outcome is uncertain. The agent still verifies before writing again.
               yield* active("publication");
+              if (setsOwnWords(input))
+                return JSON.stringify({
+                  status: "question_invalid",
+                  reason: "own_words_are_the_hosts",
+                  userInputRequired: false,
+                  instruction:
+                    "Remove allowOther and allowNote from every question and ask again: the host lets the caller answer every choice and multi_choice in their own words.",
+                });
               const { writeUpgrade, ...proposed } = callerVisibleRequest(
                 yield* decode(AgentRequest, input),
                 redactCallerText,
@@ -2790,13 +2820,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   code: "Unavailable",
                   reason: "executor_unavailable",
                 });
-              // The effect question offers two fixed answers and the capability question is the
-              // host's own, so neither can collect private data; the agent's own requests are
-              // reviewed before the caller sees them.
+              // The capability question is the host's own, so it cannot collect private data. Every
+              // request the agent writes, the effect question included, is reviewed before the
+              // caller sees it: the caller may answer any of its choices in their own words.
               let reviewId: string | undefined;
               // One id from proposal on: its review, the request the caller sees and its end.
               const requestId = randomUUID();
-              if (!effectQuestion && dependencies.capabilityQuestion === undefined) {
+              if (dependencies.capabilityQuestion === undefined) {
                 if (!dependencies.reviewQuestion)
                   return yield* new MintFailure({
                     code: "ReviewUnavailable",
@@ -2834,8 +2864,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   },
                 );
                 const rationale = yield* screenMintText(dependencies, review.rationale);
-                // A write upgrade never asks for a login, so a login verdict means reword it.
-                if (review.outcome === "authentication" && !upgrade) {
+                // A read-or-write choice never asks for a login, so a login verdict means reword it.
+                if (review.outcome === "authentication" && !upgrade && !effectQuestion) {
                   const login = dependencies.requestLogin
                     ? yield* dependencies.requestLogin()
                     : ("unavailable" as const);

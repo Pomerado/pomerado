@@ -461,3 +461,59 @@ it("gives a review the owner's own option and note beside their picks, as the ow
     },
   });
 });
+
+it("never takes an option label the owner typed back as a note or an own option for the owner's words", async () => {
+  const label = "Main store at https://main.example.test";
+  const reviewed = await Effect.runPromise(
+    answersForReview(
+      {
+        questions: [
+          {
+            id: "store",
+            type: "choice",
+            prompt: "Which store?",
+            allowOther: true,
+            allowNote: true,
+            options: [
+              { id: "main", label },
+              { id: "outlet", label: "Outlet" },
+            ],
+          },
+          {
+            id: "stores",
+            type: "multi_choice",
+            prompt: "Which stores?",
+            minSelections: 0,
+            maxSelections: 2,
+            allowOther: true,
+            allowNote: true,
+            options: [
+              { id: "main", label },
+              { id: "outlet", label: "Outlet" },
+            ],
+          },
+        ],
+      },
+      {
+        store: { type: "choice", value: { option: "outlet", note: ` ${label.toUpperCase()} ` } },
+        stores: { type: "multi_choice", value: { options: ["outlet"], other: label } },
+      },
+      Effect.succeed,
+    ),
+  );
+  expect(reviewed).toEqual([
+    { question: "Which store?", answer: "Outlet" },
+    { question: "Which stores?", answer: ["Outlet"], other: label },
+  ]);
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+      { ...pending, answeredQuestions: reviewed },
+      question,
+      unreadable,
+    ),
+  );
+  const input: unknown = JSON.parse(userText(requests[0]));
+  expect(input).toMatchObject({ trusted_authority: { answeredQuestions: reviewed } });
+  expect(input).not.toMatchObject({ trusted_authority: { ownerNamedOrigins: expect.anything() } });
+});

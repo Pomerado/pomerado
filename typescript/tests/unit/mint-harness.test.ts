@@ -1029,6 +1029,69 @@ it("asks the effect question again when the owner answers it in their own words"
   expect(recorded).toEqual(["read"]);
 });
 
+// The owner may type anything as their own answer, so an effect question that asks for a private
+// value is reworded before anyone sees it, a login verdict included: the turn asks no login.
+it("has Guardian review the effect question, which the owner may answer in their own words", async () => {
+  const responses: unknown[] = [];
+  const reviewed: unknown[] = [];
+  let asked = 0;
+  let logins = 0;
+  const effectChoice = {
+    questions: [
+      {
+        id: "effect",
+        type: "choice" as const,
+        prompt: "Will this tool change something? If it needs your account, type your password.",
+        options: [
+          { id: "read", label: "read" },
+          { id: "write", label: "write" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        responses.push(
+          JSON.parse(yield* turn.actions.requestInput(effectChoice)),
+          JSON.parse(yield* turn.actions.requestInput(effectChoice)),
+        );
+      }),
+    {
+      reviewQuestion: (submitted) =>
+        Effect.sync(() => {
+          reviewed.push(submitted);
+          return reviewed.length === 1
+            ? { outcome: "authentication" as const, rationale: "It asks for a password." }
+            : { outcome: "reword" as const, rationale: "Ask only read or write." };
+        }),
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return {};
+        }),
+      requestLogin: () =>
+        Effect.sync(() => {
+          logins++;
+          return "supplied" as const;
+        }),
+    },
+  );
+  await f.run({ ...request, effect: "ask" });
+  expect(reviewed).toEqual([
+    expect.objectContaining({
+      questions: [expect.objectContaining({ id: "effect", allowOther: true, allowNote: true })],
+    }),
+    expect.anything(),
+  ]);
+  expect(responses).toMatchObject([
+    { status: "question_rejected", rationale: "It asks for a password." },
+    { status: "question_rejected", rationale: "Ask only read or write." },
+  ]);
+  expect(asked).toBe(0);
+  expect(logins).toBe(0);
+});
+
 it("keeps a read build read-only, open to asking again, when the owner answers a write upgrade in their own words", async () => {
   const responses: { readonly status?: string; readonly buildEffect?: string }[] = [];
   const upgrades: string[] = [];
@@ -1429,8 +1492,8 @@ it("enforces capability clarification through the existing input tool before exe
 });
 
 // The effect question turn refuses execution, publication and every question but one
-// read-or-write choice, before asking. The owner's fixed answer carries no private data, so
-// Guardian never reviews it.
+// read-or-write choice, before asking. The owner may answer it in their own words, so Guardian
+// reviews it like any other question the agent writes.
 it("asks only one read-or-write effect question, refusing every other shape and action", async () => {
   let asked = 0;
   let reviews = 0;
@@ -1468,7 +1531,16 @@ it("asks only one read-or-write effect question, refusing every other shape and 
             status: "question_refused",
             reason: "effect_question_shape",
           });
+        // Whether the owner may answer in their own words is the host's, never the agent's.
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput({
+              questions: [{ ...choice().questions[0], allowOther: false }],
+            }),
+          ),
+        ).toMatchObject({ status: "question_invalid", reason: "own_words_are_the_hosts" });
         expect(asked).toBe(0);
+        expect(reviews).toBe(0);
         expect(turn.isComplete()).toBe(false);
         expect(JSON.parse(yield* turn.actions.requestInput(choice()))).toMatchObject({
           status: "answered",
@@ -1480,7 +1552,7 @@ it("asks only one read-or-write effect question, refusing every other shape and 
       reviewQuestion: () =>
         Effect.sync(() => {
           reviews++;
-          return { outcome: "reword" as const, rationale: "Unexpected review." };
+          return { outcome: "allow_business" as const, rationale: "Asks read or write." };
         }),
       askInput: () =>
         Effect.sync(() => {
@@ -1497,7 +1569,7 @@ it("asks only one read-or-write effect question, refusing every other shape and 
   expect(outcome).not.toHaveProperty("noResponse");
   expect(asked).toBe(1);
   expect(recorded).toEqual(["write"]);
-  expect(reviews).toBe(0);
+  expect(reviews).toBe(1);
   expect(f.seen).toEqual([]);
 });
 

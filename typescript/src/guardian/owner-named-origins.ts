@@ -10,7 +10,8 @@ import type { PendingExecution } from "./review.js";
  * Only text the owner wrote counts: `requestedIntent` (the intent without an approved write
  * upgrade's question), the answers `answersForReview` marks `typed` (a text answer, a choice's own
  * text or a multiple choice's own option that repeats no offered option, a confirm's text other
- * than the offered default) and every note the owner added beside a pick. An
+ * than the offered default) and every note the owner added beside a pick (`answersForReview`
+ * leaves out a note that only repeats an offered option). An
  * option label or question prompt the minting model wrote never names one, even when the owner
  * picks, types back or approves it, and neither does website content. Each entry is a
  * `URL.origin` (`https://host` or `https://host:port`, punycode for an IDN), once, in the order

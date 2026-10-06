@@ -94,6 +94,8 @@ const ownWords = {
   /**
    * The caller may answer with their own text: a choice's `{ other }` instead of an offered
    * option, a multiple choice's `other` as an option of their own beside or instead of the picks.
+   * A multiple choice's `other` counts toward `minSelections`, never `maxSelections`, and stays
+   * the caller's text even when it repeats an option.
    */
   allowOther: Schema.optional(Schema.Boolean),
   /** The caller may add `note`, their own clarification, beside the options they pick. */

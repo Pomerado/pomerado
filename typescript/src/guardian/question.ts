@@ -138,7 +138,8 @@ export const questionForReview = <E>(
  * answer whose own text the owner wrote: a text answer, a choice's own text or a multiple choice's
  * `other` that repeats no offered option, or a confirm's text other than the offered default. An
  * option label is the minting model's wording even when the owner picks it or types it back, so it
- * never names where the owner's work lives (`ownerNamedOrigins`); a note is always the owner's.
+ * never names where the owner's work lives (`ownerNamedOrigins`). A note is the owner's own words;
+ * one that only repeats an offered option is left out, as the agent's wording.
  */
 export const AnsweredQuestion = Schema.Struct({
   question: Schema.String,
@@ -214,7 +215,14 @@ export const answersForReview = <E>(
               ? { note: given.value.note }
               : {};
         const other = "other" in beside ? beside.other : undefined;
-        const note = "note" in beside ? beside.note : undefined;
+        // A note that only repeats an offered option is the agent's wording, never the owner's.
+        const note =
+          "note" in beside &&
+          beside.note !== undefined &&
+          (question.type === "choice" || question.type === "multi_choice") &&
+          optionsRepeatedBy(question.options, beside.note).length === 0
+            ? beside.note
+            : undefined;
         const answer: AnsweredQuestion["answer"] | undefined =
           given.type === "text"
             ? yield* screen(given.value)
