@@ -151,6 +151,66 @@ test("a username with an apostrophe never reaches Guardian, in a quoted snapshot
   }
 });
 
+test("a secret the browser writes into a URL's path, with | encoded, never reaches Guardian", async () => {
+  test.setTimeout(90_000);
+  const secret = "a$b|c";
+  // The site redirects to a path holding the login as written; the browser writes | as %7C there
+  // and leaves $ as it is, which no query or encodeURIComponent form matches.
+  const site = await startSite((request, response) => {
+    const url = new URL(request.url ?? "/", "http://fixture.invalid");
+    if (url.pathname === "/signin") {
+      response.statusCode = 302;
+      response.setHeader("Location", `/u/${url.searchParams.get("login") ?? ""}`);
+      response.end();
+      return;
+    }
+    if (url.pathname.startsWith("/u/")) {
+      html(response, "<title>Profile</title><h1>Profile</h1>");
+      return;
+    }
+    html(
+      response,
+      `<title>Sign in</title><form method="get" action="/signin"><input name="login" aria-label="Login"><button>Go</button></form>`,
+    );
+  });
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { requests, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ code: secret }),
+      turns: [
+        () =>
+          patch({
+            "explore/fill.mjs": probe(
+              "await page.getByLabel('Login').fill('{{secret.s1}}'); return 1;",
+            ),
+            "explore/submit.mjs": probe(
+              `await Promise.all([page.waitForURL("**/u/**"), page.getByRole("button").click()]); return 1;`,
+            ),
+            "explore/look.mjs": probe(),
+          }),
+        () => [call("request_input", secretQuestion)],
+        () => [call("execute", execution("explore", "explore/fill.mjs"), "fill")],
+        () => [call("execute", execution("explore", "explore/submit.mjs"), "submit")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+      ],
+    });
+    expect(toolResult(last, "submit"), JSON.stringify(toolResult(last, "submit"))).toMatchObject({
+      status: "completed",
+    });
+    const look = executions(guardian.reviews)[2];
+    expect(contextOf(look!)?.["currentPage"]).toMatchObject({ path: "/u/[private]" });
+    for (const shown of [secret, "a$b%7Cc", "a$b%7cc"]) {
+      expect(JSON.stringify(guardian.reviews)).not.toContain(shown);
+      expect(JSON.stringify(requests)).not.toContain(shown);
+    }
+  } finally {
+    await site.close();
+  }
+});
+
 test("a page over the element limit is not captured, and the browser keeps working", async () => {
   test.setTimeout(90_000);
   const items = Array.from(
