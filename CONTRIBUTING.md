@@ -26,7 +26,7 @@ Tests use synthetic sites and scripted model responses. They need no model API k
 - The maintainers are Alan ([@alanmrsa](https://github.com/alanmrsa)) and Akshay ([@AkshayM21](https://github.com/AkshayM21)).
 - Every change goes through a pull request, the maintainers' own included. Nobody pushes to `main` directly.
 - A pull request merges only after an independent review and green CI. A review App check and a merge queue will enforce this soon.
-- Outside pull requests will also need a maintainer's approval.
+- Outside pull requests will also need a maintainer's approval, and a maintainer approves each of their CI runs.
 - CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check, browser tests, a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
 
