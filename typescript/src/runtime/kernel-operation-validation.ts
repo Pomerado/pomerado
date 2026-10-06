@@ -7,9 +7,14 @@ export const decodeKernelOperationInput = <Input, EncodedInput, Output, EncodedO
   operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
   rawInput: unknown,
 ) =>
-  Schema.decodeUnknown(operation.input)(rawInput).pipe(
+  // Every rejected path, not only the first, so one correction can fix them all.
+  Schema.decodeUnknown(operation.input, { errors: "all" })(rawInput).pipe(
     Effect.mapError(
-      (error) => new InvalidInput({ operation: operation.name, issues: inputIssues(error) }),
+      (error) =>
+        new InvalidInput({
+          operation: operation.name,
+          issues: inputIssues(operation.input, error),
+        }),
     ),
   );
 

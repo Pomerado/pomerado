@@ -454,7 +454,8 @@ export const ExecutionRequest = Schema.Struct({
   /**
    * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
    * act step: the tool's input as JSON text, which the agent writes from the request and the
-   * owner's answers. The example runs it; a write session runs the one its first act step passes.
+   * owner's answers. The example, or each act step that passes it, runs it. A host that keeps a
+   * write session's input also runs it on the session's later act steps.
    */
   exampleInput: Schema.optional(Schema.String),
 });
