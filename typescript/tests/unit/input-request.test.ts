@@ -82,6 +82,58 @@ describe("validateAnswer", () => {
     expect(reason("not an object")).toEqual(["malformed", undefined]);
   });
 
+  it("takes the caller's own option and note only where the question allows them", () => {
+    const ownWords = Schema.decodeUnknownSync(InputRequest)({
+      ...request,
+      questions: request.questions.map((question) =>
+        question.type === "text" ? question : { ...question, allowOther: true, allowNote: true },
+      ),
+    });
+    const valid = (answers: Readonly<Record<string, unknown>>) =>
+      Either.getOrThrow(validateAnswer(ownWords, { note: "x", ...answers }));
+    expect(
+      valid({
+        plan: { option: "gold", note: "Billed yearly" },
+        extras: { options: [], other: "A blanket" },
+      }),
+    ).toMatchObject({
+      plan: { type: "choice", value: { option: "gold", note: "Billed yearly" } },
+      extras: { type: "multi_choice", value: { options: [], other: "A blanket" } },
+    });
+    // Without own words, an answer keeps its plain shape.
+    expect(valid({ plan: { option: "gold" }, extras: { options: ["bag"] } })).toMatchObject({
+      plan: { type: "choice", value: "gold" },
+      extras: { type: "multi_choice", value: ["bag"] },
+    });
+    expect(
+      reason(
+        { plan: "gold", extras: { options: ["bag", "seat"], other: "A blanket" }, note: "x" },
+        ownWords,
+      ),
+    ).toBe("valid");
+    expect(
+      reason(
+        { plan: "gold", extras: { options: ["bag", "seat", "meal"], other: "A" }, note: "x" },
+        ownWords,
+      ),
+    ).toEqual(["selection_bounds", "extras"]);
+    expect(
+      reason({ plan: { other: "Silver", note: "Monthly" }, extras: ["bag"], note: "x" }, ownWords),
+    ).toEqual(["malformed", "plan"]);
+    expect(
+      reason({ plan: { option: "silver", note: "Monthly" }, extras: ["bag"], note: "x" }, ownWords),
+    ).toEqual(["unoffered_option", "plan"]);
+    expect(
+      reason({ plan: { option: "gold", note: "Yearly" }, extras: ["bag"], note: "x" }),
+    ).toEqual(["note_not_allowed", "plan"]);
+    expect(
+      reason({ plan: "gold", extras: { options: ["bag"], note: "Large" }, note: "x" }),
+    ).toEqual(["note_not_allowed", "extras"]);
+    expect(
+      reason({ plan: "gold", extras: { options: [], other: "A blanket" }, note: "x" }),
+    ).toEqual(["other_not_allowed", "extras"]);
+  });
+
   // Own text that repeats an offered option is that option, picked.
   it.each([
     ["the label, padded and in another case", "  cONTINUE at https://x.invalid/a\n", "go"],

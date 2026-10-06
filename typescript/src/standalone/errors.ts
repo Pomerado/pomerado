@@ -37,6 +37,9 @@ export const publicationError = (cause: unknown) => {
       return new MintFailure({
         code: "PublicationUnavailable",
         reason: code === "InvalidInput" ? "contract_input_mismatch" : "contract_output_mismatch",
+        ...(code === "InvalidInput" && cause.inputIssues !== undefined
+          ? { inputIssues: cause.inputIssues }
+          : {}),
         failureDetail: failureDetail("mint_host_dependency_failed", {
           operation: "standalone.publish.contract",
           error: cause,
