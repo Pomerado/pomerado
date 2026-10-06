@@ -48,11 +48,11 @@ For more details, please see [How it works](docs/how-it-works.md).
 Prerequisites
 
 - macOS or Linux
-- Node 24.21 or a later Node 24 release. Check with `node --version`
-- An OpenAI API key. Pomerado uses OpenAI models to build and review integrations. Your agent can run on any model
+- Node 24.21 or a later Node 24 release, which you can check with `node --version`
+- An OpenAI API key, since Pomerado uses OpenAI models to build and review integrations. Your agent can run on any model
 - An MCP client that runs local servers, such as Claude Code, Codex, Cursor, Claude Desktop or Gemini CLI
 
-Install Pomerado and its browser.
+Install Pomerado and the Chromium build it drives.
 
 ```sh
 npx -y -p pomerado pomerado-mcp --help
@@ -61,7 +61,7 @@ npx -y -p pomerado playwright install chromium
 
 On Linux, add `--with-deps` after `install` if Chromium's system libraries are missing.
 
-Pomerado is a standard MCP stdio server. This is its entry for clients that read an `mcpServers` file.
+Pomerado runs as a standard MCP stdio server. Clients that read an `mcpServers` file use this entry.
 
 ```json
 {
@@ -74,11 +74,11 @@ Pomerado is a standard MCP stdio server. This is its entry for clients that read
 }
 ```
 
-- `--root` is the folder where Pomerado saves integrations. Use an absolute path, because clients start servers from different folders.
-- The server needs `OPENAI_API_KEY` in its environment. Keep the key out of chat.
-- Starting the server and listing its tools launches no browser and calls no model.
+- `--root` sets the folder where Pomerado saves your integrations. Use an absolute path, because each client starts servers from its own working folder
+- The server reads `OPENAI_API_KEY` from its environment, so the key never needs to appear in chat
+- Starting the server and listing its tools costs nothing. It launches no browser and calls no model until you start a mint
 
-Add Pomerado to your client.
+Add Pomerado to your client with the command or file below.
 
 | Client | Add Pomerado |
 | --- | --- |
@@ -89,45 +89,45 @@ Add Pomerado to your client.
 | VS Code | `code --add-mcp '{"name":"pomerado","command":"npx","args":["-y","-p","pomerado","pomerado-mcp","mint","--root","/absolute/path/to/pomerado-integrations"]}'`, or add the entry to `.mcp.json` in your workspace |
 | Claude Desktop | Add the entry to `claude_desktop_config.json` |
 
-Each client passes the key differently. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client in the table.
+Each client passes environment variables its own way. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client above.
 
-Ask your agent which Pomerado tools it has. It should list `mint`, `get_job`, `provide_input` and `cancel_job`.
+To confirm the setup, ask your agent which Pomerado tools it has. It should list `mint`, `get_job`, `provide_input` and `cancel_job`.
 
 ## Let your agent set it up
 
-Paste this into your agent.
+If you'd rather not run these steps yourself, paste this into your agent.
 
 ```text
 Set up Pomerado for me by following https://raw.githubusercontent.com/Pomerado/pomerado/main/docs/agent-setup.md
 ```
 
-The agent checks Node, installs Chromium and adds Pomerado to the client it runs in. It asks before changing anything you didn't mention. It never asks for your key in chat.
+Your agent checks your Node version, installs Chromium and adds Pomerado to the client it runs in. It asks before changing anything you didn't mention, and it never asks for your API key in chat.
 
 ## Create an integration
 
-Ask your agent to create an integration with Pomerado. We call this minting.
+Ask your agent to create an integration with Pomerado. We call this minting. A good request names the site, describes the task in plain language and says whether the integration should only read or also make changes.
 
 > Use Pomerado to create an integration named example_reader that reads the main heading from https://example.com. Keep it read-only.
 
-Your agent uses four tools.
+Your agent runs the mint with four tools.
 
-- `mint` starts a job from a name, a URL, a task, optional input and `read` or `write` authority. It returns a job ID right away.
-- `get_job` waits up to 30 seconds for progress, a question or the result. Checking never starts the work again.
-- `provide_input` sends your answer to a question. Pomerado checks the answer against the question's format.
-- `cancel_job` stops the job and closes its browser. An action already sent to a website may have taken effect.
+- `mint` starts a job from a name, a URL, a task, an optional example input and `read` or `write` authority. It returns a job ID right away
+- `get_job` waits up to 30 seconds for progress, a question or the result. Checking a job never restarts the work
+- `provide_input` sends your answer when Pomerado asks a question. Pomerado checks the answer against the question's format
+- `cancel_job` stops the job and closes its browser. An action already sent to a website may still have taken effect
 
-Tell your agent which authority to use. It picks one when it calls `mint`, and the tool's description tells it to ask you before it picks `write`.
+Authority decides what an integration is allowed to do, so choose it deliberately. Your agent picks one when it calls `mint`, and the tool tells it to ask you before choosing `write`.
 
-- Choose `read` when the task only looks at the website.
-- Choose `write` only when the task changes something, such as submitting a form.
-- A write mint performs that action once while it builds, then checks the final source without repeating it.
-- A read mint that finds the task needs a change can ask to switch to write. That question reaches your agent like any other, and the answer it sends switches the job.
+- Use `read` when the task only looks at a website
+- Use `write` only when the task changes something, such as submitting a form or making a booking
+- A write mint performs the action once while it builds, then reviews the final source without repeating it
+- A read mint that finds the task needs a change asks to switch to write, and your answer decides
 
-Names start with a lowercase letter and use lowercase letters, digits and underscores. The integration's folder must not exist yet. A mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count.
+Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 
 ## Use your integration
 
-When minting finishes, Pomerado saves the integration and returns its paths.
+When minting finishes, Pomerado saves the integration as a folder of source code and returns its paths.
 
 ```text
 pomerado-integrations/example_reader/
@@ -139,35 +139,37 @@ pomerado-integrations/example_reader/
 └── README.md            Add commands for each MCP client
 ```
 
-1. Open the integration's `README.md`. It has the add command for each major client, with your paths filled in.
-2. Add the server and give it `OPENAI_API_KEY` the same way as Pomerado. Guardian reviews every run.
-3. Reload your client and ask your agent to use the integration.
+1. Open the integration's `README.md`. It has the add command for each major client with your paths already filled in
+2. Add the server and give it `OPENAI_API_KEY` the same way you did for Pomerado. Guardian reviews every run, so the integration needs the key too
+3. Reload your client and ask your agent to use the integration
 
 > Use example_reader to read the page heading.
 
-- The integration has one tool named after it, with its arguments under `input`.
-- It also has `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time.
-- A call returns output that matches the schema in `pomerado.json`, or a job ID to continue.
-- Calling the tool again starts a new run. With write authority that means another write.
-- The integration runs on the Pomerado installation that minted it. For a fixed path, install with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`.
+Each integration appears to your agent as its own MCP server.
+
+- It has one tool named after the integration, with its arguments under `input`
+- It also has `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time
+- A call returns output that matches the schema in `pomerado.json`, or a job ID to follow up on
+- Each call is a new run. With write authority, calling again performs the write again
+- The integration runs on the Pomerado installation that minted it. For a stable path, install globally with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`
 
 ## Open source and Pomerado Cloud
 
-This repository is the complete Pomerado core. You can mint and run integrations with it without a Pomerado account.
+This repository is the complete Pomerado core, released under the MIT license. Everything you need to mint integrations and run them yourself is here, with no account required.
 
-- The minter builds integrations in a real Chromium browser.
-- The minting harness and prompts are the same ones Pomerado Cloud builds on.
-- Guardian reviews each browser action and the finished source.
-- The standalone host runs each integration as an MCP server on your own computer.
-- Each integration is source code in your own folder, and you own it.
+- The minter, which builds integrations in a real Chromium browser
+- The minting harness and prompts that Pomerado Cloud also builds on
+- Guardian, which reviews each browser action and the finished source
+- The standalone host, which serves each integration as an MCP server on your own machine
+- The integrations themselves, saved as source code in your folder that you own
 
-[Pomerado Cloud](https://pomerado.ai) runs this same core and adds hosting and operations.
+[Pomerado Cloud](https://pomerado.ai) runs this same core as a managed service. It adds the operations that production use needs.
 
-- It hosts your integrations and runs their jobs.
-- It brokers OAuth and keeps saved logins.
-- It controls who can use each integration.
-- It runs a managed browser fleet that handles bot protection.
-- It detects when a site change breaks an integration and repairs it automatically.
+- Hosting for your integrations and their jobs
+- OAuth brokerage and saved logins
+- Access control over who can use each integration
+- A managed browser fleet that handles bot protection
+- Breakage detection that notices when a site changes and repairs the integration automatically
 
 ## Documentation for humans and agents
 
