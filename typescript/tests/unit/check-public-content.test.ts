@@ -1,10 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { maskGitHubMergeNumber, scanPath, scanText } from "../../../tools/check-public-content.js";
+import {
+  maskGitHubMergeNumber,
+  scanPath,
+  scanRepository,
+  scanText,
+  type Commit,
+} from "../../../tools/check-public-content.js";
 
 const script = fileURLToPath(new URL("../../../tools/check-public-content.ts", import.meta.url));
 
@@ -138,23 +144,61 @@ describe("public content scan file names", () => {
 
 describe("GitHub merge titles", () => {
   const hash = "#";
+  const mergeTitle = j("Merge pull request ", hash, "12 from acme/topic");
+  const squashTitle = j("Add a scan (", hash, "12)");
+  const commitOf = (message: string, parents: number, committerEmail = "noreply@github.com"): Commit => ({
+    sha: "a".repeat(40),
+    parents,
+    committerEmail,
+    message,
+  });
+  const merged = () => true;
+  const notMerged = () => false;
 
   it.each([
-    ["a merge commit title", j("Merge pull request ", hash, "12 from acme/topic\n\nAdd a scan")],
-    ["a squashed title", j("Add a scan (", hash, "12)\n\n* Add a scan")],
-  ])("blanks only the number in %s", (_label, message) => {
-    const masked = maskGitHubMergeNumber(message);
-    expect(masked).toHaveLength(message.length);
+    ["a two-parent merge with GitHub's title", commitOf(`${mergeTitle}\n\nAdd a scan`, 2)],
+    ["a one-parent squash", commitOf(`${squashTitle}\n\n* Add a scan`, 1)],
+  ])("blanks only the number in %s that GitHub confirms", (_label, commit) => {
+    const masked = maskGitHubMergeNumber(commit, merged);
+    expect(masked).toHaveLength(commit.message.length);
     expect(masked).not.toContain(hash);
     expect(scanText("commit", masked)).toEqual([]);
   });
 
   it.each([
-    ["a number elsewhere in the title", j("Fix the race (Name, ", hash, "617) in checkout")],
-    ["a number in the body", j("Add a scan\n\nFollows ", hash, "617 (", hash, "12)")],
-    ["a merge title with more after the branch", j("Merge pull request ", hash, "12 from acme/topic and ", hash, "13")],
-  ])("leaves %s alone", (_label, message) => {
-    expect(maskGitHubMergeNumber(message)).toBe(message);
+    ["a merge GitHub doesn't confirm", commitOf(mergeTitle, 2), notMerged],
+    ["a merge with another committer email", commitOf(mergeTitle, 2, "dev@example.com"), merged],
+    ["a one-parent commit with the merge title", commitOf(mergeTitle, 1), merged],
+    ["a three-parent commit with the merge title", commitOf(mergeTitle, 3), merged],
+    ["a merge title with more after the branch", commitOf(j(mergeTitle, " and ", hash, "13"), 2), merged],
+    ["a merge title without an owner", commitOf(j("Merge pull request ", hash, "12 from topic"), 2), merged],
+    ["a merge title below the first line", commitOf(j("Merge topic\n\n", mergeTitle), 2), merged],
+    ["a squash GitHub doesn't confirm", commitOf(squashTitle, 1), notMerged],
+    ["a squash with another committer email", commitOf(squashTitle, 1, "dev@example.com"), merged],
+    ["a squashed title on a root commit", commitOf(squashTitle, 0), merged],
+    ["a squashed title on a two-parent commit", commitOf(squashTitle, 2), merged],
+    ["a squashed title on a three-parent commit", commitOf(squashTitle, 3), merged],
+    ["a number before the end of the title", commitOf(j("Add a scan (", hash, "12) and docs"), 1), merged],
+    ["a number with more in its brackets", commitOf(j("Fix the race (Name, ", hash, "617)"), 1), merged],
+    ["a number in the body", commitOf(j("Add a scan\n\nFollows ", hash, "617 (", hash, "12)"), 1), merged],
+  ])("leaves %s alone", (_label, commit, isPullRequestMerge) => {
+    expect(maskGitHubMergeNumber(commit, isPullRequestMerge)).toBe(commit.message);
+  });
+
+  it("asks GitHub about the commit and the number it names, and only for a candidate", () => {
+    const asked: [string, number][] = [];
+    const isPullRequestMerge = (sha: string, number: number) => {
+      asked.push([sha, number]);
+      return false;
+    };
+    maskGitHubMergeNumber({ ...commitOf(squashTitle, 1, "dev@example.com"), sha: "b".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf("Add a scan", 1), sha: "c".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf(mergeTitle, 2), sha: "d".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf(j("Add a scan (", hash, "34)"), 1), sha: "e".repeat(40) }, isPullRequestMerge);
+    expect(asked).toEqual([
+      ["d".repeat(40), 12],
+      ["e".repeat(40), 34],
+    ]);
   });
 });
 
@@ -184,8 +228,14 @@ describe("public content scan command", () => {
       { cwd, env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: committer } },
     );
   };
+  const head = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+  // Without GITHUB_REPOSITORY the command can't ask GitHub about a commit, here or in CI.
   const run = (cwd: string, ...args: string[]) =>
-    spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
+    spawnSync(process.execPath, [script, ...args], {
+      cwd,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_REPOSITORY: "" },
+    });
 
   it("passes a clean repository", () => {
     const cwd = repository();
@@ -220,7 +270,7 @@ describe("public content scan command", () => {
   it("scans commit messages in the given range only", () => {
     const cwd = repository();
     commit(cwd, j("Older work for ticket", " 5"));
-    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    const base = head(cwd);
     commit(cwd, "Clean change");
     expect(run(cwd, "--commits", `${base}..HEAD`).status).toBe(0);
     commit(cwd, j("Address review ", "P2", "-1"));
@@ -229,18 +279,51 @@ describe("public content scan command", () => {
     expect(result.stdout).toMatch(/^commit [0-9a-f]{12}:1:\d+ review-reference:/mu);
   });
 
-  it("allows the pull request number in a merge GitHub made, and nowhere else", () => {
+  it("allows the number only in a merge or squash that GitHub confirms", () => {
     const cwd = repository();
     commit(cwd, "Base");
-    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    const base = head(cwd);
     const mergeTitle = j("Merge pull request ", "#", "4 from acme/topic");
-    commit(cwd, `${mergeTitle}\n\nAdd a scan`, "noreply@github.com");
-    commit(cwd, j("Add a scan (", "#", "4)"), "noreply@github.com");
-    expect(run(cwd, "--commits", `${base}..HEAD`).status).toBe(0);
-    commit(cwd, mergeTitle);
+    git(cwd, "checkout", "--quiet", "-b", "topic");
+    commit(cwd, "Topic work");
+    git(cwd, "checkout", "--quiet", "-");
+    commit(cwd, "Main work");
+    execFileSync("git", ["-c", "user.name=GitHub", "merge", "--quiet", "--no-ff", "--message", mergeTitle, "topic"], {
+      cwd,
+      env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: "noreply@github.com" },
+    });
+    const merge = head(cwd);
+    commit(cwd, j("Add a scan (", "#", "5)"), "noreply@github.com");
+    const squash = head(cwd);
+    const asked: [string, number][] = [];
+    const confirm = (sha: string, number: number) => {
+      asked.push([sha, number]);
+      return true;
+    };
+    expect(scanRepository(cwd, `${base}..HEAD`, confirm)).toEqual([]);
+    expect(asked).toEqual([
+      [squash, 5],
+      [merge, 4],
+    ]);
+    expect(scanRepository(cwd, `${base}..HEAD`, () => false).map((finding) => finding.source)).toEqual([
+      `commit ${squash.slice(0, 12)}`,
+      `commit ${merge.slice(0, 12)}`,
+    ]);
+    // The merge title on a one-parent commit fails, even with GitHub's committer email.
+    commit(cwd, mergeTitle, "noreply@github.com");
+    expect(scanRepository(cwd, `${base}..HEAD`, confirm)).toEqual([
+      expect.objectContaining({ source: `commit ${head(cwd).slice(0, 12)}`, rule: "ticket-reference" }),
+    ]);
+  });
+
+  it("fails rather than guess when it can't ask GitHub about a squash", () => {
+    const cwd = repository();
+    commit(cwd, "Base");
+    const base = head(cwd);
+    commit(cwd, j("Add a scan (", "#", "5)"), "noreply@github.com");
     const result = run(cwd, "--commits", `${base}..HEAD`);
-    expect(result.status).toBe(1);
-    expect(result.stdout.match(/ticket-reference/gu)).toHaveLength(1);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("GITHUB_REPOSITORY");
   });
 
   it("exits with a usage error for unknown arguments and a bad range", () => {
@@ -255,5 +338,90 @@ describe("public content scan command", () => {
     for (const path of [script, fileURLToPath(import.meta.url)]) {
       expect(scanText(path, readFileSync(path, "utf8"))).toEqual([]);
     }
+  });
+});
+
+describe("GitHub pull request check", () => {
+  const repository = "Pomerado/pomerado";
+  const directories: string[] = [];
+  afterEach(() => {
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  /**
+   * A repository whose last commit looks like GitHub's squash of a pull request, and a stand-in
+   * for `gh` that logs its arguments and runs real jq, with the scan's query, on a canned body.
+   */
+  const setup = () => {
+    const cwd = mkdtempSync(join(tmpdir(), "public-content-gh-"));
+    const bin = mkdtempSync(join(tmpdir(), "public-content-gh-bin-"));
+    directories.push(cwd, bin);
+    const git = (args: string[], committer = "test@example.com") =>
+      execFileSync("git", ["-c", "user.name=Test", "-c", "commit.gpgsign=false", ...args], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: committer },
+      }).trim();
+    git(["init", "--quiet"]);
+    git(["commit", "--quiet", "--allow-empty", "--message", "Base"]);
+    const base = git(["rev-parse", "HEAD"]);
+    git(["commit", "--quiet", "--allow-empty", "--message", j("Add a scan (", "#", "5)")], "noreply@github.com");
+    const squash = git(["rev-parse", "HEAD"]);
+    const log = join(bin, "gh.log");
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> '${log}'`,
+        '[ "$1" = api ] && [ "$3" = --jq ] || exit 64',
+        'if [ -n "${GH_EXIT:-}" ]; then echo "gh: request failed" >&2; exit "$GH_EXIT"; fi',
+        'if [ -n "${GH_STDOUT+set}" ]; then printf \'%s\' "$GH_STDOUT"; exit 0; fi',
+        'printf \'%s\' "$GH_BODY" | jq -r "$4"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(bin, "gh"), 0o755);
+    const ask = (gh: Readonly<Record<string, string>>) => {
+      const result = spawnSync(process.execPath, [script, "--commits", `${base}..HEAD`], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, GITHUB_REPOSITORY: repository, ...gh },
+      });
+      return { ...result, calls: readFileSync(log, "utf8").split("\n").filter(Boolean) };
+    };
+    return { squash, ask };
+  };
+
+  /** The merged pull request of this repository that the squash names, with `sha` as its merge commit. */
+  const pull = (sha: string, overrides: object = {}) => ({
+    number: 5,
+    merged_at: "2026-10-05T00:00:00Z",
+    merge_commit_sha: sha,
+    base: { repo: { full_name: repository } },
+    ...overrides,
+  });
+  const body = (value: unknown) => ({ GH_BODY: JSON.stringify(value) });
+
+  // Exit 0 means GitHub confirmed the number, 1 a finding for it, and 2 that the scan stopped.
+  it.each<[string, (sha: string) => Record<string, string>, number]>([
+    ["a match", (sha) => body([pull(sha)]), 0],
+    ["several pull requests, one of which matches", (sha) => body([pull(sha, { number: 6 }), pull(sha), pull(sha, { merged_at: null })]), 0],
+    ["a wrong number", (sha) => body([pull(sha, { number: 6 })]), 1],
+    ["an unmerged pull request", (sha) => body([pull(sha, { merged_at: null })]), 1],
+    ["a different merge commit", (sha) => body([pull(sha, { merge_commit_sha: "f".repeat(40) })]), 1],
+    ["a different base repository", (sha) => body([pull(sha, { base: { repo: { full_name: "acme/fork" } } })]), 1],
+    ["no pull requests", () => body([]), 1],
+    ["a null body", () => body(null), 2],
+    ["empty output", () => ({ GH_STDOUT: "" }), 2],
+    ["null output", () => ({ GH_STDOUT: "null" }), 2],
+    ["a count as output", () => ({ GH_STDOUT: "1" }), 2],
+    ["gh failing", () => ({ GH_EXIT: "1" }), 2],
+  ])("handles %s", (_label, response, status) => {
+    const { squash, ask } = setup();
+    const result = ask(response(squash));
+    expect(result.calls).toEqual([expect.stringMatching(new RegExp(`^api repos/${repository}/commits/${squash}/pulls --jq `, "u"))]);
+    expect(result.status).toBe(status);
+    if (status === 1) expect(result.stdout).toContain(`commit ${squash.slice(0, 12)}:1:`);
+    if (status === 2) expect(result.stderr).toContain("could not run");
   });
 });
