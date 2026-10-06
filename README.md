@@ -25,7 +25,7 @@
 Pomerado builds MCP integrations for websites, including sites without an API. Each integration is code you own, and it runs on your computer.
 
 - Each tool does what it says. Pomerado runs the task in a real browser while it builds, then validates every input and output against the tool's schema.
-- Guardian reviews each browser action before it runs and the finished source before it is saved. Your agent picks read or write access for each mint, and Pomerado's tools tell it to ask you before it picks write.
+- Guardian reviews each browser action before it runs and the finished source before it is saved. Your agent picks read or write access for each mint, and the `mint` tool's description tells it to ask you before it picks write.
 - Your agent calls the integration like any other MCP tool. It works with any MCP client and any model your agent runs on.
 
 ```text

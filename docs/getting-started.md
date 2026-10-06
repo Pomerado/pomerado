@@ -119,7 +119,7 @@ From VS Code's docs on [MCP servers](https://code.visualstudio.com/docs/agent-cu
   ```
 
 - VS Code's docs don't say whether a server inherits VS Code's environment. They say to keep API keys out of config files and to use an environment file or an input variable instead.
-- For an environment file, add `"envFile": "/absolute/path/to/pomerado.env"` to the entry. That file holds one line, `OPENAI_API_KEY=` followed by the key. Keep it outside any repository.
+- For an environment file, add `"envFile": "/absolute/path/to/pomerado.env"` to the entry. That file holds one line, `OPENAI_API_KEY=` followed by the key. Keep it outside any repository, and make it readable only by you with `chmod 600`.
 - VS Code's own `mcp.json` format, which uses `servers` in place of `mcpServers`, can ask for the key once and store it. Declare an input with `"password": true`, then reference it in the server's `env` as `"OPENAI_API_KEY": "${input:openai-key}"`.
 
   ```json

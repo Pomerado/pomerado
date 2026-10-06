@@ -58,7 +58,8 @@ claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --r
 codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root /absolute/path/to/pomerado-integrations
 ```
 
-- Ask the user before you run it. Codex keeps MCP servers in its global `~/.codex/config.toml`, or `$CODEX_HOME/config.toml`, so the server appears in every project.
+- Ask the user before you run it. `codex mcp add` writes the global `~/.codex/config.toml`, or `$CODEX_HOME/config.toml`, so the server appears in every project.
+- For one project only, add the same section to `.codex/config.toml` in that project instead. Codex reads it only in a trusted project.
 - Then add `env_vars = ["OPENAI_API_KEY"]` and `startup_timeout_sec = 60` to the `[mcp_servers.pomerado]` section. These lines name the variable and hold no key.
 
 ### Gemini CLI
