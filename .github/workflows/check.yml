@@ -1,3 +1,13 @@
+# Runners. Trusted runs use Blacksmith runners, which are faster. Every run in this repository is
+# trusted except a pull request from a fork: pushes to main, the release workflow's call, whose
+# event is the tag push, and pull requests from branches here, which only people with write access
+# can push. A fork's pull request runs on a free GitHub-hosted runner by default. That default is
+# not a boundary: a fork's pull request runs its own copy of this file, so it can name any runner.
+# Only a first-time contributor's runs wait for a maintainer's approval. Forks of this repository
+# run on GitHub-hosted runners too. Outside code can reach a Blacksmith runner, and release
+# publishes the tarball the check job builds, so no job here restores a cache: setup-node's package
+# manager cache is off, and nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on
+# a GitHub-hosted runner, which npm provenance needs.
 name: Check
 on:
   # Only main: pull requests run below, so other pushes would only run the same commit twice.
@@ -15,7 +25,10 @@ jobs:
   # tools/ci-scan.sh holds the steps, and typescript/tests/unit/ci-scan.test.ts tests them.
   secret-scan:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ github.repository == 'Pomerado/pomerado'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,7 +61,10 @@ jobs:
   # like GitHub's merge or squash of a pull request is that pull request's merge commit.
   content-scan:
     name: Public content scan
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ github.repository == 'Pomerado/pomerado'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,13 +86,17 @@ jobs:
           PUSH_AFTER: ${{ github.event.after }}
         run: bash tools/ci-scan.sh content
   check:
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ github.repository == 'Pomerado/pomerado'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.21.0
+          package-manager-cache: false
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
@@ -138,7 +158,10 @@ jobs:
     name: CI
     if: always()
     needs: [check, secret-scan, content-scan]
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ github.repository == 'Pomerado/pomerado'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Require every job to succeed
