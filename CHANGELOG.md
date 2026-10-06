@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.
 
 ### Breaking changes
 
