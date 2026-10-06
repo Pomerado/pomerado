@@ -29,7 +29,11 @@ import {
   Targets,
   untrustedTarget,
 } from "./autofill-step.js";
-import { type CredentialKeyboard, type CredentialTypingMode } from "./credential-keyboard.js";
+import {
+  type CredentialKeyboard,
+  type CredentialTypingMode,
+  type InsertionRefusal,
+} from "./credential-keyboard.js";
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -346,18 +350,23 @@ const fillField = (
     return yield* afterFieldCall(input, progress, index, answer, bindingKey);
   });
 
-/** A field that did not take the focus, or whose typing did not land in it, and why. */
+/**
+ * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
+ * cause), and why.
+ */
 const untypedRefusal = (
   input: FillInput,
   progress: FillProgress,
   index: number,
   answer: Extract<CallAnswer, { readonly focused: boolean }>,
+  insertion: InsertionRefusal | undefined,
 ) =>
   withCheck(
     refused("credential_target_refused", index),
-    answer.focused ? "typing_refused" : "not_focused",
+    insertion === undefined ? "not_focused" : "typing_refused",
     {
       ...answer.unfocused,
+      ...(insertion === undefined ? {} : { insertion }),
       ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     },
@@ -381,6 +390,7 @@ const afterFieldCall = (
         : filledReport(input.step, progress, "not_attempted", answer.url);
     }
     if (!("focused" in answer)) return refused("page_unavailable");
+    let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
       const typing = yield* Effect.either(
@@ -395,14 +405,15 @@ const afterFieldCall = (
       );
       if (typing._tag === "Left")
         return failedCall(progress, typing.left, { heldValue: true, mayMutate: true });
-      if (typing.right) {
+      if (typing.right === "inserted") {
         progress.typed = true;
         progress.statuses.push("filled");
         progress.check = index;
         return undefined;
       }
+      insertion = typing.right;
     }
-    const refusal = untypedRefusal(input, progress, index, answer);
+    const refusal = untypedRefusal(input, progress, index, answer, insertion);
     if (!progress.typed) return refusal;
     progress.statuses.push("failed");
     return filledReport(input.step, progress, "not_attempted", answer.url, refusal);
