@@ -118,10 +118,10 @@ page it redirected to; runs open that route to replay your screens.
   - `slot: "recovery_code"` for a backup or recovery code field. The host fills a saved one only
     while recovery codes are the method in force, else asks the caller. Never ask for one yourself.
   - `slot: "private_answer"` for a security question or other private answer requested during
-    sign-in. Name the observed answer field, never the answer in a selector. The host asks the
-    caller from the current field label and fills it once through the protected sign-in path.
-    A later run asks again; the answer is never saved in the login or recipe. Never submit it
-    through generated browser code.
+    sign-in. Name each observed answer field, never an answer in a selector. The host asks the
+    caller separately for every field using its current label, then fills each once through the
+    protected sign-in path. A later run asks again; answers are never saved in the login or
+    recipe. Never submit them through generated browser code.
 - `submit`: the observed enabled control that submits those fields or advances this sign-in screen
   ("Next", "Continue", "Sign in"). It may be a native button, a submit/button/image input, an HTML
   anchor or a custom ARIA action: use its evidenced role, label or stable selector and purpose.
@@ -148,6 +148,9 @@ sign-in; never invent a marker or submit bad credentials to discover one. The ho
 visibility and retains every rejected value so it cannot send that value again.
 `private_answer` has no recorded rejection marker or automatic correction: inspect a refused
 question screen and stop rather than resending the same answer.
+Do not mark sign-in complete while a recorded answer or verification field is still visible,
+including one inside a provider frame. Account search, support and security-settings forms are
+not sign-in evidence.
 
 <!-- pomerado:hosted:start
 On a combined password-and-code screen that returns empty, an explicit code rejection permits a

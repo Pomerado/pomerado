@@ -61,8 +61,9 @@ export const makeLiveAuthentication = (options: {
   const step = (
     request: AutofillStepRequest,
     beforeFill: Effect.Effect<void, Error> = Effect.void,
-  ) =>
-    Effect.gen(function* () {
+  ) => {
+    const privateAnswers: string[] = [];
+    return Effect.gen(function* () {
       const selected: AutofillStep = yield* Effect.try({
         try: () => ({ ...request, fields: request.fields.map(field) }),
         catch: (cause) => new Error("Invalid sign-in field", { cause }),
@@ -78,26 +79,15 @@ export const makeLiveAuthentication = (options: {
       yield* beforeFill;
       const missing = [...new Set(selected.fields.map((item) => item.slot))].filter(
         (slot) =>
-          values[slot] === undefined ||
-          slot === "code" ||
-          slot === "recovery_code" ||
-          slot === "private_answer",
+          slot !== "private_answer" &&
+          (values[slot] === undefined || slot === "code" || slot === "recovery_code"),
       );
       if (missing.length > 0) {
         const answered = yield* options
           .ask({
             id: randomUUID(),
             source: "system",
-            questions: missing.map((slot) =>
-              credentialQuestion(
-                slot,
-                options.siteOrigin,
-                slot === "private_answer"
-                  ? (inspected.screen.fields.find((field) => field.slot === slot)?.label ??
-                      undefined)
-                  : undefined,
-              ),
-            ),
+            questions: missing.map((slot) => credentialQuestion(slot, options.siteOrigin)),
           })
           .pipe(
             Effect.mapError((cause) => new Error("Sign-in input was not completed", { cause })),
@@ -116,12 +106,37 @@ export const makeLiveAuthentication = (options: {
             for (const layout of wholeDateLayouts(value)) options.registerSecret(layout);
         }
       }
+      for (const [index, item] of selected.fields.entries()) {
+        if (item.slot !== "private_answer") continue;
+        const answered = yield* options
+          .ask({
+            id: randomUUID(),
+            source: "system",
+            questions: [
+              credentialQuestion(
+                "private_answer",
+                options.siteOrigin,
+                inspected.screen.fields[index]?.label ?? undefined,
+              ),
+            ],
+          })
+          .pipe(
+            Effect.mapError((cause) => new Error("Sign-in input was not completed", { cause })),
+          );
+        const answer = answered.private_answer;
+        if (answer?.type !== "secret")
+          return yield* Effect.fail(new Error("Invalid sign-in answer"));
+        options.registerSecret(answer.value);
+        privateAnswers[index] = answer.value;
+      }
       const result = yield* fillAutofillStep({
         step: selected,
         inspection: inspected,
         page: options.page,
         keyboard: options.keyboard,
-        values: selected.fields.map((item) => values[item.slot] ?? ""),
+        values: selected.fields.map((item, index) =>
+          item.slot === "private_answer" ? (privateAnswers[index] ?? "") : (values[item.slot] ?? ""),
+        ),
       });
       screens.push(selected);
       delete values.code;
@@ -130,10 +145,11 @@ export const makeLiveAuthentication = (options: {
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          delete values.private_answer;
+          privateAnswers.fill("");
         }),
       ),
     );
+  };
   return {
     step,
     rejected: (slot: AutofillSlot) => {

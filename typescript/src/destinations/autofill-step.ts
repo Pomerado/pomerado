@@ -466,18 +466,20 @@ const openAccountPage = (openPath: string | undefined, page: AutofillPage, siteO
     };
   });
 
-/** A sign-in's screens as the signed-in check reads them: the selectors of their fields. */
+/** A sign-in's recorded fields: selectors and, when present, slots of one-use challenges. */
 export type AutofillScreens = readonly {
   readonly popup?: AutofillPopup | undefined;
-  readonly fields: readonly { readonly selector: string }[];
+  readonly fields: readonly { readonly selector: string; readonly slot?: AutofillSlot }[];
 }[];
 
 /**
  * Checks the minter's signed-in indicator on the live page: the selector is visible and the path
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
- * visible one. It still fails when the site shows the recorded login form again. Another form's
- * password field on the page does not count unless a recorded selector matches in it. Screens with no field leave any visible password field failing it, as before.
+ * visible one. It also refuses a visible recorded challenge, including in a provider frame, or a
+ * challenge control on a site's active authentication route. An ordinary account search, support
+ * or security-settings form does not count. Another form's password field does not count unless a recorded
+ * selector matches in it. Screens with no field leave any visible password field failing it.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
@@ -496,6 +498,14 @@ export const checkAutofillSignedIn = (input: {
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields.map((field) => field.selector))
       .filter((selector) => !frameCrossing(selector));
+    const challengeFields = input.screens
+      .filter((screen) => screen.popup === undefined)
+      .flatMap((screen) => screen.fields)
+      .filter((field) =>
+        field.slot === "private_answer" || field.slot === "code" || field.slot === "recovery_code",
+      )
+      .map((field) => field.selector)
+      .filter((selector) => !frameCrossing(selector));
     const read = yield* page
       .execute(
         autofillSignedInCode(
@@ -503,6 +513,7 @@ export const checkAutofillSignedIn = (input: {
           indicator.selector,
           siteHost(input.siteOrigin),
           signInFields,
+          challengeFields,
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
         ),
         15,

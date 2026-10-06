@@ -46,3 +46,45 @@ test("asks the current private-answer question again on a later sign-in step", a
   expect(prompts[1]).toContain("grow up on");
   for (const answer of answers) expectNotCarried(browser.calls, answer);
 });
+
+test("asks separately for two private answers on the same sign-in screen", async ({ page }) => {
+  test.slow();
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<form><label>What was your first school?<input id="school" name="schoolAnswer"></label><label>What street did you grow up on?<input id="street" name="streetAnswer"></label></form>',
+    }),
+  );
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const answers = ["synthetic-school-one", "synthetic-street-two"];
+  const prompts: string[] = [];
+  const auth = makeLiveAuthentication({
+    page: browser,
+    keyboard,
+    siteOrigin: site,
+    authenticationOrigins: [],
+    ask: makeInputAsker((request) =>
+      Effect.sync(() => {
+        const answer = answers[prompts.length];
+        prompts.push(request.questions[0]?.prompt ?? "");
+        return { private_answer: answer };
+      }),
+    ),
+    registerSecret: () => undefined,
+    review: () => Effect.void,
+  });
+
+  await Effect.runPromise(auth.step({ fields: [
+    { selector: "#school", slot: "private_answer" },
+    { selector: "#street", slot: "private_answer" },
+  ] }));
+  expect(await page.locator("#school").inputValue()).toBe(answers[0]);
+  expect(await page.locator("#street").inputValue()).toBe(answers[1]);
+  expect(prompts).toHaveLength(2);
+  expect(prompts[0]).toContain("first school");
+  expect(prompts[1]).toContain("grow up on");
+  for (const answer of answers) expectNotCarried(browser.calls, answer);
+});
