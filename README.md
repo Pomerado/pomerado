@@ -103,13 +103,13 @@ integrations/example_reader/
 ├── pomerado.json        Entrypoint and input/output schemas
 ├── deployment.json      Tool name, description, URL, intent and authority
 ├── mcp.mjs              Fixed launcher for the shared Pomerado runtime
-├── codex-mcp.toml       Local Codex server configuration
+├── mcp.json             Standard MCP server entry, with no key
 └── README.md            Commands and usage for this integration
 ```
 
-1. Open the generated `README.md` and `codex-mcp.toml`.
-2. Copy the generated MCP section into `~/.codex/config.toml`. It already contains your local Node, launcher and runtime paths.
-3. Make sure Codex can forward `OPENAI_API_KEY`. Generated integrations still use Guardian.
+1. Open the generated `README.md`. It lists the add command for each major MCP client, with your local Node, launcher and runtime paths filled in.
+2. Add the server to your client, or copy the entry in `mcp.json` into a client that reads an `mcpServers` file.
+3. Make sure the server gets `OPENAI_API_KEY` from its environment. Generated integrations still use Guardian.
 4. Reload the MCP configuration in your client and ask it to use the integration.
 
 > Use example_reader to read the page heading.
