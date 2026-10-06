@@ -188,26 +188,69 @@ const readText = (path: string): string | undefined => {
   return bytes.includes(0) ? undefined : bytes.toString("utf8");
 };
 
-/** The committer of commits GitHub makes itself, such as a merge from a pull request's page. */
-const githubCommitter = "noreply@github.com";
+/** One commit in a scanned range. */
+export interface Commit {
+  readonly sha: string;
+  readonly parents: number;
+  readonly committerEmail: string;
+  readonly message: string;
+}
+
+/** Whether GitHub's web-flow account committed a commit and signed it. */
+export type WebFlowCheck = (sha: string) => boolean;
+
+/** The first line of a merge commit made from a pull request's page. Group 1 is the number. */
+const githubMergeTitle = /^Merge pull request (#\d+) from [A-Za-z0-9][A-Za-z0-9-]*\/\S+$/du;
+
+/** The end of a squashed title, where GitHub appends the number in brackets. Group 1 is the number. */
+const githubSquashSuffix = / \((#\d+)\)$/du;
+
+/** The committer email of web-flow, before GitHub confirms it. Anyone can set it locally. */
+const githubCommitterEmail = "noreply@github.com";
 
 /**
- * The first line GitHub writes when it merges a pull request of this repository: a merge commit
- * title, or a squashed title with the number appended in brackets. Group 1 or 2 is the number.
+ * A commit message with the pull request number GitHub wrote in its first line blanked out, so
+ * the rest of the message is still scanned. That covers a merge commit, which has two parents and
+ * GitHub's exact title, and a squash, which has one parent, a title ending in the bracketed number
+ * and web-flow as its confirmed committer. Every other message comes back unchanged.
  */
-const githubMergeTitle = /^Merge pull request (#\d+) from \S+$|^.*\S \((#\d+)\)$/du;
-
-/** A commit message with the pull request number GitHub wrote in its first line blanked out. */
-export const maskGitHubMergeNumber = (message: string): string => {
+export const maskGitHubMergeNumber = (commit: Commit, isWebFlow: WebFlowCheck): string => {
+  const { message } = commit;
   const end = message.indexOf("\n");
-  const match = githubMergeTitle.exec(end === -1 ? message : message.slice(0, end));
-  const span = match?.indices?.[1] ?? match?.indices?.[2];
+  const title = end === -1 ? message : message.slice(0, end);
+  let span: readonly [number, number] | undefined;
+  if (commit.parents === 2) {
+    span = githubMergeTitle.exec(title)?.indices?.[1];
+  } else if (commit.parents === 1 && commit.committerEmail === githubCommitterEmail) {
+    const squash = githubSquashSuffix.exec(title)?.indices?.[1];
+    if (squash !== undefined && isWebFlow(commit.sha)) span = squash;
+  }
   if (span === undefined) return message;
   return message.slice(0, span[0]) + " ".repeat(span[1] - span[0]) + message.slice(span[1]);
 };
 
+/** Asks GitHub's API, through `gh`, who committed a commit and whether its signature checks out. */
+const githubWebFlowCheck: WebFlowCheck = (sha) => {
+  const repository = process.env["GITHUB_REPOSITORY"];
+  if (repository === undefined || repository === "") {
+    throw new Error(
+      `Set GITHUB_REPOSITORY and sign in to gh to confirm that GitHub made commit ${sha.slice(0, 12)}.`,
+    );
+  }
+  const answer = execFileSync(
+    "gh",
+    ["api", `repos/${repository}/commits/${sha}`, "--jq", '"\\(.committer.login) \\(.commit.verification.verified)"'],
+    { encoding: "utf8" },
+  );
+  return answer.trim() === "web-flow true";
+};
+
 /** Findings for every tracked file and, given a range such as `A..B`, its commit messages. */
-export const scanRepository = (cwd: string, commits?: string): Finding[] => {
+export const scanRepository = (
+  cwd: string,
+  commits?: string,
+  isWebFlow: WebFlowCheck = githubWebFlowCheck,
+): Finding[] => {
   const findings: Finding[] = [];
   for (const path of git(cwd, ["ls-files", "-z"]).split("\0").filter(Boolean)) {
     findings.push(...scanPath(path));
@@ -215,16 +258,16 @@ export const scanRepository = (cwd: string, commits?: string): Finding[] => {
     if (text !== undefined) findings.push(...scanText(path, text));
   }
   if (commits !== undefined) {
-    const log = git(cwd, ["log", "-z", "--format=%H%n%ce%n%B", commits, "--"]);
+    const log = git(cwd, ["log", "-z", "--format=%H%n%P%n%ce%n%B", commits, "--"]);
     for (const entry of log.split("\0").filter(Boolean)) {
-      const [sha = "", committer = "", ...lines] = entry.split("\n");
-      const message = lines.join("\n");
-      findings.push(
-        ...scanText(
-          `commit ${sha.slice(0, 12)}`,
-          committer === githubCommitter ? maskGitHubMergeNumber(message) : message,
-        ),
-      );
+      const [sha = "", parents = "", committerEmail = "", ...lines] = entry.split("\n");
+      const commit: Commit = {
+        sha,
+        parents: parents.split(" ").filter(Boolean).length,
+        committerEmail,
+        message: lines.join("\n"),
+      };
+      findings.push(...scanText(`commit ${sha.slice(0, 12)}`, maskGitHubMergeNumber(commit, isWebFlow)));
     }
   }
   return findings;

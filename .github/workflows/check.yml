@@ -8,9 +8,9 @@ on:
 permissions:
   contents: read
 jobs:
-  # Secret scan with gitleaks and .gitleaks.toml. A pull request scans each of its commits, so a
-  # secret added and then removed still fails. Every other event scans the checked-out tree, and a
-  # push to main also scans each pushed commit.
+  # Secret scan with gitleaks and .gitleaks.toml. Every event scans the checked-out tree. A pull
+  # request also scans each of its commits, and a push to main each pushed commit, so a secret
+  # added and then removed still fails. tools/ci-scan.sh holds the steps and their tests.
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -30,43 +30,19 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
-      # A pull request scans its commits. A push to main scans the pushed commits, unless a force
-      # push left no earlier commit to start from. A release tag push scans no commits.
-      - name: Find the commits to scan
-        id: range
+      - name: Scan for secrets
         env:
+          GITLEAKS: ${{ runner.temp }}/gitleaks
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.event.after }}
-        run: |
-          commits=""
-          if [ "$EVENT" = pull_request ]; then
-            commits="$PR_BASE..$PR_HEAD"
-          elif [[ $EVENT == push && $REF == refs/heads/* ]] &&
-            git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
-            commits="$PUSH_BEFORE..$PUSH_AFTER"
-          elif [[ $EVENT == push && $REF == refs/heads/* ]]; then
-            echo "::warning::No earlier commit to start from. Only the tree is scanned."
-          fi
-          echo "commits=$commits" >> "$GITHUB_OUTPUT"
-      - name: Scan for secrets
-        env:
-          EVENT: ${{ github.event_name }}
-          COMMITS: ${{ steps.range.outputs.commits }}
-        run: |
-          if [ -n "$COMMITS" ]; then
-            "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner \
-              --log-opts="$COMMITS" .
-          fi
-          if [ "$EVENT" != pull_request ]; then
-            "$RUNNER_TEMP/gitleaks" dir --config .gitleaks.toml --redact --no-banner .
-          fi
+        run: bash tools/ci-scan.sh secrets
   # Generic scan for internal hostnames, account IDs, ticket and review references and secret
   # file names. It always scans every tracked file, and the messages of a pull request's commits or
-  # of the commits pushed to main.
+  # of the commits pushed to main. The token lets it confirm merges that GitHub made.
   content-scan:
     name: Public content scan
     runs-on: ubuntu-latest
@@ -80,37 +56,16 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
-      # A pull request scans its commits. A push to main scans the pushed commits, unless a force
-      # push left no earlier commit to start from. A release tag push scans no commits.
-      - name: Find the commits to scan
-        id: range
+      - name: Scan public content
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.event.after }}
-        run: |
-          commits=""
-          if [ "$EVENT" = pull_request ]; then
-            commits="$PR_BASE..$PR_HEAD"
-          elif [[ $EVENT == push && $REF == refs/heads/* ]] &&
-            git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
-            commits="$PUSH_BEFORE..$PUSH_AFTER"
-          elif [[ $EVENT == push && $REF == refs/heads/* ]]; then
-            echo "::warning::No earlier commit to start from. Only the tree is scanned."
-          fi
-          echo "commits=$commits" >> "$GITHUB_OUTPUT"
-      - name: Scan public content
-        env:
-          COMMITS: ${{ steps.range.outputs.commits }}
-        run: |
-          if [ -n "$COMMITS" ]; then
-            node tools/check-public-content.ts --commits "$COMMITS"
-          else
-            node tools/check-public-content.ts
-          fi
+        run: bash tools/ci-scan.sh content
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
