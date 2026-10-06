@@ -21,6 +21,7 @@ import {
   withEvidence,
 } from "./autofill-refusal.js";
 import { sameSite, siteDomain } from "../runtime/same-site.js";
+import type { PageControls } from "./page-controls.js";
 import type {
   AutofillPopup,
   DateControl,
@@ -272,6 +273,11 @@ export type AutofillStepReport =
       readonly failureDetail?: FailureDetail;
       /** Host-only: a value reached the page, even one a field no longer holds. */
       readonly typed?: true;
+      /**
+       * Host-only: the page's controls once a clicked submit settled, never a value. The host saves
+       * them to a workspace file for the minter (`afterSubmitPath`) rather than showing them inline.
+       */
+      readonly controls?: PageControls;
     }
   | {
       readonly outcome: "uncertain";

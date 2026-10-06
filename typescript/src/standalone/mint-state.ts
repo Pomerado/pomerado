@@ -8,6 +8,7 @@ import { makeSecretHandles } from "../mint/secret-handles.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
@@ -64,6 +65,7 @@ export const mintState = (
           )
           .pipe(Effect.asVoid),
     });
+    const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     let claimed = false;
     let buildEffect: "read" | "write" | undefined =
       request.effect === "read" || request.effect === "write" ? request.effect : undefined;
@@ -90,6 +92,7 @@ export const mintState = (
       mintAsk,
       runs,
       auth,
+      afterSubmit,
       navigate,
       get claimed() {
         return claimed;

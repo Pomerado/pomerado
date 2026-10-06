@@ -11,6 +11,8 @@ const products = [
   { id: "p-2", name: "Oak shelf", priceMinor: 9900 },
 ];
 export const shopAccount = { username: "ada@example.test", password: "correct-horse-battery-9" };
+/** How many help links the two-screen sign-in's password screen shows besides its 4 controls. */
+export const shopHelpLinks = 40;
 /** An account the shop has locked: it answers 423 whatever the password. */
 export const lockedShopAccount = {
   username: "grace@example.test",
@@ -166,8 +168,27 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
         ? `<title>Account</title><p id="account">${shopAccount.username}</p>`
         : "<title>Account</title><p id='signed-out'>Please sign in</p>",
     );
+  const identifierScreen: Route = (_request, response) =>
+    html(
+      response,
+      `<title>Sign in</title><form method="post" action="/sign-in/password"><label>Email<input id="username" name="username" type="email" autocomplete="username"></label><button id="next">Next</button></form>`,
+    );
+  // The next screen echoes the typed identifier in its text, a label, a placeholder and a hidden field.
+  const passwordScreen: Route = async (request, response) => {
+    const typed = new URLSearchParams(await readBody(request)).get("username") ?? "";
+    const links = Array.from(
+      { length: shopHelpLinks },
+      (_, index) => `<a href="/help/${index}">Help topic ${index}</a>`,
+    ).join("");
+    html(
+      response,
+      `<title>Password</title><p>Signing in as ${typed}</p><form method="post" action="/sign-in/session"><input type="hidden" name="user" value="${typed}"><label>Password for ${typed}<input id="password" name="password" type="password" required placeholder="${typed}"></label><input id="otp" style="display:none" aria-label="Code"><button id="sign-in">Sign in</button><button id="trouble" disabled>Trouble signing in</button></form><nav>${links}</nav>`,
+    );
+  };
   return new Map([
     ["/", home],
+    ["/sign-in", identifierScreen],
+    ["/sign-in/password", postOnly(passwordScreen)],
     ["/search", search],
     ["/api/products", productsApi],
     ["/api/cart", postOnly(cart)],

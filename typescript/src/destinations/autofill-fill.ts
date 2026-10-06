@@ -30,6 +30,7 @@ import {
   untrustedTarget,
 } from "./autofill-step.js";
 import { type CredentialKeyboard, type CredentialTypingMode } from "./credential-keyboard.js";
+import { PageControls } from "./page-controls.js";
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -51,6 +52,7 @@ const FillAnswer = Schema.Union(
   Schema.Struct({
     submit: Schema.Literal("clicked", "failed", "none"),
     url: Schema.String,
+    controls: Schema.optional(PageControls),
   }),
   GuardRefusal,
 );
@@ -473,5 +475,6 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         true,
       );
     if (!("submit" in answer)) return refused("page_unavailable");
-    return filledReport(step, progress, answer.submit, answer.url);
+    const report = filledReport(step, progress, answer.submit, answer.url);
+    return answer.controls === undefined ? report : { ...report, controls: answer.controls };
   });

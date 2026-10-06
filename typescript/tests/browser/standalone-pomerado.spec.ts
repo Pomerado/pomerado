@@ -3,13 +3,14 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { startShop, shopAccount } from "./shop-fixture.js";
+import { startShop, shopAccount, shopHelpLinks } from "./shop-fixture.js";
 import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
@@ -1136,6 +1137,151 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a two-screen sign-in saves the next screen's controls and inlines them when the next step fails", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-after-submit-"));
+  const shop = await startShop(directory);
+  const remote = await chromium.launchServer({
+    args: [
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  const email = shopAccount.username;
+  // The minter reads the saved file on its next turn; the test reads it from disk then.
+  const savedFile = () =>
+    readdirSync(tmpdir())
+      .filter((entry) => entry.startsWith("pomerado-workspace-"))
+      .map((entry) => join(tmpdir(), entry, "captures/after-submit/1.json"))
+      .filter((path) => existsSync(path))
+      .map((path) => readFileSync(path, "utf8"))
+      .find((text) => text.includes("Help topic"));
+  let saved: string | undefined;
+  const mintRequests: ModelRequest[] = [];
+  const signInStep = (step: unknown, callId: string) =>
+    call("execute", { ...execution, purpose: "authenticate", signInStep: step }, callId);
+  const minter = provider((_request, index) => {
+    if (index === 0)
+      return [
+        signInStep(
+          { fields: [{ selector: "#username", accepts: ["email"] }], submit: "#next" },
+          "identifier",
+        ),
+      ];
+    if (index === 1) {
+      saved = savedFile();
+      return [
+        call(
+          "read_source",
+          { path: "captures/after-submit/1.json", offset: null, limit: null },
+          "read_controls",
+        ),
+      ];
+    }
+    if (index === 2)
+      return [
+        signInStep(
+          { fields: [{ selector: "#pin", slot: "password" }], submit: "#sign-in" },
+          "wrong_screen",
+        ),
+      ];
+    return [message("Stopping here.")];
+  }, mintRequests);
+  const toolResult = (callId: string) => {
+    const result = objects(mintRequests.at(-1)?.input).find(
+      (item) => item["type"] === "function_call_result" && item["callId"] === callId,
+    );
+    if (result === undefined) throw new Error(`No ${callId} result`);
+    return result;
+  };
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider: minter,
+            guardianProvider: guardian([]),
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(request.questions.map((question) => [question.id, email])),
+              ),
+            ),
+            timeoutMs: 30_000,
+          });
+          yield* service.mint({
+            url: `${shop.origin}/sign-in`,
+            intent: "Read the account heading",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    // The file is saved after the first submit, with the next screen's controls and no value.
+    expect(saved).toBeDefined();
+    const file = Schema.decodeUnknownSync(
+      Schema.parseJson(
+        Schema.Struct({
+          controls: Schema.Array(
+            Schema.Struct({
+              role: Schema.String,
+              name: Schema.NullOr(Schema.String),
+              type: Schema.NullOr(Schema.String),
+              required: Schema.Boolean,
+              visible: Schema.Boolean,
+              enabled: Schema.Boolean,
+            }),
+          ),
+          total: Schema.Number,
+        }),
+      ),
+    )(saved);
+    expect(saved).not.toContain(email);
+    expect(file.controls).toContainEqual(
+      expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+    );
+    expect(file.controls).toContainEqual(
+      expect.objectContaining({ role: "button", name: "Trouble signing in", enabled: false }),
+    );
+    expect(file.controls).toContainEqual(
+      expect.objectContaining({ name: "Code", visible: false }),
+    );
+    expect(file.total).toBe(shopHelpLinks + 4);
+    // The step result names the file and adds no control list.
+    const identifier = JSON.stringify(toolResult("identifier"));
+    expect(identifier).toContain("captures/after-submit/1.json");
+    expect(identifier).not.toContain("Help topic");
+    // The minter reads it like any other workspace file.
+    const read = JSON.stringify(toolResult("read_controls"));
+    expect(read).toContain("Help topic 0");
+    expect(read).not.toContain(email);
+    // A step that cannot find its screen carries the saved controls inline, capped.
+    const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+    const lastScreen = Schema.decodeUnknownSync(
+      Schema.Struct({
+        lastScreen: Schema.Struct({
+          path: Schema.Literal("captures/after-submit/1.json"),
+          controls: Schema.Array(Schema.Unknown),
+          truncated: Schema.String,
+        }),
+      }),
+    )(failed).lastScreen;
+    expect(lastScreen.controls).toHaveLength(30);
+    expect(JSON.stringify(mintRequests)).not.toContain(email);
+  } finally {
+    await remote.close();
+    await shop.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
