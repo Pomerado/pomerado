@@ -168,7 +168,7 @@ This repository owns the shared minter, Guardian, operation runtime and live aut
 | `typescript/src/execution/`    | Local workspaces, child processes and native Playwright adapter  |
 | `typescript/src/standalone/`   | Local library, terminal and MCP composition                      |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP               |
-| `typescript/authoring/`        | Shared prompts and examples for local and hosted minting      |
+| `typescript/authoring/`        | Shared prompts and examples, with sections a host can replace    |
 
 <details>
 <summary>Runtime boundaries and browser compatibility</summary>
@@ -186,7 +186,7 @@ Here `kernel` is a compatibility object forwarding calls to native Playwright ov
 
 This public repository is the sole source for the shared core, portable tests, authoring assets and local MCP adapters. Cloud calls the installed library directly. Its hosted MCP frontend stays in the private repository with accounts, permissions and durable jobs.
 
-Cloud owns the REST backend, database, Kernel and hosted compute providers, recorder, evidence bundles, general privacy service, repair loop and credential storage. Cloud also owns Kernel CAPTCHA telemetry, antibot browser switching and proxy recovery notices.
+Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop, credential storage and its own hosted authoring text.
 
 Integrations run through native Playwright. The local host does not mint HTTP variants, record network traffic, produce `captures/routes.json`, or provide the hosted `SiteHttp` transport and capture replay helpers. Website requests made inside the browser remain available.
 
@@ -229,6 +229,7 @@ The package exposes local APIs and direct core library entry points. Importing a
 - Use explicit `pomerado/core/*` subpaths such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute` for hosted library composition. The export map lists supported modules.
 - Use `pomerado/testing/*` for reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - Use `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` for installed prompt and policy paths. These paths resolve relative to the package.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then loads it in `"hosted"` mode, which refuses any section left uncomposed.
 
 Run `corepack pnpm start --help` for the advanced terminal mint/run interface. Terminal mint retains its original source-artifact format. Use the MCP minting entrypoint for generated MCP packaging.
 

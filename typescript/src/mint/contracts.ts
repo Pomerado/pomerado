@@ -1,7 +1,7 @@
 import type { MintDiagnostics, MintReporting } from "./diagnostics.js";
 import type { MintProjection } from "./projection.js";
 import { CredentialRejectedField } from "../runtime/authentication.js";
-import type { ProxySwitchSummary } from "../runtime/provider-metadata.js";
+import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
@@ -810,10 +810,19 @@ export interface MintActions {
   readonly requestInput: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Ends the build blocked (`BuildBlocked`); absent on a question-only turn. */
   readonly reportBlocked?: (input: unknown) => Effect.Effect<string, MintFailure>;
-  /** Read-only Kernel CAPTCHA state for the host's current browser; absent when unsupported. */
+  /** Read-only CAPTCHA state for the host's current browser; absent when unsupported. */
   readonly captchaState?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** The agent's troubleshooting request for a new browser; absent where the host has none. */
   readonly requestBrowserRecovery?: (input: unknown) => Effect.Effect<string, MintFailure>;
+}
+
+/**
+ * A host's descriptions of the optional tools it offers, such as which of its own skills to read
+ * first. A tool the host describes gets that text instead of the generic description.
+ */
+export interface HostToolDescriptions {
+  readonly captchaState?: string;
+  readonly requestBrowserRecovery?: string;
 }
 
 export interface MintTurn {
@@ -831,6 +840,7 @@ export interface MintTurn {
   readonly instructions: string;
   readonly skills: readonly SkillDescriptor[];
   readonly actions: MintActions;
+  readonly hostToolDescriptions?: HostToolDescriptions;
   readonly screen: (value: unknown) => Effect.Effect<string, MintFailure>;
   readonly isComplete: () => boolean;
   readonly reportDiagnostic: (value: unknown) => Effect.Effect<void, MintFailure>;
@@ -902,12 +912,12 @@ export type MintEntryNavigation =
    * The browser was replaced: by managed authentication (`sign_in`), where `page` is the page the
    * agent was on, when it was on the site and loaded, else the login page; or by a recovery
    * (`recovery`), where `page` is the page a read's replacement reopened: the last page the site
-   * served the browser it replaced.
-   * `antibot`: after the entry load, a move-up for the site's bot products, blank.
+   * served the browser it replaced. A host may give its own reason and explain it in
+   * `instruction`.
    */
   | {
       readonly state: "replaced";
-      readonly reason: "sign_in" | "recovery" | "antibot";
+      readonly reason: "sign_in" | "recovery" | (string & {});
       readonly requestedUrl?: string;
       readonly page?: string;
       /** Host-authored explanation of the browser replacement. */
@@ -1226,9 +1236,9 @@ export interface MintDependencies {
   readonly readRetainedCapture?: (path: string) => Effect.Effect<string | undefined>;
   /** Host-only selection/retrieval; never refetches a historical website response. */
   readonly retainCapture?: (request: CaptureRequest) => Effect.Effect<string, MintFailure>;
-  /** Host-bound, read-only Kernel CAPTCHA state for the current live browser. Never
-   * dispatches a browser action, triggers a solve or extends a deadline. Absent when the
-   * host has no CAPTCHA telemetry; then the minter tool is not offered. */
+  /** Host-bound, read-only CAPTCHA state for the current live browser. Never dispatches a
+   * browser action, triggers a solve or extends a deadline. Absent when the host has no CAPTCHA
+   * telemetry; then the minter tool is not offered. */
   readonly captchaState?: {
     readonly read: () => Effect.Effect<object, MintFailure>;
     readonly limit: number;
@@ -1242,6 +1252,8 @@ export interface MintDependencies {
   readonly requestBrowserRecovery?: (
     rationale: string,
   ) => Effect.Effect<MintBrowserRecoveryResult, MintFailure>;
+  /** The host's own descriptions of its optional tools, in place of the generic ones. */
+  readonly hostToolDescriptions?: HostToolDescriptions;
   readonly projection: MintProjection;
   /** The workspace AGENTS.md, installed at the workspace root and given as the instructions. */
   readonly instructions: string;
@@ -1312,7 +1324,7 @@ export type MintBrowserRecoveryResult =
       readonly outcome: "replaced" | "kept" | "lost";
       readonly notice: string;
       readonly reviewId: string;
-      readonly browserRecovery?: ProxySwitchSummary;
+      readonly browserRecovery?: BrowserRecoverySummary;
     };
 
 export const PublicationDiagnosticGap = Schema.Union(

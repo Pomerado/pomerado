@@ -2,12 +2,13 @@
 
 Every npm release of `pomerado` comes from GitHub Actions with npm provenance. Maintainers never publish from their own machines. GitHub stores no npm token.
 
-1. A maintainer merges a pull request into `main` that sets the new `version` in `package.json`.
+1. A maintainer merges a pull request into `main` that sets the new `version` in `package.json` and records the release's changes under that version in [CHANGELOG.md](../CHANGELOG.md). Breaking changes get migration steps and, while the major version is 0, a new minor version.
 2. A maintainer tags that commit with `v` and the same version, then pushes the tag.
 
    ```sh
-   git tag v0.1.2 <commit-on-main>
-   git push origin v0.1.2
+   version=$(node -p "require('./package.json').version")
+   git tag "v$version" <commit-on-main>
+   git push origin "v$version"
    ```
 
 3. The tag starts the [Release workflow](../.github/workflows/release.yml). It runs the full Check workflow first. Check typechecks, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
