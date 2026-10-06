@@ -8,6 +8,9 @@ import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution } from "../../src/guardian/review.js";
+import { makeSourceInspector } from "../../src/guardian/source.js";
+import type { SourceProjection } from "../../src/guardian/source.js";
+import { makeRunSecrets } from "../../src/inputs/secrets.js";
 
 const pending: PendingExecution = {
   invocationId: "mint_continuity",
@@ -141,7 +144,55 @@ const readCurrent = () =>
     }),
   );
 
-it("restores a completed review checkpoint and puts the current entrypoint in the next request", async () => {
+const InlinedEntrypoint = Schema.Struct({
+  submitted_call: Schema.Struct({
+    entrypointSource: Schema.optional(
+      Schema.Struct({
+        kind: Schema.Literal("untrusted_source"),
+        path: Schema.String,
+        byteOffset: Schema.Number,
+        nextOffset: Schema.Number,
+        hasMore: Schema.Boolean,
+        source: Schema.String,
+      }),
+    ),
+  }),
+});
+/** The entrypoint source carried in a request's own review message, as the model saw it. */
+const inlinedEntrypoint = (request: ModelRequest | undefined) => {
+  const input = request?.input;
+  const review =
+    typeof input === "string"
+      ? undefined
+      : input?.findLast(
+          (item) =>
+            "role" in item &&
+            item.role === "user" &&
+            typeof item.content === "string" &&
+            item.content.startsWith("{"),
+        );
+  const content =
+    typeof input === "string"
+      ? input
+      : review !== undefined && "content" in review
+        ? review.content
+        : undefined;
+  return Schema.decodeUnknownSync(Schema.parseJson(InlinedEntrypoint))(content).submitted_call
+    .entrypointSource;
+};
+/** The host's own source reader over in-memory files, with the host's source projection. */
+const inspector = (
+  files: Record<string, string>,
+  project: SourceProjection = (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
+) =>
+  makeSourceInspector((path) => {
+    const text = files[path];
+    return text === undefined
+      ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+      : Effect.succeed(new TextEncoder().encode(text));
+  }, project);
+
+it("gives a restored conversation's next review the current entrypoint source, so an allow needs no new read", async () => {
   const requests: ModelRequest[] = [];
   provide([[call("first")], [reason, message()], [message()]], requests);
   let saved: typeof GuardianSessionSnapshot.Type | undefined;
@@ -154,21 +205,88 @@ it("restores a completed review checkpoint and puts the current entrypoint in th
         );
       }),
   });
-  await Effect.runPromise(first.review(pending, readCurrent));
+  await Effect.runPromise(
+    first.review(pending, inspector({ [pending.entrypoint]: "export default 1" })),
+  );
   expect(saved?.incomplete).toBe(false);
   const replacement = makeGuardian(reviewer, undefined, {
     initial: Schema.decodeUnknownSync(GuardianSessionSnapshot)(saved),
   });
-  let current = 0;
-  const result = await Effect.runPromise(
-    replacement.review({ ...pending, attemptId: "takeover" }, () =>
-      readCurrent().pipe(Effect.tap(() => Effect.sync(() => current++))),
+  const edited = "export default 'edited since the first review'";
+  const reviewed = await Effect.runPromise(
+    replacement.review(
+      { ...pending, attemptId: "takeover" },
+      inspector({ [pending.entrypoint]: edited }),
     ),
   );
-  expect(result.decision.outcome).toBe("allow");
-  expect(current).toBe(1);
+  expect(reviewed.decision.outcome).toBe("allow");
   expect(requests).toHaveLength(3);
   expect(JSON.stringify(requests[2]?.input)).toContain("opaque-first-review-reasoning");
+  expect(inlinedEntrypoint(requests[2])).toEqual({
+    kind: "untrusted_source",
+    path: pending.entrypoint,
+    byteOffset: 0,
+    nextOffset: edited.length,
+    hasMore: false,
+    source: edited,
+  });
+});
+
+it("masks a registered secret in the entrypoint source the request carries", async () => {
+  const secret = "synthetic-registered-entrypoint-secret";
+  const secrets = makeRunSecrets();
+  secrets.register(secret);
+  const requests: ModelRequest[] = [];
+  provide([[message()]], requests);
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const reviewed = await Effect.runPromise(
+    guardian.review(
+      pending,
+      inspector({ [pending.entrypoint]: `export const token = "${secret}";` }, (_path, bytes) =>
+        Effect.sync(() => secrets.redact(new TextDecoder().decode(bytes))),
+      ),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(inlinedEntrypoint(requests[0])?.source).toBe('export const token = "[private]";');
+  expect(JSON.stringify(requests)).not.toContain(secret);
+});
+
+it("carries only the first page of a large entrypoint, and later pages come through read_source", async () => {
+  const requests: ModelRequest[] = [];
+  provide(
+    [
+      [
+        {
+          type: "function_call",
+          callId: "second_page",
+          name: "read_source",
+          status: "completed",
+          arguments: JSON.stringify({ path: pending.entrypoint, offset: 64 * 1024 }),
+        },
+      ],
+      [message()],
+    ],
+    requests,
+  );
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const reviewed = await Effect.runPromise(
+    guardian.review(
+      pending,
+      inspector({ [pending.entrypoint]: `${"a".repeat(70_000)}second-page-marker` }),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  const firstPage = inlinedEntrypoint(requests[0]);
+  expect(firstPage).toMatchObject({ byteOffset: 0, nextOffset: 64 * 1024, hasMore: true });
+  expect(firstPage?.source).toBe("a".repeat(64 * 1024));
+  expect(JSON.stringify(requests[0])).not.toContain("second-page-marker");
+  // The model's own read of the next page returns the rest of the file.
+  const nextInput = requests[1]?.input;
+  const pageResult = (Array.isArray(nextInput) ? nextInput : []).find(
+    (item) => item.type === "function_call_result" && item.callId === "second_page",
+  );
+  expect(JSON.stringify(pageResult)).toContain("second-page-marker");
 });
 
 it("keeps an interrupted model response and closes an unreturned source call on takeover", async () => {
