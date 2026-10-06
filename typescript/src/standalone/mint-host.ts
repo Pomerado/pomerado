@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import { questionForReview } from "../guardian/question.js";
-import { MintFailure, MintServices, type MintDependencies } from "../mint/contracts.js";
+import {
+  MintFailure,
+  MintServices,
+  type ExecutionRequest,
+  type MintDependencies,
+} from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
 import {
@@ -16,6 +21,31 @@ import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
+/**
+ * Steps the local host refuses before review. It keeps no write maintenance, so it has no
+ * possible write to inspect or finish. And once a write session started, a sign-in runs only as
+ * a signInStep the host fills: an authenticate step without one would run the agent's own source
+ * on the site outside the session's act steps.
+ */
+const localStepRefusal = (
+  execution: ExecutionRequest,
+  writeSessionStarted: boolean,
+): { readonly supported: false; readonly reason: string } | undefined =>
+  execution.purpose === "inspect" || execution.purpose === "residual"
+    ? {
+        supported: false,
+        reason: `${execution.purpose} is for a write maintenance recovering a possible write; this build has none to recover.`,
+      }
+    : writeSessionStarted &&
+        execution.purpose === "authenticate" &&
+        execution.target === "liveBrowser" &&
+        execution.signInStep === undefined
+      ? {
+          supported: false,
+          reason:
+            "This write session already started, so it signs in only through a signInStep the host fills: an authenticate step without one would run your own source on the site outside the session's act steps. Nothing was executed.",
+        }
+      : undefined;
 const mintDependencies = (state: MintState) => {
   const { workspace, authoring, deadline, context, request, mintAsk, handles } = state;
   const { projection, options } = state.session;
@@ -74,6 +104,7 @@ const mintDependencies = (state: MintState) => {
           };
         const { buildEffect } = context;
         const refusal =
+          localStepRefusal(execution, state.writeSession.started) ??
           preflightTestInput(execution, { buildEffect, executionHistory: context.executions() }) ??
           exampleInputRefusal(execution, {
             buildEffect,

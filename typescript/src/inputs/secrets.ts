@@ -3,15 +3,43 @@ import { Effect } from "effect";
 /** Explicit caller secrets live only for this run. This does not detect or classify page data. */
 export const makeRunSecrets = () => {
   const values = new Set<string>();
+  /**
+   * Each form a page or URL can show the value in: as given, trimmed, and with its whitespace
+   * collapsed as a page's accessibility snapshot shows it; each as written, URL-encoded,
+   * JSON-escaped and form-encoded with `+` for a space, as a query string carries it.
+   */
   const register = (value: string) => {
-    if (value.length === 0) return;
-    values.add(value);
-    values.add(encodeURIComponent(value));
-    values.add(JSON.stringify(value).slice(1, -1));
+    const shown = [
+      value,
+      value.trim(),
+      value
+        .replace(/[\u200b\u00ad]/gu, "")
+        .trim()
+        .replace(/\s+/gu, " "),
+    ];
+    for (const form of shown) {
+      if (form.length === 0) continue;
+      values.add(form);
+      values.add(encodeURIComponent(form));
+      values.add(JSON.stringify(form).slice(1, -1));
+      values.add(new URLSearchParams([["", form]]).toString().slice(1));
+    }
   };
   const ordered = () => [...values].sort((left, right) => right.length - left.length);
   const redact = (text: string) =>
     ordered().reduce((result, secret) => result.split(secret).join("[private]"), text);
+  /** The longest proper prefix of a registered form that `text` ends with, as a length. */
+  const splitPrefix = (text: string) =>
+    ordered().reduce((longest, secret) => {
+      for (let length = Math.min(secret.length - 1, text.length); length > longest; length--)
+        if (text.endsWith(secret.slice(0, length))) return length;
+      return longest;
+    }, 0);
+  /** Redacts text a cut ended, so a secret the cut split leaves no prefix at its end either. */
+  const redactCut = (text: string) => {
+    const redacted = redact(text);
+    return redacted.slice(0, redacted.length - splitPrefix(redacted));
+  };
   const assertAbsent = (text: string) =>
     Effect.suspend(() =>
       ordered().some((secret) => text.includes(secret))
@@ -40,5 +68,5 @@ export const makeRunSecrets = () => {
       },
       catch: () => new Error("Observation must be JSON serializable"),
     });
-  return { register, redact, assertAbsent, json, clear: () => values.clear() };
+  return { register, redact, redactCut, assertAbsent, json, clear: () => values.clear() };
 };

@@ -47,7 +47,8 @@ const executeCommand = (
           purpose: "command",
           target: "pureFiles",
           commandSandbox: {
-            cwd: workspace.root,
+            // The command runs in the workspace; its path on this machine is not Guardian's.
+            cwd: ".",
             timeoutSeconds: localCommandTimeoutMs / 1000,
             maxOutputBytes: localOutputLimit,
           },

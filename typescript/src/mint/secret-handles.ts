@@ -39,7 +39,7 @@ export const publishedHandlePath = (
 export const isSecretHandle = (value: string) => issuedShape.test(value);
 
 /** The rule a misplaced handle's refusal states after its file and line. */
-export const misplacedHandleRule =
+const misplacedHandleRule =
   "a secret handle may only be the whole string passed as the value to fill, type or pressSequentially, or a field of a request to this site, in code that never reads a typed field back (inputValue, evaluate), reads its own source, or redefines JSON, a global, a prototype or a page, keyboard or Kernel method; anything else is refused";
 
 /**
@@ -186,5 +186,5 @@ export const secretHandleRefusal = (
   const misplaced = handles.misplaced(files, siteOrigin);
   return misplaced === undefined
     ? undefined
-    : `${misplaced.path} line ${misplaced.line}: ${misplacedHandleRule}. Write the handle as the whole string passed to fill, type or pressSequentially in the step's page code, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.`;
+    : `${misplaced.path} line ${misplaced.line}: ${misplacedHandleRule}. Write the handle as a string literal, with no escaped quotes, inside the code string passed to the runtime's page-execute call, kernel.browsers.playwright.execute: the whole value passed to fill, type or pressSequentially, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.`;
 };

@@ -78,14 +78,33 @@ export const requestSite = (session: StandaloneSession, request: Pick<PomeradoRe
 const capturePath = "captures/current-page.aria.yml";
 const captureBytes = 256 * 1024;
 const captureMarker = "\n…[truncated at 256 KiB]";
-const PageSnapshot = Schema.Struct({ url: Schema.String, capture: Schema.String });
-/** A readable capture within its cap, cut on a character. */
-const cappedCapture = (capture: string) => {
-  const bytes = new TextEncoder().encode(capture);
-  if (bytes.byteLength <= captureBytes) return capture;
-  const kept = new TextDecoder().decode(bytes.subarray(0, captureBytes));
-  return `${kept.replace(/�$/u, "")}${captureMarker}`;
-};
+/**
+ * The most elements a page may have for the host to capture it. A snapshot's work grows faster
+ * than the page: about a second at this size, and past five seconds at four times it.
+ */
+const captureElements = 10_000;
+/**
+ * Reads the page in the browser worker: its URL, and its accessibility snapshot cut to 256 KiB
+ * there, so no more crosses to the host. A page over the element limit is not snapshotted.
+ */
+const pageSnapshotCode = `const url = page.url();
+const elements = await page.evaluate(() => document.getElementsByTagName("*").length);
+if (elements > ${captureElements}) return { url, elements };
+const bytes = new TextEncoder().encode(await page.locator("body").ariaSnapshot({ timeout: 4000 }));
+return {
+  url,
+  capture: new TextDecoder().decode(bytes.subarray(0, ${captureBytes})),
+  truncated: bytes.byteLength > ${captureBytes},
+};`;
+const PageSnapshot = Schema.Union(
+  Schema.Struct({ url: Schema.String, elements: Schema.Number }),
+  Schema.Struct({ url: Schema.String, capture: Schema.String, truncated: Schema.Boolean }),
+);
+/** A page capture, redacted with the values known when it was taken, and cut when `truncated`. */
+interface PageCapture {
+  readonly text: string;
+  readonly truncated: boolean;
+}
 
 /** One step Guardian reviews: its files under `operation/`, its input and what it is. */
 export interface ReviewStep {
@@ -114,7 +133,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let claimed = false;
     let approvedChange: string | undefined;
     let navigated = false;
-    let observed: { readonly page: ObservedPage; readonly capture: string } | undefined;
+    let observed: { readonly page: ObservedPage; readonly capture: PageCapture } | undefined;
     let inputSchema: unknown;
     const executions: ExecutionEntry[] = [];
     const stepResults = makeStepResults();
@@ -135,7 +154,15 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const host: MintReviewHost = {
       repeatableRead: () => repeatableReadFor(buildEffect, claimed),
       browser: () => (navigated ? "active" : "not_opened"),
-      observedPage: () => observed?.page,
+      // The page's place is redacted again on each read, as its capture is.
+      observedPage: () =>
+        observed === undefined
+          ? undefined
+          : {
+              ...observed.page,
+              origin: secrets.redact(observed.page.origin),
+              path: secrets.redact(observed.page.path),
+            },
       // The local host keeps the page a step leaves open for the next one.
       startsOnFreshPage: () => false,
       executions: () => executions,
@@ -166,9 +193,9 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           mintContext,
         };
         const readable = new Map(step.sources);
-        // A capture is redacted again on each read, for values the owner gave since.
+        // A capture is redacted on each read, for values the owner gave since it was taken.
         if (mintContext.currentPage !== undefined && observed !== undefined)
-          readable.set(capturePath, secrets.redact(observed.capture));
+          readable.set(capturePath, readableCapture(observed.capture));
         return { turn, readSource: sourceInspector(session, readable) };
       });
     /**
@@ -258,20 +285,35 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           }),
         ),
       );
+    /** Redacts a capture; a cut one keeps no prefix of a secret the cut split. */
+    const redactedCapture = (capture: PageCapture): PageCapture => ({
+      text: capture.truncated ? secrets.redactCut(capture.text) : secrets.redact(capture.text),
+      truncated: capture.truncated,
+    });
     /**
-     * Reads the page the browser shows, redacted and capped, for the next review. A page that
-     * cannot be read leaves no observed page; the step's own result stands.
+     * A capture as Guardian reads it: redacted again, for values the owner gave since it was
+     * taken, and within 256 KiB, since a redaction can lengthen it.
+     */
+    const readableCapture = (capture: PageCapture) => {
+      const { text, truncated } = redactedCapture(capture);
+      if (!truncated) return text;
+      const bytes = new TextEncoder().encode(text);
+      const capped =
+        bytes.byteLength <= captureBytes
+          ? text
+          : new TextDecoder().decode(bytes.subarray(0, captureBytes)).replace(/\uFFFD$/u, "");
+      return `${capped}${captureMarker}`;
+    };
+    /**
+     * Reads the page the browser shows for the next review. A page that cannot be read leaves no
+     * observed page; the step's own result stands. The read leaves the executor's timeout well
+     * above the snapshot's, so a slow page never stops the browser.
      */
     const observe = Effect.gen(function* () {
-      const read = yield* browser
-        .execute(
-          `return { url: page.url(), capture: await page.locator("body").ariaSnapshot({ timeout: 5000 }) };`,
-          6,
-        )
-        .pipe(
-          Effect.flatMap((value) => Schema.decodeUnknown(PageSnapshot)(value)),
-          Effect.option,
-        );
+      const read = yield* browser.execute(pageSnapshotCode, 20).pipe(
+        Effect.flatMap((value) => Schema.decodeUnknown(PageSnapshot)(value)),
+        Effect.option,
+      );
       const location = Option.flatMap(read, ({ url: href }) =>
         Option.fromNullable(URL.canParse(href) ? pageLocation(new URL(href)) : undefined),
       );
@@ -284,7 +326,19 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
                 path: secrets.redact(location.value.path),
                 capture: capturePath,
               },
-              capture: cappedCapture(secrets.redact(read.value.capture)),
+              capture:
+                "elements" in read.value
+                  ? {
+                      text: `Page too large to capture: ${read.value.elements} elements, over the ${captureElements} the host reads.`,
+                      truncated: false,
+                    }
+                  : redactedCapture({
+                      // A character the cut split decodes to one replacement character, dropped.
+                      text: read.value.truncated
+                        ? read.value.capture.replace(/\uFFFD$/u, "")
+                        : read.value.capture,
+                      truncated: read.value.truncated,
+                    }),
             };
     });
     return {
