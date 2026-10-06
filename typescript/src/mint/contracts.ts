@@ -888,6 +888,8 @@ export type MintEntryNavigation =
   | {
       readonly state: "not_opened";
       readonly outcome: "failed" | "timeout" | "skipped";
+      /** `prior_effect`: the host skipped the entry because an earlier attempt of this job already ran on the website. */
+      readonly reason?: "prior_effect";
       readonly requestedUrl: string;
       readonly resolvedUrl?: string;
       readonly redirects?: readonly { readonly url: string; readonly status: number | null }[];
@@ -1191,6 +1193,11 @@ export interface MintDependencies {
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */
   readonly initialExample?: ExecutionEvidence;
   readonly priorReadExecutions?: readonly ExecutionEvidence[];
+  /**
+   * An earlier attempt of this write build ended after steps that may have changed the website,
+   * and this attempt starts over. The agent's first input tells it to read back before any write.
+   */
+  readonly priorAttemptMayHaveChanged?: boolean;
   /** Host-owned state, independent of model prose and publication. */
   readonly currentInvocation?: () => CurrentInvocation | undefined;
   readonly canPublishRepair?: (executionId: string) => boolean;

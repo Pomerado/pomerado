@@ -71,6 +71,13 @@ const effectQuestionInstruction =
   "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching or filtering does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
 
 /**
+ * What the agent of a new attempt of a write build is told when an earlier attempt may have
+ * changed the website (`priorAttemptMayHaveChanged`). It reads back before it writes again.
+ */
+const priorAttemptChangeNotice =
+  "An earlier attempt of this build ended before it finished, after steps that may have changed the website, and this attempt starts over: a new workspace and a fresh browser on a new, empty profile, signed out, with none of that attempt's records. Before you run a write, read back on the site whether the requested change already happened; never redo one that did, and if it did, end the attempt and say so in the summary.";
+
+/**
  * The host's own labels for the two answers of a read/write choice (the effect question and a
  * write upgrade). The agent writes the prompt, which Guardian reviews, but never what an answer
  * says, so a label cannot present `write` as keeping the build read-only.
@@ -560,13 +567,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       : (current.instruction ??
                         "The trusted host already loaded the requested page before you started, but the site answered with an HTTP error status. Inspect the current page before assuming its content; do not navigate to the entry URL again."),
                 }
-              : {
-                  state: current.state,
-                  outcome: current.outcome,
-                  requestedUrl: current.requestedUrl,
-                  instruction:
-                    "Host entry navigation did not reach the requested page. Do not assume the browser is on requestedUrl; read page.url() before acting.",
-                };
+              : current.reason === "prior_effect"
+                ? {
+                    state: current.state,
+                    outcome: current.outcome,
+                    reason: current.reason,
+                    requestedUrl: current.requestedUrl,
+                    instruction:
+                      "The host did not open the requested page, because an earlier attempt of this build already ran on the website. The browser is not on requestedUrl; read page.url() before acting. Navigate to requestedUrl yourself when the task needs it, after reading back whether a write an earlier attempt may have made already happened.",
+                  }
+                : {
+                    state: current.state,
+                    outcome: current.outcome,
+                    requestedUrl: current.requestedUrl,
+                    instruction:
+                      "Host entry navigation did not reach the requested page. Do not assume the browser is on requestedUrl; read page.url() before acting.",
+                  };
         // The caller's own page URLs are shown exactly; they are never masked.
         return current.state === "opened" && current.egressProxy !== undefined
           ? {
@@ -2995,6 +3011,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             businessInputTypes,
             site,
             ...changedEntryNotice(),
+            ...(dependencies.priorAttemptMayHaveChanged === true
+              ? {
+                  priorAttempt: {
+                    websiteMayHaveChanged: true,
+                    instruction: priorAttemptChangeNotice,
+                  },
+                }
+              : {}),
             hostIncidentsBeforeStart,
             executionContext: yield* executionContext(),
             websiteAuthentication: {
