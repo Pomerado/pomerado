@@ -36,6 +36,9 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - If an allow still lacks the read after two follow-up rounds in the same review, the review fails with `EntrypointNotRead`. That failure is a verdict, so it is never retried.
 - **Incremental review.** Before an execution review, the host compares each executed source Guardian already read in this conversation since its last compaction with the current bytes. It lists the identical ones in `trusted_review.unchangedSources`, and Guardian needn't read them again. The entrypoint is still always included.
 - **Diagnostics.** Each review emits `guardian.usage` with its model calls and its input, cached, cache-write, output and reasoning token counts. Model diagnostics are reported with or without a session. The wait for a session is emitted as the `guardian.session_wait` interval, and waits between outage retries happen outside the session.
+  - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
+  - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
+  - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
 
 ## The runtime
 

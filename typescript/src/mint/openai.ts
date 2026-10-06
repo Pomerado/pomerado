@@ -571,7 +571,7 @@ export const makeOpenAIMinter = (
               : "trusted host credentials and Kernel Managed Auth";
             const executeTool = hostTool(
               "execute",
-              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for ${signInDescription} (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it. Up to 2 of a read's live tests may run an input you choose instead (testInput). Writes perform the action once as act steps after sign-in, the first of which claims the write; a write build tests only offline. intent states what this execution should establish; it never authorizes the execution.`,
+              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for ${signInDescription} (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it. Up to 2 of a read's live tests may run an input you choose instead (testInput). Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty, an act step passes exampleInput the same way, and each act step that passes it runs it. A write build tests only offline. intent states what this execution should establish; it never authorizes the execution.`,
               "Execution did not succeed. Diagnose the root cause and retained evidence. Correct request/source errors within existing authority; preserve prior effects. Another example read requires explicit host repeatableRead:true; never replay a nonrepeatable example or a write that may have committed. After a failed authenticate, fix its cause and call authenticate again.",
               (request) => turn.actions.execute(request),
             );
@@ -623,7 +623,7 @@ export const makeOpenAIMinter = (
             const requestInput = tool({
               ...hostTool(
                 "request_input",
-                "Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues. Follow the instructions' try-hard-then-ask rule. Question and option ids are your own short lowercase ids; a secret is private text the caller types, or a code the site sends to confirm a protected action after sign-in; a code that is part of signing in (by text message, email or an authenticator app) is a code field of execute purpose authenticate, which asks the caller itself, so never ask for it here. A secret's answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. One request at a time. intent states why only the caller can supply this.",
+                'Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues. Follow the instructions\' try-hard-then-ask rule. Question and option ids are your own short lowercase ids. The caller may answer any choice or multi_choice in their own words, which comes back as {"other": text} instead of an option, {"option": id, "note": text} for a pick with their note, or {"options": [ids], "other": text, "note": text} with an option of their own or a note: their words are their answer, so follow them and ask again if they leave the choice open. A secret is private text the caller types, or a code the site sends to confirm a protected action after sign-in; a code that is part of signing in (by text message, email or an authenticator app) is a code field of execute purpose authenticate, which asks the caller itself, so never ask for it here. A secret\'s answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. One request at a time. intent states why only the caller can supply this.',
                 "The question was not asked. Inspect the finite failure; correct the request or continue without it.",
                 (request) => turn.actions.requestInput(request),
               ),
@@ -739,14 +739,16 @@ export const makeOpenAIMinter = (
               purpose: "turn" | "compaction",
               compactedInput: boolean,
             ) =>
-              turn.reportTrace?.({
-                phase: "model_usage",
-                call,
-                purpose,
-                ...modelUsageCounts(response.usage),
-                reasoningContext: effectiveReasoningContext(response.providerData),
-                ...(compactedInput ? { compactedInput: true } : {}),
-              }).pipe(Effect.ignore) ?? Effect.void;
+              turn
+                .reportTrace?.({
+                  phase: "model_usage",
+                  call,
+                  purpose,
+                  ...modelUsageCounts(response.usage),
+                  reasoningContext: effectiveReasoningContext(response.providerData),
+                  ...(compactedInput ? { compactedInput: true } : {}),
+                })
+                .pipe(Effect.ignore) ?? Effect.void;
             const idle = turn.effectQuestion
               ? undefined
               : makeIdleCompaction({

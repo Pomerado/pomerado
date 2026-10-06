@@ -1,7 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
-
-const DateOnly = Schema.String.pipe(Schema.pattern(/^\d{4}-\d{2}-\d{2}$/));
+import { CalendarDate, defineOperation } from "../../src/browser/index.js";
 
 // An observed calendar popup: month panels carry data-month (YYYY-MM) and days carry the full
 // data-date, so day text alone never identifies a cell. Other sites need their own evidence.
@@ -9,10 +7,12 @@ export const pickTravelDate = defineOperation(
   {
     name: "pick_travel_date",
     input: Schema.Struct({
-      date: DateOnly.annotations({ description: "Travel date to pick, YYYY-MM-DD" }),
+      date: CalendarDate.annotations({ description: "Travel date to pick, YYYY-MM-DD" }),
     }),
     output: Schema.Struct({
-      date: DateOnly.annotations({ description: "Travel date the field now holds, YYYY-MM-DD" }),
+      date: CalendarDate.annotations({
+        description: "Travel date the field now holds, YYYY-MM-DD",
+      }),
     }),
   },
   async ({ kernel, sessionId, input, errors }) => {
@@ -48,7 +48,7 @@ export const pickTravelDate = defineOperation(
       throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
     const result = Schema.decodeUnknownSync(
       Schema.Union(
-        Schema.Struct({ date: DateOnly }),
+        Schema.Struct({ date: CalendarDate }),
         Schema.Struct({
           failure: Schema.Literal(
             "month_unavailable",

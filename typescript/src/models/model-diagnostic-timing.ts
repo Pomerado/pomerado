@@ -37,6 +37,8 @@ export const ModelDiagnosticTiming = Schema.Struct({
   runId: Schema.optional(Schema.UUID),
   toolCall: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
   toolKind: Schema.optional(TimingToolKind),
+  /** Set on tool_completed: whether the host tool call returned or failed. */
+  toolOutcome: Schema.optional(Schema.Literal("returned", "failed")),
   /** Finite lifecycle facts. Skill names come from host-installed skills, never model text. */
   count: Schema.optional(Schema.Int.pipe(Schema.between(0, Number.MAX_SAFE_INTEGER))),
   skill: Schema.optional(Schema.String.pipe(Schema.pattern(/^[a-z0-9][a-z0-9_-]{0,63}$/))),

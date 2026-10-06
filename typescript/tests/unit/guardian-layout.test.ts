@@ -150,6 +150,11 @@ const recording = () => {
         transcripts.push(details);
       }),
     retainScreenedSource: () => Effect.void,
+    // A private kind's finite model timing, recorded with the readable events.
+    observeModelTrace: (name, timing, correlation) =>
+      Effect.sync(() => {
+        events.push({ name: `observed:${name}`, details: { timing, correlation } });
+      }),
   };
   return { diagnostics, events, transcripts };
 };
@@ -682,6 +687,12 @@ it.each([
     );
     expect(result).toMatchObject({ _tag: "Left", left: { code } });
     expect(events.map((event) => event.name)).toContain("guardian.review_retried");
+    // Each attempt's timing and the model's finite timing are kept, and are checked below too.
+    const failed = events.filter((event) => event.name === "guardian.failed");
+    expect(failed.length).toBeGreaterThan(0);
+    for (const event of failed)
+      expect(event.details).toMatchObject({ details: { timing: { attempt: expect.any(Number) } } });
+    expect(events.map((event) => event.name)).toContain("observed:guardian.model");
     const failure = result._tag === "Left" ? result.left : undefined;
     const readable = JSON.stringify({
       events,
