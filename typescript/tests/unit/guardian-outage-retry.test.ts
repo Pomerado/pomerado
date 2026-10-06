@@ -1,9 +1,16 @@
 import { OpenAIProvider, setDefaultModelProvider } from "@openai/agents";
 import { Effect, Fiber, TestClock, TestContext } from "effect";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
-import type { PendingExecution, Reviewer, ReviewRetry } from "../../src/guardian/review.js";
+import type {
+  GuardianDiagnostics,
+  PendingExecution,
+  Reviewer,
+  ReviewRetry,
+} from "../../src/guardian/review.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 const pending: PendingExecution = {
   invocationId: "invocation_a",
@@ -102,6 +109,115 @@ it.each([
   );
   expect(result).toMatchObject({ _tag: "Left", left: { code: failure().code } });
   expect(f.runs()).toBe(1);
+});
+
+it("times each review attempt and ties the retry to the attempt that failed", async () => {
+  let now = 100;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const events: {
+    name: string;
+    details: unknown;
+    reviewId?: string;
+    reviewKind?: string;
+  }[] = [];
+  const record: GuardianDiagnostics["emit"] = (name, details, correlation) =>
+    Effect.sync(() => {
+      events.push({
+        name,
+        // Review-scoped events wrap their details; the retry event carries them directly.
+        details:
+          name === "guardian.review_retried" ? details : (details as { details: unknown }).details,
+        ...(correlation?.reviewId === undefined ? {} : { reviewId: correlation.reviewId }),
+        ...(correlation?.reviewKind === undefined ? {} : { reviewKind: correlation.reviewKind }),
+      });
+    });
+  const diagnostics: GuardianDiagnostics = {
+    emit: record,
+    retainModelTranscript: record,
+    retainScreenedSource: () => Effect.void,
+  };
+  let reads = 0;
+  const failingOnce = () =>
+    Effect.suspend(() => {
+      const failed = reads++ === 0;
+      now += failed ? 7 : 3;
+      return failed ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })) : readSource();
+    });
+  const f = flaky(() => undefined, 0, {
+    delays: ["20 millis"],
+    budget: "1 minute",
+  });
+  const reviewed = await Effect.runPromise(
+    Effect.gen(function* () {
+      const review = yield* Effect.fork(
+        makeGuardian(f.reviewer, diagnostics).review(pending, failingOnce),
+      );
+      yield* Effect.yieldNow();
+      now += 20;
+      yield* TestClock.adjust("20 millis");
+      return yield* Fiber.join(review);
+    }).pipe(Effect.provide(TestContext.TestContext)),
+  );
+  type Timing = {
+    attempt: number;
+    startOffsetMs: number;
+    endOffsetMs?: number;
+    elapsedMs?: number;
+  };
+  const named = (name: string) => events.filter((event) => event.name === name);
+  const timing = (event: { details: unknown } | undefined) =>
+    (event?.details as { timing: Timing } | undefined)?.timing;
+  const started = named("guardian.started");
+  expect(started.map((event) => timing(event)?.attempt).sort()).toEqual([1, 2]);
+  const first = started.find((event) => timing(event)?.attempt === 1);
+  const second = started.find((event) => timing(event)?.attempt === 2);
+  expect(first?.reviewId).not.toBe(second?.reviewId);
+  expect(second?.reviewId).toBe(reviewed.reviewId);
+
+  const sourceFailed = named("guardian.source_failed")[0]?.details as Record<string, number>;
+  expect(sourceFailed).toMatchObject({
+    elapsedMs: 7,
+    startOffsetMs: 100,
+    endOffsetMs: 107,
+  });
+  expect(sourceFailed["endOffsetMs"]! - sourceFailed["startOffsetMs"]!).toBe(
+    sourceFailed["elapsedMs"],
+  );
+
+  const failed = named("guardian.failed")[0];
+  expect(failed?.reviewId).toBe(first?.reviewId);
+  const failedTiming = timing(failed);
+  expect(failedTiming).toMatchObject({
+    attempt: 1,
+    startOffsetMs: timing(first)?.startOffsetMs,
+  });
+  expect(failedTiming?.endOffsetMs).toBeGreaterThanOrEqual(failedTiming!.startOffsetMs);
+  expect(failedTiming?.elapsedMs).toBe(failedTiming!.endOffsetMs! - failedTiming!.startOffsetMs);
+
+  const retried = named("guardian.review_retried")[0];
+  expect(retried).toMatchObject({
+    reviewId: first?.reviewId,
+    reviewKind: "execution",
+    details: { attempt: 1, retry: 1, waitMs: 20 },
+  });
+  const interval = retried?.details as {
+    startOffsetMs: number;
+    endOffsetMs: number;
+  };
+  expect(interval.endOffsetMs - interval.startOffsetMs).toBe(20);
+
+  const completed = named("guardian.completed")[0];
+  expect(completed?.reviewId).toBe(second?.reviewId);
+  const completedTiming = timing(completed);
+  expect(completedTiming).toMatchObject({
+    attempt: 2,
+    startOffsetMs: timing(second)?.startOffsetMs,
+  });
+  expect(completedTiming).toMatchObject({
+    startOffsetMs: 127,
+    endOffsetMs: 130,
+    elapsedMs: 3,
+  });
 });
 
 it("returns the outage once it outlasts the retry budget", async () => {
