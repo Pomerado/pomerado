@@ -80,10 +80,12 @@ export interface RunnerChannels {
 }
 
 /**
- * What spent an attempt's sign-ins: its one sign-in again on the same browser, or the sign-ins
- * it allows on a recovery's new profile.
+ * What spent an attempt's sign-ins: its one sign-in again on the same browser, the sign-ins it
+ * allows on a recovery's new profile, or the host's identical refusals in a row while typing into
+ * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
  */
-export type SpentSignIn = "relogin_spent" | "fresh_profile_sign_ins_spent";
+export type SpentSignIn =
+  "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;

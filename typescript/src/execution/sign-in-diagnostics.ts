@@ -8,6 +8,7 @@ import type {
   RetainedProxyError,
 } from "../runtime/provider-metadata.js";
 import type { NoResponseError } from "../destinations/navigation-failure.js";
+import type { HostRefusal } from "../destinations/autofill-refusal.js";
 import type {
   CaptureCollectionDiagnostic,
   CaptureFailureReason,
@@ -20,6 +21,12 @@ type KernelManagedAuthErrorCode = typeof ManagedAuthErrorCode.Type | "unknown";
 type SignInFailureCode =
   | "AccountMismatch"
   | "AuthenticationFailed"
+  /**
+   * The host refused to type into a field of an autofill sign-in screen, or to keep typing it:
+   * `hostRefusal` says which check refused, which field and on which screen. It submitted nothing
+   * of that screen.
+   */
+  | "AutofillRefused"
   | "CredentialsRejected"
   | "CaptureUnavailable"
   /**
@@ -113,6 +120,8 @@ export interface SignInDiagnostic {
    * failure spends no sign-in allowance and the same sign-in may simply be tried again.
    */
   readonly nothingSubmitted?: true;
+  /** For `AutofillRefused`: what the host refused to type, where, and which check refused it. */
+  readonly hostRefusal?: HostRefusal;
   readonly identityErrorCode?: typeof IdentityErrorCode.Type;
   readonly execution?: Pick<
     ExecutionBoundaryError,

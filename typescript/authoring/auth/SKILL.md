@@ -239,6 +239,10 @@ browser. A failed host check leaves this browser available for another evidenced
 that sign-in could not be verified when the site or the remaining allowance prevents recovery.
 Never send a visibly rejected value again. There is no provider-login fallback.
 
+When the host refuses to type into a field (`AutofillRefused`), its answer names the field, the
+check that refused it and why. Fix that cause before sending the step again: the same refusal of
+the same field on the same screen three times in a row ends sign-in in this build.
+
 <!-- pomerado:hosted:start
 After browser recovery, inspect the retained bound profile before signing in. When its published
 signed-in indicator verifies the identity, continue without another credential submission. When

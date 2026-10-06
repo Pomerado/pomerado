@@ -8,6 +8,7 @@ import {
   failureRootCause,
 } from "../runtime/failure-detail.js";
 import {
+  maximumHostRefusals,
   signInAnswer,
   signInFailureFeedback,
   signInFeedbackOf,
@@ -16,6 +17,7 @@ import {
   unresolvedSignInGuidance,
 } from "./sign-in-failure.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
+import { type HostRefusal, sameHostRefusal } from "../destinations/autofill-refusal.js";
 import { authorityCheckMetadata } from "../auth/authority-metadata.js";
 import {
   diagnosticRetentionReason,
@@ -696,6 +698,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             guided: boolean;
           }
         | undefined;
+      /**
+       * The host's identical refusals in a row while typing into a sign-in screen: the latest
+       * and how many. An authenticate that ends any other way clears it.
+       */
+      let hostRefusals: { readonly refusal: HostRefusal; readonly count: number } | undefined;
+      /** `hostRefusals` before the running authenticate, which a refusal of its own extends. */
+      let priorHostRefusals: typeof hostRefusals;
       /**
        * Sign-in is unavailable in this build: the answer that said so, which a later authenticate
        * gets again, and the outcome the build ends with. A retained receipt that may still
@@ -1630,7 +1639,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       const executionFeedback = (error: MintFailure) =>
         Effect.flatMap(Clock.currentTimeMillis, (now) => providerFeedback(error, now));
-      const providerFeedback = (error: MintFailure, now: number) => {
+      /**
+       * Counts a host refusal while typing into a sign-in screen. The `maximumHostRefusals`th
+       * identical one in a row spends the attempt's sign-ins: sign-in is unavailable in the build.
+       */
+      const countHostRefusal = (error: MintFailure) => {
+        const refusal = error.authentication?.hostRefusal;
+        if (refusal === undefined) return error;
+        const prior = priorHostRefusals;
+        const count =
+          prior !== undefined && sameHostRefusal(prior.refusal, refusal) ? prior.count + 1 : 1;
+        hostRefusals = { refusal, count };
+        return count < maximumHostRefusals || error.spentSignIn !== undefined
+          ? error
+          : new MintFailure({ ...error, spentSignIn: "host_refusals_repeated" });
+      };
+      const providerFeedback = (failed: MintFailure, now: number) => {
+        const error = countHostRefusal(failed);
         const runnerFailure = screenedRunnerFailure(error);
         const captureGap = screenedCaptureGap(error) ?? runnerFailure?.captureGap;
         const hostStopped = stopUnavailableHost() || unavailableExecutionHost(error);
@@ -2181,7 +2206,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 return yield* visible(evidence);
               }
               if (submitted.purpose === "residual") yield* dependencies.authorizeResidual;
-              if (submitted.purpose === "authenticate") unresolvedSignIn = undefined;
+              if (submitted.purpose === "authenticate") {
+                unresolvedSignIn = undefined;
+                priorHostRefusals = hostRefusals;
+                hostRefusals = undefined;
+              }
               const effectful =
                 submitted.purpose === "example" ||
                 submitted.purpose === "act" ||
