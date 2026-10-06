@@ -122,8 +122,9 @@ const reviewerWithPolicy = (
           const diagnostics = options.observerFactory?.(
             (value, timing) =>
               Effect.runPromise(
+                // A session-mode review retains no transcript, only its finite timing.
                 turn.session
-                  ? Effect.void
+                  ? (turn.observeTiming?.(timing) ?? Effect.void)
                   : (turn.reportDiagnostic?.(value, timing) ?? Effect.void),
                 { signal },
               ),
