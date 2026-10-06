@@ -71,6 +71,8 @@ const failureSubCauses = [
   "browser_primary_page_closed",
   "browser_gone",
   "browser_unresponsive",
+  // The browser responded with a page-command failure, such as a script error or timeout.
+  "browser_page_call_failed",
   // A mint browser lost a third time with no agent command since the first (mint/host-browser-recovery.ts)
   "browser_loss_repeated",
   // Startup and job authority (worker/startup-authority.ts, worker/mint.ts, worker/run.ts)
