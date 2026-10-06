@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
+
+- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
+  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
+  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
+  - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
+- `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
+  - Migrate by creating your isolated world in that function and returning its context ID.
+- Modules and exports nothing in the package used are removed.
+  - `pomerado/core/browser/promise`, with `browserPromise`. The local host never ran it.
+  - `pomerado/core/destinations/cdp-contracts`, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
+  - `pomerado/core/privacy/common-values`, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
+  - `TargetPageMismatch`, `TargetNotFound`, `TargetAmbiguous`, `TargetGuardMismatch`, `TargetGuardUnavailable`, `ConditionTimeout`, `ConditionObservation` and `ConditionState` from `pomerado/runtime` and `pomerado/core/runtime/errors`. Nothing in the package raised them.
+  - `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` and `KnownDialog` from `pomerado/core/browser/dialogs/contracts`. `ExpectedConfirm` stays.
+  - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
+  - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
+  - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
+  - `boundaryError` from `pomerado/core/execution/boundary`
+  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
+  - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
+  - `refusalEvidence` and `callFailure` from `pomerado/core/destinations/autofill-refusal`. A refused step's evidence is still its report's `failureDetail.context`.
+  - Migrate by keeping your own copy of what you use in your host.
+
 ## 0.3.0
 
 This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.
@@ -31,28 +59,6 @@ This release lets the person answering a minting question use their own words on
   - Migrate by giving the agent your own notice through `drainStartIncidents` if a restarted write build must read back before it writes again.
 - In `pomerado/core/destinations/autofill-step`, `AutofillInspection.screen` adds a required `origin`, which `inspectAutofillStep` sets. A filled `AutofillStepReport`'s `submit` adds `"stayed_disabled"`: the fields were filled, but the submit stayed disabled through the wait, so the host never clicked it.
   - Migrate by setting `origin` on any inspection you build yourself, and by handling `"stayed_disabled"` in any exhaustive check on `submit`.
-- The package now holds only code the local host runs, plus the hook interfaces another host implements. The changes from here to the end of this list follow from that, and local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for them.
-- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
-  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
-  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
-- `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
-  - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
-- `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
-  - Migrate by creating your isolated world in that function and returning its context ID.
-- Modules and exports nothing in the package used are removed.
-  - `pomerado/core/browser/promise`, with `browserPromise`. The local host never ran it.
-  - `pomerado/core/destinations/cdp-contracts`, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
-  - `pomerado/core/privacy/common-values`, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
-  - `TargetPageMismatch`, `TargetNotFound`, `TargetAmbiguous`, `TargetGuardMismatch`, `TargetGuardUnavailable`, `ConditionTimeout`, `ConditionObservation` and `ConditionState` from `pomerado/runtime` and `pomerado/core/runtime/errors`. Nothing in the package raised them.
-  - `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` and `KnownDialog` from `pomerado/core/browser/dialogs/contracts`. `ExpectedConfirm` stays.
-  - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
-  - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
-  - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
-  - `boundaryError` from `pomerado/core/execution/boundary`
-  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
-  - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
-  - `refusalEvidence` and `callFailure` from `pomerado/core/destinations/autofill-refusal`. A refused step's evidence is still its report's `failureDetail.context`.
-  - Migrate by keeping your own copy of what you use in your host.
 
 ### Other changes
 
