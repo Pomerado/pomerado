@@ -120,6 +120,7 @@ Authority decides what an integration is allowed to do, so choose it deliberatel
 - Use `write` only when the task changes something, such as submitting a form or making a booking
 - A write mint performs the action once while it builds, then reviews the final source without repeating it
 - A read mint that finds the task needs a change asks to switch to write, and your agent's answer decides
+- A run doesn't check authority, intent or sign-in origins, and edits to `src/` or `deployment.json` aren't reviewed
 
 Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 
@@ -138,7 +139,7 @@ pomerado-integrations/example_reader/
 ```
 
 1. Open the integration's `README.md`. It has the add command for each major client with your paths already filled in
-2. Add the server and give it `OPENAI_API_KEY` the same way you did for Pomerado. Guardian reviews every run, so the integration needs the key too
+2. Add the server with that command. Skip the key setup. Running an integration makes no model request, so only minting needs `OPENAI_API_KEY`
 3. Reload your client and ask your agent to use the integration
 
 > Use example_reader to read the page heading.
@@ -157,7 +158,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 
 - The minter, which builds integrations in a real Chromium browser
 - The minting harness and prompts that Pomerado Cloud also builds on
-- Guardian, which reviews each browser action and the finished source
+- Guardian, which reviews each browser action and the finished source while minting, not when an integration runs
 - The standalone host, which serves each integration as an MCP server on your own machine
 - The integrations themselves, saved as source code in your folder that you own
 

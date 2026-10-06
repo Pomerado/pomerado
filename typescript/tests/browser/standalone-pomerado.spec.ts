@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, symlink, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,6 +20,7 @@ import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
+import { writeArtifact } from "../../src/standalone/artifact-files.js";
 
 const message = (text: string): ModelResponse["output"][number] => ({
   type: "message",
@@ -65,6 +66,11 @@ const objects = (value: unknown): readonly Record<string, unknown>[] => {
     ? []
     : [record.right, ...Object.values(record.right).flatMap(objects)];
 };
+/** The standalone host tells Guardian it runs natively. A hosted review gets the hosted policy. */
+const reviewedNative = (request: ModelRequest) =>
+  objects(request.input).find((item) => "trusted_execution_environment" in item)?.[
+    "trusted_execution_environment"
+  ] === "native";
 const guardian = (
   requests: ModelRequest[],
   outcome: "allow" | "deny" | ((request: ModelRequest) => "allow" | "deny") = "allow",
@@ -82,10 +88,11 @@ const guardian = (
       ];
     if (sourcePending) {
       sourcePending = false;
+      const decided = typeof outcome === "function" ? outcome(request) : outcome;
       return [
         message(
           JSON.stringify({
-            outcome: typeof outcome === "function" ? outcome(request) : outcome,
+            outcome: reviewedNative(request) ? decided : "deny",
             rationale: "Recorded fixture review",
           }),
         ),
@@ -303,6 +310,7 @@ for (const authentication of [false, true]) {
               expect.arrayContaining(["src/tool.mjs", "src/heading.mjs"]),
             );
             if (built.artifact === undefined) throw new Error(JSON.stringify(built));
+            const modelRequests = [mintRequests.length, reviewRequests.length];
             expect(
               yield* service.run(built.artifact, {
                 url: shop === undefined ? url : `${shop.origin}/account`,
@@ -310,6 +318,8 @@ for (const authentication of [false, true]) {
                 input: {},
               }),
             ).toEqual({ heading: authentication ? "Account" : "Public fixture" });
+            // Guardian reviewed the source while minting. The run makes no model request.
+            expect([mintRequests.length, reviewRequests.length]).toEqual(modelRequests);
             expect(JSON.stringify(built)).not.toContain(shopAccount.password);
           }),
         ),
@@ -329,49 +339,62 @@ for (const authentication of [false, true]) {
   });
 }
 
-test("Guardian refusal prevents native browser dispatch", async () => {
+/** Records and fails any model request, as a host without a model key or provider would. */
+const unreachableModel = (calls: string[], role: string): ModelProvider => ({
+  getModel: () => {
+    calls.push(role);
+    throw new Error(`Unexpected ${role} model request during a run`);
+  },
+});
+
+test("a run makes no Guardian or model call and returns the operation's output", async () => {
   let hits = 0;
-  const requests: ModelRequest[] = [];
+  const calls: string[] = [];
   const server = createServer((_request, response) => {
     hits++;
-    response.end("<h1>Never read</h1>");
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Run fixture</h1>");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("No fixture address");
   try {
-    await expect(
-      Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const service = yield* createPomerado({
-              ask: makeInputAsker(() => Effect.succeed({})),
-              guardianProvider: guardian(requests, (request) => {
-                const context = objects(request.input).find(
-                  (item) => "trusted_execution_environment" in item,
-                );
-                return context?.["trusted_execution_environment"] === "native" ? "deny" : "allow";
-              }),
-            });
-            return yield* service.run(
-              {
-                entrypoint: "src/tool.mjs",
-                files: [
-                  { path: "src/tool.mjs", content: operation },
-                  { path: "src/heading.mjs", content: "export const heading = String;" },
-                ],
-                inputSchema: {},
-                outputSchema: {},
-              },
-              { url: `http://127.0.0.1:${address.port}/`, intent: "Read fixture" },
-            );
-          }),
-        ),
+    const output = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            ask: makeInputAsker(() => Effect.succeed({})),
+            minterProvider: unreachableModel(calls, "minter"),
+            guardianProvider: unreachableModel(calls, "guardian"),
+            timeoutMs: 10_000,
+          });
+          return yield* service.run(
+            {
+              entrypoint: "src/tool.mjs",
+              files: [
+                { path: "src/tool.mjs", content: operation },
+                {
+                  path: "src/heading.mjs",
+                  content: "export const heading = (value) => String(value).trim();",
+                },
+              ],
+              inputSchema: {},
+              outputSchema: {},
+            },
+            {
+              url: `http://127.0.0.1:${address.port}/`,
+              intent: "Read fixture",
+              effect: "read",
+              input: {},
+            },
+          );
+        }),
       ),
-    ).rejects.toThrow();
-    expect(requests).toHaveLength(2);
-    expect(hits).toBe(0);
+    );
+    expect(output).toEqual({ heading: "Run fixture" });
+    expect(calls).toEqual([]);
+    expect(hits).toBeGreaterThan(0);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -396,6 +419,77 @@ test("terminal CLI help requires no provider credentials", async () => {
   const code = closed[0];
   expect(code, errors).toBe(0);
   expect(output).toContain("pomerado mint --url URL");
+  expect(output).toContain("A run ignores --intent and --effect.");
+});
+
+/** Runs the built terminal CLI with only PATH, so it has no model key or provider. */
+const terminal = async (args: readonly string[]) => {
+  const child = spawn(process.execPath, ["dist/typescript/src/standalone/cli.js", ...args], {
+    env: { PATH: process.env["PATH"] ?? "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const closed: readonly unknown[] = await once(child, "close");
+  return { code: closed[0], stdout, stderr };
+};
+
+test("terminal run needs no model key, provider or intent", async () => {
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Terminal fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-cli-run-"));
+  const url = `http://127.0.0.1:${address.port}/`;
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        writeArtifact(join(directory, "artifact"), {
+          entrypoint: "src/tool.mjs",
+          files: [
+            { path: "src/tool.mjs", content: operation },
+            {
+              path: "src/heading.mjs",
+              content: "export const heading = (value) => String(value).trim();",
+            },
+          ],
+          inputSchema: {},
+          outputSchema: {},
+        }),
+      ),
+    );
+    // A run ignores --effect, so even the mint-only value ask is accepted.
+    const ran = await terminal([
+      "run",
+      "--artifact",
+      join(directory, "artifact"),
+      "--url",
+      url,
+      "--effect",
+      "ask",
+    ]);
+    expect(ran.code, ran.stderr).toBe(0);
+    expect(JSON.parse(ran.stdout)).toEqual({ heading: "Terminal fixture" });
+    const minted = await terminal(["mint", "--url", url, "--out", join(directory, "minted")]);
+    expect(minted.code).toBe(1);
+    expect(minted.stderr).toContain("--intent is required to mint.");
+    expect(await readdir(directory)).toEqual(["artifact"]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("terminal EOF ends an ordinary unanswered question", async () => {
@@ -778,6 +872,7 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
         arguments: { input: "wrong" },
       });
       expect(malformed.isError).toBe(true);
+      const minted = await readFile(fixture.ledger, "utf8");
       const result = await generated.client.callTool({
         name: "read_fixture",
         arguments: { input: {} },
@@ -786,6 +881,8 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
         objects(result).find((value) => value["heading"] === "Public fixture"),
         generated.stderr(),
       ).toBeDefined();
+      // The served run adds no model request to the ledger the mint wrote.
+      expect(await readFile(fixture.ledger, "utf8")).toBe(minted);
     } finally {
       await generated.client.close();
     }
@@ -835,7 +932,7 @@ test("MCP write polls and answers never resubmit and EOF closes its owned contex
   test.info().annotations.push({
     type: "slow",
     description:
-      "Actual stdio SDK, original Guardian and three distinct native write lifecycles including cancellation and EOF",
+      "Actual stdio SDK and three distinct native write lifecycles including cancellation and EOF",
   });
   test.setTimeout(60_000);
   let writes = 0;
@@ -926,7 +1023,8 @@ if(!result.success||result.result!==true)throw new Error("Save not confirmed");v
     await connection.client.close();
     expect(await contexts()).toEqual([]);
     expect(writes).toBe(3);
-    expect(await readFile(fixture.ledger, "utf8")).not.toContain("sigterm");
+    // The ledger would record a SIGTERM or any model request. A served run makes no model request.
+    await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await connection.client.close();
     await cdp.detach();
@@ -939,17 +1037,18 @@ if(!result.success||result.result!==true)throw new Error("Save not confirmed");v
   }
 });
 
-test("MCP malformed saved schema fails before models and Guardian denial never dispatches", async () => {
+test("MCP malformed saved schema fails before models and a served run calls no model", async () => {
   let hits = 0;
   const server = createServer((_request, response) => {
     hits++;
-    response.end("<h1>Denied</h1>");
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Served</h1>");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("Missing deny address");
-  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-deny-"));
+  if (address === null || typeof address === "string") throw new Error("Missing serve address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-serve-"));
   const url = `http://127.0.0.1:${address.port}/`;
   const source = operation.replace(
     'import { heading } from "./heading.mjs";',
@@ -965,18 +1064,93 @@ test("MCP malformed saved schema fails before models and Guardian denial never d
     ).rejects.toThrow();
     await expect(readFile(invalidRuntime.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(hits).toBe(0);
-    const saved = await saveMcpFixture(directory, "deny_fixture", url, "read", source);
+    const saved = await saveMcpFixture(directory, "served_fixture", url, "read", source);
+    // The recorded Guardian denies every review and the ledger records any model request.
     const fixture = await mcpRuntime(directory, [], { deny: true });
     const connection = await stdioMcp([join(saved, "mcp.mjs"), pathToFileURL(fixture.file).href]);
     try {
-      const denied = viewOf(
-        await connection.client.callTool({ name: "deny_fixture", arguments: { input: {} } }),
-      );
-      expect(denied.status, connection.stderr()).toBe("failed");
-      expect(hits).toBe(0);
-      expect(await readFile(fixture.ledger, "utf8")).toContain("guardian");
+      const result = await connection.client.callTool({
+        name: "served_fixture",
+        arguments: { input: {} },
+      });
+      expect(result.isError, connection.stderr()).toBeFalsy();
+      expect(result.structuredContent).toEqual({ heading: "Served" });
+      expect(hits).toBeGreaterThan(0);
+      await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await connection.client.close();
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a generated integration serves and runs with no model key or provider", async () => {
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Keyless</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing keyless address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-keyless-"));
+  const source = operation.replace(
+    'import { heading } from "./heading.mjs";',
+    "const heading=value=>String(value);",
+  );
+  try {
+    const saved = await saveMcpFixture(
+      directory,
+      "keyless_fixture",
+      `http://127.0.0.1:${address.port}/`,
+      "read",
+      source,
+    );
+    // The installed runtime with its default configuration. stdioMcp passes only PATH, so the
+    // server has no model key and no injected provider.
+    const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href;
+    const connection = await stdioMcp([join(saved, "mcp.mjs"), runtime]);
+    try {
+      expect((await connection.client.listTools()).tools.map((tool) => tool.name).sort()).toEqual([
+        "cancel_job",
+        "get_job",
+        "keyless_fixture",
+        "provide_input",
+      ]);
+      const result = await connection.client.callTool({
+        name: "keyless_fixture",
+        arguments: { input: {} },
+      });
+      expect(result.isError, JSON.stringify(result) + connection.stderr()).toBeFalsy();
+      expect(result.structuredContent).toEqual({ heading: "Keyless" });
+    } finally {
+      await connection.client.close();
+    }
+    // An unclassified run failure names no model, because a run makes no model request.
+    const failing = await saveMcpFixture(
+      directory,
+      "failing_fixture",
+      `http://127.0.0.1:${address.port}/`,
+      "read",
+      source.replace("const response =", 'throw new Error("Fixture failure"); const response ='),
+    );
+    const failed = await stdioMcp([join(failing, "mcp.mjs"), runtime]);
+    try {
+      const result = await failed.client.callTool({
+        name: "failing_fixture",
+        arguments: { input: {} },
+      });
+      expect(result.structuredContent, failed.stderr()).toMatchObject({
+        status: "failed",
+        error:
+          "Operation failed. Check the local browser and integration configuration. A dispatched website action may have taken effect; this job will not be replayed.",
+      });
+    } finally {
+      await failed.client.close();
     }
   } finally {
     await new Promise<void>((resolve, reject) =>
@@ -1024,11 +1198,15 @@ test("original owner intent authorizes a named off-site tenant while an unnamed 
   test.info().annotations.push({
     type: "slow",
     description:
-      "Original Guardian source review and native browser navigation to the existing TLS shop on another registrable domain",
+      "Original Guardian source review of a minting example and native browser navigation to the existing TLS shop on another registrable domain",
   });
   const directory = await mkdtemp(join(tmpdir(), "pomerado-owner-origin-"));
   const shop = await startShop(directory);
-  const server = createServer((_request, response) => response.end("Product site"));
+  let productHits = 0;
+  const server = createServer((_request, response) => {
+    productHits++;
+    response.end("Product site");
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
@@ -1045,16 +1223,6 @@ test("original owner intent authorizes a named off-site tenant while an unnamed 
   const browserCode = `await page.goto(${JSON.stringify(target)}); return await page.title();`;
   const source = `import {Schema} from "effect";import {defineOperation} from "../runtime/index.js";
 export default defineOperation({name:"tenant_title",input:Schema.Struct({}),output:Schema.Struct({title:Schema.String})},async({kernel,sessionId})=>{const result=await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(browserCode)},timeout_sec:3});if(!result.success)throw new Error(String(result.error));return {title:result.result};});`;
-  const artifact = {
-    entrypoint: "src/tool.mjs",
-    files: [{ path: "src/tool.mjs", content: source }],
-    inputSchema: { type: "object", properties: {} },
-    outputSchema: {
-      type: "object",
-      properties: { title: { type: "string" } },
-      required: ["title"],
-    },
-  };
   const Authority = Schema.Struct({
     allowedOrigins: Schema.Array(Schema.String),
     ownerNamedOrigins: Schema.optional(Schema.Array(Schema.String)),
@@ -1062,6 +1230,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
   try {
     for (const named of [false, true]) {
       let inspected = false;
+      const decisions: string[] = [];
       const reviewer = provider((request, index) => {
         const current = objects(request.input)
           .filter((item) => "submitted_call" in item)
@@ -1085,10 +1254,12 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
           (item) => typeof item["source"] === "string" && item["source"].includes(shop.origin),
         );
         const allowed =
+          reviewedNative(request) &&
           readSource !== undefined &&
           [...authority.allowedOrigins, ...(authority.ownerNamedOrigins ?? [])].includes(
             shop.origin,
           );
+        decisions.push(allowed ? "allow" : "deny");
         return [
           message(
             JSON.stringify({
@@ -1100,17 +1271,44 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
           ),
         ];
       }, []);
-      const result = await Effect.runPromise(
+      // The minter writes the source, asks for one live example and then stops.
+      const minterRequests: ModelRequest[] = [];
+      const minter = provider((_request, index) => {
+        if (index === 0)
+          return [
+            {
+              type: "apply_patch_call",
+              callId: "tenant_source",
+              status: "completed",
+              operation: {
+                type: "create_file",
+                path: "src/tool.mjs",
+                diff:
+                  source
+                    .split("\n")
+                    .map((line) => `+${line}`)
+                    .join("\n") + "\n",
+              },
+            },
+          ];
+        if (index === 1)
+          return [call("execute", { ...execution, intent: "Read the tenant page title" })];
+        return [message("Stopped after the tenant example.")];
+      }, minterRequests);
+      const searchLoads = shop.state.searchPageLoads;
+      const productLoads = productHits;
+      await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const service = yield* createPomerado({
               browser: { endpoint: remote.wsEndpoint() },
+              minterProvider: minter,
               guardianProvider: reviewer,
               ask: makeInputAsker(() => Effect.succeed({})),
               timeoutMs: 10_000,
             });
             return yield* Effect.either(
-              service.run(artifact, {
+              service.mint({
                 url: `http://127.0.0.1:${address.port}/`,
                 intent: named
                   ? `Read the page title of our tenant at ${target}.`
@@ -1122,13 +1320,14 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
           }),
         ),
       );
+      expect(decisions, JSON.stringify(minterRequests.at(-1)?.input)).toEqual([
+        named ? "allow" : "deny",
+      ]);
       if (named) {
-        expect(result._tag).toBe("Right");
-        if (result._tag === "Right") expect(result.right).toEqual({ title: "Search" });
-        expect(shop.state.searchPageLoads).toBe(1);
+        expect(shop.state.searchPageLoads).toBe(searchLoads + 1);
       } else {
-        expect(result._tag).toBe("Left");
-        expect(shop.state.searchPageLoads).toBe(0);
+        expect(shop.state.searchPageLoads).toBe(searchLoads);
+        expect(productHits).toBe(productLoads);
       }
     }
   } finally {
