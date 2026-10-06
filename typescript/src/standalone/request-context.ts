@@ -80,23 +80,46 @@ const captureBytes = 256 * 1024;
 const captureMarker = "\n…[truncated at 256 KiB]";
 /**
  * The most elements a page may have for the host to capture it. A snapshot's work grows faster
- * than the page: about a second at this size, and past five seconds at four times it.
+ * than the page: about a second at this size, and past five seconds at four times it. The count
+ * covers the main document, not shadow roots or frames; the snapshot's own time limit bounds
+ * those.
  */
 const captureElements = 10_000;
 /**
  * Reads the page in the browser worker: its URL, and its accessibility snapshot cut to 256 KiB
- * there, so no more crosses to the host. A page over the element limit is not snapshotted.
+ * there, so no more crosses to the host. A page over the element limit is not snapshotted. The
+ * script ends on its own within 8 seconds: it waits at most 3 for the element count and 5 for the
+ * snapshot, and a page that does not answer in time, as when its scripts keep it busy, is
+ * reported unanswered.
  */
 const pageSnapshotCode = `const url = page.url();
-const elements = await page.evaluate(() => document.getElementsByTagName("*").length);
+const late = Symbol("late");
+const within = (seconds, work) => {
+  let timer;
+  const expiry = new Promise((resolve) => {
+    timer = setTimeout(resolve, seconds * 1000, late);
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+};
+const elements = await within(3, page.evaluate(() => document.getElementsByTagName("*").length));
+if (elements === late) return { url, unanswered: true };
 if (elements > ${captureElements}) return { url, elements };
-const bytes = new TextEncoder().encode(await page.locator("body").ariaSnapshot({ timeout: 4000 }));
+const snapshot = await within(
+  5,
+  page
+    .locator("body")
+    .ariaSnapshot({ timeout: 4000 })
+    .catch((error) => (error?.name === "TimeoutError" ? late : Promise.reject(error))),
+);
+if (snapshot === late) return { url, unanswered: true };
+const bytes = new TextEncoder().encode(snapshot);
 return {
   url,
   capture: new TextDecoder().decode(bytes.subarray(0, ${captureBytes})),
   truncated: bytes.byteLength > ${captureBytes},
 };`;
 const PageSnapshot = Schema.Union(
+  Schema.Struct({ url: Schema.String, unanswered: Schema.Literal(true) }),
   Schema.Struct({ url: Schema.String, elements: Schema.Number }),
   Schema.Struct({ url: Schema.String, capture: Schema.String, truncated: Schema.Boolean }),
 );
@@ -306,8 +329,9 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     };
     /**
      * Reads the page the browser shows for the next review. A page that cannot be read leaves no
-     * observed page; the step's own result stands. The read leaves the executor's timeout well
-     * above the snapshot's, so a slow page never stops the browser.
+     * observed page; the step's own result stands. The capture script ends within 8 seconds,
+     * well inside the executor's 20, so a page too busy to answer is reported not captured and
+     * leaves the browser running.
      */
     const observe = Effect.gen(function* () {
       const read = yield* browser.execute(pageSnapshotCode, 20).pipe(
@@ -327,18 +351,23 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
                 capture: capturePath,
               },
               capture:
-                "elements" in read.value
+                "unanswered" in read.value
                   ? {
-                      text: `Page too large to capture: ${read.value.elements} elements, over the ${captureElements} the host reads.`,
+                      text: "Page not captured: the page did not answer in time, as when its scripts keep it busy.",
                       truncated: false,
                     }
-                  : redactedCapture({
-                      // A character the cut split decodes to one replacement character, dropped.
-                      text: read.value.truncated
-                        ? read.value.capture.replace(/\uFFFD$/u, "")
-                        : read.value.capture,
-                      truncated: read.value.truncated,
-                    }),
+                  : "elements" in read.value
+                    ? {
+                        text: `Page too large to capture: ${read.value.elements.toLocaleString("en-US")} elements, over the ${captureElements.toLocaleString("en-US")} the host reads.`,
+                        truncated: false,
+                      }
+                    : redactedCapture({
+                        // A character the cut split decodes to one replacement character, dropped.
+                        text: read.value.truncated
+                          ? read.value.capture.replace(/\uFFFD$/u, "")
+                          : read.value.capture,
+                        truncated: read.value.truncated,
+                      }),
             };
     });
     return {

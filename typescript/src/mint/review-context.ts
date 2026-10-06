@@ -64,7 +64,7 @@ const intentDerivedWriteSessionAllowedEffect =
  * `signInStep`, or the agent's own source that writes the caller's secret handles.
  */
 const signInAllowedEffect =
-  "Signing in on the site's own sign-in page: the step fills the sign-in fields with the login and codes the caller supplied privately, filled by the host or written as secret handles in the step's source, submits them, and checks whether the account is signed in. Nothing else on the site may change.";
+  "Signing in on the site's own sign-in page: the step enters the login and codes the caller supplied privately, either filled by the host or written as secret handles in the step's source, submits them, and checks whether the account is signed in. Nothing else on the site may change.";
 
 const offlineAllowedEffect =
   "Offline local files, source checks and computation only. No live website, credentials or network.";
