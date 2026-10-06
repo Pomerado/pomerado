@@ -57,8 +57,48 @@ const identify = (context: BrowserContext, page: Page) =>
     );
   });
 
-const script = (code: string, page: Page, context: BrowserContext, browser: Browser) =>
+/** The values the host watches for while one script runs, and which of them it typed. */
+let watching: { readonly values: readonly string[]; readonly typed: Set<number> } | undefined;
+let typingWatched = false;
+/**
+ * Wraps the calls a handle may type through (`fill`, `type` and `pressSequentially` on a page,
+ * frame, locator or keyboard) so that one which completed with a watched value as its text marks
+ * that value typed. A call that throws marks nothing. The prototypes are shared by every page.
+ */
+const watchTypingCalls = (page: Page) => {
+  if (typingWatched) return;
+  typingWatched = true;
+  const sinks: readonly (readonly [object, readonly string[], number])[] = [
+    [Object.getPrototypeOf(page) as object, ["fill", "type"], 1],
+    [Object.getPrototypeOf(page.mainFrame()) as object, ["fill", "type"], 1],
+    [Object.getPrototypeOf(page.keyboard) as object, ["type"], 0],
+    [Object.getPrototypeOf(page.locator(":root")) as object, ["fill", "type", "pressSequentially"], 0],
+  ];
+  for (const [prototype, methods, index] of sinks)
+    for (const method of methods) {
+      const original: unknown = Reflect.get(prototype, method);
+      if (typeof original !== "function") continue;
+      Reflect.set(prototype, method, async function (this: unknown, ...args: unknown[]) {
+        const result: unknown = await Reflect.apply(original, this, args);
+        const text = args[index];
+        const at = typeof text === "string" ? (watching?.values.indexOf(text) ?? -1) : -1;
+        if (at >= 0) watching?.typed.add(at);
+        return result;
+      });
+    }
+};
+
+const script = (
+  code: string,
+  page: Page,
+  context: BrowserContext,
+  browser: Browser,
+  watch?: readonly string[],
+) =>
   Effect.gen(function* () {
+    if (watch !== undefined) watchTypingCalls(page);
+    const typed = new Set<number>();
+    watching = watch === undefined ? undefined : { values: watch, typed };
     let stdout = "";
     let stderr = "";
     let overflow = false;
@@ -111,7 +151,15 @@ const script = (code: string, page: Page, context: BrowserContext, browser: Brow
         return JSON.parse(json) as unknown;
       },
       catch: asError,
-    }).pipe(Effect.either);
+    }).pipe(
+      Effect.either,
+      Effect.ensuring(
+        Effect.sync(() => {
+          watching = undefined;
+        }),
+      ),
+    );
+    const delivered = watch === undefined ? {} : { typed: [...typed] };
     if (result._tag === "Left") {
       const error = result.left;
       const stack = error.stack ?? error.message;
@@ -120,14 +168,16 @@ const script = (code: string, page: Page, context: BrowserContext, browser: Brow
         error: error.message,
         stdout,
         stderr: `${stderr}${stack}`.slice(0, outputLimit),
-      } satisfies BrowserExecuteResponse;
+        ...delivered,
+      } satisfies BrowserExecuteResponse & { readonly typed?: readonly number[] };
     }
     return {
       success: true,
       ...(result.right === undefined ? {} : { result: result.right }),
       stdout,
       stderr,
-    } satisfies BrowserExecuteResponse;
+      ...delivered,
+    } satisfies BrowserExecuteResponse & { readonly typed?: readonly number[] };
   });
 
 const credential = (
@@ -237,7 +287,7 @@ await Effect.runPromise(
         );
         const response = yield* Effect.gen(function* () {
           if (request.kind === "execute")
-            return yield* script(request.code, page, context, browser);
+            return yield* script(request.code, page, context, browser, request.watch);
           return yield* credential(request, context, target.targetId);
         }).pipe(Effect.either);
         port.postMessage(

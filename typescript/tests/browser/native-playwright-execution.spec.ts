@@ -100,6 +100,45 @@ test("generated calls retain their selected page and full success or failure res
   });
 });
 
+test("a typing watch marks a value typed only by a typing call that completed", async () => {
+  await native(async (executor) => {
+    const page = `await page.setContent('<label>Code<input id="code"></label><iframe srcdoc="<input id=inner>"></iframe>');`;
+    const typed = async (code: string) => {
+      const watch = executor.watchTyping(["111111", "222222"]);
+      const response = await Effect.runPromise(watch.executeResponse(`${page} ${code}`, 5));
+      return { success: response.success, typed: [...watch.typed()].sort() };
+    };
+    // Each call a handle may type through, on a locator, the page, a frame and the keyboard.
+    for (const code of [
+      "await page.locator('#code').fill('111111');",
+      "await page.locator('#code').pressSequentially('111111');",
+      "await page.getByLabel('Code').type('111111');",
+      "await page.fill('#code', '111111');",
+      "await page.frames()[1].fill('#inner', '111111');",
+      "await page.locator('#code').focus(); await page.keyboard.type('111111');",
+    ])
+      expect(await typed(code)).toEqual({ success: true, typed: [0] });
+    // A call that failed, a value that no typing call entered and code that stopped first type nothing.
+    expect(
+      await typed(
+        "try { await page.locator('#missing').fill('222222', { timeout: 500 }); } catch {} return '222222';",
+      ),
+    ).toEqual({ success: true, typed: [] });
+    expect(
+      await typed("throw new Error('stopped'); await page.locator('#code').fill('111111');"),
+    ).toEqual({ success: false, typed: [] });
+    // Unwatched calls report nothing, and a later watch starts empty.
+    const plain = await Effect.runPromise(
+      executor.executeResponse(`${page} await page.locator('#code').fill('111111');`, 5),
+    );
+    expect(plain).toEqual({ success: true, stdout: "", stderr: "" });
+    expect(await typed("await page.locator('#code').fill('222222');")).toEqual({
+      success: true,
+      typed: [1],
+    });
+  });
+});
+
 test("unsupported and oversized results fail without invalidating the browser", async () => {
   await native(async (executor) => {
     const kernel = client(executor);
