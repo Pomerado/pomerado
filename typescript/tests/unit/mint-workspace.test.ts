@@ -123,6 +123,54 @@ it("does not claim success from an explicit failed SDK edit result", async () =>
   });
 });
 
+it("does not invoke the SDK editor for path or admission refusal", async () => {
+  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
+  cleanup.push(workspace.close);
+  let editorCalls = 0;
+  let admissionCalls = 0;
+  const modelWorkspace = editorWorkspace(
+    workspace,
+    () => ({
+      createFile: async () => {
+        editorCalls++;
+        throw new Error("SDK editor must not run");
+      },
+      updateFile: async () => {
+        editorCalls++;
+        throw new Error("SDK editor must not run");
+      },
+      deleteFile: async () => {
+        editorCalls++;
+        throw new Error("SDK editor must not run");
+      },
+    }),
+    async () => {
+      admissionCalls++;
+      throw new Error("admission unavailable");
+    },
+  );
+  const editor = modelWorkspace.createEditor?.();
+  if (!editor) throw new Error("Expected a model editor");
+  const blocked = [
+    await editor.createFile({ type: "create_file", path: "../escape.mjs", diff: "+x\n" }),
+    await editor.updateFile({
+      type: "update_file",
+      path: "src/tool.mjs",
+      moveTo: "README.md",
+      diff: "@@\n",
+    }),
+    await editor.deleteFile({ type: "delete_file", path: "src/tool.mjs" }),
+  ];
+  for (const result of blocked)
+    expect(result).toMatchObject({
+      status: "failed",
+      output: "Workspace edit unavailable or outside allowed source paths.",
+    });
+  expect(admissionCalls).toBe(1);
+  expect(editorCalls).toBe(0);
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+});
+
 it("leaves a file unchanged and says the patch did not apply when it does not match", async () => {
   const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
   cleanup.push(workspace.close);
@@ -239,80 +287,6 @@ it("refuses a new file at the workspace's file limit and says nothing changed", 
   expect(updated?.output).toContain("(EMFILE)");
   expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 1;");
 }, 30_000);
-
-it("does not invoke the SDK editor for path or admission refusal", async () => {
-  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
-  cleanup.push(workspace.close);
-  let editorCalls = 0;
-  let admissionCalls = 0;
-  const modelWorkspace = editorWorkspace(
-    workspace,
-    () => ({
-      createFile: async () => {
-        editorCalls++;
-        throw new Error("SDK editor must not run");
-      },
-      updateFile: async () => {
-        editorCalls++;
-        throw new Error("SDK editor must not run");
-      },
-      deleteFile: async () => {
-        editorCalls++;
-        throw new Error("SDK editor must not run");
-      },
-    }),
-    async () => {
-      admissionCalls++;
-      throw new Error("admission unavailable");
-    },
-  );
-  const editor = modelWorkspace.createEditor?.();
-  if (!editor) throw new Error("Expected a model editor");
-  const blocked = [
-    await editor.createFile({ type: "create_file", path: "../escape.mjs", diff: "+x\n" }),
-    await editor.updateFile({
-      type: "update_file",
-      path: "src/tool.mjs",
-      moveTo: "README.md",
-      diff: "@@\n",
-    }),
-    await editor.deleteFile({ type: "delete_file", path: "src/tool.mjs" }),
-  ];
-  for (const result of blocked)
-    expect(result).toMatchObject({
-      status: "failed",
-      output: "Workspace edit unavailable or outside allowed source paths.",
-    });
-  expect(admissionCalls).toBe(1);
-  expect(editorCalls).toBe(0);
-  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
-});
-
-// Skipped: the local workspace editor fails an unmatched patch, and a create over an existing
-// file, with an error that carries no edit stage, so the minter is told the edit outcome is
-// unknown instead of that the patch did not apply. The file is unchanged in both cases.
-it.skip("leaves a file unchanged and says the patch did not apply when it does not match", async () => {
-  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
-  cleanup.push(workspace.close);
-  const editor = editorWorkspace(workspace, (original) => original).createEditor?.();
-  if (!editor) throw new Error("Expected a model editor");
-  const result = await editor.updateFile({
-    type: "update_file",
-    path: "src/tool.mjs",
-    diff: "@@\n-export const absent = 1;\n+export const value = 2;\n",
-  });
-  expect(result).toMatchObject({ status: "failed" });
-  expect(result?.output).toContain("patch did not apply");
-  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
-  const exists = await editor.createFile({
-    type: "create_file",
-    path: "src/tool.mjs",
-    diff: "+export const value = 3;\n",
-  });
-  expect(exists).toMatchObject({ status: "failed" });
-  expect(exists?.output).toContain("(EEXIST)");
-  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
-});
 
 it("refuses non-JSON structured input", async () => {
   const cycle: unknown[] = [];
