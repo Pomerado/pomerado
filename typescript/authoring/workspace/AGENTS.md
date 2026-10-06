@@ -36,6 +36,9 @@ Return `InvalidInput` when authoritative evidence establishes that the supplied 
 be fulfilled as specified. Explain the conflicting input, unavailable option, or unmet constraint.
 Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of
 our automation.
+Not finding a value where you first looked is not that evidence. Before you call a value
+unavailable, look everywhere the site keeps it, such as later calendar months, other tabs or
+more results.
 
 **Sign in only when the task needs it.** Try a public task signed out first. Sign in when the
 request asks for it, the task is about the caller's own account, or the site puts the data

@@ -199,6 +199,8 @@ GET, HEAD or OPTIONS the page sent since the last execution result, by `method`,
 `origin`, `path` and `resourceType`, with a `count` (`omitted` counts routes past
 the list). Nothing refused them; the list exists so you can catch writes you did not
 intend. Telemetry, analytics and bot-sensor POSTs are normal and need no change.
+So is an anonymous recent-search, prefill or search-state save the site fires when
+you submit a search.
 
 For a read tool, look for a write your own action caused, such as adding an item to
 a cart, submitting a form, saving a preference or starting a checkout. If you find
