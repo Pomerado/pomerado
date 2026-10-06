@@ -115,7 +115,11 @@ signed-in indicator; confirmation alone does not verify the session.
 
 # Signed in
 
-<!-- pomerado:section auth.signed-in-evidence -->
+<!-- pomerado:section auth.signed-in-evidence:start
+Prefer an observed protected account page or authenticated workflow control that the signed-out
+flow cannot reach, corroborated by the live business example. Generic Sign out or account chrome
+alone does not establish access to the caller's workflow.
+pomerado:section auth.signed-in-evidence:end -->
 
 # Popup sign-in
 
@@ -142,7 +146,11 @@ Never send a visibly rejected value again. There is no provider-login fallback.
 
 # Every sign-in ends with its check
 
-<!-- pomerado:section auth.sign-in-check -->
+<!-- pomerado:section auth.sign-in-check:start
+End every sign-in with a check that it worked: an observed signed-in marker that every
+signed-in account shows and a signed-out page never does. Never use an account's name, email or
+number as the marker.
+pomerado:section auth.sign-in-check:end -->
 
 ## A sign-in refusal found by operation code
 

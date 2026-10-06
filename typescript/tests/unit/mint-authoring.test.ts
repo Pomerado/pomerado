@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,11 +105,49 @@ it("loads a host-composed directory in hosted mode exactly as composed", async (
   }
 });
 
-it("rejects an unterminated section in either mode", async () => {
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/*
+ * Pins everything the package gives a standalone minting model: each skill's name, description,
+ * text and references in catalog order, the instructions and the workspace README. Change a digest
+ * only for an intended authoring change, after reading the rendered text. Each digest comes before
+ * its name so a secret scanner does not read a name such as `auth` as a key for it.
+ */
+it("renders the pinned standalone authoring", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  expect(guide.instructions).toBe(guide.files.get("AGENTS.md"));
+  expect([
+    ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
+    ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
+  ]).toStrictEqual([
+    ["342b521de860ee7f452253af3951f95a5938787f7813159cf0910a98be1545b2", "core"],
+    ["cb5d827f6216a73624c72b5ed79fd31ff790e30e49f2e2e14a488273f370b204", "auth"],
+    ["d07cbe4642fff0df7477110ae8d28104d73638a42aea0904270859851892f255", "pagination"],
+    ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
+    ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
+    ["1403bba009fd19871a30250576cbba6cb93368905d877a7269b6b3ec5cd7b680", "caller-input"],
+    ["18597c5c0a8d84663dc052a74453534ba724f1480809f656f9dbbf1f8d028126", "workspace/AGENTS.md"],
+    ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
+  ]);
+});
+
+it.each([
+  ["an unterminated section", "<!-- pomerado:section core.left-open:start\nleft open\n"],
+  ["a stray end marker", "pomerado:section core.stray:end -->\n"],
+  ["a marker without its space", "<!--pomerado:section core.unspaced -->\n"],
+  ["a section named for another file", "<!-- pomerado:section auth.elsewhere -->\n"],
+  [
+    "a duplicated section",
+    "<!-- pomerado:section core.twice -->\n<!-- pomerado:section core.twice -->\n",
+  ],
+  [
+    "a section inside a code fence",
+    "```md\n<!-- pomerado:section core.fenced:start\nshown\npomerado:section core.fenced:end -->\n```\n",
+  ],
+])("refuses %s in either mode", async (_case, appended) => {
   const root = await authoringCopy((path, text) =>
-    path.endsWith(join("core", "SKILL.md"))
-      ? `${text}<!-- pomerado:section core.unterminated:start\nleft open\n`
-      : text,
+    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text,
   );
   try {
     for (const mode of ["standalone", "hosted"] as const)

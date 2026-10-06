@@ -13,7 +13,7 @@ import type {
   CaptureFailureReason,
   CaptureScreeningDiagnostic,
 } from "../runtime/capture-diagnostic.js";
-type KernelManagedAuthErrorCode = typeof ManagedAuthErrorCode.Type | "unknown";
+type ProviderAuthErrorCode = typeof ManagedAuthErrorCode.Type | "unknown";
 
 // Provider fields remain readable only for retained checkpoints and historical diagnostics.
 // New sign-ins use autofill or a direct HTTP step, never a provider flow.
@@ -73,7 +73,7 @@ export interface SignInDiagnostic {
   readonly providerStatus?: number;
   readonly providerStage?: RetainedProviderStage;
   readonly providerSchemaField?: RetainedProviderSchemaField;
-  readonly providerAuthCode?: KernelManagedAuthErrorCode;
+  readonly providerAuthCode?: ProviderAuthErrorCode;
   /** The site answered the failed login's latest page load 429, a rate limit. */
   readonly siteRateLimited?: true;
   /**
@@ -94,9 +94,9 @@ export interface SignInDiagnostic {
    * says the browser moved only when it did.
    */
   readonly hostMovedBrowser?: true;
-  /** Kernel's account of a failed or expired login flow; see `RetainedLoginFailureEvidence`. */
+  /** The provider's account of a failed or expired login flow; see `RetainedLoginFailureEvidence`. */
   readonly providerEvidence?: RetainedLoginFailureEvidence;
-  /** One line for the agent and the caller: `Kernel <code>: <message>`. */
+  /** One line for the agent and the caller: the provider's name, its code and its message. */
   readonly providerReason?: string;
   readonly cleanupCode?: SignInFailureCode;
   /**
@@ -104,7 +104,7 @@ export interface SignInDiagnostic {
    * of it still runs; `cleanupCode` says the opposite. Context for the agent.
    */
   readonly cleanupConfirmed?: true;
-  /** The login failed after Kernel submitted a field or choice to the site. */
+  /** The login failed after the provider submitted a field or choice to the site. */
   readonly afterSubmission?: true;
   /**
    * The sign-in failed before anything reached the site: no direct request was sent, and no
@@ -121,20 +121,20 @@ export interface SignInDiagnostic {
 
 interface RetainedLoginFailureEvidence {
   readonly flowStatus: "FAILED" | "EXPIRED";
-  /** Kernel's exact error code, also when it is outside `ManagedAuthErrorCode`. */
+  /** The provider's exact error code, also when it is outside `ManagedAuthErrorCode`. */
   readonly errorCode?: string;
   readonly message?: string;
-  /** The error text the website itself showed, as Kernel read it. */
+  /** The error text the website itself showed, as the provider read it. */
   readonly website_error?: string | null;
-  /** The step the flow reached, from Kernel's login timeline. */
+  /** The step the flow reached, from the provider's login timeline. */
   readonly step?: string;
   readonly browserSessionId?: string;
-  /** Kernel's replay of the login browser; present only when the login was recorded. */
+  /** The provider's replay of the login browser; present only when the login was recorded. */
   readonly replayId?: string;
   readonly completedAt?: string;
   /** The last main-frame URL the host's capture saw on the login browser. */
   readonly lastObservedUrl?: string;
-  /** Set when Kernel's login timeline could not be read; the connection fields still apply. */
+  /** Set when the provider's login timeline could not be read; the connection fields still apply. */
   readonly timelineUnavailable?: true;
   /** Prior submitted values were not available to screen provider prose after takeover. */
   readonly privateRedactionUnavailable?: true;

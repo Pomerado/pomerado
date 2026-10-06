@@ -23,7 +23,16 @@ against `typescript/src/runtime/index.ts` and show the real method signatures.
 
 ## Secret answers
 
-<!-- pomerado:section core.secret-answers -->
+<!-- pomerado:section core.secret-answers:start
+A `secret` answer comes back as a handle such as `{{secret.s1}}`, never the value. Write the
+handle exactly as given as the whole string passed as the value to `fill`, `type` or
+`pressSequentially` on a `page` chain inside the code of a `kernel.browsers.playwright.execute`
+call, such as `await page.getByLabel("Code").fill("{{secret.s1}}")`. The host fills in the value
+when it runs that source live. Never hold a handle in a variable, transform, log, return or read
+it back, or put it in a URL or a file. An example and published source never hold a handle: a
+value the finished tool needs at run time is a declared `secret` question it asks with `ask`
+(caller-input skill).
+pomerado:section core.secret-answers:end -->
 
 ## Kernel scripts
 

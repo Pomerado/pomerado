@@ -58,7 +58,7 @@ const catalog = [
  * read on demand. Each path is installed at the same path under the workspace root, without the
  * `workspace/` prefix.
  */
-const workspaceGuideFiles = ["README.md"] as const;
+const workspaceGuideFiles = [{ path: "README.md", sectionKey: "guide" }] as const;
 
 export interface WorkspaceGuide {
   /** The workspace `AGENTS.md`, which is also the minting model's instructions. */
@@ -76,26 +76,47 @@ export type AuthoringMode = "hosted" | "standalone";
 /**
  * A named section is `<!-- pomerado:section ID -->`, or `<!-- pomerado:section ID:start`, its
  * standalone text and `pomerado:section ID:end -->`. A section that ends the file also takes the
- * file's final newline.
+ * file's final newline. Each ID starts with its file's key, such as `core.` in `core/SKILL.md`.
  */
 const section =
   /<!-- pomerado:section ([a-z0-9.-]+)(?: -->|:start\n([\s\S]*?)\npomerado:section \1:end -->)(?:\n(?=$))?/g;
+/** Anything left that reads as a section marker, however it is spaced, is malformed. */
+const sectionTrace = /<!--\s*pomerado:|pomerado:section/;
+const fence = /^\s*(`{3,}|~{3,})/;
 
-const authoringText = (text: string, mode: AuthoringMode): string => {
+/** A section marker belongs to the file's own text, never to a fenced example. */
+const refuseFencedSections = (text: string) => {
+  let open: string | undefined;
+  for (const line of text.split("\n")) {
+    const marker = fence.exec(line)?.[1];
+    if (marker === undefined) {
+      if (open !== undefined && sectionTrace.test(line))
+        throw new Error("Authoring section inside a code fence");
+    } else if (open === undefined) open = marker;
+    else if (marker[0] === open[0] && marker.length >= open.length) open = undefined;
+  }
+};
+
+const authoringText = (text: string, mode: AuthoringMode, sectionKey: string): string => {
   if (mode === "hosted") {
-    if (text.includes("<!-- pomerado:"))
+    if (sectionTrace.test(text))
       throw new Error("Hosted authoring has a section the host did not compose");
     return text;
   }
-  const rendered = text.replace(
-    section,
-    (_match: string, _id: string, content?: string) => content ?? "",
-  );
-  if (rendered.includes("<!-- pomerado:")) throw new Error("Malformed authoring section");
+  refuseFencedSections(text);
+  const seen = new Set<string>();
+  const rendered = text.replace(section, (_match: string, id: string, content?: string) => {
+    if (!id.startsWith(`${sectionKey}.`))
+      throw new Error(`Authoring section ${id} is not one of ${sectionKey}'s`);
+    if (seen.has(id)) throw new Error(`Authoring section ${id} appears twice`);
+    seen.add(id);
+    return content ?? "";
+  });
+  if (sectionTrace.test(rendered)) throw new Error("Malformed authoring section");
   return rendered;
 };
 
-const readGuideFile = (directory: string, path: string, mode: AuthoringMode) =>
+const readGuideFile = (directory: string, path: string, sectionKey: string, mode: AuthoringMode) =>
   Effect.tryPromise({
     try: async () =>
       authoringText(
@@ -103,6 +124,7 @@ const readGuideFile = (directory: string, path: string, mode: AuthoringMode) =>
           await readScopedFile(directory, `workspace/${path}`),
         ),
         mode,
+        sectionKey,
       ),
     catch: (error) =>
       new MintFailure({
@@ -122,10 +144,10 @@ export const loadWorkspaceGuide = (
   mode: AuthoringMode = "standalone",
 ): Effect.Effect<WorkspaceGuide, MintFailure> =>
   Effect.gen(function* () {
-    const instructions = yield* readGuideFile(directory, "AGENTS.md", mode);
+    const instructions = yield* readGuideFile(directory, "AGENTS.md", "agents", mode);
     const files = new Map([["AGENTS.md", instructions]]);
-    for (const path of workspaceGuideFiles)
-      files.set(path, yield* readGuideFile(directory, path, mode));
+    for (const { path, sectionKey } of workspaceGuideFiles)
+      files.set(path, yield* readGuideFile(directory, path, sectionKey, mode));
     return { instructions, files };
   });
 
@@ -152,6 +174,7 @@ export const loadAuthoringSkills = (
                   await readScopedFile(directory, `${entry.name}/SKILL.md`),
                 ),
                 mode,
+                entry.name,
               ),
             ),
             references,
