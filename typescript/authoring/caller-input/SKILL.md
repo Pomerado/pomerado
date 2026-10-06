@@ -10,7 +10,9 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
 - a choice whose options exist only once the run reaches them: the open seats of the
   flight the caller just chose, the delivery slots for the cart the run just filled, or
   which of the account's saved travelers or addresses to use;
-- a code the site sends during the action, such as a confirmation code by text or email;
+- a code the site sends to confirm a protected action after sign-in, such as a confirmation code
+  by text or email. A code that is part of signing in is the host's: a `code` field of the
+  `authenticate` step, never a question;
 - a fact only the caller has that the site now asks for.
 
 <!-- pomerado:hosted:start
@@ -41,9 +43,9 @@ pomerado:hosted:end -->
      at least one unless `minSelections` says otherwise, at most the options offered.
    - `{ type: "text", prompt, maxLength? }`: free text.
    - `{ type: "confirm", prompt, followUp? }`: yes or no, returned as `{ confirmed }`.
-   - `{ type: "secret", secretKind, prompt, maxLength? }`: a code the site sent
-     (`one_time_code`), an authenticator code (`totp`, which a saved login's TOTP fills
-     without asking) or other private text (`private_text`). It stays out of traces,
+   - `{ type: "secret", secretKind, prompt, maxLength? }`: a code the site sent to confirm
+     an action after sign-in (`one_time_code`), an authenticator code (`totp`, which a saved
+     login's TOTP fills without asking) or other private text (`private_text`). It stays out of traces,
      logs and the minting model. A secret you ask during the build with `request_input`
      comes back to you as a handle such as `{{secret.s1}}`, which the host fills in only
      when your explore, test or `act` source runs live, and only where it is the whole

@@ -10,6 +10,12 @@ screen's fields and its submit control, and the host fills them from the private
 the submit. You never see, type, request or read back a credential. Start with a `signInStep` for
 the first screen. If a step fails, inspect the site and correct the steps in this browser.
 
+A code the site sends as part of signing in, by text message, email or an authenticator app, is
+part of the sign-in: map its screen as a `signInStep` with a `code` field and let `authenticate`
+get the code. Never ask for it separately with `request_input`. A `request_input` secret question
+for a code is only for a later protected action after sign-in, when the site asks for another code
+to confirm it.
+
 Sign in only when the task needs it (the request asks, the task is about the caller's own account,
 or the data sits behind a login wall). Try a public task signed out first.
 

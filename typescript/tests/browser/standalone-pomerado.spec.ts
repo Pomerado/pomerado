@@ -1,6 +1,8 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createServer as createTlsServer } from "node:https";
+import { promisify } from "node:util";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { mkdtemp, rm, symlink, writeFile, readFile } from "node:fs/promises";
@@ -1133,6 +1135,232 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
   } finally {
     await remote.close();
     await shop.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a sign-in code asked during sign-in is typed into the code screen; a later action code is not marked", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs drive a two-screen native sign-in and two explores in Chromium",
+  });
+  test.setTimeout(60_000);
+  const codesReceived: string[] = [];
+  const body = async (request: AsyncIterable<unknown>) => {
+    let text = "";
+    for await (const chunk of request) text += String(chunk);
+    return new URLSearchParams(text);
+  };
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-code-"));
+  await promisify(execFile)("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-keyout",
+    join(directory, "key.pem"),
+    "-out",
+    join(directory, "cert.pem"),
+    "-subj",
+    "/CN=www.codes.test",
+    "-days",
+    "1",
+  ]);
+  const tls = {
+    key: await readFile(join(directory, "key.pem")),
+    cert: await readFile(join(directory, "cert.pem")),
+  };
+  const server = createTlsServer(tls, (request, response) => {
+    void (async () => {
+      const cookie = request.headers.cookie ?? "";
+      if (request.method === "POST" && request.url === "/login") {
+        await body(request);
+        response.writeHead(303, { "Set-Cookie": "stage=code; Path=/", Location: "/" });
+        return response.end();
+      }
+      if (request.method === "POST" && request.url === "/code") {
+        const code = (await body(request)).get("code") ?? "";
+        codesReceived.push(code);
+        response.writeHead(303, {
+          ...(code === "135790" ? { "Set-Cookie": "signed=yes; Path=/" } : {}),
+          Location: "/",
+        });
+        return response.end();
+      }
+      response.setHeader("Content-Type", "text/html");
+      response.end(
+        cookie.includes("signed=yes")
+          ? `<title>Account</title><h1>Account</h1><div id="account">Your orders</div><form><label>Confirmation code<input name="confirm" autocomplete="one-time-code"></label></form>`
+          : cookie.includes("stage=code")
+            ? `<title>Verify</title><form method="post" action="/code"><label>We texted you a code<input name="code" autocomplete="one-time-code" inputmode="numeric"></label><button>Verify</button></form>`
+            : `<title>Sign in</title><form method="post" action="/login"><label>User<input name="username" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>`,
+      );
+    })();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const remote = await chromium.launchServer({
+    args: [
+      "--host-resolver-rules=MAP www.codes.test 127.0.0.1",
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  /** A probe whose one browser call runs `code`. */
+  const probe = (code: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(code)},timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return response.result;
+});`;
+  const files: readonly (readonly [string, string])[] = [
+    [
+      "explore/code.mjs",
+      probe(
+        "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.getByRole('button', { name: 'Verify' }).click(); await page.locator('#account').waitFor({ timeout: 3000 }); return page.url();",
+      ),
+    ],
+  ];
+  // Written once its handle is issued: a handle the attempt never issued refuses every execution.
+  const confirm = probe(
+    "await page.locator('input[name=confirm]').fill('{{secret.s2}}'); return null;",
+  );
+  const created = (entries: readonly (readonly [string, string])[]): ModelResponse["output"] =>
+    entries.map(([path, content]) => ({
+      type: "apply_patch_call",
+      callId: `patch_${path}`,
+      status: "completed",
+      operation: {
+        type: "create_file",
+        path,
+        diff:
+          content
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n") + "\n",
+      },
+    }));
+  const secretQuestion = (id: string, prompt: string) =>
+    call(
+      "request_input",
+      {
+        intent: prompt,
+        questions: [{ id, type: "secret", secretKind: "one_time_code", prompt }],
+      },
+      id,
+    );
+  const explore = (entrypoint: string) =>
+    call("execute", { ...execution, purpose: "explore", entrypoint }, entrypoint);
+  const steps: ModelResponse["output"][] = [
+    created(files),
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+        },
+        "sign_in",
+      ),
+    ],
+    [secretQuestion("code", "Enter the code the site texted you to finish signing in.")],
+    [explore("explore/code.mjs")],
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: { signedIn: { selector: "#account" } },
+        },
+        "signed_in",
+      ),
+    ],
+    [secretQuestion("confirm", "Enter the confirmation code the site sent for this action.")],
+    created([["explore/confirm.mjs", confirm]]),
+    [explore("explore/confirm.mjs")],
+  ];
+  const mintRequests: ModelRequest[] = [];
+  // The scenario ends after the second probe; final text without a tool call ends the attempt.
+  const minterProvider = provider(
+    (_request, index) => steps[index] ?? [message("Stopping after the probes.")],
+    mintRequests,
+  );
+  /** The trusted context of each execution review, by the entrypoint it reviewed. */
+  const contexts = new Map<string, Record<string, unknown>>();
+  const reviewRequests: ModelRequest[] = [];
+  const guardianProvider = guardian(reviewRequests, (request) => {
+    const current = objects(request.input)
+      .filter((item) => "submitted_call" in item)
+      .at(-1);
+    const entrypoint = objects(current?.["submitted_call"]).at(0)?.["entrypoint"];
+    const context = objects(current?.["trusted_execution_context"]).at(0) ?? {};
+    if (typeof entrypoint === "string") contexts.set(entrypoint, context);
+    // The recorded Guardian follows the policy: typing a handle into the sign-in form is allowed
+    // only for a code the host lists as asked during this sign-in.
+    if (entrypoint !== "operation/explore/code.mjs") return "allow";
+    const listed = context["signInCodes"];
+    return Array.isArray(listed) && listed.includes("{{secret.s1}}") ? "allow" : "deny";
+  });
+  const answers: Record<string, string> = {
+    username: "ada@example.test",
+    password: "fixture-password-4417",
+    code: "135790",
+    confirm: "246802",
+  };
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider,
+            guardianProvider,
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, answers[question.id] ?? ""]),
+                ),
+              ),
+            ),
+            timeoutMs: 45_000,
+          });
+          yield* service.mint({
+            url: `https://www.codes.test:${address.port}/`,
+            intent: "Read my account page title",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    // The site took the code the caller supplied for this sign-in, typed by the agent's probe.
+    expect(codesReceived).toEqual(["135790"]);
+    expect(contexts.get("operation/explore/code.mjs")?.["signInCodes"]).toEqual([
+      "{{secret.s1}}",
+    ]);
+    // A code asked after the sign-in was verified is an action's code, reviewed as before.
+    expect(contexts.get("operation/explore/confirm.mjs")).toBeDefined();
+    expect(contexts.get("operation/explore/confirm.mjs")?.["signInCodes"]).toBeUndefined();
+    for (const value of Object.values(answers).slice(1))
+      expect(JSON.stringify([mintRequests, reviewRequests])).not.toContain(value);
+  } finally {
+    await remote.close();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );

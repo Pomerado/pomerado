@@ -189,9 +189,11 @@ add-on toggle, a pre-selected checkbox or a lone saved payment method is still a
 to ask about. Read the path's options with read-only exploration where you can and settle them before
 the first act step where possible; a question during the session waits in place. Take a site default only for a choice that is not a
 credential, not a write and easy to reverse, and list it in `finish_build` `assumptions`. A full
-new login goes through execute purpose `authenticate`, where the host fills or asks for any
-sign-in code; a standalone two-factor code needed during an action is a `request_input`
-secret question, and `authenticate` is never started just for a code. You may ask after live
+new login goes through execute purpose `authenticate`: an SMS, email or authenticator code that
+is part of signing in is a `code` field of its `signInStep`, which the host fills or asks the
+caller for, so never ask for it with `request_input`. The standalone code path, a
+`request_input` secret question, is only for a later protected action after sign-in, when the
+site asks for another code to confirm it; `authenticate` is never started just for such a code. You may ask after live
 execution has closed or while a write's outcome is uncertain; after the answer, verify the
 current state before writing again.
 

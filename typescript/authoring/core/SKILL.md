@@ -442,9 +442,11 @@ is bounded; never describe a truncated list as complete.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code
-never request or enter a sign-in code, or sign in themselves. A code the site sends during the
-action, such as a two-factor or confirmation code, is different: declare it as a `secret`
-question and ask it with `ask`, as the caller-input skill's `caller-code.ts` shows. A missing ordinary page
+never request or enter a sign-in code, or sign in themselves: an SMS, email or authenticator code
+that is part of signing in is a `code` field of the `authenticate` step (auth skill), never asked
+separately. A code the site sends later, to confirm a protected action after sign-in, is different:
+declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
+`caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
 current page state within the existing deadline. When a few distinct attempts have
 not found the way, ask the caller for directions with `request_input` before
