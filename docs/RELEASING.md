@@ -9,16 +9,18 @@ There are two channels:
 | `canary` | Every commit merged to `main`, as soon as its checks pass | `npm install pomerado@canary` |
 | `latest` | The canary that Pomerado's hosted service has run in production | `npm install pomerado` |
 
+`latest` is always a canary, so `npm install pomerado` saves a range such as `^0.2.1-canary.57`. That range also matches later canaries of 0.2.1, which production may never have run, and package managers such as yarn classic and bun install the highest match. To stay on the version you installed, use `npm install --save-exact pomerado` or commit a lockfile.
+
 ## Canaries
 
-1. A pull request merges into `main` after green CI, the review check and one maintainer's approval. Rulesets on `main` enforce all three.
+1. A pull request merges into `main` after a green `CI` check, a `review/clear` check from the independent review, and a code owner's approval. Rulesets on `main` enforce all three. A repository admin may merge without the approval, never without the two checks.
 2. The merge starts the Release workflow. It picks the canary version `X.Y.Z-canary.N`:
    - `X.Y.Z` is the `version` in `package.json` while npm doesn't have it, and the next patch version once it does.
    - `N` is the workflow's run number, so a later canary always sorts higher.
 3. The workflow writes that version into `package.json` and runs the full Check workflow on it. Check typechecks, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
-4. The publish job verifies that the tested tarball carries the canary's name and version, then publishes exactly that tarball under `canary`, with a provenance attestation naming this repository, the workflow and the commit.
+4. The publish job verifies that the tested tarball carries the canary's name and version, and that the version sorts above every version npm has. Then it publishes exactly that tarball under `canary`, with a provenance attestation naming this repository, the workflow and the commit. A re-run that finds the canary already on npm stops without publishing.
 
-A newer merge replaces a canary that is still waiting to start, and the newer canary includes its commits. Version ranges such as `^0.2.0` never resolve to a canary, because npm skips prereleases unless asked for one.
+A newer merge replaces a canary that is still waiting to start, and the newer canary includes its commits. The replaced merge gets no Check run of its own on `main`, but its pull request passed CI on the same tree.
 
 ## Promotion to latest
 
@@ -27,9 +29,12 @@ A newer merge replaces a canary that is still waiting to start, and the newer ca
 The promote job:
 
 1. Checks that npm has that exact version with that exact integrity, so `latest` names the bytes production tested.
-2. Checks that the commit npm recorded for the version (`gitHead`) is on `main`.
-3. Moves `latest` to the version, unless it already names it.
-4. Tags that commit `v<version>` and creates the GitHub Release with generated notes, unless a rollback finds them already there. A tag ruleset blocks moving or deleting any `v*` tag.
+2. Checks the version's SLSA provenance, which npm serves with the version. npm records no `gitHead` for a tarball publish, so the provenance names the commit.
+   - Its subject is `pkg:npm/pomerado@<version>`, with a sha512 digest equal to that integrity.
+   - It was built by `.github/workflows/release.yml` in this repository, from `refs/heads/main`, on a GitHub-hosted runner. A release from the retired tag workflow, 0.2.0 or earlier, may name its own `v<version>` tag instead of `main`.
+   - The commit it names is on `main`.
+3. Moves `latest` to the version, unless it already names it, and reads `latest` back, retrying briefly while npm catches up.
+4. Tags that commit `v<version>` and creates the GitHub Release with generated notes, unless a rollback finds them already there. A tag that is already there must point to that commit. A tag ruleset blocks moving or deleting any `v*` tag.
 
 To promote by hand, a maintainer runs:
 
@@ -42,6 +47,8 @@ gh workflow run release.yml --repo Pomerado/pomerado --ref main \
 ## Changes and versions
 
 Record user-facing changes in [CHANGELOG.md](../CHANGELOG.md) in the pull request that makes them. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.
+
+Changes go under `Unreleased`. The pull request that bumps `version` renames `Unreleased` to the `X.Y.Z` of the canaries that shipped those changes, as in `X.Y.Z-canary.N`, and lists its own changes under a new `Unreleased`.
 
 ## Failures
 
