@@ -34,7 +34,13 @@ The workspace root is `/workspace`. Paths below are relative to it.
   there when a published module's imports cannot be read statically, so keep private data out.
 - `captures/`: host-published evidence, exactly as the site sent it except masked credentials. It appears after the first live execution:
   `captures/index.json` (read it first after each live probe), `captures/routes.json` and the
-  capture files the index lists. Read-only.
+  capture files the index lists. Read-only. `routes.json` is a complete index of references,
+  one JSON route per line, with no inline bodies. Its header line (`version: 2`) gives
+  `routeCount`, `complete` and counts by label, resource type, status class and site versus
+  others. Each route gives its order, time, duration, label, session and request ID, channel,
+  owner, frame, method, origin, path, query and header names, status, content type and resource
+  type. A body is `{state, reason, path, bytes, sourceBytes}`: read the body file at `path`.
+  `record: {offset, length}` points into `network.ndjson`.
 - In maintenance only: `captures/original/index.json` and, when the observations say so,
   `failures/original/manifest.json` (`reference/maintenance.md`).
 pomerado:hosted:end -->

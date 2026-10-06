@@ -173,7 +173,8 @@ account ID, is a free-form input, never an enum member, example or default in th
 public schema (core's input schema rules).
 
 <!-- pomerado:hosted:start
-Also write `src/tool-http.mjs`, the `http` version, from `captures/routes.json` and
+Also write `src/tool-http.mjs`, the `http` version, from `captures/routes.json` (an index
+of references: read each body file at its `path`) and
 the session's state-changing requests (the http-mcp skill). Test it offline only,
 with `savedHTTP` against the session's recorded exchanges. Never run either version
 live: the write already happened, and a second run would be a second write. When an
