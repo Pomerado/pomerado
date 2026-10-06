@@ -141,6 +141,59 @@ const isWriteUpgradeCall = (call: RecoveryToolCall): boolean =>
     )(call.arguments),
   );
 
+type AgentQuestion = (typeof AgentRequest.Type)["questions"][number];
+/** The agent's question as its caller reads it, with each caller-visible text redacted. */
+const callerVisibleQuestion = (
+  question: AgentQuestion,
+  redact: (text: string) => string,
+): AgentQuestion => {
+  const prompt = redact(question.prompt);
+  if (question.type === "choice" || question.type === "multi_choice")
+    return {
+      ...question,
+      prompt,
+      options: question.options.map((option) => ({
+        ...option,
+        label: redact(option.label),
+        ...(option.maskedLabel === undefined ? {} : { maskedLabel: redact(option.maskedLabel) }),
+      })),
+    };
+  if (question.type === "confirm" && question.followUp !== undefined) {
+    const { defaultText } = question.followUp;
+    return {
+      ...question,
+      prompt,
+      followUp: {
+        prompt: redact(question.followUp.prompt),
+        // The caller's form shows it as the field's default.
+        ...(defaultText === undefined ? {} : { defaultText: redact(defaultText) }),
+      },
+    };
+  }
+  return { ...question, prompt };
+};
+/** The agent's request as its caller reads it: its notice and every question. */
+const callerVisibleRequest = <R extends typeof AgentRequest.Type>(
+  request: R,
+  redact: (text: string) => string,
+): R => ({
+  ...request,
+  ...(request.notice === undefined ? {} : { notice: redact(request.notice) }),
+  questions: request.questions.map((question) => callerVisibleQuestion(question, redact)),
+});
+
+/** How the minter removes an account reference from the named part of a tool's definition. */
+const definitionFix = (section: string | undefined) =>
+  section === "loginUrl"
+    ? "Run authenticate again with the site's plain sign-in page as loginUrl, then call finish_build again with the same executionId."
+    : section === "name" || section === "description" || section === "supportedVariants"
+      ? `Rewrite the ${section} in finish_build's metadata without it and call finish_build again with the same executionId.`
+      : section === "site"
+        ? "Rewrite siteName and siteSummary in finish_build's metadata without it and call finish_build again with the same executionId."
+        : section === "inputSchema" || section === "outputSchema" || section === "questions"
+          ? "Edit the operation's schemas and questions in its source without it, then call finish_build again with the same executionId."
+          : "Remove it from the metadata, the operation's schemas and questions, and the login URL, then call finish_build again with the same executionId.";
+
 /** The owner's answer to a write upgrade's one question, and that question's prompt. */
 const writeUpgradeChoice = (submitted: AgentInputRequest, answers: ValidAnswers) => {
   const [only] = submitted.questions;
@@ -380,6 +433,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }),
       });
       const dependencies = yield* MintServices;
+      const redactCallerText = dependencies.redactCallerText ?? ((text: string) => text);
       const reportFailure = (error: unknown, details: MintReportContext) =>
         dependencies.reporting?.failure(error, details) ?? Effect.void;
       const reportBestEffort = (effect: Effect.Effect<void, Error>, details: MintReportContext) =>
@@ -2537,6 +2591,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     { ...error.publicationFeedback },
                     "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
                   );
+                if (error.reason === "definition_login_reference") {
+                  const section = error.screening?.section;
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    { section },
+                    `Not published: the tool's ${section ?? "definition"} quotes this build's account reference, an opaque value the host gave this build to identify its login (such as an inspection's accountScope). It means nothing to a caller and is never published. ${definitionFix(section)} The existing example and result remain recorded.`,
+                  );
+                }
                 if (error.reason === "secret_handle") {
                   const path = error.screening?.path ?? "the source";
                   return notPublished(
@@ -2672,7 +2735,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // Asking needs no live execution: it stays open after execution closed and while a
               // write's outcome is uncertain. The agent still verifies before writing again.
               yield* active("publication");
-              const { writeUpgrade, ...proposed } = yield* decode(AgentRequest, input);
+              const { writeUpgrade, ...proposed } = callerVisibleRequest(
+                yield* decode(AgentRequest, input),
+                redactCallerText,
+              );
               const upgrade = writeUpgrade === true;
               const submitted =
                 upgrade || effectQuestion
@@ -2834,7 +2900,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   Effect.gen(function* () {
                     yield* active("publication");
                     const submitted = yield* decode(BuildBlocked, input);
-                    const explanation = yield* screenMintText(dependencies, submitted.explanation);
+                    const explanation = redactCallerText(
+                      yield* screenMintText(dependencies, submitted.explanation),
+                    );
                     const refusal = blockedRefusal(explanation);
                     if (refusal !== undefined) return refusal;
                     const review = yield* reviewBlockedExplanation(explanation);
