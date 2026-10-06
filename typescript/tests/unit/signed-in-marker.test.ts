@@ -74,6 +74,76 @@ describe("matchSignedOutSnapshots", () => {
   });
 });
 
+describe("role names on the signed-out page", () => {
+  /** One signed-out page with this body. */
+  const page = (body: string) => [
+    {
+      url: "https://shop.example.test/",
+      dom: `<!doctype html><html><head></head><body>${body}</body></html>`,
+    },
+  ];
+  const match = (selector: string, body: string) =>
+    matchSignedOutSnapshots({ selector }, page(body));
+
+  it("builds a name from the content's own text alternatives", () => {
+    for (const [selector, body] of [
+      ['role=link[name="Account"]', '<a href="/sign-in"><img alt="Account"></a>'],
+      ['role=button[name="Account"]', '<button><svg aria-label="Account"></svg></button>'],
+      [
+        'role=button[name="Account"]',
+        "<button><svg><title>Account</title><path></path></svg></button>",
+      ],
+      [
+        'role=button[name="Account menu"]',
+        '<button><span aria-label="Account menu"></span></button>',
+      ],
+      [
+        'role=link[name="Your account"s]',
+        '<a href="/account"><span>Your</span> <b>account</b></a>',
+      ],
+    ] as const)
+      expect(match(selector, body), body).toBe("matches");
+  });
+
+  it("leaves out content the page hides from the name", () => {
+    expect(
+      match(
+        'role=button[name="Menu"s]',
+        '<button><span aria-hidden="true">Open</span><span hidden>Account</span>Menu</button>',
+      ),
+    ).toBe("matches");
+  });
+
+  it("names an element by aria-labelledby before aria-label", () => {
+    const body =
+      '<nav aria-label="Main" aria-labelledby="nav-title"><h2 id="nav-title">Account</h2></nav>';
+    expect(match('role=navigation[name="Account"]', body)).toBe("matches");
+    expect(match('role=navigation[name="Main"]', body)).toBe("absent");
+  });
+
+  it("names a landmark only from its author, never its content", () => {
+    expect(match('role=navigation[name="Account"]', '<nav><a href="/a">Account</a></nav>')).toBe(
+      "absent",
+    );
+  });
+
+  it("leaves roles and names it cannot compute unchecked", () => {
+    for (const [selector, body] of [
+      ['role=region[name="Account"]', '<section aria-label="Account">Account</section>'],
+      ["role=article", "<article>Account</article>"],
+      ["role=group", "<fieldset><legend>Account</legend></fieldset>"],
+      ['role=textbox[name="Account"]', "<label>Account <input></label>"],
+      [
+        'role=button[name="Account"]',
+        "<button>Account <select><option>A</option></select></button>",
+      ],
+    ] as const)
+      expect(match(selector, body), selector).toBe("unchecked");
+    // A name it can compute that differs is still absent.
+    expect(match('role=button[name="Account"]', "<button>Help</button>")).toBe("absent");
+  });
+});
+
 describe("evaluateSignedInMarker", () => {
   it("reports a marker the signed-out page shows", () => {
     const check = evaluateSignedInMarker({

@@ -3142,7 +3142,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const verdict = validateSignedInMarker({ marker, check: result });
                     return JSON.stringify({
                       kind: "host_signed_in_marker",
-                      status: verdict.accepted ? "passed" : "refused",
+                      // A pass the signed-out page could not confirm is not a plain pass.
+                      status: !verdict.accepted
+                        ? "refused"
+                        : result.signedOutSnapshot === "unchecked"
+                          ? "passed_unchecked"
+                          : "passed",
                       ...result,
                       ...(verdict.accepted ? {} : { refusals: verdict.refusals }),
                       ...(verdict.warnings.length === 0 ? {} : { warnings: verdict.warnings }),

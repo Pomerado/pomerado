@@ -157,7 +157,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["43687c3a072436628b4694bc0fc788b2d6ab126200dfaf504fcc393358eb58f4", "core"],
-    ["d86183dbf7f6b0a379b76cd4711ab1c99793b6e2401272a7643338930494460c", "auth"],
+    ["060148efc7ea33f94b53473d0a6bd5e1b3eca85b1bbc91479b5bdc435ca40852", "auth"],
     ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
     ["97287c44e1b4629efa00f066d65ba0859cb4a4625d44b97faea7784b0a084afd", "forms"],
     ["4b99ef8281a9e202be17a353f7a7b25e7c4da7bc00afc84088e2077be6d0683f", "writes"],

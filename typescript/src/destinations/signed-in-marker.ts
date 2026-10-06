@@ -13,8 +13,15 @@
  *   `:text-is`, `:text-matches` and `:visible`, and the `text`, `css`, `id`, `data-testid` and
  *   `role` engines. Anything else, such as XPath or `:hover`, leaves the page unchecked, as does
  *   a frame-crossing selector (`>>`, `internal:`), which the live check refuses too.
- * - A role's name is estimated from `aria-label`, `aria-labelledby`, `alt`, `title`, a control's
- *   value and the text.
+ * - A role selector is checked only for the roles whose implicit elements this match knows
+ *   (`coveredRoles`); any other leaves the page unchecked.
+ * - A role's name follows the accessible-name rules in part: `aria-labelledby` first, then
+ *   `aria-label`, a native attribute (`alt`, a button's value, an svg's `<title>`, a table's
+ *   caption) or `title`, and, for roles named from their content, the content, built from each
+ *   child's own text alternative and leaving out what the page hides. A name it cannot compute,
+ *   such as a form field's `<label>` or content holding a form control or embedded content,
+ *   leaves the page unchecked. CSS-generated text (`::before`, `::after`) is not seen.
+ * - The snapshot is the main document alone: a shadow root's content and frames are not in it.
  * - Visibility is estimated without layout or stylesheets: an element counts as hidden only
  *   under a `hidden` attribute, an inline `display: none` or `visibility: hidden`, a closed
  *   dialog or details, a hidden input, or inside an element the page never renders (`head`,
@@ -196,6 +203,8 @@ export const validateSignedInMarker = (input: {
 /**
  * Whether the signed-out snapshots show the marker: one shows it when its selector has a visible
  * match there and its path is the snapshot's path, for whichever of the two the marker names.
+ * With no match, an element it may match where the name could not be computed leaves the pages
+ * unchecked.
  */
 export const matchSignedOutSnapshots = (
   marker: AutofillSignedIn,
@@ -204,12 +213,15 @@ export const matchSignedOutSnapshots = (
   if (snapshots.length === 0) return "unchecked";
   const step = marker.selector === undefined ? undefined : parseSelector(marker.selector);
   if (marker.selector !== undefined && step === undefined) return "unchecked";
+  let uncertain = false;
   for (const snapshot of snapshots) {
     if (marker.urlPath !== undefined && pathOf(snapshot.url) !== pathOf(marker.urlPath)) continue;
-    if (step === undefined || query(parseDocument(snapshot.dom), step).some(visible))
-      return "matches";
+    if (step === undefined) return "matches";
+    const found = query(parseDocument(snapshot.dom), step);
+    if (found.matched.some(visible)) return "matches";
+    if (found.uncertain.some(visible)) uncertain = true;
   }
-  return "absent";
+  return uncertain ? "unchecked" : "absent";
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -458,7 +470,7 @@ type SelectorList = readonly ComplexSelector[];
 type Step =
   | { readonly kind: "css"; readonly list: SelectorList }
   | { readonly kind: "text"; readonly test: TextMatcher }
-  | { readonly kind: "role"; readonly test: (element: SnapshotElement) => boolean }
+  | { readonly kind: "role"; readonly test: (element: SnapshotElement) => boolean | "unknown" }
   | { readonly kind: "attribute"; readonly name: string; readonly value: string };
 
 class Unsupported extends Error {}
@@ -503,6 +515,19 @@ const textMatcher = (body: string, exactByDefault: boolean): TextMatcher => {
 const innermostText = (test: TextMatcher) => (element: SnapshotElement) =>
   test(textOf(element)) && !elementChildren(element).some((child) => test(textOf(child)));
 
+/** An element inside one of these tags is not a page-level banner or content info. */
+const sectioning = new Set(["article", "aside", "main", "nav", "section"]);
+const insideSectioning = (element: SnapshotElement) => {
+  for (let node = element.parent; node !== undefined; node = node.parent)
+    if (sectioning.has(node.tag)) return true;
+  return false;
+};
+
+/**
+ * The implicit role of the elements whose role this match knows, as Playwright gives it. Any
+ * other element has none here, and a role selector for a role outside `coveredRoles` is not
+ * checked at all.
+ */
 const implicitRole = (element: SnapshotElement): string | undefined => {
   const { tag, attributes } = element;
   const type = (attributes.get("type") ?? "text").toLowerCase();
@@ -516,36 +541,45 @@ const implicitRole = (element: SnapshotElement): string | undefined => {
     case "input":
       if (["button", "submit", "reset", "image"].includes(type)) return "button";
       if (type === "checkbox" || type === "radio") return type;
-      if (type === "search") return "searchbox";
+      if (type === "search") return attributes.has("list") ? "combobox" : "searchbox";
       if (type === "range") return "slider";
-      return type === "hidden" ? undefined : "textbox";
+      if (["text", "email", "tel", "url"].includes(type))
+        return attributes.has("list") ? "combobox" : "textbox";
+      return undefined;
     case "textarea":
       return "textbox";
     case "select":
-      return attributes.has("multiple") ? "listbox" : "combobox";
+      return attributes.has("multiple") || Number(attributes.get("size") ?? 0) > 1
+        ? "listbox"
+        : "combobox";
+    case "datalist":
+      return "listbox";
     case "option":
       return "option";
     case "nav":
       return "navigation";
     case "header":
-      return "banner";
+      return insideSectioning(element) ? undefined : "banner";
     case "footer":
-      return "contentinfo";
+      return insideSectioning(element) ? undefined : "contentinfo";
     case "main":
       return "main";
     case "aside":
       return "complementary";
     case "form":
-      return "form";
+      return authorName(element) === "" ? undefined : "form";
     case "dialog":
       return "dialog";
     case "ul":
     case "ol":
+    case "menu":
       return "list";
     case "li":
       return "listitem";
     case "img":
       return attributes.get("alt") === "" ? "presentation" : "img";
+    case "svg":
+      return "img";
     case "table":
       return "table";
     case "h1":
@@ -560,8 +594,77 @@ const implicitRole = (element: SnapshotElement): string | undefined => {
   }
 };
 
+/** The roles `implicitRole` gives: a role selector for any other role leaves the page unchecked. */
+const coveredRoles = new Set([
+  "link",
+  "button",
+  "checkbox",
+  "radio",
+  "searchbox",
+  "slider",
+  "textbox",
+  "combobox",
+  "listbox",
+  "option",
+  "navigation",
+  "banner",
+  "contentinfo",
+  "main",
+  "complementary",
+  "form",
+  "dialog",
+  "list",
+  "listitem",
+  "img",
+  "table",
+  "heading",
+]);
+
 const roleOf = (element: SnapshotElement) =>
   element.attributes.get("role")?.trim().toLowerCase().split(/\s+/u)[0] || implicitRole(element);
+
+/** Roles whose accessible name may come from their content; any other is named by its author. */
+const nameFromContent = new Set([
+  "button",
+  "checkbox",
+  "heading",
+  "link",
+  "option",
+  "radio",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "tab",
+  "treeitem",
+  "cell",
+  "gridcell",
+  "columnheader",
+  "rowheader",
+  "row",
+  "switch",
+  "tooltip",
+]);
+/** Form fields, whose name comes from a `<label>` this match does not resolve. */
+const labelledFields = new Set(["textbox", "searchbox", "combobox", "listbox", "slider"]);
+/** Content whose part of a name this match cannot know. */
+const opaqueContent = new Set([
+  "input",
+  "select",
+  "textarea",
+  "iframe",
+  "object",
+  "embed",
+  "canvas",
+  "video",
+  "audio",
+  "math",
+]);
+/** Elements that add no space around their text in a name. */
+const inlineTags = new Set(
+  "a abbr b bdi bdo cite code data dfn em font i img kbd label mark q s samp small span strong sub sup svg time u var".split(
+    " ",
+  ),
+);
 
 const documentOf = (element: SnapshotElement) => {
   let node = element;
@@ -569,44 +672,133 @@ const documentOf = (element: SnapshotElement) => {
   return node;
 };
 
-/** The accessible name, estimated. */
-const nameOf = (element: SnapshotElement): string => {
-  const label = element.attributes.get("aria-label");
-  if (label !== undefined && label.trim() !== "") return label;
-  const labelledBy = element.attributes.get("aria-labelledby");
-  if (labelledBy !== undefined) {
-    const ids = new Set(labelledBy.split(/\s+/u));
-    const text = [...elementsUnder(documentOf(element))]
-      .filter((candidate) => ids.has(candidate.attributes.get("id") ?? ""))
-      .map(textOf)
-      .join(" ");
-    if (text.trim() !== "") return text;
+/** A name this match cannot compute reliably. */
+const unknownName = Symbol("unknown name");
+type Name = string | typeof unknownName;
+
+const ariaHidden = (element: SnapshotElement) =>
+  element.attributes.get("aria-hidden")?.trim().toLowerCase() === "true";
+
+/** The elements `aria-labelledby` names, in order; empty when it names none on the page. */
+const labelledBy = (element: SnapshotElement): SnapshotElement[] => {
+  const ids = (element.attributes.get("aria-labelledby") ?? "").split(/\s+/u).filter(Boolean);
+  if (ids.length === 0) return [];
+  const byId = new Map<string, SnapshotElement>();
+  for (const candidate of elementsUnder(documentOf(element))) {
+    const id = candidate.attributes.get("id");
+    if (id !== undefined && !byId.has(id)) byId.set(id, candidate);
   }
-  if (element.tag === "img")
-    return element.attributes.get("alt") ?? element.attributes.get("title") ?? "";
-  if (element.tag === "input") {
-    const type = (element.attributes.get("type") ?? "").toLowerCase();
-    if (type === "image") return element.attributes.get("alt") ?? "";
-    if (["button", "submit", "reset"].includes(type)) return element.attributes.get("value") ?? "";
-  }
-  return textOf(element).trim() !== "" ? textOf(element) : (element.attributes.get("title") ?? "");
+  return ids.flatMap((id) => byId.get(id) ?? []);
 };
 
-/** `role=button[name="Sign out"][level=2]`, with Playwright's `i` and `s` suffixes on the name. */
+const joinNames = (names: readonly Name[]): Name =>
+  names.includes(unknownName) ? unknownName : names.join(" ");
+
+/** `aria-label`, or the name a native attribute gives; undefined when neither does. */
+const ownLabel = (element: SnapshotElement): string | undefined => {
+  const label = element.attributes.get("aria-label");
+  if (label !== undefined && label.trim() !== "") return label;
+  const type = (element.attributes.get("type") ?? "").toLowerCase();
+  if (
+    element.tag === "img" ||
+    element.tag === "area" ||
+    (element.tag === "input" && type === "image")
+  )
+    return element.attributes.get("alt") || undefined;
+  if (element.tag === "input" && ["button", "submit", "reset"].includes(type))
+    return element.attributes.get("value") || undefined;
+  if (element.tag === "svg") {
+    const title = elementChildren(element).find((child) => child.tag === "title");
+    return title === undefined ? undefined : textOf(title) || undefined;
+  }
+  if (element.tag === "table") {
+    const caption = elementChildren(element).find((child) => child.tag === "caption");
+    return caption === undefined ? undefined : textOf(caption) || undefined;
+  }
+  return undefined;
+};
+
+/** The name its author gave: `aria-labelledby`, `aria-label`, a native attribute, or `title`. */
+const authorName = (element: SnapshotElement): Name => {
+  const referenced = labelledBy(element);
+  if (referenced.length > 0) {
+    const name = joinNames(referenced.map((node) => ownLabel(node) ?? contentName(node)));
+    if (name === unknownName || name.trim() !== "") return name;
+  }
+  return ownLabel(element) ?? element.attributes.get("title") ?? "";
+};
+
+/**
+ * The name an element's content gives, as the accessible-name rules build it: each child's own
+ * text alternative (`aria-labelledby`, `aria-label`, `alt`, an svg's `<title>`), else its
+ * content, leaving out what the page hides. A form control or embedded content in it makes the
+ * name unknown.
+ */
+const contentName = (element: SnapshotElement): Name => {
+  let name = "";
+  for (const child of element.children) {
+    if (!isElement(child)) {
+      name += child.text;
+      continue;
+    }
+    if (ariaHidden(child) || !visible(child)) continue;
+    const type = (child.attributes.get("type") ?? "").toLowerCase();
+    const button = child.tag === "input" && ["button", "submit", "reset", "image"].includes(type);
+    if (opaqueContent.has(child.tag) && !button) return unknownName;
+    const referenced = labelledBy(child);
+    let part: Name =
+      referenced.length > 0
+        ? joinNames(referenced.map((node) => ownLabel(node) ?? contentName(node)))
+        : (ownLabel(child) ?? (child.tag === "svg" ? "" : contentName(child)));
+    if (part === unknownName) return unknownName;
+    if (part.trim() === "") part = child.attributes.get("title") ?? "";
+    name += inlineTags.has(child.tag) ? part : ` ${part} `;
+  }
+  return name;
+};
+
+/** The accessible name, estimated, or `unknownName` where this match cannot compute it. */
+const nameOf = (element: SnapshotElement, role: string): Name => {
+  const author = authorName(element);
+  if (author === unknownName) return unknownName;
+  const authored =
+    labelledBy(element).length > 0 || (element.attributes.get("aria-label") ?? "").trim() !== "";
+  if (!authored && labelledFields.has(role)) return unknownName;
+  if (author.trim() !== "" || !nameFromContent.has(role)) return author;
+  return contentName(element);
+};
+
+/** Whether the element or an ancestor hides it from the accessibility tree with `aria-hidden`. */
+const hiddenFromRoles = (element: SnapshotElement) => {
+  for (let node: SnapshotElement | undefined = element; node !== undefined; node = node.parent)
+    if (ariaHidden(node)) return true;
+  return false;
+};
+
+/**
+ * `role=button[name="Sign out"][level=2]`, with Playwright's `i` and `s` suffixes on the name. A
+ * role outside `coveredRoles` is unsupported, and a name it cannot compute answers `unknown`.
+ */
 const roleStep = (body: string): Step => {
   const match = /^([a-z-]+)((?:\[[^\]]*\])*)$/iu.exec(body.trim());
   if (match === null) throw new Unsupported();
   const role = (match[1] ?? "").toLowerCase();
-  const tests: ((element: SnapshotElement) => boolean)[] = [];
+  if (!coveredRoles.has(role)) throw new Unsupported();
+  const tests: ((element: SnapshotElement) => boolean | "unknown")[] = [];
+  let includeHidden = false;
   for (const [, attribute] of (match[2] ?? "").matchAll(/\[([^\]]*)\]/gu)) {
     const pair = /^\s*([a-z-]+)\s*(?:=\s*(.*?))?\s*$/isu.exec(attribute ?? "");
     if (pair === null) throw new Unsupported();
     const name = (pair[1] ?? "").toLowerCase();
     const value = pair[2];
-    if (name === "include-hidden") continue;
-    if (name === "name" && value !== undefined) {
+    if (name === "include-hidden")
+      includeHidden = value === undefined || unquote(value).value !== "false";
+    else if (name === "name" && value !== undefined) {
       const matches = textMatcher(value, false);
-      tests.push((element) => matches(nameOf(element)));
+      tests.push((element) => {
+        const computed = nameOf(element, role);
+        return computed === unknownName ? "unknown" : matches(computed);
+      });
     } else if (name === "level" && value !== undefined) {
       const level = Number(unquote(value).value);
       tests.push((element) => {
@@ -618,7 +810,16 @@ const roleStep = (body: string): Step => {
   }
   return {
     kind: "role",
-    test: (element) => roleOf(element) === role && tests.every((test) => test(element)),
+    test: (element) => {
+      if (roleOf(element) !== role || (!includeHidden && hiddenFromRoles(element))) return false;
+      let answer: boolean | "unknown" = true;
+      for (const test of tests) {
+        const result = test(element);
+        if (result === false) return false;
+        if (result === "unknown") answer = "unknown";
+      }
+      return answer;
+    },
   };
 };
 
@@ -1021,11 +1222,25 @@ const hasMatch = (anchor: SnapshotElement, complex: ComplexSelector): boolean =>
   return false;
 };
 
-/** The document's elements the step matches. */
-const query = (document: SnapshotElement, step: Step): SnapshotElement[] =>
-  [...elementsUnder(document)].filter((element) => stepMatches(element, step));
+/**
+ * The document's elements the step matches, and those it may match where this match cannot
+ * compute what the step asks, such as a role's name.
+ */
+const query = (
+  document: SnapshotElement,
+  step: Step,
+): { readonly matched: SnapshotElement[]; readonly uncertain: SnapshotElement[] } => {
+  const matched: SnapshotElement[] = [];
+  const uncertain: SnapshotElement[] = [];
+  for (const element of elementsUnder(document)) {
+    const answer = stepMatches(element, step);
+    if (answer === true) matched.push(element);
+    else if (answer === "unknown") uncertain.push(element);
+  }
+  return { matched, uncertain };
+};
 
-const stepMatches = (element: SnapshotElement, step: Step): boolean => {
+const stepMatches = (element: SnapshotElement, step: Step): boolean | "unknown" => {
   switch (step.kind) {
     case "css":
       return listMatches(element, step.list);

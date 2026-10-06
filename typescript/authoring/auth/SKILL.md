@@ -178,7 +178,8 @@ shows. It must show on any signed-in page, not only on `openPath`.
   check passes: absent on the signed-out page the host saw before the sign-in, and present on the
   signed-in page now, after a fresh load and on another page you visited signed in. The host
   refuses a marker that the signed-out page shows. When the tool reports the check unavailable,
-  compare it yourself against the signed-out pages you explored before signing in.
+  or passed with the signed-out page unchecked, compare it yourself against the signed-out pages
+  you explored before signing in.
 
 For example, after sign-in the header shows an "Account" link, which the signed-out header shows
 too, and an account menu button, which it does not. `{ "selector": "text=Account" }` matches the

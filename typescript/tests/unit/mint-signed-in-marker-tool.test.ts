@@ -127,3 +127,15 @@ it("hands the marker to the host and refuses one the signed-out page shows", asy
   });
   expect(markers).toEqual([{ selector: "text=Account" }, menu]);
 });
+
+it("does not report a plain pass when the signed-out page went unchecked", async () => {
+  const host: Partial<MintDependencies> = {
+    checkSignedInMarker: () =>
+      Effect.succeed({ signedOutSnapshot: "unchecked", signedInNow: true, freshLoad: true }),
+  };
+  expect(await checkMarker({ selector: "role=region" }, host)).toMatchObject({
+    kind: "host_signed_in_marker",
+    status: "passed_unchecked",
+    warnings: ["signed_out_page_unchecked"],
+  });
+});
