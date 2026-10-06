@@ -9,8 +9,10 @@ permissions:
   contents: read
 jobs:
   # Secret scan with gitleaks and .gitleaks.toml. Every event scans the checked-out tree. A pull
-  # request also scans each of its commits, and a push to main each pushed commit, so a secret
-  # added and then removed still fails. tools/ci-scan.sh holds the steps and their tests.
+  # request also scans the diff of each of its commits, and a push to main of each pushed commit.
+  # Merge commits show what they changed beyond an automatic merge, through --remerge-diff. So a
+  # secret added and removed later still fails, including one added while resolving a merge.
+  # tools/ci-scan.sh holds the steps, and typescript/tests/unit/ci-scan.test.ts tests them.
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -42,7 +44,8 @@ jobs:
         run: bash tools/ci-scan.sh secrets
   # Generic scan for internal hostnames, account IDs, ticket and review references and secret
   # file names. It always scans every tracked file, and the messages of a pull request's commits or
-  # of the commits pushed to main. The token lets it confirm merges that GitHub made.
+  # of the commits pushed to main. The token lets it ask GitHub's API whether a commit that looks
+  # like GitHub's merge or squash of a pull request is that pull request's merge commit.
   content-scan:
     name: Public content scan
     runs-on: ubuntu-latest

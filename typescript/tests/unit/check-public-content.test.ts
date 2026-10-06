@@ -152,45 +152,53 @@ describe("GitHub merge titles", () => {
     committerEmail,
     message,
   });
-  const webFlow = () => true;
-  const notWebFlow = () => false;
+  const merged = () => true;
+  const notMerged = () => false;
 
   it.each([
-    ["a two-parent merge with GitHub's title", commitOf(`${mergeTitle}\n\nAdd a scan`, 2, "dev@example.com"), notWebFlow],
-    ["a squash that web-flow committed", commitOf(`${squashTitle}\n\n* Add a scan`, 1), webFlow],
-  ])("blanks only the number in %s", (_label, commit, isWebFlow) => {
-    const masked = maskGitHubMergeNumber(commit, isWebFlow);
+    ["a two-parent merge with GitHub's title", commitOf(`${mergeTitle}\n\nAdd a scan`, 2)],
+    ["a one-parent squash", commitOf(`${squashTitle}\n\n* Add a scan`, 1)],
+  ])("blanks only the number in %s that GitHub confirms", (_label, commit) => {
+    const masked = maskGitHubMergeNumber(commit, merged);
     expect(masked).toHaveLength(commit.message.length);
     expect(masked).not.toContain(hash);
     expect(scanText("commit", masked)).toEqual([]);
   });
 
   it.each([
-    ["a one-parent commit with the merge title", commitOf(mergeTitle, 1), webFlow],
-    ["a three-parent merge with the merge title", commitOf(mergeTitle, 3), webFlow],
-    ["a merge title with more after the branch", commitOf(j(mergeTitle, " and ", hash, "13"), 2), webFlow],
-    ["a merge title without an owner", commitOf(j("Merge pull request ", hash, "12 from topic"), 2), webFlow],
-    ["a merge title below the first line", commitOf(j("Merge topic\n\n", mergeTitle), 2), webFlow],
-    ["a squash that web-flow did not confirm", commitOf(squashTitle, 1), notWebFlow],
-    ["a squashed title on a merge", commitOf(squashTitle, 2), webFlow],
-    ["a number before the end of the title", commitOf(j("Add a scan (", hash, "12) and docs"), 1), webFlow],
-    ["a number with more in its brackets", commitOf(j("Fix the race (Name, ", hash, "617)"), 1), webFlow],
-    ["a number in the body", commitOf(j("Add a scan\n\nFollows ", hash, "617 (", hash, "12)"), 1), webFlow],
-  ])("leaves %s alone", (_label, commit, isWebFlow) => {
-    expect(maskGitHubMergeNumber(commit, isWebFlow)).toBe(commit.message);
+    ["a merge GitHub doesn't confirm", commitOf(mergeTitle, 2), notMerged],
+    ["a merge with another committer email", commitOf(mergeTitle, 2, "dev@example.com"), merged],
+    ["a one-parent commit with the merge title", commitOf(mergeTitle, 1), merged],
+    ["a three-parent commit with the merge title", commitOf(mergeTitle, 3), merged],
+    ["a merge title with more after the branch", commitOf(j(mergeTitle, " and ", hash, "13"), 2), merged],
+    ["a merge title without an owner", commitOf(j("Merge pull request ", hash, "12 from topic"), 2), merged],
+    ["a merge title below the first line", commitOf(j("Merge topic\n\n", mergeTitle), 2), merged],
+    ["a squash GitHub doesn't confirm", commitOf(squashTitle, 1), notMerged],
+    ["a squash with another committer email", commitOf(squashTitle, 1, "dev@example.com"), merged],
+    ["a squashed title on a root commit", commitOf(squashTitle, 0), merged],
+    ["a squashed title on a two-parent commit", commitOf(squashTitle, 2), merged],
+    ["a squashed title on a three-parent commit", commitOf(squashTitle, 3), merged],
+    ["a number before the end of the title", commitOf(j("Add a scan (", hash, "12) and docs"), 1), merged],
+    ["a number with more in its brackets", commitOf(j("Fix the race (Name, ", hash, "617)"), 1), merged],
+    ["a number in the body", commitOf(j("Add a scan\n\nFollows ", hash, "617 (", hash, "12)"), 1), merged],
+  ])("leaves %s alone", (_label, commit, isPullRequestMerge) => {
+    expect(maskGitHubMergeNumber(commit, isPullRequestMerge)).toBe(commit.message);
   });
 
-  it("asks GitHub only about a one-parent squashed title with GitHub's committer email", () => {
-    const asked: string[] = [];
-    const isWebFlow = (sha: string) => {
-      asked.push(sha);
+  it("asks GitHub about the commit and the number it names, and only for a candidate", () => {
+    const asked: [string, number][] = [];
+    const isPullRequestMerge = (sha: string, number: number) => {
+      asked.push([sha, number]);
       return false;
     };
-    maskGitHubMergeNumber({ ...commitOf(squashTitle, 1, "dev@example.com"), sha: "b".repeat(40) }, isWebFlow);
-    maskGitHubMergeNumber({ ...commitOf("Add a scan", 1), sha: "c".repeat(40) }, isWebFlow);
-    maskGitHubMergeNumber({ ...commitOf(mergeTitle, 2), sha: "d".repeat(40) }, isWebFlow);
-    maskGitHubMergeNumber({ ...commitOf(squashTitle, 1), sha: "e".repeat(40) }, isWebFlow);
-    expect(asked).toEqual(["e".repeat(40)]);
+    maskGitHubMergeNumber({ ...commitOf(squashTitle, 1, "dev@example.com"), sha: "b".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf("Add a scan", 1), sha: "c".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf(mergeTitle, 2), sha: "d".repeat(40) }, isPullRequestMerge);
+    maskGitHubMergeNumber({ ...commitOf(j("Add a scan (", hash, "34)"), 1), sha: "e".repeat(40) }, isPullRequestMerge);
+    expect(asked).toEqual([
+      ["d".repeat(40), 12],
+      ["e".repeat(40), 34],
+    ]);
   });
 });
 
@@ -271,7 +279,7 @@ describe("public content scan command", () => {
     expect(result.stdout).toMatch(/^commit [0-9a-f]{12}:1:\d+ review-reference:/mu);
   });
 
-  it("allows the number in GitHub's merges only for two parents or a squash web-flow confirms", () => {
+  it("allows the number only in a merge or squash that GitHub confirms", () => {
     const cwd = repository();
     commit(cwd, "Base");
     const base = head(cwd);
@@ -280,23 +288,30 @@ describe("public content scan command", () => {
     commit(cwd, "Topic work");
     git(cwd, "checkout", "--quiet", "-");
     commit(cwd, "Main work");
-    git(cwd, "merge", "--quiet", "--no-ff", "--message", `${mergeTitle}\n\nAdd a scan`, "topic");
+    execFileSync("git", ["-c", "user.name=GitHub", "merge", "--quiet", "--no-ff", "--message", mergeTitle, "topic"], {
+      cwd,
+      env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: "noreply@github.com" },
+    });
+    const merge = head(cwd);
     commit(cwd, j("Add a scan (", "#", "5)"), "noreply@github.com");
     const squash = head(cwd);
-    const asked: string[] = [];
-    const webFlow = (sha: string) => {
-      asked.push(sha);
+    const asked: [string, number][] = [];
+    const confirm = (sha: string, number: number) => {
+      asked.push([sha, number]);
       return true;
     };
-    expect(scanRepository(cwd, `${base}..HEAD`, webFlow)).toEqual([]);
-    expect(asked).toEqual([squash]);
-    expect(scanRepository(cwd, `${base}..HEAD`, () => false)).toEqual([
-      expect.objectContaining({ source: `commit ${squash.slice(0, 12)}`, rule: "ticket-reference" }),
+    expect(scanRepository(cwd, `${base}..HEAD`, confirm)).toEqual([]);
+    expect(asked).toEqual([
+      [squash, 5],
+      [merge, 4],
+    ]);
+    expect(scanRepository(cwd, `${base}..HEAD`, () => false).map((finding) => finding.source)).toEqual([
+      `commit ${squash.slice(0, 12)}`,
+      `commit ${merge.slice(0, 12)}`,
     ]);
     // The merge title on a one-parent commit fails, even with GitHub's committer email.
     commit(cwd, mergeTitle, "noreply@github.com");
-    const findings = scanRepository(cwd, `${base}..HEAD`, webFlow);
-    expect(findings).toEqual([
+    expect(scanRepository(cwd, `${base}..HEAD`, confirm)).toEqual([
       expect.objectContaining({ source: `commit ${head(cwd).slice(0, 12)}`, rule: "ticket-reference" }),
     ]);
   });

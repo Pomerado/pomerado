@@ -13,6 +13,9 @@
  *   node tools/check-public-content.ts                  scan every tracked file
  *   node tools/check-public-content.ts --commits A..B   also scan the messages of commits in A..B
  *
+ * A range that holds what looks like a merge or squash GitHub made needs GITHUB_REPOSITORY and a
+ * signed-in `gh`, to ask GitHub which pull request the commit merged. Without them it exits 2.
+ *
  * Findings print a location and a rule, not the matched text, because CI logs are public too.
  */
 import { execFileSync } from "node:child_process";
@@ -196,60 +199,69 @@ export interface Commit {
   readonly message: string;
 }
 
-/** Whether GitHub's web-flow account committed a commit and signed it. */
-export type WebFlowCheck = (sha: string) => boolean;
+/**
+ * Whether a commit is the merge or squash commit GitHub made when it merged this repository's pull
+ * request `number`.
+ */
+export type PullRequestCheck = (sha: string, number: number) => boolean;
 
 /** The first line of a merge commit made from a pull request's page. Group 1 is the number. */
-const githubMergeTitle = /^Merge pull request (#\d+) from [A-Za-z0-9][A-Za-z0-9-]*\/\S+$/du;
+const githubMergeTitle = /^Merge pull request #(\d+) from [A-Za-z0-9][A-Za-z0-9-]*\/\S+$/du;
 
 /** The end of a squashed title, where GitHub appends the number in brackets. Group 1 is the number. */
-const githubSquashSuffix = / \((#\d+)\)$/du;
+const githubSquashSuffix = / \(#(\d+)\)$/du;
 
-/** The committer email of web-flow, before GitHub confirms it. Anyone can set it locally. */
+/** The committer email GitHub uses. Anyone can set it, so it only decides whether to ask GitHub. */
 const githubCommitterEmail = "noreply@github.com";
 
 /**
  * A commit message with the pull request number GitHub wrote in its first line blanked out, so
- * the rest of the message is still scanned. That covers a merge commit, which has two parents and
- * GitHub's exact title, and a squash, which has one parent, a title ending in the bracketed number
- * and web-flow as its confirmed committer. Every other message comes back unchanged.
+ * the rest of the message is still scanned. That covers a merge commit, with two parents and
+ * GitHub's exact title, and a squash, with one parent and a title ending in the bracketed number.
+ * Either needs GitHub's committer email, and GitHub must confirm that the commit merged that pull
+ * request. Every other message comes back unchanged.
  */
-export const maskGitHubMergeNumber = (commit: Commit, isWebFlow: WebFlowCheck): string => {
+export const maskGitHubMergeNumber = (commit: Commit, isPullRequestMerge: PullRequestCheck): string => {
   const { message } = commit;
+  if (commit.committerEmail !== githubCommitterEmail) return message;
   const end = message.indexOf("\n");
   const title = end === -1 ? message : message.slice(0, end);
-  let span: readonly [number, number] | undefined;
-  if (commit.parents === 2) {
-    span = githubMergeTitle.exec(title)?.indices?.[1];
-  } else if (commit.parents === 1 && commit.committerEmail === githubCommitterEmail) {
-    const squash = githubSquashSuffix.exec(title)?.indices?.[1];
-    if (squash !== undefined && isWebFlow(commit.sha)) span = squash;
-  }
-  if (span === undefined) return message;
-  return message.slice(0, span[0]) + " ".repeat(span[1] - span[0]) + message.slice(span[1]);
+  const pattern =
+    commit.parents === 2 ? githubMergeTitle : commit.parents === 1 ? githubSquashSuffix : undefined;
+  const match = pattern?.exec(title);
+  const digits = match?.indices?.[1];
+  if (match === undefined || match === null || digits === undefined) return message;
+  if (!isPullRequestMerge(commit.sha, Number(match[1]))) return message;
+  // Blank the hash too, which sits just before the digits.
+  const start = digits[0] - 1;
+  return message.slice(0, start) + " ".repeat(digits[1] - start) + message.slice(digits[1]);
 };
 
-/** Asks GitHub's API, through `gh`, who committed a commit and whether its signature checks out. */
-const githubWebFlowCheck: WebFlowCheck = (sha) => {
+/**
+ * Asks GitHub's API, through `gh`, whether the commit is the merge commit of this repository's
+ * merged pull request `number`. Only GitHub sets a pull request's merge commit.
+ */
+const githubPullRequestCheck: PullRequestCheck = (sha, number) => {
   const repository = process.env["GITHUB_REPOSITORY"];
   if (repository === undefined || repository === "") {
     throw new Error(
-      `Set GITHUB_REPOSITORY and sign in to gh to confirm that GitHub made commit ${sha.slice(0, 12)}.`,
+      `Set GITHUB_REPOSITORY and sign in to gh to confirm which pull request commit ${sha.slice(0, 12)} merged.`,
     );
   }
-  const answer = execFileSync(
-    "gh",
-    ["api", `repos/${repository}/commits/${sha}`, "--jq", '"\\(.committer.login) \\(.commit.verification.verified)"'],
-    { encoding: "utf8" },
-  );
-  return answer.trim() === "web-flow true";
+  const filter =
+    `[.[] | select(.number == ${number} and .merged_at != null and ` +
+    `.merge_commit_sha == ${JSON.stringify(sha)} and .base.repo.full_name == ${JSON.stringify(repository)})] | length`;
+  const answer = execFileSync("gh", ["api", `repos/${repository}/commits/${sha}/pulls`, "--jq", filter], {
+    encoding: "utf8",
+  });
+  return answer.trim() !== "0";
 };
 
 /** Findings for every tracked file and, given a range such as `A..B`, its commit messages. */
 export const scanRepository = (
   cwd: string,
   commits?: string,
-  isWebFlow: WebFlowCheck = githubWebFlowCheck,
+  isPullRequestMerge: PullRequestCheck = githubPullRequestCheck,
 ): Finding[] => {
   const findings: Finding[] = [];
   for (const path of git(cwd, ["ls-files", "-z"]).split("\0").filter(Boolean)) {
@@ -267,7 +279,7 @@ export const scanRepository = (
         committerEmail,
         message: lines.join("\n"),
       };
-      findings.push(...scanText(`commit ${sha.slice(0, 12)}`, maskGitHubMergeNumber(commit, isWebFlow)));
+      findings.push(...scanText(`commit ${sha.slice(0, 12)}`, maskGitHubMergeNumber(commit, isPullRequestMerge)));
     }
   }
   return findings;
