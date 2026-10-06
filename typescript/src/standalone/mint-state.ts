@@ -94,6 +94,9 @@ export const makeBuildStart = (
     },
     /** The site showed the build signed in. Returns whether it counted. */
     verified: tracker.verified,
+    /** Whether `step` starts on a reset page, not the one the last step left. Changes nothing. */
+    resets: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
+      tracker.plan({ purpose: step.purpose, live: step.target === "liveBrowser" }).start !== "none",
     /** Saves the session when due, then resets the page or enters the site, before `step` runs. */
     before: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
       Effect.gen(function* () {

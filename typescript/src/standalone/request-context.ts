@@ -135,6 +135,8 @@ export interface ReviewStep {
   readonly sources: ReadonlyMap<string, string>;
   readonly input: unknown;
   readonly currentExecution?: CurrentExecution;
+  /** The step resets the page before it runs, so the page the last step left is not its page. */
+  readonly startsOnFreshPage?: boolean;
   /** Host text Guardian reads after the build's observations. */
   readonly note?: string;
 }
@@ -178,7 +180,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       undefined,
       {},
     );
-    const host: MintReviewHost = {
+    // Each step says whether it starts on a fresh page; see `pending`.
+    const host: Omit<MintReviewHost, "startsOnFreshPage"> = {
       repeatableRead: () => repeatableReadFor(buildEffect, claimed),
       browser: () => (navigated ? "active" : "not_opened"),
       // The page's place is redacted again on each read, as its capture is.
@@ -190,8 +193,6 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
               origin: secrets.redact(observed.page.origin),
               path: secrets.redact(observed.page.path),
             },
-      // The local host keeps the page a step leaves open for the next one.
-      startsOnFreshPage: () => false,
       executions: () => executions,
       inputSchema: () => inputSchema,
       signInCodes: () => (signedIn() ? [] : [...signInCodeHandles]),
@@ -199,7 +200,11 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     /** The pending review of `step`, and the files Guardian may read for it. */
     const pending = (step: ReviewStep) =>
       Effect.gen(function* () {
-        const mintContext = yield* mintReviewContext(host, projection, step);
+        const mintContext = yield* mintReviewContext(
+          { ...host, startsOnFreshPage: () => step.startsOnFreshPage === true },
+          projection,
+          step,
+        );
         const requestedIntent = secrets.redact(request.intent);
         const turn: PendingExecution = {
           invocationId,
@@ -339,6 +344,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
      * leaves the browser running.
      */
     const observe = Effect.gen(function* () {
+      // A live step ran, so the browser shows a page, even one the step's start reset.
+      navigated = true;
       const read = yield* browser.execute(pageSnapshotCode, 20).pipe(
         Effect.flatMap((value) => Schema.decodeUnknown(PageSnapshot)(value)),
         Effect.option,
@@ -383,17 +390,13 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       running,
       recorded,
       observe,
-      /** Opens the request's site once; the browser is active from then on. */
-      navigate: Effect.suspend(() =>
-        navigated
-          ? Effect.void
-          : site.navigate.pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  navigated = true;
-                }),
-              ),
-            ),
+      /** Opens the request's site, which the build's start does once; the browser is then active. */
+      navigate: site.navigate.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            navigated = true;
+          }),
+        ),
       ),
       executions: () => executions,
       repeatableRead: host.repeatableRead,

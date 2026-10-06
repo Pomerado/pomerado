@@ -341,6 +341,7 @@ const authoredExecution = (
           target: execution.target,
           ...(mark === undefined ? {} : { input: mark }),
         },
+        startsOnFreshPage: start.resets(execution),
       },
       "not_sent",
     );
