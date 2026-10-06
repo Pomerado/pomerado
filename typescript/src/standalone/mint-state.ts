@@ -65,10 +65,11 @@ export const makeBuildStart = (
     /** A sign-in step; see `makeStartTracker`. */
     signIn: tracker.signIn,
     /**
-     * What a host fill step may have sent. Without a request recorder, every field the fill typed
-     * counts, whatever became of its submit: the page may send what was typed itself. A submit the
-     * page kept disabled was never clicked, so that step sent nothing. A fill whose answer was lost
-     * counts every field the step asked for. The signed-in check stays the gate.
+     * What a host fill step may have sent. The host can't see the request itself, so every field
+     * the fill typed counts, whatever became of its submit: the page may send what was typed
+     * itself. A submit the page kept disabled was never clicked, so that step sent nothing. A fill
+     * whose answer was lost counts every field the step asked for. The signed-in check stays the
+     * gate.
      */
     sent: (report: AutofillStepReport, requested: AutofillStepRequest["fields"]) => {
       const slots =
@@ -84,7 +85,10 @@ export const makeBuildStart = (
     },
     /** The user completed the sign-in's approval. */
     approved: () => tracker.sent("proof"),
-    /** An explore typed a code the site sent for the sign-in under way into its code screen. */
+    /**
+     * An explore that ran without failing typed a code the site sent for the sign-in under way
+     * into its code screen.
+     */
     typedCode: () => tracker.sent("proof"),
     /** Whether the current sign-in sent the login. */
     get submitted() {

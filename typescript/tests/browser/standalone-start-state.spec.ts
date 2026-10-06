@@ -632,66 +632,83 @@ test("a check again after a confirmed sign-in is refused and drops the saved ses
   });
 });
 
+/** Types the code the agent was given into the code screen, then waits for the account page. */
+const typeCode = operation(
+  "code",
+  "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#verify-button').click(); await page.locator('#account').waitFor({ timeout: 5000 }); return true;",
+);
+/** Makes the page show an account without any sign-in: a cookie of its own, then the page. */
+const forge = `await page.evaluate(() => { document.cookie = "member=signed; path=/"; localStorage.setItem("token", "member"); });
+await page.goto(new URL("/account", page.url()).href);`;
+
+/**
+ * A passwordless sign-in: the host fills the identifier, the agent asks for the code the site
+ * sent, writes `files` once the code's handle is issued, runs `explores`, then checks, explores
+ * and runs its example.
+ */
+const passwordlessSteps = (
+  files: Readonly<Record<string, string>>,
+  explores: readonly string[],
+): readonly ((request: ModelRequest) => Output)[] => [
+  () =>
+    patch({
+      "explore/look.mjs": explore,
+      "src/tool.mjs": operation("probe", probe("example")),
+    }),
+  () =>
+    [
+      execution(
+        "authenticate",
+        "src/tool.mjs",
+        {
+          signInStep: {
+            fields: [{ selector: "#identify input[name=username]", accepts: ["username"] }],
+            submit: "#identify button",
+          },
+        },
+        "sign_in",
+      ),
+    ] as Output,
+  // The code the site sent for this sign-in, asked by the agent.
+  () =>
+    [
+      call("request_input", {
+        intent: "Ask for the code the site sent to finish signing in",
+        questions: [
+          {
+            id: "code",
+            type: "secret",
+            secretKind: "one_time_code",
+            prompt: "Enter the code the site sent you to finish signing in.",
+          },
+        ],
+      }),
+    ] as Output,
+  // Written once its handle is issued: a handle the attempt never issued refuses every execution.
+  () => patch(files).map((item, index) => ({ ...item, callId: `patch_code_${index}` })),
+  ...explores.map((entrypoint) => () => [execution("explore", entrypoint)] as Output),
+  () =>
+    [
+      execution(
+        "authenticate",
+        "src/tool.mjs",
+        { signInStep: { signedIn: { selector: "#account" } } },
+        "signed_in",
+      ),
+    ] as Output,
+  () => [execution("explore", "explore/look.mjs")] as Output,
+  () => [execution("example", "src/tool.mjs")] as Output,
+  finish,
+];
+
 test("a code the agent types into a passwordless sign-in's code screen counts as its proof", async () => {
   test.setTimeout(90_000);
   const site = await startSite();
-  const built = await build(site, { url: `${site.origin}/login-code`, effect: "read" }, [
-    () =>
-      patch({
-        "explore/look.mjs": explore,
-        "src/tool.mjs": operation("probe", probe("example")),
-      }),
-    () =>
-      [
-        execution(
-          "authenticate",
-          "src/tool.mjs",
-          {
-            signInStep: {
-              fields: [{ selector: "#identify input[name=username]", accepts: ["username"] }],
-              submit: "#identify button",
-            },
-          },
-          "sign_in",
-        ),
-      ] as Output,
-    // The code the site sent for this sign-in, asked by the agent and typed by its own probe.
-    () =>
-      [
-        call("request_input", {
-          intent: "Ask for the code the site sent to finish signing in",
-          questions: [
-            {
-              id: "code",
-              type: "secret",
-              secretKind: "one_time_code",
-              prompt: "Enter the code the site sent you to finish signing in.",
-            },
-          ],
-        }),
-      ] as Output,
-    // Written once its handle is issued: a handle the attempt never issued refuses every execution.
-    () =>
-      patch({
-        "explore/code.mjs": operation(
-          "code",
-          "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#verify-button').click(); await page.locator('#account').waitFor({ timeout: 5000 }); return true;",
-        ),
-      }).map((item) => ({ ...item, callId: "patch_code" })),
-    () => [execution("explore", "explore/code.mjs")] as Output,
-    () =>
-      [
-        execution(
-          "authenticate",
-          "src/tool.mjs",
-          { signInStep: { signedIn: { selector: "#account" } } },
-          "signed_in",
-        ),
-      ] as Output,
-    () => [execution("explore", "explore/look.mjs")] as Output,
-    () => [execution("example", "src/tool.mjs")] as Output,
-    finish,
-  ]);
+  const built = await build(
+    site,
+    { url: `${site.origin}/login-code`, effect: "read" },
+    passwordlessSteps({ "explore/code.mjs": typeCode }, ["explore/code.mjs"]),
+  );
   expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
   // The check counted the sign-in, so the example gets back the session saved after it.
   expect(site.probe("example")).toMatchObject({
@@ -702,3 +719,41 @@ test("a code the agent types into a passwordless sign-in's code screen counts as
     tabs: 1,
   });
 });
+
+for (const [name, files, explores] of [
+  [
+    "sits in a file that never ran",
+    { "explore/code.mjs": typeCode, "explore/forge.mjs": operation("forge", `${forge}\nreturn true;`) },
+    ["explore/forge.mjs"],
+  ],
+  [
+    "comes after the explore failed",
+    {
+      "explore/code.mjs": operation(
+        "code",
+        // Code that holds a handle may not evaluate in the page, so this one sets the cookie
+        // through the context.
+        "await context.addCookies([{ name: 'member', value: 'signed', url: new URL(page.url()).origin }]); await page.goto(new URL('/account', page.url()).href); throw new Error('Stopped before the code'); await page.locator('input[name=code]').fill('{{secret.s1}}');",
+      ),
+    },
+    ["explore/code.mjs"],
+  ],
+] as const)
+  test(`a sign-in code that ${name} is no proof, so a page showing an account leaves the example signed out`, async () => {
+    test.setTimeout(90_000);
+    const site = await startSite();
+    const built = await build(
+      site,
+      { url: `${site.origin}/login-code`, effect: "read" },
+      passwordlessSteps(files, explores),
+    );
+    expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
+    // The check was refused, so the build never signed in and the example starts clean.
+    expect(site.probe("example")).toMatchObject({
+      path: "/",
+      cookies: [],
+      explored: null,
+      token: null,
+      tabs: 1,
+    });
+  });
