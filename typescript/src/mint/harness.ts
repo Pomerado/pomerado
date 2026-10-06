@@ -37,8 +37,10 @@ import {
   MintRequest,
   MintServices,
   PublicationRequest,
+  SignedInMarkerCheckRequest,
   withOwnWords,
 } from "./contracts.js";
+import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
 import type {
@@ -311,6 +313,9 @@ const withHostNotices = (
     ...(actions.requestBrowserRecovery === undefined
       ? {}
       : { requestBrowserRecovery: wrap(actions.requestBrowserRecovery) }),
+    ...(actions.checkSignedInMarker === undefined
+      ? {}
+      : { checkSignedInMarker: wrap(actions.checkSignedInMarker) }),
   };
 };
 
@@ -3110,6 +3115,37 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     return JSON.stringify({
                       kind: "host_browser_recovery",
                       ...(yield* request(rationale)),
+                    });
+                  }),
+                ),
+            }),
+        // The agent tests a signed-in marker before it sends it. The host may reload the page,
+        // so the check holds the execution permit; it signs nothing in and sends no value. A host
+        // without the check says so, and the agent compares the pages itself.
+        ...(questionOnly
+          ? {}
+          : {
+              checkSignedInMarker: (input: unknown) =>
+                serial.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* active();
+                    const marker = yield* decode(SignedInMarkerCheckRequest, input);
+                    const check = dependencies.checkSignedInMarker;
+                    if (check === undefined)
+                      return JSON.stringify({
+                        kind: "host_signed_in_marker",
+                        status: "unavailable",
+                        notice:
+                          "This host cannot test a marker. Confirm yourself that it is absent on the signed-out pages you explored before signing in, and present on the signed-in page and on another page you visited signed in.",
+                      });
+                    const result = yield* check(marker);
+                    const verdict = validateSignedInMarker({ marker, check: result });
+                    return JSON.stringify({
+                      kind: "host_signed_in_marker",
+                      status: verdict.accepted ? "passed" : "refused",
+                      ...result,
+                      ...(verdict.accepted ? {} : { refusals: verdict.refusals }),
+                      ...(verdict.warnings.length === 0 ? {} : { warnings: verdict.warnings }),
                     });
                   }),
                 ),
