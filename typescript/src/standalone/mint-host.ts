@@ -50,6 +50,7 @@ const mintDependencies = (state: MintState) => {
           ),
         ),
         Effect.map((answers) => handles.issue(answers)),
+        Effect.tap((issued) => Effect.sync(() => context.askedByAgent(candidate, issued))),
         Effect.mapError(mintError),
       ),
     recordBuildEffect: (effect) =>
