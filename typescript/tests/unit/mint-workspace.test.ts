@@ -3,8 +3,9 @@ import { join } from "node:path";
 import type { Editor } from "@openai/agents";
 import type { SandboxSession } from "@openai/agents/sandbox";
 import { portableJobSession, portableMintProjection } from "../support/portable-mint.js";
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
 import { afterEach, expect, it } from "vitest";
+import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 import type { MintDependencies } from "../../src/mint/contracts.js";
 import { makeMintWorkspace } from "../../src/mint/workspace.js";
 
@@ -51,6 +52,24 @@ const editorWorkspace = (
     Effect.runPromise,
     editAction,
   );
+
+// The local host hands the mint the local workspace session itself, not a test wrapper.
+it("reads a source file through the local workspace and refuses one past 8 MiB", async () => {
+  const scope = await Effect.runPromise(Scope.make());
+  cleanup.push(() => Effect.runPromise(Scope.close(scope, Exit.void)));
+  const local = await Effect.runPromise(
+    createLocalWorkspace().pipe(Effect.provideService(Scope.Scope, scope)),
+  );
+  await Effect.runPromise(local.write("src/tool.mjs", "export const value = 0;"));
+  // Past the editor's limit, as a command can leave a file.
+  mkdirSync(join(local.root, "scratch"));
+  writeFileSync(join(local.root, "scratch", "large.txt"), "x".repeat(8 * 1024 * 1024 + 1));
+  const modelWorkspace = editorWorkspace(local.session, (original) => original);
+  expect(await modelWorkspace.readFile?.({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+  await expect(modelWorkspace.readFile?.({ path: "scratch/large.txt" })).rejects.toMatchObject({
+    code: "Unavailable",
+  });
+});
 
 // Create, update and delete share one edit wrapper; an update stands for all three.
 it("reports an uncertain edit when the workspace writes before throwing", async () => {
