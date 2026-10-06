@@ -76,30 +76,46 @@ const executeCommand = (
       }),
     );
   });
+/** A page check before this sign-in's steps sent the login proves nothing about this build. */
+const credentialsNotSubmitted = {
+  signedIn: false,
+  failed: "credentials_not_submitted",
+  nextStep:
+    "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
+} as const;
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { auth, afterSubmit, mintAsk, context } = state;
+    const { start, auth, afterSubmit, mintAsk, context } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
-    yield* context.navigate;
+    yield* start.enter;
 
     let result: unknown;
     let authenticated = false;
-    if ("fields" in signIn)
-      result = yield* auth.step(signIn, beforeDispatch).pipe(Effect.flatMap(afterSubmit));
-    else if ("signedIn" in signIn) {
-      const checked = yield* auth.signedIn(signIn.signedIn);
-      authenticated = checked.signedIn;
-      result = checked;
+    if ("fields" in signIn) {
+      start.signIn();
+      const report = yield* auth.step(signIn, beforeDispatch);
+      start.sent(report, signIn.fields);
+      result = yield* afterSubmit(report);
+    } else if ("signedIn" in signIn) {
+      // A check is a sign-in step too: after a verified sign-in it starts a new one.
+      start.signIn();
+      if (start.submitted) {
+        const checked = yield* auth.signedIn(signIn.signedIn);
+        authenticated = checked.signedIn && start.verified();
+        result = checked;
+      } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
+      start.signIn();
       auth.rejected(signIn.rejected.slot);
       result = { outcome: "correction_requested" };
-    } else
+    } else {
+      start.signIn();
       result = yield* mintAsk(
         noticeRequest(
           randomUUID(),
@@ -107,6 +123,8 @@ const executeAuthentication = (
           `Complete the ${signIn.approval.replaceAll("_", " ")} sign-in for ${context.siteOrigin}, then confirm.`,
         ),
       );
+      start.approved();
+    }
     yield* context.observe;
     return {
       executionId: id,
@@ -295,7 +313,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, mintAsk, writeSession } = state;
+    const { workspace, context, request, handles, start, mintAsk, writeSession } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -326,6 +344,15 @@ const authoredExecution = (
       },
       "not_sent",
     );
+    // A code the site sent for the sign-in under way, which an explore typed into the page,
+    // finished that sign-in: it counts as the proof, as a code the host fills does. Only a typing
+    // call that delivered the code's value and completed counts, never the source text.
+    const known = new Map(handles.snapshot());
+    const codes =
+      execution.purpose === "explore" && live
+        ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
+        : [];
+    const watch = codes.length === 0 ? undefined : browser.watchTyping(codes);
     yield* beforeDispatch ?? Effect.void;
     if (execution.purpose === "act") {
       writeSession.started = true;
@@ -341,7 +368,7 @@ const authoredExecution = (
         ...(mark === "agent_chosen" ? { input: mark } : {}),
       },
       Effect.gen(function* () {
-        if (live) yield* context.navigate;
+        yield* start.before(execution);
         const executed = yield* Effect.either(
           runLocalOperation({
             workspace,
@@ -349,7 +376,10 @@ const authoredExecution = (
             // Only a live step receives a value; offline steps run the handle text as written.
             sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
             input,
-            browser,
+            browser:
+              watch === undefined
+                ? browser
+                : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
             siteOrigin: context.siteOrigin,
             ...(siteDomain(context.siteOrigin) === undefined
               ? {}
@@ -361,6 +391,7 @@ const authoredExecution = (
             decideDialog: makeDialogDecider(mintAsk, secrets.redact),
           }),
         );
+        if (watch !== undefined && watch.typed().size > 0) start.typedCode();
         if (live) yield* context.observe;
         if (execution.purpose === "act")
           writeSession.steps.push({

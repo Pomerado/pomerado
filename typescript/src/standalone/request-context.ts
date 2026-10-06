@@ -452,6 +452,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             signInCodeHandles.add(answer.value);
         }
       },
+      /** The handles `askedByAgent` noted, while no sign-in of this attempt is verified. */
+      signInCodes: host.signInCodes,
     };
   });
 export type RequestContext = Effect.Effect.Success<ReturnType<typeof requestContext>>;
