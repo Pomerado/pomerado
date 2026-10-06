@@ -197,7 +197,7 @@ Pomerado has three parts.
 ## Contributing
 
 - Issues are welcome.
-- Outside pull requests open once the review gate in [CONTRIBUTING.md](CONTRIBUTING.md) is live.
+- Outside pull requests open once the review and approval gate in [CONTRIBUTING.md](CONTRIBUTING.md) is live.
 - Security problems go privately through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security).
 - [CONTRIBUTING.md](CONTRIBUTING.md) has the clone, build and test steps.
 
