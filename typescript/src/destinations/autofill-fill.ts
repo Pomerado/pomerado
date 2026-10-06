@@ -87,11 +87,15 @@ const controls = (before: typeof Targets.Type, after: typeof Targets.Type) => [
   ...after.fields.map((now, index) => ({ at: index, was: before.fields[index], now })),
   { at: "submit" as const, was: before.submit, now: after.submit },
 ];
-/** Which properties of which controls differ between two judgments, by name only. */
+/**
+ * Which properties of which controls differ between two judgments, by name only. The submit's
+ * `editable` only follows whether it is disabled, which no call judges as a change.
+ */
 const changedProperties = (before: typeof Targets.Type, after: typeof Targets.Type) =>
   controls(before, after)
     .flatMap(({ at, was, now }) =>
       properties
+        .filter((key) => !(at === "submit" && key === "editable"))
         .filter((key) => JSON.stringify(was?.[key]) !== JSON.stringify(now?.[key]))
         .map((key) => `${at}.${key}`),
     )
