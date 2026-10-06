@@ -187,7 +187,7 @@ Your agent then calls `get_job`. Each call waits up to 30 seconds and returns th
 To use the integration, follow the steps in the README's [Use your integration](../README.md#use-your-integration).
 
 1. Open `example_reader/README.md` and run the add command for your client.
-2. Give the new server `OPENAI_API_KEY` the same way as Pomerado.
+2. Skip the key setup. Running an integration makes no model request, so only minting needs `OPENAI_API_KEY`.
 3. Reload your client and ask your agent to use `example_reader`.
 
 The call returns JSON that matches the output schema in `example_reader/pomerado.json`.

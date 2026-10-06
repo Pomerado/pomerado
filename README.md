@@ -138,7 +138,7 @@ pomerado-integrations/example_reader/
 ```
 
 1. Open the integration's `README.md`. It has the add command for each major client with your paths already filled in
-2. Add the server and give it `OPENAI_API_KEY` the same way you did for Pomerado. Guardian reviews every run, so the integration needs the key too
+2. Add the server with that command. Skip the key setup. Running an integration makes no model request, so only minting needs `OPENAI_API_KEY`
 3. Reload your client and ask your agent to use the integration
 
 > Use example_reader to read the page heading.
@@ -157,7 +157,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 
 - The minter, which builds integrations in a real Chromium browser
 - The minting harness and prompts that Pomerado Cloud also builds on
-- Guardian, which reviews each browser action and the finished source
+- Guardian, which reviews each browser action and the finished source while minting, not when an integration runs
 - The standalone host, which serves each integration as an MCP server on your own machine
 - The integrations themselves, saved as source code in your folder that you own
 
