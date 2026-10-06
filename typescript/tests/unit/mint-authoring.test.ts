@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
@@ -16,6 +17,8 @@ import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.j
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { executeKernelOperation, offlineKernel } from "../../src/runtime/kernel-operation.js";
+import { runLocalOperation } from "../../src/execution/local-operation.js";
+import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
 it("loads modular skill references and keeps auth discovery outside managed login", async () => {
   expect("websiteAuth" in authEntry).toBe(false);
@@ -107,6 +110,17 @@ it("loads a host-composed directory in hosted mode exactly as composed", async (
   }
 });
 
+// Many sign-in forms enable their submit only once the fields hold input, and the host waits for
+// it. The minter records such a submit as it observes it, disabled or not.
+it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const auth = contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "";
+  expect(auth.replace(/\s+/g, " ")).toContain(
+    "Record a field only after observing its unique visible enabled match in the intended frame and form, and a submit after observing its unique visible match there, even one the page enables only once the fields hold input.",
+  );
+  expect(auth).not.toContain("enabled submit");
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -123,13 +137,13 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["964e12308c358741b63ecd329facc0d837ef17bfbb693ed4b34efd07e9769037", "core"],
-    ["cb5d827f6216a73624c72b5ed79fd31ff790e30e49f2e2e14a488273f370b204", "auth"],
-    ["d07cbe4642fff0df7477110ae8d28104d73638a42aea0904270859851892f255", "pagination"],
-    ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
-    ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
-    ["1403bba009fd19871a30250576cbba6cb93368905d877a7269b6b3ec5cd7b680", "caller-input"],
-    ["ba325fa85de88cfcfd1421cccf76be5a71487e5266bc6c61d9bf24611812ab44", "workspace/AGENTS.md"],
+    ["2486b41337525cf33d86b346278d870f131204f0fe3b98db2d5be1170e1b3213", "core"],
+    ["3b569c6f058ac70c7a68d930aae8bad26cc42947fdfc6545db38ad77692bce3a", "auth"],
+    ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
+    ["97287c44e1b4629efa00f066d65ba0859cb4a4625d44b97faea7784b0a084afd", "forms"],
+    ["ef7f6b139f6ea7c920e1c294ae10300f0f9bf2c4148b8f0836b5cc9fe60783dd", "writes"],
+    ["c6f95c20707e9f3e799ffe71999997aa887c0ffa0c893af0f8c408c5d04ab179", "caller-input"],
+    ["627613e21924a2f5974ee0309846051eb20150d5353bca128705047139080d35", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });
@@ -367,3 +381,142 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   expect(clicks).toBe(1);
   expect(reads).toBe(2);
 });
+
+const runPureFiles = (entrypoint: string, sources: readonly (readonly [string, string])[]) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspace = yield* createLocalWorkspace();
+        return yield* runLocalOperation({
+          workspace,
+          entrypoint,
+          sources,
+          input: {},
+          target: "pureFiles",
+        });
+      }),
+    ),
+  );
+
+/*
+ * Every skill reference, as the agent copies it into its workspace, and every import the workspace
+ * guide or a skill shows, must load against the SDK the local executor stages beside authored
+ * source. It fails when an example or the guidance names an import the executor cannot resolve.
+ */
+it("loads every reference and every documented import against the runtime the local executor ships", async () => {
+  const authoring = "typescript/authoring";
+  const skills = await Effect.runPromise(loadAuthoringSkills(authoring));
+  const guide = await Effect.runPromise(loadWorkspaceGuide(authoring));
+  const modules = new Map<string, string>();
+  // A reference names the repository's SDK paths; the workspace README maps them to the
+  // workspace's own, two levels above src/.
+  for (const name of new Set(skills.flatMap((skill) => Object.keys(skill.references ?? {}))))
+    modules.set(
+      `src/${name.replace(/\.ts$/u, ".mjs")}`,
+      stripTypeScriptTypes(await readFile(join(authoring, "examples", name), "utf8"), {
+        mode: "transform",
+      }).replaceAll('"../../src/', '"../../'),
+    );
+  const documents = [
+    ...guide.files.values(),
+    ...skills.map((skill) => {
+      if (typeof skill.content === "string") return skill.content;
+      if (skill.content instanceof Uint8Array) return new TextDecoder().decode(skill.content);
+      throw new Error(`Expected rendered text for skill ${skill.name}`);
+    }),
+  ];
+  for (const content of documents)
+    for (const [index, [, block]] of [
+      ...content.matchAll(/```(?:js|javascript|ts|typescript)?\n([\s\S]*?)```/gu),
+    ].entries()) {
+      // An import statement, over several lines when it lists its names that way.
+      const imports = [...(block ?? "").matchAll(/^import\s[^;]*?["'][^"']+["'];?/gmu)].map(
+        ([statement]) => statement,
+      );
+      if (imports.length > 0)
+        modules.set(`src/documented-${modules.size}-${index}.mjs`, imports.join("\n"));
+    }
+  expect([...modules.keys()].filter((path) => path.includes("documented-")).length).toBeGreaterThan(
+    0,
+  );
+  // The real local executor loads every module from one authored entrypoint, which finds the
+  // SDK at whichever path this layout resolves, so only the modules under test can fail.
+  const entrypoint = "src/load-every-import.mjs";
+  const entry = `import { Schema } from "effect";
+const sdk = await import("../../runtime/index.js").catch(() => import("../runtime/index.js"));
+const paths = ${JSON.stringify([...modules.keys()].map((path) => `./${path.slice("src/".length)}`))};
+export default sdk.defineOperation(
+  { input: Schema.Struct({}), output: Schema.Struct({ failed: Schema.Array(Schema.String) }) },
+  async () => {
+    const failed = [];
+    for (const path of paths) {
+      try {
+        await import(path);
+      } catch (error) {
+        failed.push(path + ": " + String(error?.message ?? error).split("\\n")[0]);
+      }
+    }
+    return { failed };
+  },
+);
+`;
+  const result = await runPureFiles(entrypoint, [...modules, [entrypoint, entry]]);
+  expect(result.output).toEqual({ failed: [] });
+}, 30_000);
+
+/*
+ * Before the executor staged authored source a level below the SDK, source in src/ reached the SDK
+ * and the dependency folder one level up, a nested module two levels up, and its working folder
+ * held package.json. Integrations saved that way keep running, against the same modules as the
+ * documented path, with relative file paths still read from the authored root.
+ */
+it("runs source that reaches the SDK one level up from src/, as saved integrations may", async () => {
+  const result = await runPureFiles("src/tool.mjs", [
+    [
+      "src/tool.mjs",
+      `import { Schema } from "effect";
+import * as dependency from "../node_modules/effect/dist/esm/index.js";
+import { readFileSync } from "node:fs";
+import * as documented from "../../runtime/index.js";
+import * as runtime from "../runtime/index.js";
+import * as browser from "../browser/index.js";
+import { nested } from "./lib/nested.mjs";
+export default runtime.defineOperation(
+  {
+    input: Schema.Struct({}),
+    output: Schema.Struct({ same: Schema.Boolean, note: Schema.String, type: Schema.String }),
+  },
+  async () => ({
+    same:
+      documented.defineOperation === runtime.defineOperation &&
+      browser.OperationFailure === runtime.OperationFailure &&
+      nested === runtime.defineOperation &&
+      dependency.Schema === Schema,
+    note: JSON.parse(readFileSync("src/note.json", "utf8")).note,
+    type: JSON.parse(readFileSync("package.json", "utf8")).type,
+  }),
+);`,
+    ],
+    ["src/lib/nested.mjs", `export { defineOperation as nested } from "../../runtime/index.js";`],
+    ["src/note.json", JSON.stringify({ note: "authored root" })],
+  ]);
+  expect(result.output).toEqual({ same: true, note: "authored root", type: "module" });
+}, 30_000);
+
+it("refuses authored files named like a folder the host stages beside them", async () => {
+  const operation = `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => ({}));`;
+  for (const name of ["runtime", "browser", "privacy", "node_modules"]) {
+    const result = await runPureFiles("src/tool.mjs", [
+      ["src/tool.mjs", operation],
+      [name, "export {};"],
+    ]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(result, name).toMatchObject({
+      message: expect.stringContaining(`Reviewed source cannot replace trusted SDK: ${name}`),
+    });
+  }
+}, 30_000);

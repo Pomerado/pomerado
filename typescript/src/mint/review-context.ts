@@ -33,6 +33,11 @@ export interface MintReviewHost {
   readonly executions: () => readonly ExecutionEntry[];
   /** The input schema the latest example or contract run declared; undefined before either. */
   readonly inputSchema: () => unknown;
+  /**
+   * The handles answering code questions the agent asked during this attempt's unverified
+   * sign-in; empty once a sign-in is verified. Only execution reviews carry them.
+   */
+  readonly signInCodes: () => readonly string[];
 }
 
 /**
@@ -107,6 +112,7 @@ export const mintReviewContext = (
     const browser = host.browser();
     const page = host.observedPage();
     const schema = reviewsSource ? host.inputSchema() : undefined;
+    const signInCodes = currentExecution === undefined ? [] : host.signInCodes();
     return {
       repeatableRead: host.repeatableRead(),
       operationSources: [...step.sources.keys()],
@@ -118,6 +124,7 @@ export const mintReviewContext = (
         : { inputSchema: yield* screenMintText({ projection }, schema) }),
       ...(currentExecution === undefined ? {} : { currentExecution }),
       browser,
+      ...(signInCodes.length === 0 ? {} : { signInCodes: [...signInCodes] }),
       ...(page === undefined ||
       browser !== "active" ||
       (currentExecution !== undefined && host.startsOnFreshPage(currentExecution))

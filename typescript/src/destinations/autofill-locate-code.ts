@@ -123,10 +123,14 @@ const locate = async (selector) => {
         ? element.formMethod
         : formProperty("method")
       : null;
-    const disabled = element.matches(":disabled") || element.closest('[aria-disabled="true"], [inert]') !== null;
+    // Disabled, which a page may undo once the fields hold input, and inert, which takes no
+    // interaction at all, as an inactive or background form does. Page code can redefine what
+    // these read, so the submit call reads whether the submit is disabled again through Playwright.
+    const disabled = element.matches(":disabled") || element.closest('[aria-disabled="true"]') !== null;
+    const inert = element.closest("[inert]") !== null;
     const editable =
       (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
-      !disabled && !element.readOnly;
+      !disabled && !inert && !element.readOnly;
     // Only whether it holds a value leaves the page, never the value.
     const empty =
       (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
@@ -141,6 +145,7 @@ const locate = async (selector) => {
     };
     return {
       disabled,
+      inert,
       target: { documentOrigin: self.origin, actions, methods, submitMethod, editable, empty },
       described: {
         role: element.getAttribute("role"),
@@ -160,10 +165,11 @@ const locate = async (selector) => {
   });
   const described = Object.fromEntries(Object.entries(found.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
   const shape = await formControlShape(locator);
-  const control = found.disabled && (shape === "select" || shape === "combobox") ? "other" : shape;
+  const control =
+    (found.disabled || found.inert) && (shape === "select" || shape === "combobox") ? "other" : shape;
   return {
     locator,
-    disabled: found.disabled,
+    inert: found.inert,
     target: {
       ...found.target,
       ownerUrl: owner ? where(owner.url(), false) : null,

@@ -119,6 +119,11 @@ continues, when:
    method, that the request and business input do not name or clearly imply: never guess it or
    take the site's preselected default, ask before clicking it.
 
+The caller may answer every choice and multi_choice in their own words: their own text instead
+of an option, or a note beside the options they pick. The host always allows it, so never add an
+"other" option. Their words are their answer: follow them, and ask again if they leave the choice
+open.
+
 Never ask for a fact the site shows (a choice it offers is askable when the input leaves it
 open), for host or infrastructure failures, for permission to do what was requested, for
 credentials (the host asks for logins itself) or for CAPTCHAs. Asking which sign-in method or
@@ -132,9 +137,11 @@ add-on toggle, a pre-selected checkbox or a lone saved payment method is still a
 to ask about. Read the path's options with read-only exploration where you can and settle them before
 the first act step where possible; a question during the session waits in place. Take a site default only for a choice that is not a
 credential, not a write and easy to reverse, and list it in `finish_build` `assumptions`. A full
-new login goes through execute purpose `authenticate`, where the host fills or asks for any
-sign-in code; a standalone two-factor code needed during an action is a `request_input`
-secret question, and `authenticate` is never started just for a code. You may ask after live
+new login goes through execute purpose `authenticate`: an SMS, email or authenticator code that
+is part of signing in is a `code` field of its `signInStep`, which the host fills or asks the
+caller for, so never ask for it with `request_input`. The standalone code path, a
+`request_input` secret question, is only for a later protected action after sign-in, when the
+site asks for another code to confirm it; `authenticate` is never started just for such a code. You may ask after live
 execution has closed or while a write's outcome is uncertain; after the answer, verify the
 current state before writing again.
 
@@ -145,6 +152,15 @@ allows, and is an input of the tool either way. No request or answer authorizes 
 words such as synthetic, sample or test data settle no value or choice. A caller that wants
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field.
+
+An answer can change what is left to do. When the owner's `request_input` answer clarifies that a
+prerequisite the request named, such as a check before the action, is unavailable on the site or
+not needed, drop it from the remaining work and from the tool's contract: it no longer blocks the
+build or publication, and the tool does not promise it. Checking whether an earlier attempt already
+acted is your own reconciliation, not a capability the tool offers. No answer removes the requested
+action itself or the rule against repeating a write that may have committed, adds a capability the
+site lacks, or waives a Guardian decision or a constraint the owner set. A write the session
+already confirmed is done: compose and publish from its evidence, never run it again.
 
 ## Authentication
 
@@ -227,7 +243,11 @@ never with final text, which the host treats as unfinished work:
 
 - `site_lacks_capability`: the site does not offer what the task needs, such as a form, option,
   service or data it never shows, after you have looked where a person would find it (and asked
-  for directions when stuck).
+  for directions when stuck). Data shown under another word than the request's is not absent:
+  compare the headings, the values around it and the task. When they settle that it is the
+  requested field, use it; when they do not, ask the user one focused question with
+  `request_input`. Report absence only when the evidence shows the site lacks it, and never
+  invent a value or substitute a different field.
 - `policy`: a Guardian decision, or a constraint the owner set, refuses what the task needs, and
   no change within your authority gets past it, such as a requirement the site cannot meet.
 
@@ -247,9 +267,9 @@ Use the same canonical operation SDK and Kernel-shaped browser execute syntax. T
 
 `read_source` reads source, installed skills and references in bounded ranges. `apply_patch` edits only authored directories. `execute` supports `liveBrowser` and `pureFiles`; every command or live execution receives fresh Guardian review. `exec_command` runs a local process over caller-owned files with an explicit environment; it is not an operating-system or network sandbox. Never use a command, Node fetch or socket to access the website; browser work stays in reviewed Playwright calls. `request_input`, `report_blocked` and `finish_build` use their existing request shapes.
 
-Inspect the current page with bounded read-only probes. Use only caller-supplied input, answers and observed page choices. Keep observations focused; there are no recorder captures to read or retain. A timeout or browser loss leaves effects uncertain: read back current state before repeating an action and never replay an uncertain write.
+Inspect the current page with bounded read-only probes. Use only caller-supplied input, answers and observed page choices. Keep observations focused; there are no recorder captures to retain. A timeout or browser loss leaves effects uncertain: read back current state before repeating an action and never replay an uncertain write.
 
-For sign-in, inspect the actual current fields without reading their values, then submit an observed `signInStep` through execute purpose `authenticate`. The host collects credentials through protected callback or masked terminal input and inserts them through the guarded credential channel. Model text, files and ordinary output never contain passwords or codes. A secret answer is an opaque handle; apply the core skill's whole-value restrictions.
+For sign-in, inspect the actual current fields without reading their values, then submit an observed `signInStep` through execute purpose `authenticate`. The host collects credentials through protected callback or masked terminal input and inserts them through the guarded credential channel. After each step whose submit it clicked, the host saves the next screen's controls (role, name or label, input type, required, visible, enabled; never a value) to `captures/after-submit/<step>.json` and its result names that file: read it with `read_source` or `exec_command` like any other file. A step that fails also shows the last saved controls inline, at most 30. Model text, files and ordinary output never contain passwords or codes. A secret answer is an opaque handle; apply the core skill's whole-value restrictions.
 
 A write performs the caller's task once as live act steps, reads back a supported confirmation, then composes the operation from those steps. Do not execute the composed write again. Finish with honest coverage and the confirming execution ID; returning integration files does not justify a second website write.
 

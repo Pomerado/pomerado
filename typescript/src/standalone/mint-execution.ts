@@ -82,7 +82,7 @@ const executeAuthentication = (
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { auth, mintAsk, context } = state;
+    const { auth, afterSubmit, mintAsk, context } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
@@ -90,7 +90,8 @@ const executeAuthentication = (
 
     let result: unknown;
     let authenticated = false;
-    if ("fields" in signIn) result = yield* auth.step(signIn, beforeDispatch);
+    if ("fields" in signIn)
+      result = yield* auth.step(signIn, beforeDispatch).pipe(Effect.flatMap(afterSubmit));
     else if ("signedIn" in signIn) {
       const checked = yield* auth.signedIn(signIn.signedIn);
       authenticated = checked.signedIn;

@@ -18,7 +18,8 @@ cannot become a write. The host writes the two answers' labels. Guardian reviews
 A `write` answer makes this a write build in place: every later step is reviewed under
 write authority and the rules below, what you explored stays valid evidence, and the first
 `act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
-can do, or end and say the task needs a write build.
+can do, or end and say the task needs a write build. An answer in the owner's own words approves
+no write either: follow what they said, and ask again if they asked for the change.
 
 ## Before the session
 
@@ -77,6 +78,12 @@ declines one the input leaves open, and fails before the commit instead. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
 public schema (core's input schema rules).
+
+The composed script publishes without ever running end to end, so it ends with a check that
+tells whether its action succeeded: the site's confirmation for this submission, or a read-back
+of the saved state matched to the input, unless the site offers neither; then declare it
+`unverifiable`. Compose it from the steps that worked, also when a commit step returned an
+uncertain result and a later read-back showed the write landed.
 
 <!-- pomerado:section writes.alternate-version -->
 

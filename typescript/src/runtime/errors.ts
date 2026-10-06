@@ -1,4 +1,5 @@
-import { Cause, Data, Option } from "effect";
+import { Cause, Data, Option, ParseResult } from "effect";
+import type { Schema, SchemaAST } from "effect";
 import type {
   CaptureFailureReason,
   CaptureCollectionDiagnostic,
@@ -9,8 +10,110 @@ import type { FailureDetail } from "./failure-detail.js";
 
 export type Dispatch = "not_sent" | "sent" | "unknown";
 
+/**
+ * Where an input schema rejected an input: the property path (`""` for the input itself) and
+ * whether the value was `missing` or `invalid` there. Never the value, and never a key the caller
+ * chose, so it can go to the minter.
+ */
+export interface InputIssue {
+  readonly path: string;
+  readonly issue: "missing" | "invalid";
+}
+
+/** At most this many issues, each path at most this long, go back. */
+export const maximumInputIssues = 20;
+export const maximumInputIssuePath = 200;
+
+/** A key the schema does not declare, such as a record's, which is the caller's own text. */
+const undeclaredKey = "[key]";
+const identifier = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+/** The schemas a path segment can lead into from `ast`, and whether `key` is declared there. */
+const childrenOf = (
+  ast: SchemaAST.AST,
+  key: PropertyKey,
+): { readonly declared: boolean; readonly children: readonly SchemaAST.AST[] } => {
+  switch (ast._tag) {
+    case "Refinement":
+      return childrenOf(ast.from, key);
+    case "Transformation": {
+      const [from, to] = [childrenOf(ast.from, key), childrenOf(ast.to, key)];
+      return {
+        declared: from.declared || to.declared,
+        children: [...from.children, ...to.children],
+      };
+    }
+    case "Suspend":
+      return childrenOf(ast.f(), key);
+    case "Union": {
+      const members = ast.types.map((member) => childrenOf(member, key));
+      return {
+        declared: members.some((member) => member.declared),
+        children: members.flatMap((member) => member.children),
+      };
+    }
+    case "TypeLiteral": {
+      const property = ast.propertySignatures.find((candidate) => candidate.name === key);
+      return property === undefined
+        ? { declared: false, children: ast.indexSignatures.map((signature) => signature.type) }
+        : { declared: true, children: [property.type] };
+    }
+    case "TupleType": {
+      if (typeof key !== "number") return { declared: false, children: [] };
+      const element = ast.elements[key];
+      return {
+        declared: true,
+        children: element === undefined ? ast.rest.map((rest) => rest.type) : [element.type],
+      };
+    }
+    default:
+      return { declared: false, children: [] };
+  }
+};
+
+/** One rejected path as text: declared names and indexes kept, any other key `[key]`. */
+const issuePath = (ast: SchemaAST.AST, path: readonly PropertyKey[]) => {
+  let at: readonly SchemaAST.AST[] = [ast];
+  let text = "";
+  for (const key of path) {
+    const next = at.map((candidate) => childrenOf(candidate, key));
+    const declared = next.some((candidate) => candidate.declared);
+    text +=
+      !declared || typeof key === "symbol"
+        ? undeclaredKey
+        : typeof key === "number"
+          ? `[${key}]`
+          : identifier.test(key)
+            ? `${text === "" ? "" : "."}${key}`
+            : `[${JSON.stringify(key)}]`;
+    at = next.flatMap((candidate) => candidate.children);
+  }
+  return text.length > maximumInputIssuePath
+    ? `${text.slice(0, maximumInputIssuePath - 1)}…`
+    : text;
+};
+
+/**
+ * The rejected paths of a decode of `schema`, one per path, at most `maximumInputIssues`. A
+ * property name the schema declares and an array index are kept; a key it does not declare, such
+ * as a record's, reads `[key]`.
+ */
+export const inputIssues = (
+  schema: Schema.Schema.Any,
+  error: ParseResult.ParseError,
+): readonly InputIssue[] => {
+  const issues = new Map<string, InputIssue["issue"]>();
+  for (const { _tag, path } of ParseResult.ArrayFormatter.formatErrorSync(error)) {
+    const at = issuePath(schema.ast, path);
+    if (issues.get(at) !== "missing") issues.set(at, _tag === "Missing" ? "missing" : "invalid");
+  }
+  return [...issues].slice(0, maximumInputIssues).map(([path, issue]) => ({ path, issue }));
+};
+
 export class InvalidInput extends Data.TaggedError("InvalidInput")<{
   readonly operation: string;
+  /** Where the schema rejected the input, when the decode said so. */
+  readonly issues?: readonly InputIssue[];
 }> {}
 
 export class InvalidOutput extends Data.TaggedError("InvalidOutput")<{

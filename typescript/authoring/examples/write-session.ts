@@ -57,7 +57,10 @@ const fillCheckout = async ({ kernel, sessionId, siteOrigin, input, errors }: Co
   if (!answer.success)
     throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
   const filled = Schema.decodeUnknownSync(Filled)(answer.result);
-  // Filling sends nothing the site keeps: a changed form fails before any commit.
+  // Filling sends nothing the site keeps: a changed form fails before any commit. That holds
+  // only because this site's Continue was seen to open a review step without saving. A
+  // Continue, Next or payment button whose next screen you have not seen may save or place
+  // the order, so mark it with enteringCommit before the call, as placeAndConfirm does.
   if ("failure" in filled)
     throw new errors.OperationFailure(filled.failure, { dispatch: "not_sent" });
 };

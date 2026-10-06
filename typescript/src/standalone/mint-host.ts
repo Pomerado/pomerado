@@ -84,15 +84,19 @@ const mintDependencies = (state: MintState) => {
           ),
         ),
         Effect.map((answers) => handles.issue(answers)),
+        Effect.tap((issued) => Effect.sync(() => context.askedByAgent(candidate, issued))),
         Effect.mapError(mintError),
       ),
     recordBuildEffect: (effect) => Effect.sync(() => context.setBuildEffect(effect)),
     upgradeToWrite: context.approveWrite,
     repeatableRead: context.repeatableRead(),
+    // A repeatable read's example claims nothing, so it may run again.
     claimExample: Effect.suspend(() =>
-      context.claimed
-        ? Effect.fail(new MintFailure({ code: "ScopeDenied" }))
-        : Effect.sync(context.claim),
+      context.repeatableRead()
+        ? Effect.void
+        : context.claimed
+          ? Effect.fail(new MintFailure({ code: "ScopeDenied" }))
+          : Effect.sync(context.claim),
     ),
     authorizeResidual: Effect.fail(new MintFailure({ code: "ScopeDenied" })),
     preflight: (execution) =>

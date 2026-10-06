@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { chromium, type Browser, type BrowserServer } from "playwright";
 import { Cause, Effect, Exit, Fiber, Schema, type Scope } from "effect";
-import type { CredentialKeyboard } from "../destinations/credential-keyboard.js";
+import {
+  CredentialInsertion,
+  type CredentialKeyboard,
+} from "../destinations/credential-keyboard.js";
 import { BrowserExecuteResponse, type BrowserExecute } from "../runtime/browser-execution.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 
@@ -346,7 +349,7 @@ export const makePlaywrightExecutor = (
     const keyboard: CredentialKeyboard = {
       insertText: (target, text) =>
         call({ kind: "credential", target, text }, 15).pipe(
-          Effect.flatMap((value) => Schema.decodeUnknown(Schema.Boolean)(value)),
+          Effect.flatMap((value) => Schema.decodeUnknown(CredentialInsertion)(value)),
           Effect.mapError(asError),
         ),
     };

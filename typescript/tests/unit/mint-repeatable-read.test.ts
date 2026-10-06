@@ -80,8 +80,9 @@ const countingHost = () => {
 };
 
 // The shared harness tests cover a repeatable read running its example twice. This one adds
-// what the host sees: no claim, and the example still blocks a later write upgrade.
-it("claims nothing for a repeatable read's example, and still refuses a later write upgrade", async () => {
+// what the host sees: one claim request, which a host that lets the read run again answers by
+// claiming nothing, and the example still blocks a later write upgrade.
+it("asks the host to claim a repeatable read's example, and still refuses a later write upgrade", async () => {
   const host = countingHost();
   let upgrades = 0;
   const f = await fixture(
@@ -120,7 +121,7 @@ it("claims nothing for a repeatable read's example, and still refuses a later wr
   await f.run();
   expect(resultOf(f.requests[2], "upgrade")).toContain("write_upgrade_unavailable");
   expect(upgrades).toBe(0);
-  expect(host.counts.claims).toBe(0);
+  expect(host.counts.claims).toBe(1);
 });
 
 it("claims a read's example when the host does not let it run again", async () => {

@@ -161,6 +161,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const executions: ExecutionEntry[] = [];
     const stepResults = makeStepResults();
     const answeredQuestions = new Map<string, AnsweredQuestion>();
+    /** Handles of codes the agent asked for during this attempt's unverified sign-in. */
+    const signInCodeHandles = new Set<string>();
+    const signedIn = () =>
+      executions.some((execution) => execution.authentication?.state === "authenticated");
     const guardian = makeGuardian(
       {
         ...makeOpenAIReviewer(policy, false, {
@@ -190,6 +194,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       startsOnFreshPage: () => false,
       executions: () => executions,
       inputSchema: () => inputSchema,
+      signInCodes: () => (signedIn() ? [] : [...signInCodeHandles]),
     };
     /** The pending review of `step`, and the files Guardian may read for it. */
     const pending = (step: ReviewStep) =>
@@ -429,6 +434,24 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           ),
           Effect.asVoid,
         ),
+      /**
+       * Notes the handles the agent received for one-time or authenticator code questions it
+       * asked after an authenticate step and before any verified sign-in: codes the site sent as
+       * part of that sign-in, which the agent may type into its code screen.
+       */
+      askedByAgent: (candidate: Pick<InputRequest, "questions">, issued: ValidAnswers) => {
+        if (signedIn() || !executions.some((execution) => execution.purpose === "authenticate"))
+          return;
+        for (const question of candidate.questions) {
+          const answer = issued[question.id];
+          if (
+            question.type === "secret" &&
+            (question.secretKind === "one_time_code" || question.secretKind === "totp") &&
+            answer?.type === "secret"
+          )
+            signInCodeHandles.add(answer.value);
+        }
+      },
     };
   });
 export type RequestContext = Effect.Effect.Success<ReturnType<typeof requestContext>>;

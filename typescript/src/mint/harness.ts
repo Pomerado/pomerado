@@ -8,6 +8,7 @@ import {
   failureRootCause,
 } from "../runtime/failure-detail.js";
 import {
+  maximumHostRefusals,
   signInAnswer,
   signInFailureFeedback,
   signInFeedbackOf,
@@ -16,6 +17,7 @@ import {
   unresolvedSignInGuidance,
 } from "./sign-in-failure.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
+import { type HostRefusal, sameHostRefusal } from "../destinations/autofill-refusal.js";
 import { authorityCheckMetadata } from "../auth/authority-metadata.js";
 import {
   diagnosticRetentionReason,
@@ -35,6 +37,7 @@ import {
   MintRequest,
   MintServices,
   PublicationRequest,
+  withOwnWords,
 } from "./contracts.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
@@ -47,7 +50,7 @@ import type {
   MintHarnessSnapshot,
   SpentSignIn,
 } from "./contracts.js";
-import type { ValidAnswers } from "../runtime/input-request.js";
+import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
 import type { RecoveryToolCall } from "./recovery-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
@@ -194,10 +197,35 @@ const definitionFix = (section: string | undefined) =>
           ? "Edit the operation's schemas and questions in its source without it, then call finish_build again with the same executionId."
           : "Remove it from the metadata, the operation's schemas and questions, and the login URL, then call finish_build again with the same executionId.";
 
-/** The owner's answer to a write upgrade's one question, and that question's prompt. */
-const writeUpgradeChoice = (submitted: AgentInputRequest, answers: ValidAnswers) => {
-  const [only] = submitted.questions;
-  return { choice: answers[only?.id ?? ""]?.value, change: only?.prompt ?? "" };
+/**
+ * Whether the agent's request sets whether the caller may answer in their own words, which is the
+ * host's to set on every choice.
+ */
+const setsOwnWords = (input: unknown) =>
+  Option.isSome(
+    Schema.decodeUnknownOption(
+      Schema.Struct({
+        questions: Schema.Array(Schema.Unknown).pipe(
+          Schema.filter((questions) =>
+            questions.some(
+              (question) =>
+                typeof question === "object" &&
+                question !== null &&
+                ("allowOther" in question || "allowNote" in question),
+            ),
+          ),
+        ),
+      }),
+    )(input),
+  );
+
+/**
+ * The option the owner picked on a read-or-write choice (the effect question or a write upgrade),
+ * undefined when they answered in their own words instead.
+ */
+const readOrWritePick = (submitted: AgentInputRequest, answers: ValidAnswers) => {
+  const given = answers[submitted.questions[0]?.id ?? ""];
+  return given?.type === "choice" ? pickedOption(given.value) : undefined;
 };
 
 /**
@@ -292,12 +320,23 @@ const withHostNotices = (
   };
 };
 
+/** The paths an input schema rejected, as a sentence, or nothing when the host has none. */
+const inputIssueText = (issues: MintFailure["inputIssues"]) =>
+  issues === undefined || issues.length === 0
+    ? ""
+    : ` It rejected ${issues
+        .map(
+          ({ path, issue }) =>
+            `${path === "" ? "the input itself" : JSON.stringify(path)} (${issue})`,
+        )
+        .join(", ")}.`;
+
 /** What the agent does about a question its script asked that reached nobody. */
 const scriptQuestionInstruction: Readonly<
   Record<NonNullable<ExecutionEvidence["scriptQuestion"]>["outcome"], string>
 > = {
   reword:
-    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows.",
+    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows: read a value the caller's input or the request gives from the tool's input (when the caller's input is empty, pass it in exampleInput on the example, or on the write session's first act step), and use the {{secret.<id>}} handle of a protected answer you already hold.",
   authentication:
     "The script's question asks for a website login, which only the host requests, so nobody was asked. Remove it from the script's questions and sign in with execute purpose authenticate instead.",
   invalid:
@@ -697,6 +736,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }
         | undefined;
       /**
+       * The host's identical refusals in a row while typing into a sign-in screen: the latest
+       * and how many. An authenticate that ends any other way clears it.
+       */
+      let hostRefusals: { readonly refusal: HostRefusal; readonly count: number } | undefined;
+      /** `hostRefusals` before the running authenticate, which a refusal of its own extends. */
+      let priorHostRefusals: typeof hostRefusals;
+      /**
        * Sign-in is unavailable in this build: the answer that said so, which a later authenticate
        * gets again, and the outcome the build ends with. A retained receipt that may still
        * publish holds the outcome back until the model stops.
@@ -933,12 +979,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "Build published for future calls. The current invocation outcome is returned separately; do not execute the example again.",
           });
         });
+      /**
+       * Records the answer to the host's own question of a question-only turn. Returns the agent's
+       * instruction instead when the owner answered the effect question in their own words, which
+       * decides nothing.
+       */
       const recordInputAnswer = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
           const value = answers[submitted.questions[0]?.id ?? ""]?.value;
           let summary: string;
           if (effectQuestion) {
-            const effect = value;
+            const effect = readOrWritePick(submitted, answers);
+            if (effect === undefined && value !== undefined)
+              return "The owner answered in their own words instead of choosing read or write, so the build's effect is not decided. Ask the read-or-write question again with request_input, its prompt reflecting what they said.";
             if (effect !== "read" && effect !== "write")
               return yield* new MintFailure({ code: "InvalidRequest" });
             if (!dependencies.recordBuildEffect)
@@ -951,14 +1004,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               return yield* new MintFailure({ code: "Unavailable" });
             yield* dependencies.capabilityAnswered(answer);
             summary = "The owner answered the capability question.";
-          } else return;
+          } else return undefined;
           terminal ??= { build: "incomplete", summary };
+          return undefined;
         });
       const inputResult = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
-          yield* recordInputAnswer(submitted, answers);
+          const askAgain = yield* recordInputAnswer(submitted, answers);
           const visibleAnswers = yield* answersForModel(answers);
           const handles = Object.values(answers).some((answer) => answer.type === "secret");
+          if (askAgain !== undefined)
+            return JSON.stringify({
+              status: "answered",
+              answers: visibleAnswers,
+              instruction: askAgain,
+            });
           return JSON.stringify({
             status: "answered",
             answers: visibleAnswers,
@@ -1255,9 +1315,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const answerWriteUpgrade = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
-          const { choice, change } = writeUpgradeChoice(submitted, answers);
-          const asked = { answers: yield* answersForModel(answers), change };
+          const choice = readOrWritePick(submitted, answers);
+          const asked = {
+            answers: yield* answersForModel(answers),
+            change: submitted.questions[0]?.prompt ?? "",
+          };
           const upgradeToWrite = dependencies.upgradeToWrite;
+          // Own words approve no write, but unlike a `read` pick they do not settle the upgrade.
+          if (choice === undefined)
+            return JSON.stringify({
+              status: "answered",
+              answers: asked.answers,
+              buildEffect: "read",
+              instruction:
+                "The owner answered in their own words and approved no write, so this build is still read-only. Do not fill, choose, advance, save or submit anything on the site. Follow what they said: finish what a read can do, ask for the write upgrade again if they asked for the change, or end the attempt and say in the summary that the task needs a write build.",
+            });
           if (choice !== "write" || upgradeToWrite === undefined) {
             writeUpgradeDeclined = true;
             return JSON.stringify({
@@ -1630,7 +1702,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       const executionFeedback = (error: MintFailure) =>
         Effect.flatMap(Clock.currentTimeMillis, (now) => providerFeedback(error, now));
-      const providerFeedback = (error: MintFailure, now: number) => {
+      /**
+       * Counts a host refusal while typing into a sign-in screen. The `maximumHostRefusals`th
+       * identical one in a row spends the attempt's sign-ins: sign-in is unavailable in the build.
+       */
+      const countHostRefusal = (error: MintFailure) => {
+        const refusal = error.authentication?.hostRefusal;
+        if (refusal === undefined) return error;
+        const prior = priorHostRefusals;
+        const count =
+          prior !== undefined && sameHostRefusal(prior.refusal, refusal) ? prior.count + 1 : 1;
+        hostRefusals = { refusal, count };
+        return count < maximumHostRefusals || error.spentSignIn !== undefined
+          ? error
+          : new MintFailure({ ...error, spentSignIn: "host_refusals_repeated" });
+      };
+      const providerFeedback = (failed: MintFailure, now: number) => {
+        const error = countHostRefusal(failed);
         const runnerFailure = screenedRunnerFailure(error);
         const captureGap = screenedCaptureGap(error) ?? runnerFailure?.captureGap;
         const hostStopped = stopUnavailableHost() || unavailableExecutionHost(error);
@@ -1820,11 +1908,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             submitted.purpose === "example" ||
               (submitted.purpose === "act" && writeSession === "none")
               ? Effect.uninterruptible(
-                  // A repeatable read's example claims nothing at the host; it may run again.
-                  (repeatableRead && submitted.purpose === "example"
-                    ? Effect.void
-                    : dependencies.claimExample
-                  ).pipe(
+                  dependencies.claimExample.pipe(
                     Effect.tap(() =>
                       Effect.sync(() => {
                         exampleClaimed = true;
@@ -2185,7 +2269,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 return yield* visible(evidence);
               }
               if (submitted.purpose === "residual") yield* dependencies.authorizeResidual;
-              if (submitted.purpose === "authenticate") unresolvedSignIn = undefined;
+              if (submitted.purpose === "authenticate") {
+                unresolvedSignIn = undefined;
+                priorHostRefusals = hostRefusals;
+                hostRefusals = undefined;
+              }
               const effectful =
                 submitted.purpose === "example" ||
                 submitted.purpose === "act" ||
@@ -2655,7 +2743,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   return notPublished(
                     error.code,
                     error.reason,
-                    {},
+                    error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
+                      ? { inputIssues: error.inputIssues }
+                      : {},
                     (error.reason === "confirmation_undeclared"
                       ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
                       : error.reason === "commit_marks_undeclared"
@@ -2665,7 +2755,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           : error.reason === "confirmation_unrecorded"
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"
-                              ? "Not published: the script's input schema rejects the caller's own values, which the example or session used (in maintenance, the original invocation's). Correct the schema so these values decode, then call finish_build again with the same executionId."
+                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
                               : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
                       " The host extracts the contract offline; never run the write or the example again for this.",
                   );
@@ -2739,15 +2829,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // Asking needs no live execution: it stays open after execution closed and while a
               // write's outcome is uncertain. The agent still verifies before writing again.
               yield* active("publication");
+              if (setsOwnWords(input))
+                return JSON.stringify({
+                  status: "question_invalid",
+                  reason: "own_words_are_the_hosts",
+                  userInputRequired: false,
+                  instruction:
+                    "Remove allowOther and allowNote from every question and ask again: the host lets the caller answer every choice and multi_choice in their own words.",
+                });
               const { writeUpgrade, ...proposed } = callerVisibleRequest(
                 yield* decode(AgentRequest, input),
                 redactCallerText,
               );
               const upgrade = writeUpgrade === true;
-              const submitted =
-                upgrade || effectQuestion
-                  ? { ...proposed, questions: withEffectAnswerLabels(proposed.questions) }
-                  : proposed;
+              const submitted = {
+                ...proposed,
+                questions: (upgrade || effectQuestion
+                  ? withEffectAnswerLabels(proposed.questions)
+                  : proposed.questions
+                ).map(withOwnWords),
+              };
               const refusal = requestShapeRefusal(submitted, upgrade);
               if (refusal !== undefined)
                 return JSON.stringify({
@@ -2761,13 +2862,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   code: "Unavailable",
                   reason: "executor_unavailable",
                 });
-              // The effect question offers two fixed answers and the capability question is the
-              // host's own, so neither can collect private data; the agent's own requests are
-              // reviewed before the caller sees them.
+              // The capability question is the host's own, so it cannot collect private data. Every
+              // request the agent writes, the effect question included, is reviewed before the
+              // caller sees it: the caller may answer any of its choices in their own words.
               let reviewId: string | undefined;
               // One id from proposal on: its review, the request the caller sees and its end.
               const requestId = randomUUID();
-              if (!effectQuestion && dependencies.capabilityQuestion === undefined) {
+              if (dependencies.capabilityQuestion === undefined) {
                 if (!dependencies.reviewQuestion)
                   return yield* new MintFailure({
                     code: "ReviewUnavailable",
@@ -2805,8 +2906,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   },
                 );
                 const rationale = yield* screenMintText(dependencies, review.rationale);
-                // A write upgrade never asks for a login, so a login verdict means reword it.
-                if (review.outcome === "authentication" && !upgrade) {
+                // A read-or-write choice never asks for a login, so a login verdict means reword it.
+                if (review.outcome === "authentication" && !upgrade && !effectQuestion) {
                   const login = dependencies.requestLogin
                     ? yield* dependencies.requestLogin()
                     : ("unavailable" as const);
@@ -3097,8 +3198,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               credentialsAvailable: dependencies.websiteCredentialsAvailable === true,
               instruction:
                 dependencies.websiteCredentialsAvailable === true
-                  ? "Credential values are private host input. After discovering the login entry, use execute purpose authenticate with the observed reusable loginUrl before the business example; it runs Kernel Managed Auth. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host."
-                  : "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host.",
+                  ? "Credential values are private host input. After discovering the login entry, use execute purpose authenticate with the observed reusable loginUrl before the business example; it runs Kernel Managed Auth. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question."
+                  : "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.",
             },
           }),
           ...(dependencies.deadline ? { deadline: dependencies.deadline } : {}),

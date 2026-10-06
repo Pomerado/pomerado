@@ -1,18 +1,25 @@
 import { mkdtemp, mkdir, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
+import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { guardianExecutionPolicy } from "../../src/guardian/execution-policy.js";
+import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
-import type { PendingExecution, Reviewer } from "../../src/guardian/review.js";
-import { makeSourceInspector } from "../../src/guardian/source.js";
+import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
+import { UpstreamPolicySlotInvalid } from "../../src/guardian/upstream-policy.js";
+import { makeSourceInspector, sourceChunk } from "../../src/guardian/source.js";
 import { readScopedFile } from "../../src/filesystem/read.js";
+import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import {
   diagnosticRetentionReason,
   diagnosticScreeningReason,
   diagnosticStorageFailure,
 } from "../../src/models/model-diagnostic-failure.js";
 import { EventUnavailable } from "../../src/runtime/errors.js";
+import { markedUpstreamPolicy, tenantPolicyCopies } from "../support/tenant-policy.js";
 
 const makeSourceReader = (root: string) =>
   makeSourceInspector(
@@ -82,6 +89,7 @@ describe("Guardian modeled reviewer contract", () => {
       run: (turn) =>
         Effect.gen(function* () {
           expect(turn.pending).toEqual(pending);
+          expect(JSON.stringify(turn.sources?.entrypoint)).toContain("synthetic-source-evidence");
           seenReviewIds.push(turn.reviewId);
           const observed = yield* turn.readSource(turn.pending.entrypoint, 0);
           expect(observed).toContain("synthetic-source-evidence");
@@ -104,22 +112,83 @@ describe("Guardian modeled reviewer contract", () => {
       expect(reviewed.decision.outcome).toBe("allow");
       expect(reviewed.reviewId).toBe(seenReviewIds[run]);
     }
-    expect(reads).toEqual([
-      { path: "operation.ts", offset: 0 },
-      { path: "operation.ts", offset: 0 },
-    ]);
+    // Each review includes the entrypoint, and this reviewer also reads it itself.
+    expect(reads).toEqual(Array.from({ length: 4 }, () => ({ path: "operation.ts", offset: 0 })));
     expect(new Set(seenReviewIds).size).toBe(2);
   });
 
-  it("does not permit an allow decision without source inspection", async () => {
-    const guardian = makeGuardian({
-      run: () => Effect.succeed({ outcome: "allow", rationale: "No source was read." }),
-    });
-    const result = await Effect.runPromise(
-      Effect.either(guardian.review(pending, () => Effect.succeed(sourceEnvelope))),
+  it("names an unreadable source offset by its check, keeping only the offset", async () => {
+    const inspect = makeSourceInspector(
+      () => Effect.succeed(new TextEncoder().encode("é")),
+      (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
     );
-    expect(result).toMatchObject({ _tag: "Left", left: { code: "SourceUnavailable" } });
+    const negative = await Effect.runPromise(Effect.flip(inspect(pending.entrypoint, -1)));
+    const midCharacter = await Effect.runPromise(Effect.flip(inspect(pending.entrypoint, 1)));
+    const fractional = await Effect.runPromise(Effect.flip(sourceChunk("a.ts", "a", 0.5)));
+    expect([negative, midCharacter, fractional].map((failure) => failure.code)).toEqual([
+      "SourceUnavailable",
+      "SourceUnavailable",
+      "SourceUnavailable",
+    ]);
+    expect(negative.failureDetail).toMatchObject({
+      subCause: "invalid_input",
+      operation: "guardian.source.offset_invalid",
+      context: { offset: -1 },
+    });
+    expect(midCharacter.failureDetail).toMatchObject({
+      subCause: "invalid_input",
+      operation: "guardian.source.offset_mid_character",
+      context: { offset: 1 },
+    });
+    expect(fractional.failureDetail).toMatchObject({
+      operation: "guardian.source.offset_invalid",
+      context: { offset: 0.5 },
+    });
+    for (const failure of [negative, midCharacter, fractional])
+      expect(Object.keys(failure.failureDetail?.context ?? {})).toEqual(["offset"]);
   });
+
+  it.each([
+    ["a read error", () => () => Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))],
+    ["a missing file", (empty: string) => makeSourceReader(empty)],
+    [
+      "a screening refusal",
+      () => {
+        const secrets = makeRunSecrets();
+        secrets.register("synthetic-source-evidence");
+        return makeSourceInspector(
+          () => Effect.succeed(new TextEncoder().encode(source)),
+          (_path, bytes) =>
+            secrets.assertAbsent(new TextDecoder().decode(bytes)).pipe(
+              Effect.as(new TextDecoder().decode(bytes)),
+              Effect.mapError(() => new ReviewFailure({ code: "SourceUnavailable" })),
+            ),
+        );
+      },
+    ],
+  ] satisfies [string, (empty: string) => ReviewTurn["readSource"]][])(
+    "without the entrypoint in the request after %s, a deny stands and an allow ends EntrypointNotRead",
+    async (_failure, reader) => {
+      const empty = await mkdtemp(join(tmpdir(), "guardian-missing-entrypoint-"));
+      try {
+        const decide = (outcome: "allow" | "deny") =>
+          makeGuardian({
+            run: (turn) =>
+              Effect.sync(() => {
+                expect(turn.sources?.entrypoint).toBeUndefined();
+                return { outcome, rationale: "No source was read." };
+              }),
+          }).review(pending, reader(empty));
+        expect(await Effect.runPromise(Effect.either(decide("allow")))).toMatchObject({
+          _tag: "Left",
+          left: { code: "EntrypointNotRead" },
+        });
+        expect((await Effect.runPromise(decide("deny"))).decision.outcome).toBe("deny");
+      } finally {
+        await rm(empty, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves a required source outage when the reviewer tool swallows it before deny", async () => {
     const guardian = makeGuardian({
@@ -165,14 +234,15 @@ describe("Guardian modeled reviewer contract", () => {
     const reviewed = await Effect.runPromise(
       guardian.review(pending, (path) =>
         Effect.suspend(() => {
-          if (path !== pending.entrypoint || ++requiredReads === 1)
+          // The host's own inclusion read and the reviewer's first read both fail.
+          if (path !== pending.entrypoint || ++requiredReads <= 2)
             return Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }));
           return Effect.succeed(sourceEnvelope);
         }),
       ),
     );
     expect(reviewed.decision.outcome).toBe("allow");
-    expect(requiredReads).toBe(2);
+    expect(requiredReads).toBe(3);
   });
 
   it.each([false, true])(
@@ -198,7 +268,8 @@ describe("Guardian modeled reviewer contract", () => {
           retainScreenedSource: () =>
             Effect.suspend(() => {
               retentionCalls++;
-              return retentionCalls === 2
+              // The third retained read, after the host's inclusion and the entrypoint read.
+              return retentionCalls === 3
                 ? Effect.fail(
                     new EventUnavailable({
                       event: "diagnostic_storage_failed",
@@ -234,6 +305,64 @@ describe("Guardian modeled reviewer contract", () => {
               },
             },
       );
+    },
+  );
+
+  it.each([
+    [
+      "a mapped",
+      {
+        diagnosticFailure: (error: unknown) =>
+          new ReviewFailure({
+            code: "Unavailable",
+            diagnosticRetentionReason: diagnosticRetentionReason(error),
+            diagnosticStorageFailure: diagnosticStorageFailure(error),
+          }),
+      },
+      { diagnosticRetentionReason: "storage" },
+    ],
+    ["the default", {}, { failureDetail: { operation: "diagnostics.retainScreenedSource" } }],
+    ["a bare", { diagnosticFailure: () => new ReviewFailure({ code: "Unavailable" }) }, {}],
+  ] as const)(
+    "goes forward with the entrypoint inline after %s retention failure of the host's read",
+    async (_mapping, options, gap) => {
+      let entrypointSource: unknown;
+      const events: [string, unknown][] = [];
+      const guardian = makeGuardian(
+        {
+          run: (turn) =>
+            Effect.sync(() => {
+              entrypointSource = turn.sources?.entrypoint;
+              return { outcome: "allow", rationale: "Modeled reviewer inspected the source." };
+            }),
+        },
+        {
+          emit: (name, value) => Effect.sync(() => void events.push([name, value])),
+          retainModelTranscript: () => Effect.void,
+          retainScreenedSource: () =>
+            Effect.fail(
+              new EventUnavailable({
+                event: "diagnostic_storage_failed",
+                diagnosticStorageFailure: "unavailable",
+              }),
+            ),
+        },
+        undefined,
+        options,
+      );
+      const result = await Effect.runPromise(
+        Effect.either(guardian.review(pending, () => Effect.succeed(sourceEnvelope))),
+      );
+      expect(result).toMatchObject({ _tag: "Right", right: { decision: { outcome: "allow" } } });
+      expect(entrypointSource).toEqual(JSON.parse(sourceEnvelope));
+      expect(events).toMatchObject([
+        ["guardian.started", {}],
+        [
+          "guardian.source_failed",
+          { details: { path: pending.entrypoint, offset: 0, code: "Unavailable", ...gap } },
+        ],
+        ["guardian.completed", {}],
+      ]);
     },
   );
 
@@ -338,5 +467,138 @@ describe("scoped Guardian source reader", () => {
         left: { code: "SourceUnavailable" },
       });
     }
+  });
+});
+
+describe("OpenAI reviewer policy and trusted authority", () => {
+  afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+
+  /** Scripted Guardian model: one entrypoint read_source call, then the given decision. */
+  const readThenDecide = (decision: unknown) => {
+    const requests: ModelRequest[] = [];
+    setDefaultModelProvider({
+      getModel: () => ({
+        getResponse: async (request) => {
+          requests.push(request);
+          return {
+            usage: new Usage(),
+            output:
+              requests.length === 1
+                ? [
+                    {
+                      type: "function_call" as const,
+                      callId: "read_source_once",
+                      name: "read_source",
+                      arguments: JSON.stringify({ path: pending.entrypoint, offset: 0 }),
+                      status: "completed" as const,
+                    },
+                  ]
+                : [
+                    {
+                      type: "message" as const,
+                      role: "assistant" as const,
+                      status: "completed" as const,
+                      content: [{ type: "output_text" as const, text: JSON.stringify(decision) }],
+                    },
+                  ],
+          };
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
+    });
+    return requests;
+  };
+  const readEntrypoint = () => Effect.succeed(sourceEnvelope);
+  const reviewer = (upstreamPolicy: string) =>
+    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: "native" });
+  const modelInput = (requests: readonly ModelRequest[]): unknown => {
+    const input = requests[0]?.input;
+    const [message] = Array.isArray(input) ? input : [];
+    const content = message !== undefined && "content" in message ? message.content : undefined;
+    if (typeof content !== "string") throw new Error("Guardian input is not one text message");
+    return JSON.parse(content);
+  };
+
+  // Failure mode: the adapter fills the upstream policy's slot with the browser policy and then
+  // appends it again, so every review sends the model that policy twice.
+  it("sends the tenant policy once, in the upstream policy's slot", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const copies = requests.map((request) => tenantPolicyCopies(request.systemInstructions ?? ""));
+    expect(copies).toEqual([1, 1]);
+  });
+
+  // Failure mode: an upstream policy file without its slot, or with two, builds a reviewer that
+  // reviews without Pomerado's policy or with it twice.
+  it.each(["Synthetic upstream", `${markedUpstreamPolicy}\n${markedUpstreamPolicy}`])(
+    "refuses to build without exactly one tenant policy slot",
+    (upstreamPolicy) => {
+      expect(() => reviewer(upstreamPolicy)).toThrow(UpstreamPolicySlotInvalid);
+    },
+  );
+
+  // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
+  // the page to enable it before it clicks. Guardian judges what the submit is, not whether the page
+  // has enabled it yet.
+  it("asks Guardian for an observed sign-in submit, enabled or not", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy("hosted"),
+    ]) {
+      expect(policy).toContain(sentence);
+      expect(policy).not.toContain("enabled control");
+    }
+  });
+
+  // Guardian reviews an execution's source, never each request it sends.
+  it("an execution review carries no destination review", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Relevant listing page." });
+    await Effect.runPromise(
+      makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
+        pending,
+        readEntrypoint,
+      ),
+    );
+    expect(modelInput(requests)).not.toHaveProperty("destination_review");
+  });
+
+  // An entry load can redirect to a sibling subdomain, such as flights. to www. Guardian, seeing
+  // only the exact origin and no observed page, would deny every guarded explore.
+  it("a first explore review names the authorized site's registrable domain", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Guarded on the site." });
+    await Effect.runPromise(
+      makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
+        {
+          ...pending,
+          allowedOrigins: ["https://flights.site.invalid"],
+          mintContext: {
+            repeatableRead: false,
+            operationSources: [pending.entrypoint],
+            currentExecution: { purpose: "explore", target: "liveBrowser" },
+            browser: "active",
+            executions: [],
+          },
+        },
+        readEntrypoint,
+      ),
+    );
+    const input = modelInput(requests);
+    expect(input).toHaveProperty("trusted_authority.allowedOrigins", [
+      "https://flights.site.invalid",
+    ]);
+    expect(input).toHaveProperty("trusted_authority.allowedSites", [
+      { scheme: "https", registrableDomain: "site.invalid" },
+    ]);
+    expect(input).not.toHaveProperty("trusted_execution_context.currentPage");
   });
 });

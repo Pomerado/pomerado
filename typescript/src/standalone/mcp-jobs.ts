@@ -59,6 +59,14 @@ export const mcpFailureMessage = (
   if (error instanceof ReviewFailure) return `Guardian review failed (${error.code}).`;
   if (error instanceof MintFailure) return `Mint failed (${error.code}).`;
   if (error instanceof InputRequestFailure) return `Input could not be completed (${error.code}).`;
+  // The tool's own InvalidInput says which value the task or site refuses, for the caller to fix.
+  // A schema decode failure carries only its name, which the generic message below covers.
+  if (
+    error instanceof LocalOperationFailure &&
+    error.code === "InvalidInput" &&
+    error.message !== "InvalidInput"
+  )
+    return `Operation failed (InvalidInput): ${error.message}`;
   if (
     error instanceof LocalOperationFailure &&
     ["InvalidInput", "InvalidOutput", "NoResponse"].includes(error.code ?? "")

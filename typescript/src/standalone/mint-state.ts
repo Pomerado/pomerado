@@ -9,6 +9,7 @@ import type { WriteStep } from "../mint/step-checks.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
@@ -80,6 +81,7 @@ export const mintState = (
       input: Readonly<Record<string, unknown>> | undefined;
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
+    const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     return {
       session,
       context,
@@ -92,6 +94,7 @@ export const mintState = (
       runs,
       auth,
       writeSession,
+      afterSubmit,
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;

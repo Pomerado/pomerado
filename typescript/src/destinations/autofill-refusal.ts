@@ -222,3 +222,85 @@ export const maySend = (stepReport: AutofillStepReport) =>
   stepReport.outcome === "uncertain" ||
   (stepReport.outcome === "filled" &&
     (stepReport.submit === "clicked" || stepReport.clicked === true));
+
+/**
+ * A host refusal while typing into an autofill sign-in screen, value-free. Two are identical
+ * when every field is: the same check, field and screen.
+ */
+export interface HostRefusal {
+  /**
+   * The check that refused, the phase of its `autofill_step_failed` failure detail (`withCheck`):
+   * `typing_refused`, `not_focused`, `not_editable`, `change`, `destination`, `not_found`,
+   * `ambiguous_match`, `popup_missing` or `popup_ambiguous`.
+   */
+  readonly check: string;
+  /** The field's index in the step. */
+  readonly field: number;
+  /** What the field takes: its slot, or the identifier kinds it accepts joined by ` or `. */
+  readonly slot: string;
+  /** The screen as the step names it: its fields' selectors, its submit and its popup's origin. */
+  readonly screen: {
+    readonly fields: readonly string[];
+    readonly submit?: string;
+    readonly popup?: string;
+  };
+}
+
+/** Whether two host refusals are identical: the same check, field and screen. */
+export const sameHostRefusal = (one: HostRefusal, other: HostRefusal) => {
+  const key = (refusal: HostRefusal) =>
+    JSON.stringify([
+      refusal.check,
+      refusal.field,
+      refusal.slot,
+      refusal.screen.fields,
+      refusal.screen.submit ?? null,
+      refusal.screen.popup ?? null,
+    ]);
+  return key(one) === key(other);
+};
+
+/** A sign-in screen as a step or its request names it: each field's slot or accepted kinds. */
+interface NamedScreen {
+  readonly popup?: { readonly origin: string } | undefined;
+  readonly fields: readonly {
+    readonly selector: string;
+    readonly slot?: string;
+    readonly accepts?: readonly string[] | undefined;
+  }[];
+  readonly submit?: string | undefined;
+}
+
+/**
+ * The fill's refusal of a field of `step`, if its report is one: a check refused to type into the
+ * field, or to keep typing once an earlier field was typed, so the host submitted nothing of the
+ * screen. Only a fill's report counts; an inspection's refusal comes before any typing. A refused
+ * submit, a failed call and a lost answer are not refusals of a field.
+ */
+export const typingRefusal = (
+  step: NamedScreen,
+  report: AutofillStepReport,
+): HostRefusal | undefined => {
+  if (report.outcome === "uncertain" || report.failureDetail?.subCause !== "autofill_step_failed")
+    return undefined;
+  const check = report.failureDetail.context?.["check"];
+  const field =
+    report.outcome === "refused"
+      ? report.target
+      : report.submit === "not_attempted"
+        ? report.fields.findIndex((filled) => filled.status === "failed")
+        : undefined;
+  const named = typeof field === "number" ? step.fields[field] : undefined;
+  if (typeof check !== "string" || typeof field !== "number" || named === undefined)
+    return undefined;
+  return {
+    check,
+    field,
+    slot: named.slot ?? named.accepts?.join(" or ") ?? "identifier",
+    screen: {
+      fields: step.fields.map((each) => each.selector),
+      ...(step.submit === undefined ? {} : { submit: step.submit }),
+      ...(step.popup === undefined ? {} : { popup: step.popup.origin }),
+    },
+  };
+};

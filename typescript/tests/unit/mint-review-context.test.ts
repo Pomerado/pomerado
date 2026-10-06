@@ -35,6 +35,7 @@ const fakeHost = () => {
     fresh: false,
     executions: [] as ExecutionEntry[],
     inputSchema: undefined as unknown,
+    signInCodes: [] as string[],
   };
   const host: MintReviewHost = {
     repeatableRead: () => state.repeatableRead,
@@ -43,6 +44,7 @@ const fakeHost = () => {
     startsOnFreshPage: () => state.fresh,
     executions: () => state.executions,
     inputSchema: () => state.inputSchema,
+    signInCodes: () => state.signInCodes,
   };
   return { state, host };
 };
@@ -136,6 +138,18 @@ describe("mintReviewContext", () => {
       state.browser = browser;
       expect(await context(host, live("explore"))).not.toHaveProperty("currentPage");
     }
+  });
+
+  it("gives an execution review the sign-in codes the host lists, and a question review none", async () => {
+    const { state, host } = fakeHost();
+    expect(await context(host, live("explore"))).not.toHaveProperty("signInCodes");
+    state.signInCodes = ["{{secret.s1}}"];
+    const reviewed = await context(host, live("explore"));
+    expect(reviewed.signInCodes).toEqual(["{{secret.s1}}"]);
+    // The host's list is copied, so a code it notes later reaches only later reviews.
+    state.signInCodes.push("{{secret.s2}}");
+    expect(reviewed.signInCodes).toEqual(["{{secret.s1}}"]);
+    expect(await context(host)).not.toHaveProperty("signInCodes");
   });
 
   it("tells an execution review which operation files its entrypoint imports", async () => {
