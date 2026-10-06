@@ -57,14 +57,16 @@ export type AutofillSlot = IdentifierKind | SecretSlot;
 export interface AutofillField {
   readonly selector: string;
   readonly slot: AutofillSlot;
+  /** Observed question in the answer field's frame; supported only for private_answer. */
+  readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
   /** How a `date_of_birth` field takes the date, or the one part of it a dropdown takes. */
   readonly format?: DateOfBirthFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
   /**
-   * Host-read current question from the field's label, ARIA label or placeholder, never an answer
-   * or recipe field. Normalize whitespace only; unavailable or ambiguous text cannot permit reuse.
+   * Host-read question from inspection, never an answer or recipe field. Local prompts may fall
+   * back to a field label, but saved-answer reuse requires the explicit current questionText.
    */
   readonly privateAnswerPrompt?: string | undefined;
   /**
@@ -85,6 +87,7 @@ export interface AutofillStepRequest {
     | {
         readonly selector: string;
         readonly slot: SecretSlot;
+        readonly questionSelector?: string | undefined;
         readonly format?: DateOfBirthFormat | undefined;
         readonly control?: DateControl | undefined;
       }
@@ -156,6 +159,8 @@ const Described = Schema.Struct({
   placeholder: Text,
   ariaLabel: Text,
   text: Text,
+  /** Current visible question; inspection-only, never a recipe value. */
+  questionText: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2_000))),
 });
 
 /** A control a step call could not find, or found moved to where the host refuses it. */
@@ -479,9 +484,8 @@ export type AutofillScreens = readonly {
  * Checks the minter's signed-in indicator on the live page: the selector is visible and the path
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
- * visible one. It also refuses a visible recorded challenge, including in a provider frame, or a
- * challenge control on a recognized authentication route. The route check is supplemental:
- * unrecorded controls on other account routes cannot be distinguished from security settings.
+ * visible one. It also refuses a visible explicitly recorded challenge, including in a provider
+ * frame. It does not classify unrecorded controls or infer a challenge from the page route.
  * Callers must inspect and record each authentication screen before checking completion.
  * Another form's password field does not count unless a recorded selector matches in it.
  * Screens with no field leave any visible password field failing it.

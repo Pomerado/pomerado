@@ -72,7 +72,37 @@ const kept = (id) =>
  * and how many it searched, or, with no one visible match, each frame that matched and how often.
  */
 const findCode = `const clip = (value) => (typeof value === "string" && value.trim() !== "" ? value.trim().replace(/\\s+/g, " ").slice(0, 200) : null);
-const locate = async (selector) => {
+// Questions are explicit observed locators, never inferred from names or routes.
+const readQuestion = async (frame, selector) => {
+  if (selector == null || selector.includes(">>") || selector.includes("internal:")) return undefined;
+  try {
+    for (let scope = frame; scope.parentFrame() !== null; scope = scope.parentFrame())
+      if (!(await (await scope.frameElement()).isVisible())) return undefined;
+    const candidates = frame.locator(selector);
+    const count = await candidates.count();
+    if (count > 100) return undefined;
+    const visible = [];
+    for (let index = 0; index < count; index++)
+      if (await candidates.nth(index).isVisible()) visible.push(candidates.nth(index));
+    if (visible.length !== 1) return undefined;
+    const text = await visible[0].evaluate((element) => {
+      if (element.matches('input,textarea,select') || element.isContentEditable) return null;
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      const words = [];
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const parent = node.parentElement;
+        if (!parent || parent.closest('input,textarea,select,[contenteditable]') ||
+            !parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
+        words.push(node.textContent);
+        if (words.join(' ').length > 8_000) return null;
+      }
+      const text = words.join(' ').trim().replace(/\\s+/g, ' ');
+      return text.length > 0 && text.length <= 2_000 ? text : null;
+    });
+    return text ?? undefined;
+  } catch { return undefined; }
+};
+const locate = async (selector, questionSelector) => {
   const visible = [];
   const frames = primary.frames();
   const matches = [];
@@ -159,6 +189,8 @@ const locate = async (selector) => {
     };
   });
   const described = Object.fromEntries(Object.entries(found.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
+  const questionText = await readQuestion(frame, questionSelector);
+  if (questionText !== undefined) described.questionText = questionText;
   const shape = await formControlShape(locator);
   const control = found.disabled && (shape === "select" || shape === "combobox") ? "other" : shape;
   return {

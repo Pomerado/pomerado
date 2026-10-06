@@ -169,11 +169,10 @@ test("an account page below an auth URL prefix still accepts an unrelated securi
   });
 });
 
-test("an active security-question route blocks a premature signed-in claim before its field is recorded", async ({ page }) => {
+test("an auth-named route does not classify an unrecorded account form as a challenge", async ({ page }) => {
   const challenge = `${marker}<form><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`;
   expect(await checkPage(page, challenge, null, screens, "/security-question")).toEqual({
-    signedIn: false,
-    failed: "challenge_form_visible",
+    signedIn: true,
     url: `${site}/security-question`,
   });
 });
@@ -189,7 +188,7 @@ test("a visible contenteditable security answer remains an unfinished challenge"
 
 test("a recorded challenge field associated with its form by form attribute remains unfinished", async ({ page }) => {
   const account = `${marker}<form id="challenge"><button>Continue</button></form><label>Security answer<input id="answer" name="securityAnswer" form="challenge" required></label>`;
-  expect(await checkPage(page, account, null, [...screens, { fields: [{ selector: "#answer" }] }])).toEqual({
+  expect(await checkPage(page, account, null, [...screens, { fields: [{ selector: "#answer", slot: "private_answer" }] }])).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
     url: `${site}/account`,
@@ -199,7 +198,7 @@ test("a recorded challenge field associated with its form by form attribute rema
 test("a recorded challenge field in a visible provider iframe remains unfinished", async ({ page }) => {
   const account = `${marker}<iframe src="${widget}/security-question"></iframe>`;
   const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
-  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer" }] }])).toEqual({
+  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }])).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
     url: `${site}/account`,
@@ -209,7 +208,7 @@ test("a recorded challenge field in a visible provider iframe remains unfinished
 test("a challenge field in a hidden provider iframe does not block signed-in proof", async ({ page }) => {
   const account = `${marker}<iframe style="display:none" src="${widget}/security-question"></iframe>`;
   const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
-  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer" }] }])).toEqual({
+  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }])).toEqual({
     signedIn: true,
     url: `${site}/account`,
   });

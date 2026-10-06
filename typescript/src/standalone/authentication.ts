@@ -116,7 +116,8 @@ export const makeLiveAuthentication = (options: {
               credentialQuestion(
                 "private_answer",
                 options.siteOrigin,
-                inspected.screen.fields[index]?.label ?? undefined,
+                inspected.screen.fields[index]?.questionText ??
+                  inspected.screen.fields[index]?.label ?? undefined,
               ),
             ],
           })

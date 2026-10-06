@@ -10,6 +10,7 @@ import { submissionGuardCode } from "./autofill-submission-guard.js";
  * The page keeps the controls as found, with every form destination as found, under `observed`.
  */
 const inspectCode = `await keep(observed, {
+  questions: fields.map(({ described }) => described.questionText ?? null),
   targets: { fields: fields.map(({ target }) => target), submit: submit === null ? null : submit.target },
   destinations: [submit, ...fields].flatMap((found) => found?.destinations ?? []),
 });
@@ -90,7 +91,14 @@ const fillCallCode = (
   call: AutofillFillCall,
   judgedId: string | undefined,
   check: number | null,
-) => `const judged = (await kept(${JSON.stringify(judgedId ?? null)}))?.targets ?? null;
+) => `const judgment = await kept(${JSON.stringify(judgedId ?? null)});
+const judged = judgment?.targets ?? null;
+const questions = fields.map(({ described }) => described.questionText ?? null);
+for (let index = 0; index < questionSelectors.length; index++) {
+  if (questionSelectors[index] !== null &&
+      (judgment === null || questions[index] !== judgment.questions?.[index]))
+    return { error: "target_changed", target: index, url: primary.url() };
+}
 const same = (found, expected) =>
   found === null || expected === null
     ? found === expected
@@ -107,7 +115,7 @@ if (
   found.fields.some((target, index) => !same(target, judged.fields[index] ?? null)) ||
   !same(found.submit, judged.submit)
 ) {
-  await keep(observed, { targets: found });
+  await keep(observed, { targets: found, questions });
   return { changed: found, located, url: primary.url() };
 }
 const check = ${JSON.stringify(check)};
@@ -236,7 +244,11 @@ const primary = matches[0];
 export const autofillStepCode = (
   targetId: string,
   step: {
-    readonly fields: readonly { readonly selector: string }[];
+    readonly fields: readonly {
+      readonly selector: string;
+      readonly slot?: string | undefined;
+      readonly questionSelector?: string | undefined;
+    }[];
     readonly submit?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
   },
@@ -261,9 +273,10 @@ ${formControlsCode}
 ${locateCode}
 const observed = ${JSON.stringify(observed)};
 const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
+const questionSelectors = ${JSON.stringify(step.fields.map((field) => field.slot === "private_answer" ? field.questionSelector ?? null : null))};
 const fields = [];
 for (let index = 0; index < selectors.length; index++) {
-  const found = await locate(selectors[index]);
+  const found = await locate(selectors[index], questionSelectors[index]);
   if ("error" in found) return { ...found, target: index, url: primary.url() };
   fields.push(found);
 }
@@ -283,49 +296,17 @@ export const SignedInPage = Schema.Struct({
   challengeFormVisible: Schema.Boolean,
 });
 
-const challengeControlCode = `(field) => {
-  if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement || (field instanceof HTMLElement && field.isContentEditable))) return false;
-  if (field instanceof HTMLInputElement && ['hidden', 'submit', 'button', 'image', 'reset'].includes(field.type)) return false;
-  const box = field.getBoundingClientRect();
-  if (box.width <= 0 || box.height <= 0 || !field.checkVisibility({ visibilityProperty: true })) return false;
-  const description = [field.getAttribute('name'), field.id, field.getAttribute('autocomplete'), field.getAttribute('aria-label'), field.getAttribute('placeholder'), ...Array.from(field.labels ?? []).map((label) => label.textContent)].filter(Boolean).join(' ').toLowerCase();
-  return /security.?answer|security.?question|challenge|one.?time.?code|otp|verification.?code|verify.?code/.test(description);
-}`;
-
 const signedInChallengeFormCode = `
 const visibleFrame = async (frame) =>
   frame.parentFrame() === null || await (await frame.frameElement()).isVisible();
-// A site-wide header can look like a signed-in marker while an unanswered challenge remains
-// below it. Only authentication controls count; an account search or support form does not.
-const visibleChallengeForm = async (scopes) => {
-  for (const scope of scopes) {
-    if (!(await visibleFrame(scope))) continue;
-    const forms = scope.locator('form');
-    const count = Math.min(await forms.count(), 100);
-    for (let index = 0; index < count; index++) {
-      const form = forms.nth(index);
-      if (!(await form.isVisible())) continue;
-      // HTMLFormElement.elements includes controls associated from outside the form by form=.
-      if (await form.evaluate((element) => {
-        const controls = Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, 'elements').get.call(element);
-        return [...Array.from(controls), ...Array.from(element.querySelectorAll('[contenteditable="true"]'))]
-          .some(${challengeControlCode});
-      })) return true;
-    }
-  }
-  return false;
-};
-const recordedChallengeVisible = async (allFields, explicitFields) => {
+const recordedChallengeVisible = async (selectors) => {
   for (const frame of primary.frames()) {
     if (!(await visibleFrame(frame))) continue;
-    for (const selector of allFields) {
+    for (const selector of selectors) {
       const located = frame.locator(selector);
       const count = Math.min(await located.count(), 100);
-      for (let index = 0; index < count; index++) {
-        const field = located.nth(index);
-        if (!(await field.isVisible())) continue;
-        if (explicitFields.includes(selector) || await field.evaluate(${challengeControlCode})) return true;
-      }
+      for (let index = 0; index < count; index++)
+        if (await located.nth(index).isVisible()) return true;
     }
   }
   return false;
@@ -412,13 +393,10 @@ const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
 const challengeFields = ${JSON.stringify(challengeFields)};
 const siteFrames = primary.frames().filter(onSite);
-const authSegments = new Set(['login', 'log-in', 'signin', 'sign-in', 'auth', 'authenticate', 'authentication', 'security-question', 'security_question', 'challenge', 'verify', 'verification', 'mfa', 'otp', '2fa', 'two-factor']);
-const pathSegments = new URL(primary.url()).pathname.toLowerCase().split('/').filter(Boolean);
-const activeAuthPage = authSegments.has(pathSegments.at(-1));
 return {
   url: primary.url(),
   indicator: selector === null ? null : await visibleIn(selector, siteFrames),
-  challengeFormVisible: (activeAuthPage && await visibleChallengeForm(siteFrames)) || await recordedChallengeVisible(signInFields, challengeFields),
+  challengeFormVisible: await recordedChallengeVisible(challengeFields),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:
     signInFields.length === 0
