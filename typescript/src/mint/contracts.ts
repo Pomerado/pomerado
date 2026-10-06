@@ -48,9 +48,9 @@ import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import type { QuestionDecision } from "../guardian/question.js";
 import {
-  ChoiceQuestion,
   ConfirmQuestion,
-  MultiChoiceQuestion,
+  ProposedChoiceQuestion,
+  ProposedMultiChoiceQuestion,
   SecretQuestion,
   TextQuestion,
 } from "../runtime/input-request.js";
@@ -757,12 +757,14 @@ export interface BuildAssumption {
 /**
  * What the agent may ask with request_input: typed questions of every kind but a login, which
  * only the host raises. The request's own checks (unique ids, bounds) run when the host asks it.
+ * The caller may answer any choice in their own words, so the agent never decides it
+ * (`withOwnWords`).
  */
 export const AgentRequest = Schema.Struct({
   questions: Schema.Array(
     Schema.Union(
-      ChoiceQuestion,
-      MultiChoiceQuestion,
+      ProposedChoiceQuestion,
+      ProposedMultiChoiceQuestion,
       TextQuestion,
       ConfirmQuestion,
       SecretQuestion,
@@ -786,6 +788,16 @@ export const AgentRequest = Schema.Struct({
 export type AgentInputRequest = Pick<InputRequest, "notice" | "questions">;
 
 /**
+ * A question as the host asks it for the minting agent: the caller may answer every choice and
+ * multiple choice in their own words, with their own text instead of an option (or beside a
+ * multiple choice's picks) or a note beside the options they pick, whatever the agent proposed.
+ */
+export const withOwnWords = <Q extends { readonly type: string }>(question: Q): Q =>
+  question.type === "choice" || question.type === "multi_choice"
+    ? { ...question, allowOther: true, allowNote: true }
+    : question;
+
+/**
  * One choice question whose only options are `read` and `write`, with no notice: the shape of
  * the effect question and of a write upgrade.
  */
@@ -795,7 +807,6 @@ export const isReadOrWriteChoice = (submitted: AgentInputRequest): boolean => {
     only?.type === "choice" &&
     submitted.questions.length === 1 &&
     submitted.notice === undefined &&
-    only.allowOther !== true &&
     only.options
       .map((option) => option.id)
       .sort()
