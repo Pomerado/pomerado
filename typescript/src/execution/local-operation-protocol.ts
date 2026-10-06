@@ -2,6 +2,11 @@ import { Schema } from "effect";
 import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 
+const InputIssue = Schema.Struct({
+  path: Schema.String,
+  issue: Schema.Literal("missing", "invalid"),
+});
+
 const Id = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200));
 export const LocalOperationStart = Schema.Struct({
   kind: Schema.Literal("start"),
@@ -63,6 +68,7 @@ export const LocalOperationMessage = Schema.Union(
     error: Schema.String,
     code: Schema.optionalWith(Schema.String, { exact: true }),
     tag: Schema.optionalWith(Schema.String, { exact: true }),
+    inputIssues: Schema.optionalWith(Schema.Array(InputIssue), { exact: true }),
     ...JournalFields,
   }),
 );

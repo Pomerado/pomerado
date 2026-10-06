@@ -1,4 +1,4 @@
-import { Cause, Data, Option } from "effect";
+import { Cause, Data, Option, ParseResult } from "effect";
 import type {
   CaptureFailureReason,
   CaptureCollectionDiagnostic,
@@ -9,8 +9,29 @@ import type { FailureDetail } from "./failure-detail.js";
 
 export type Dispatch = "not_sent" | "sent" | "unknown";
 
+/**
+ * Where an input schema rejected an input: the property path (`""` for the input itself) and
+ * whether the value was `missing` or `invalid` there. Never the value, so it can go to the minter.
+ */
+export interface InputIssue {
+  readonly path: string;
+  readonly issue: "missing" | "invalid";
+}
+
+/** The rejected paths of an input decode, one per path. */
+export const inputIssues = (error: ParseResult.ParseError): readonly InputIssue[] => {
+  const issues = new Map<string, InputIssue["issue"]>();
+  for (const { _tag, path } of ParseResult.ArrayFormatter.formatErrorSync(error)) {
+    const at = path.map(String).join(".");
+    if (issues.get(at) !== "missing") issues.set(at, _tag === "Missing" ? "missing" : "invalid");
+  }
+  return [...issues].map(([path, issue]) => ({ path, issue }));
+};
+
 export class InvalidInput extends Data.TaggedError("InvalidInput")<{
   readonly operation: string;
+  /** Where the schema rejected the input, when the decode said so. */
+  readonly issues?: readonly InputIssue[];
 }> {}
 
 export class InvalidOutput extends Data.TaggedError("InvalidOutput")<{
