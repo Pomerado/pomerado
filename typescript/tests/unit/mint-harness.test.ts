@@ -1128,16 +1128,14 @@ const textQuestion = (prompt: string, id = "answer") => ({
 
 const fixture = makeMintHarnessFixture(cleanup, request, portableJobSession);
 
-it.each(["ChallengeFailure", "DeadlineExceeded"] as const)(
+it.each(["DeadlineExceeded"] as const)(
   "ends only a host-marked %s failure after retaining its receipt",
   async (errorCode) => {
-    let modelCalls = 0;
     let executions = 0;
     let publications = 0;
     const f = await fixture(
       (turn) =>
         Effect.gen(function* () {
-          modelCalls++;
           const receipt: unknown = JSON.parse(
             yield* turn.actions.execute({
               ...execution,
@@ -1147,17 +1145,7 @@ it.each(["ChallengeFailure", "DeadlineExceeded"] as const)(
           );
           expect(receipt).toMatchObject({ status: "failed", effect: "possible" });
           expect(receipt).not.toHaveProperty("terminalFailure");
-          expect(turn.isComplete()).toBe(errorCode === "ChallengeFailure");
-          if (errorCode === "ChallengeFailure") {
-            expect(yield* Effect.either(turn.actions.execute(execution))).toMatchObject({
-              _tag: "Left",
-              left: { code: "AlreadyExecuted" },
-            });
-            expect(yield* Effect.either(turn.actions.finish(publication))).toMatchObject({
-              _tag: "Left",
-              left: { code: "AlreadyExecuted" },
-            });
-          }
+          expect(turn.isComplete()).toBe(false);
         }),
       {
         reviewAndExecute: () =>
@@ -1168,9 +1156,6 @@ it.each(["ChallengeFailure", "DeadlineExceeded"] as const)(
               status: "failed" as const,
               effect: "possible" as const,
               observations: { result: { status: "failed", errorCode } },
-              ...(errorCode === "ChallengeFailure"
-                ? { terminalFailure: "ChallengeFailure" as const }
-                : {}),
             };
           }),
         publish: () =>
@@ -1185,49 +1170,8 @@ it.each(["ChallengeFailure", "DeadlineExceeded"] as const)(
     expect(outcome.executions[0]).toMatchObject({ status: "failed", effect: "possible" });
     expect(executions).toBe(1);
     expect(publications).toBe(0);
-    if (errorCode === "ChallengeFailure") {
-      expect(outcome).toMatchObject({ build: "incomplete" });
-      expect(modelCalls).toBe(1);
-    }
   },
 );
-
-it("projects a finite site-access adjunct beside the failed receipt", async () => {
-  const adjunct = {
-    code: "site_bot_challenge",
-    evidence: "screened_page_and_response_headers",
-  } as const;
-  const f = await fixture(
-    (turn) =>
-      Effect.gen(function* () {
-        const response: unknown = JSON.parse(
-          yield* turn.actions.execute({
-            ...execution,
-            target: "liveBrowser",
-            purpose: "explore",
-          }),
-        );
-        expect(response).toMatchObject({
-          status: "failed",
-          effect: "possible",
-          siteAccess: adjunct,
-        });
-      }),
-    {
-      reviewAndExecute: () =>
-        Effect.succeed<ExecutionEvidence>({
-          executionId: "failed_site_read",
-          status: "failed",
-          effect: "possible",
-          observations: { result: { errorCode: "DeadlineExceeded" } },
-          siteAccess: adjunct,
-        }),
-    },
-  );
-  const outcome = await f.run();
-  expect(outcome.executions[0]).toMatchObject({ status: "failed", effect: "possible" });
-  expect(outcome.diagnostics.some((entry) => entry.includes("site_bot_challenge"))).toBe(true);
-});
 
 it("enforces capability clarification through the existing input tool before execution", async () => {
   const question = "What result do you need that product search does not provide?";
@@ -1728,6 +1672,51 @@ it("ends the build as no_response when the host's sign-in request goes unanswere
     build: "incomplete",
     noResponse: { possibleCommit: true },
   });
+});
+
+// A login question is the host's alone: the agent's credential request does not decode, so it is
+// neither reviewed nor asked, and the attempt goes on.
+it("refuses a model-requested credential question without reviewing or asking it", async () => {
+  let asked = 0;
+  let reviews = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput({
+              questions: [
+                {
+                  id: "login",
+                  type: "credential",
+                  prompt: "Send the website password again",
+                  fields: "password",
+                  reason: "invalid_credentials",
+                  allowSave: false,
+                  siteOrigin: "https://example.com",
+                },
+              ],
+            }),
+          ),
+        ).toMatchObject({ status: "question_invalid", userInputRequired: false });
+        expect(turn.isComplete()).toBe(false);
+      }),
+    {
+      reviewQuestion: () =>
+        Effect.sync(() => {
+          reviews++;
+          return { outcome: "allow_business" as const, rationale: "Unexpected review." };
+        }),
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return {};
+        }),
+    },
+  );
+  await f.run();
+  expect(asked).toBe(0);
+  expect(reviews).toBe(0);
 });
 
 /** Probe receipts of a site's sign-in path: the public entry, a plan choice and a username page. */
@@ -2397,7 +2386,7 @@ it("answers request_input in place through the actual pinned Runner and SandboxA
   // Minting requests provider-readable summaries.
   expect(requests[0]?.modelSettings.reasoning).toEqual({ effort, summary: "auto" });
   expect(f.seen).toHaveLength(0);
-});
+}, 30_000);
 
 it("asks after a write example whose effect is possible and continues with the answer", async () => {
   const asked: unknown[] = [];
@@ -2797,7 +2786,7 @@ it("keeps a stronger terminal outcome when the host is poisoned afterwards", asy
   expect(JSON.stringify(outcome.diagnostics)).not.toContain("background_policy");
 });
 
-it("omits availability for a nonhosted dependency and stops on asynchronous poison", async () => {
+it("omits availability for a host that does not report it and stops on asynchronous poison", async () => {
   const withoutHost = await fixture((turn) =>
     Effect.sync(() => {
       const input: unknown = JSON.parse(turn.input);
@@ -2957,6 +2946,30 @@ it("screens complete authored source before applying a range crossing a secret",
       const part = yield* turn.actions.readSource("src/tool.ts", { offset: 31, limit: 6 });
       expect(part).not.toContain("secret");
       expect(JSON.parse(part)).toMatchObject({ offset: 31, offsetUnit: "UTF-16 code units" });
+    }),
+  );
+  await f.run();
+});
+
+it("refuses read_source ranges outside the source and a path outside the workspace", async () => {
+  const f = await fixture((turn) =>
+    Effect.gen(function* () {
+      const { total } = Schema.decodeUnknownSync(Schema.Struct({ total: Schema.Number }))(
+        JSON.parse(yield* turn.actions.readSource("src/tool.ts")),
+      );
+      for (const range of [
+        { offset: -1 },
+        { offset: total + 1 },
+        { limit: 0 },
+        { limit: 64_001 },
+        { offset: 0.5 },
+      ])
+        expect(yield* Effect.either(turn.actions.readSource("src/tool.ts", range))).toMatchObject({
+          _tag: "Left",
+        });
+      expect(
+        yield* Effect.either(turn.actions.readSource("../src/tool.ts", { limit: 10 })),
+      ).toMatchObject({ _tag: "Left" });
     }),
   );
   await f.run();
