@@ -20,7 +20,7 @@
 
 ### Other changes
 
-- Guardian diagnostics record each review attempt's interval, failed source-read duration, session permit wait, and scheduled retry backoff. Session reviews can forward finite model and tool timing without retaining their transcript.
+- Guardian diagnostics record each review attempt's interval, failed source-read duration, session permit wait, and scheduled retry backoff. Follow-up rounds for a skipped entrypoint read stay inside one attempt, and its closing record counts them. A private host kind, whose transcript is not kept, can forward its finite model and tool timing through `observeModelTrace`.
 - `pomerado/runtime` exports `CalendarDate`, a date-only `YYYY-MM-DD` schema that refuses a date that does not exist, such as `2026-02-30`, with the calendar check `fillDate` already made. Its JSON Schema is `format: "date"`. It sets no date range. The forms skill and the date examples use it, and say that a range's order, a past date or a booking limit is the tool's own `InvalidInput` check.
 - A generated integration's MCP tool names the failing input path and rule when arguments do not match its schema, and a failed job reports the tool's own `InvalidInput` message.
 - The person answering a minting question may always answer a choice or multiple choice in their own words: their own text instead of an option, or a note beside the options they pick. The host marks every choice and multiple choice the minting agent asks with `allowOther` and the new `allowNote`, and Guardian now reviews the effect question too, since its answer may be free text. An answer in the person's own words to a read-or-write question approves no write: the effect question is asked again, and a write upgrade leaves the build read-only without settling it.
