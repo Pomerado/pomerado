@@ -112,7 +112,7 @@ const recordingCdp = () => {
         case "DOM.resolveNode":
           return Promise.resolve({ object: { objectId: "field" } });
         case "Runtime.callFunctionOn":
-          return Promise.resolve({ result: { value: true } });
+          return Promise.resolve({ result: { value: "inserted" } });
         default:
           return Promise.resolve({});
       }
@@ -125,7 +125,7 @@ const target = { bindingKey: "data-binding", documentOrigin: "https://member.exa
 it("types a credential in the bound field's main world with four DevTools commands", async () => {
   const { cdp, sent } = recordingCdp();
   expect(await Effect.runPromise(makeCredentialKeyboard(cdp).insertText(target, "s3cret"))).toBe(
-    true,
+    "inserted",
   );
   expect(sent.map(({ method }) => method)).toEqual([
     "DOM.getDocument",
@@ -150,7 +150,7 @@ it("resolves the field in the execution context a host's binding world returns",
       return 42;
     }),
   );
-  expect(await Effect.runPromise(keyboard.insertText(target, "s3cret"))).toBe(true);
+  expect(await Effect.runPromise(keyboard.insertText(target, "s3cret"))).toBe("inserted");
   expect(bindings).toEqual([{ sessionId: "page", frameId: "child-frame" }]);
   expect(sent[1]).toEqual({
     method: "DOM.resolveNode",
