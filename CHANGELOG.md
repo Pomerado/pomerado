@@ -14,8 +14,8 @@
   - Migrate by writing example, test and first-step source that runs its flow from the root, as the authoring guide already asks.
 - A sign-in check counts only after the build's own sign-in steps typed the login's identifier and a password or code, or the user completed an approval. Before that, the check returns `signedIn: false` with `failed: "credentials_not_submitted"` and leaves the build signed out. Every sign-in step drops the session saved after the last sign-in, a check included, and a check after a confirmed sign-in starts a new one, so checking again is refused.
   - Migrate by sending the sign-in screens' `signInStep` fields before the `signedIn` check, and checking once per sign-in.
-- `MintDependencies.priorAttemptMayHaveChanged` is removed. No host set it.
-  - Migrate by dropping the field.
+- `MintDependencies.priorAttemptMayHaveChanged` is removed, with the notice it added to the agent's first input.
+  - Migrate by giving the agent your own notice through `drainStartIncidents` if a restarted write build must read back before it writes again.
 
 ### Other changes
 
