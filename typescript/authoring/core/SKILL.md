@@ -45,10 +45,11 @@ request and the flow, never from one caller's account or example.
 
 A value the request's text supplies, such as a code, a quantity or a choice, is the build's to
 use even when the caller's structured input is empty: pass the request's values as
-`exampleInput` where the host takes one (a read's example, or a write's first act step), never
-as a build-time question. Decide from the request and the site which inputs are required. An
-optional input plus a declared question the tool asks before any effect is only for a value the
-request genuinely leaves open; never make fields optional with nothing that asks.
+`exampleInput` where the host takes one (a read's example, or each write act step that needs
+it), never as a build-time question. Decide from the request and the site which inputs are
+required. An optional input plus a declared question the tool asks before any effect is only for
+a value the request genuinely leaves open; never make a required field optional with nothing
+that asks.
 
 <!-- pomerado:section core.schema-coverage -->
 
