@@ -13,7 +13,7 @@ import { guardianModel, guardianReviewTimeout } from "./model.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
 import { failureDetail } from "../runtime/failure-detail.js";
-import { Agent, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
+import { Agent, AgentsError, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
 import { Effect, Exit, Schema } from "effect";
 import { requiredReadRounds, ReviewFailure } from "./review.js";
 import { withTenantPolicy } from "./upstream-policy.js";
@@ -114,6 +114,33 @@ const guardianUsage = (usage: Usage): GuardianUsage => ({
   modelCalls: usage.requests,
   ...modelUsageCounts(usage),
 });
+
+/** What a readable record shows in place of one private review's exchange. */
+const privatePlaceholder = (index: number): AgentInputItem => ({
+  role: "user",
+  type: "message",
+  content: `[A private review is withheld from this record: ${index}]`,
+});
+
+/**
+ * An SDK error as a readable record may show it: its run state, which carries the whole
+ * conversation, becomes only that history with each earlier private review withheld.
+ */
+const withheldError = (error: unknown, leadingPrivate: boolean): unknown => {
+  if (!(error instanceof AgentsError) || error.state === undefined) return error;
+  const shown = Object.create(
+    Object.getPrototypeOf(error) as object,
+    Object.getOwnPropertyDescriptors(error),
+  ) as AgentsError;
+  Object.defineProperty(shown, "state", {
+    value: {
+      history: withholdPrivateReviews(error.state.history, privatePlaceholder, leadingPrivate)
+        .items,
+    },
+    enumerable: true,
+  });
+  return shown;
+};
 
 /**
  * A model provider whose observer sees each earlier private review's exchange as a placeholder,
@@ -335,7 +362,7 @@ const reviewerWithPolicy = (
                   return { outcome, usage };
                 },
                 catch: (error) => {
-                  diagnostics?.failed(error);
+                  diagnostics?.failed(privateKind ? error : withheldError(error, leadingPrivate));
                   failureCode =
                     error instanceof MaxTurnsExceededError ? "TurnLimitExceeded" : "Unavailable";
                   const finite = (options.failureMetadata ?? modelFailureMetadata)(error);
@@ -348,7 +375,8 @@ const reviewerWithPolicy = (
                           {
                             operation: "runner.run",
                             phase: "review_computation",
-                            error,
+                            // A private kind's error text may echo its request or output.
+                            ...(privateKind ? {} : { error }),
                             context: {
                               kind: finite.kind,
                               code: finite.code,
@@ -389,15 +417,7 @@ const reviewerWithPolicy = (
             diagnostics?.completed(
               privateKind
                 ? result.history
-                : withholdPrivateReviews(
-                    result.history,
-                    (index) => ({
-                      role: "user" as const,
-                      type: "message" as const,
-                      content: `[A private review is withheld from this record: ${index}]`,
-                    }),
-                    leadingPrivate,
-                  ).items,
+                : withholdPrivateReviews(result.history, privatePlaceholder, leadingPrivate).items,
               usage,
             );
             if (turn.session)

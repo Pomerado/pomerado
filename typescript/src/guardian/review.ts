@@ -461,8 +461,23 @@ const decodeHost = (request: HostReview) => {
   });
   return (raw: unknown): Effect.Effect<HostReviewDecision, ReviewFailure> =>
     Schema.decodeUnknown(shape)(boundedRationale(raw), { onExcessProperty: "error" }).pipe(
-      Effect.mapError(decisionFailure),
+      Effect.mapError((error) =>
+        decisionFailure(request.private === true ? privateDecisionError(request, raw) : error),
+      ),
     );
+};
+
+/**
+ * A private kind's invalid decision, described by a fixed reason only: the parse error would
+ * echo the rejected value and the kind's labels into every readable record of the failure.
+ */
+const privateDecisionError = (request: HostReview, raw: unknown) => {
+  const label = typeof raw === "object" && raw !== null ? Reflect.get(raw, "label") : undefined;
+  return new Error(
+    label !== undefined && !(request.labels ?? []).some((allowed) => allowed === label)
+      ? "The label is not one of the kind's labels"
+      : "The decision does not match the kind's format",
+  );
 };
 
 export const makeGuardian = (

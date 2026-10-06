@@ -3,7 +3,9 @@
 // although the agent's own file is in view; a skipped entrypoint read retries the whole review
 // with backoff; a compaction in the middle of a review keeps an earlier read; an unchanged source
 // is not marked as already read; session reviews drop their model diagnostics and token counts;
-// a host-defined private kind's exchange reaches later readable records.
+// a host-defined private kind's exchange reaches later readable records, also through a later
+// review's failed run; a private kind's rejected label, its configured labels or its model error
+// text reach a readable failure record, its retry included.
 import { createHash } from "node:crypto";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
@@ -603,3 +605,172 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([
+  { failure: "a label outside the kind's labels", code: "InvalidDecision" },
+  { failure: "a model call whose error names its output", code: "Unavailable" },
+] as const)(
+  "describes a private host kind's failure without its output or the kind's labels ($failure)",
+  async ({ code }) => {
+    setDefaultModelProvider({
+      getModel: () => ({
+        getResponse: async () => {
+          if (code === "Unavailable")
+            throw new Error("Synthetic provider error: synthetic-rejected-label-marker");
+          return {
+            usage: new Usage(),
+            output: [
+              decision({
+                outcome: "deny",
+                rationale: "Synthetic rationale.",
+                label: "synthetic-rejected-label-marker",
+              }),
+            ],
+          };
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
+    });
+    const timing: ModelDiagnosticTiming = {
+      phase: "completed",
+      sequence: 0,
+      occurredAtUtc: "2026-01-01T00:00:00.000Z",
+      occurredMonotonicMs: 0,
+      queueMs: 0,
+    };
+    // Everything the observer is handed, persisted as a readable record would be.
+    const observerFactory: ModelObserverFactory = (persist) => {
+      const persisted: Promise<void>[] = [];
+      return {
+        attach: () => undefined,
+        tool: (_call, invoke) => invoke(),
+        provider: (provider) => provider,
+        started: () => undefined,
+        skillsInstalled: () => undefined,
+        segment: () => undefined,
+        completed: (history) => {
+          persisted.push(persist({ history }, timing));
+        },
+        failed: (error) => {
+          persisted.push(persist({ error: String(error) }, timing));
+        },
+        takeNativeCall: () => undefined,
+        durabilityFailure: () => undefined,
+        terminal: () => ({ phase: "terminal", timing, value: {} }),
+        flush: async () => {
+          await Promise.all(persisted);
+        },
+      };
+    };
+    const { diagnostics, events, transcripts } = recording();
+    const result = await Effect.runPromise(
+      Effect.either(
+        makeGuardian(
+          {
+            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+            // One retry: the second wait alone outlasts the budget.
+            retry: { delays: ["1 millis", "1 second"], budget: "1 second" },
+          },
+          diagnostics,
+        ).reviewHostKind(pending, {
+          ...listing({}),
+          labels: ["synthetic-private-label-marker-a", "synthetic-private-label-marker-b"],
+        }),
+      ),
+    );
+    expect(result).toMatchObject({ _tag: "Left", left: { code } });
+    expect(events.map((event) => event.name)).toContain("guardian.review_retried");
+    const failure = result._tag === "Left" ? result.left : undefined;
+    const readable = JSON.stringify({
+      events,
+      transcripts,
+      failure,
+      detail: failure?.failureDetail,
+      message: String(failure),
+    });
+    expect(readable).not.toContain("synthetic-rejected-label-marker");
+    expect(readable).not.toContain("synthetic-private-label-marker");
+  },
+);
+
+it("keeps an earlier private host kind's exchange out of a later review's failed run", async () => {
+  scripted([
+    [
+      decision({
+        outcome: "deny",
+        rationale: "Names synthetic-private-rationale-marker.",
+        label: "owner_specific",
+      }),
+    ],
+    [read("call_turn_limit", "operation/src/helper.mjs")],
+  ]);
+  const timing: ModelDiagnosticTiming = {
+    phase: "completed",
+    sequence: 0,
+    occurredAtUtc: "2026-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 0,
+    queueMs: 0,
+  };
+  // An observer that keeps a failed run's history in its readable record.
+  const observerFactory: ModelObserverFactory = (persist) => {
+    const persisted: Promise<void>[] = [];
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => undefined,
+      failed: (error) => {
+        const state: unknown =
+          typeof error === "object" && error !== null ? Reflect.get(error, "state") : undefined;
+        persisted.push(
+          persist(
+            {
+              error: String(error),
+              history:
+                typeof state === "object" && state !== null
+                  ? Reflect.get(state, "history")
+                  : undefined,
+            },
+            timing,
+          ),
+        );
+      },
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing, value: {} }),
+      flush: async () => {
+        await Promise.all(persisted);
+      },
+    };
+  };
+  const { diagnostics, events, transcripts } = recording();
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, {
+      observerFactory,
+      specialize: (turn) => (turn.pending.hostReview === undefined ? { maxTurns: 1 } : {}),
+    }),
+    diagnostics,
+    {},
+  );
+  const hosted = await Effect.runPromise(
+    guardian.reviewHostKind(
+      pending,
+      listing({ primaryOrigin: "https://synthetic-private-evidence-marker.example.test" }),
+    ),
+  );
+  expect(hosted.decision.outcome).toBe("deny");
+  const later = await Effect.runPromise(
+    Effect.either(guardian.review(pending, sourcesOf(files()))),
+  );
+  expect(later).toMatchObject({ _tag: "Left", left: { code: "TurnLimitExceeded" } });
+  // The later review's failure record keeps its own history, with the private one withheld.
+  const readable = JSON.stringify({ events, transcripts });
+  expect(readable).toContain("call_turn_limit");
+  expect(readable).not.toContain("synthetic-private-evidence-marker");
+  expect(readable).not.toContain("synthetic-private-rationale-marker");
+});
