@@ -90,34 +90,58 @@ export default sdk.defineOperation(
 }, 30_000);
 
 /*
- * Before the executor staged authored source a level below the SDK, source in src/ reached it one
- * level up and a nested module two levels up. Integrations saved that way keep running, against
- * the same SDK modules as the documented path, with relative file paths still read from the
- * authored root.
+ * Before the executor staged authored source a level below the SDK, source in src/ reached the SDK
+ * and the dependency folder one level up, a nested module two levels up, and its working folder
+ * held package.json. Integrations saved that way keep running, against the same modules as the
+ * documented path, with relative file paths still read from the authored root.
  */
 it("runs source that reaches the SDK one level up from src/, as saved integrations may", async () => {
   const result = await runPureFiles("src/tool.mjs", [
     [
       "src/tool.mjs",
       `import { Schema } from "effect";
+import * as dependency from "../node_modules/effect/dist/esm/index.js";
 import { readFileSync } from "node:fs";
 import * as documented from "../../runtime/index.js";
 import * as runtime from "../runtime/index.js";
 import * as browser from "../browser/index.js";
 import { nested } from "./lib/nested.mjs";
 export default runtime.defineOperation(
-  { input: Schema.Struct({}), output: Schema.Struct({ same: Schema.Boolean, note: Schema.String }) },
+  {
+    input: Schema.Struct({}),
+    output: Schema.Struct({ same: Schema.Boolean, note: Schema.String, type: Schema.String }),
+  },
   async () => ({
     same:
       documented.defineOperation === runtime.defineOperation &&
       browser.OperationFailure === runtime.OperationFailure &&
-      nested === runtime.defineOperation,
+      nested === runtime.defineOperation &&
+      dependency.Schema === Schema,
     note: JSON.parse(readFileSync("src/note.json", "utf8")).note,
+    type: JSON.parse(readFileSync("package.json", "utf8")).type,
   }),
 );`,
     ],
     ["src/lib/nested.mjs", `export { defineOperation as nested } from "../../runtime/index.js";`],
     ["src/note.json", JSON.stringify({ note: "authored root" })],
   ]);
-  expect(result.output).toEqual({ same: true, note: "authored root" });
+  expect(result.output).toEqual({ same: true, note: "authored root", type: "module" });
+}, 30_000);
+
+it("refuses authored files named like a folder the host stages beside them", async () => {
+  const operation = `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => ({}));`;
+  for (const name of ["runtime", "browser", "privacy", "node_modules"]) {
+    const result = await runPureFiles("src/tool.mjs", [
+      ["src/tool.mjs", operation],
+      [name, "export {};"],
+    ]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(result, name).toMatchObject({
+      message: expect.stringContaining(`Reviewed source cannot replace trusted SDK: ${name}`),
+    });
+  }
 }, 30_000);
