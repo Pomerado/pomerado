@@ -49,6 +49,7 @@ describe("makeRunSecrets", () => {
     ["with | encoded as a URL's path carries it", "a$b|c", "a$b%7Cc"],
     ["with ^ encoded as a URL's path carries it", "user@x^y", "user@x%5Ey"],
     ["with \\ turned into / as a URL's path carries it", "a\\b$c", "a/b$c"],
+    ["without its tab, which a URL drops", "a\tb|c", "ab%7Cc"],
     ["as a URL's fragment carries it", "o'brien `x`", "o'brien%20%60x%60"],
   ])("redacts a secret %s", (_, value, shown) => {
     expect(registered(value).redact(`before ${shown} after`)).toBe("before [private] after");
