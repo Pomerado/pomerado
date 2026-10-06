@@ -1,24 +1,26 @@
 import { guardianExecutionPolicy } from "./execution-policy.js";
 import {
+  guardianFollowUpState,
   guardianReviewInput,
   guardianReviewSettings,
   guardianReviewState,
   SourceInput,
 } from "./openai-input.js";
+import { guardianDecisionFormat, reviewKindOf } from "./review-layout.js";
 import { guardianContinuityPolicy } from "./session.js";
 import { guardianModel, guardianReviewTimeout } from "./model.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { failureDetail } from "../runtime/failure-detail.js";
-import { Agent, MaxTurnsExceededError, Runner, tool } from "@openai/agents";
+import { Agent, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
 import { Effect, Exit, Schema } from "effect";
-import { ReviewFailure } from "./review.js";
+import { requiredReadRounds, ReviewFailure } from "./review.js";
 import { withTenantPolicy } from "./upstream-policy.js";
-import type { Reviewer, ReviewTurn } from "./review.js";
+import type { GuardianUsage, Reviewer, ReviewTurn } from "./review.js";
 import type { ModelObserver, ModelObserverFactory } from "../models/model-observer.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { modelFailureMetadata, modelCauseMetadata } from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
-import type { AgentOutputType, ModelProvider } from "@openai/agents";
+import type { ModelProvider } from "@openai/agents";
 import type { Cause } from "effect";
 
 export interface GuardianModelOptions {
@@ -33,11 +35,15 @@ export interface GuardianModelOptions {
     effect: Effect.Effect<A, E>,
     operation: string,
   ) => Effect.Effect<void>;
+  /**
+   * The host's additions for one review: policy text for its kind and input fields, both sent in
+   * that review's user message, and its turn limit. Never the instructions, tools or output
+   * format, which every kind shares so the conversation stays cached across kinds.
+   */
   readonly specialize?: (turn: ReviewTurn) => {
-    readonly instructions: string;
-    readonly input: Readonly<Record<string, unknown>>;
-    readonly maxTurns: number;
-    readonly outputType: AgentOutputType;
+    readonly policy?: string;
+    readonly input?: Readonly<Record<string, unknown>>;
+    readonly maxTurns?: number;
   };
 }
 
@@ -68,39 +74,60 @@ A question that asks which sign-in method to use, which account to use, or how t
 Work on another registrable domain is judged when it runs, never ruled out of scope here: do not reword a question for naming or asking about an off-site place, and never tell the agent that only the host can authorize another domain.
 For this review return outcome allow_business, authentication or reword and a concise rationale saying what to change. A reword's rationale names every problem the request has, in each of its questions, so that one revision can fix them all; do not hold a problem back for a later round. Never solicit a private value in the rationale.`;
 
-const guardianPresentation = (
-  policy: string,
-  turn: ReviewTurn,
-  options: GuardianModelOptions,
-): { readonly instructions: string; readonly outputType: AgentOutputType } => ({
-  instructions: `${turn.session ? `${guardianContinuityPolicy}\n\n` : ""}${policy}\n\n${executionOutcomePolicy}${options.specialize?.(turn).instructions ?? ""}${turn.pending.questionCandidate === undefined ? "" : `\n\n${questionPolicy}`}`,
-  outputType: options.specialize?.(turn).outputType ?? {
-    type: "json_schema",
-    name: "guardian_decision",
-    strict: true,
-    schema: {
-      type: "object",
-      properties: {
-        outcome: {
-          type: "string",
-          enum:
-            turn.pending.questionCandidate === undefined
-              ? ["allow", "deny", "escalate"]
-              : ["allow_business", "authentication", "reword"],
-        },
-        rationale: { type: "string" },
-      },
-      required: ["outcome", "rationale"],
-      additionalProperties: false,
-    },
-  },
-});
+/**
+ * How every review request is laid out, in the instructions every kind shares. The kind's own
+ * policy travels in its user message.
+ */
+const reviewLayoutPolicy = `Each request is one review. trusted_review.kind names its kind (execution, question, recovery, publication or shareability) and trusted_review.policy is the host's policy for that kind: apply it to this request only, where it replaces any general rule it names. Return only an outcome that policy allows and a concise rationale; set reason and findings to null unless that policy asks for them.
+submitted_call.entrypointSource, when present, is the first chunk of the submitted entrypoint, read by the host for this review: it counts as your read of that chunk, so do not read it again, and read the rest through read_source while hasMore is true. trusted_review.hostWrapper, when present, is the host's own trusted wrapper that loads the entrypoint, with what it does: it is not the agent's code, and reading it is optional. trusted_review.unchangedSources, when present, lists executed source paths whose current content is byte-identical to a read already in this conversation: rely on that read instead of reading them again.`;
+
+const guardianInstructions = (policy: string, turn: ReviewTurn) =>
+  `${turn.session ? `${guardianContinuityPolicy}\n\n` : ""}${policy}\n\n${reviewLayoutPolicy}`;
+
+/** The kind's policy, sent in the review's user message. */
+const reviewPolicy = (turn: ReviewTurn, options: GuardianModelOptions) => {
+  const host = options.specialize?.(turn).policy;
+  const shareability = turn.pending.shareabilityCandidate;
+  if (shareability !== undefined)
+    return [shareability.policy, host]
+      .filter((part) => part !== undefined && part !== "")
+      .join("\n\n");
+  return [
+    executionOutcomePolicy,
+    host,
+    reviewKindOf(turn.pending) === "question" ? questionPolicy : undefined,
+  ]
+    .filter((part) => part !== undefined && part !== "")
+    .join("\n\n");
+};
 
 const reviewInput = (turn: ReviewTurn, options: GuardianModelOptions) =>
-  guardianReviewInput(turn, {
+  guardianReviewInput(turn, reviewPolicy(turn, options), {
     ...options.specialize?.(turn).input,
     trusted_execution_environment: options.executionEnvironment ?? "hosted",
   });
+
+const detailSum = (details: readonly Record<string, number>[], keys: readonly string[]) =>
+  details.reduce(
+    (total, detail) =>
+      total +
+      keys.reduce((sum, key) => sum + (typeof detail[key] === "number" ? detail[key] : 0), 0),
+    0,
+  );
+
+/** The review's token counts, including cache reads and writes and reasoning. */
+const guardianUsage = (usage: Usage): GuardianUsage => ({
+  modelCalls: usage.requests,
+  inputTokens: usage.inputTokens,
+  cachedInputTokens: detailSum(usage.inputTokensDetails, ["cached_tokens"]),
+  cacheWriteInputTokens: detailSum(usage.inputTokensDetails, [
+    "cache_write_tokens",
+    "cache_creation_input_tokens",
+    "cache_creation_tokens",
+  ]),
+  outputTokens: usage.outputTokens,
+  reasoningTokens: detailSum(usage.outputTokensDetails, ["reasoning_tokens"]),
+});
 
 const reviewerWithPolicy = (
   policy: string,
@@ -121,12 +148,7 @@ const reviewerWithPolicy = (
           const retainRuntimeRecord = turn.retainRuntimeRecord;
           const diagnostics = options.observerFactory?.(
             (value, timing) =>
-              Effect.runPromise(
-                turn.session
-                  ? Effect.void
-                  : (turn.reportDiagnostic?.(value, timing) ?? Effect.void),
-                { signal },
-              ),
+              Effect.runPromise(turn.reportDiagnostic?.(value, timing) ?? Effect.void, { signal }),
             signal,
             {
               source: "guardian.model",
@@ -200,7 +222,8 @@ const reviewerWithPolicy = (
             name: "Pomerado Guardian",
             ...guardianModel,
             modelSettings: guardianReviewSettings(turn),
-            ...guardianPresentation(policy, turn, options),
+            instructions: guardianInstructions(policy, turn),
+            outputType: guardianDecisionFormat,
             tools: [readSource],
           });
           const runner = new Runner({
@@ -216,8 +239,9 @@ const reviewerWithPolicy = (
           diagnostics?.attach(runner);
           const input = reviewInput(turn, options);
           diagnostics?.started(input);
-          const activeState = await Effect.runPromise(
-            guardianReviewState(turn, input, agent, options.specialize?.(turn).maxTurns),
+          const maxTurns = options.specialize?.(turn).maxTurns ?? 12;
+          let activeState = await Effect.runPromise(
+            guardianReviewState(turn, input, agent, maxTurns),
             {
               signal,
             },
@@ -239,14 +263,35 @@ const reviewerWithPolicy = (
           try {
             // Bound review computation separately from mandatory diagnostic retention.
             // The outer signal still fences both phases at the invocation deadline.
-            const result = await Effect.runPromise(
+            const completed = await Effect.runPromise(
               Effect.tryPromise({
-                try: (computationSignal) => {
+                try: async (computationSignal) => {
                   reviewSignal = computationSignal;
-                  return runner.run(agent, activeState, {
-                    signal: computationSignal,
-                    maxTurns: options.specialize?.(turn).maxTurns ?? 12,
-                  });
+                  const usage = new Usage();
+                  const run = async () => {
+                    const outcome = await runner.run(agent, activeState, {
+                      signal: computationSignal,
+                      maxTurns,
+                    });
+                    usage.add(outcome.runContext.usage);
+                    return outcome;
+                  };
+                  let outcome = await run();
+                  // A skipped required read gets bounded follow-ups in this same review.
+                  for (let round = 0; round < requiredReadRounds; round++) {
+                    const followUp = turn.missingRead?.(outcome.finalOutput);
+                    if (followUp === undefined) break;
+                    if (turn.session)
+                      await Effect.runPromise(turn.session.observe(outcome.history), {
+                        signal: computationSignal,
+                      });
+                    activeState = await Effect.runPromise(
+                      guardianFollowUpState(turn, outcome.history, followUp, agent, maxTurns),
+                      { signal: computationSignal },
+                    );
+                    outcome = await run();
+                  }
+                  return { outcome, usage };
                 },
                 catch: (error) => {
                   diagnostics?.failed(error);
@@ -299,9 +344,13 @@ const reviewerWithPolicy = (
               ),
               { signal },
             );
-            diagnostics?.completed(result.history, result.runContext.usage);
+            const { outcome: result, usage } = completed;
+            diagnostics?.completed(result.history, usage);
             if (turn.session)
               await Effect.runPromise(turn.session.observe(result.history), { signal });
+            await Effect.runPromise(turn.reportUsage?.(guardianUsage(usage)) ?? Effect.void, {
+              signal,
+            });
             const output: unknown = result.finalOutput;
             return output;
           } finally {
@@ -323,7 +372,7 @@ const reviewerWithPolicy = (
               }),
       }).pipe(
         Effect.onExit((exit) =>
-          Exit.isFailure(exit) && turn.session === undefined && diagnosticState !== undefined
+          Exit.isFailure(exit) && diagnosticState !== undefined
             ? Effect.suspend(() => {
                 const { timing, ...terminal } = diagnosticState?.terminal() ?? {
                   phase: "terminal",

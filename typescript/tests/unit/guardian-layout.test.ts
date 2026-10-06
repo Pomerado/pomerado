@@ -1,0 +1,452 @@
+// Failure modes covered: switching review kinds changes the instructions, tools or output format
+// and resends the conversation uncached; a review that never reads the host's wrapper fails
+// although the agent's own file is in view; a skipped entrypoint read retries the whole review
+// with backoff; a compaction in the middle of a review keeps an earlier read; an unchanged source
+// is not marked as already read; session reviews drop their model diagnostics and token counts.
+import { createHash } from "node:crypto";
+import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
+import type { ModelRequest, ModelResponse } from "@openai/agents";
+import { Effect, Schema } from "effect";
+import { afterEach, expect, it } from "vitest";
+import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import {
+  GuardianDecision,
+  ReviewFailure,
+  guardianOutageRetry,
+  makeGuardian,
+} from "../../src/guardian/review.js";
+import type { GuardianDiagnostics, PendingExecution } from "../../src/guardian/review.js";
+import { makeSourceInspector } from "../../src/guardian/source.js";
+import type { ModelObserverFactory } from "../../src/models/model-observer.js";
+import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
+
+afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+
+const pending: PendingExecution = {
+  invocationId: "layout_job",
+  attemptId: "layout_attempt",
+  entrypoint: "operation/operation.mjs",
+  screenedIntent: "Read the listed opening hours",
+  screenedInput: "{}",
+  screenedObservations: "Synthetic fixture",
+  accountScope: "account_layout",
+  allowedOrigins: ["https://hours.example.test"],
+  allowedEffects: ["read"],
+};
+
+const sourcesOf = (files: Map<string, string>) =>
+  makeSourceInspector(
+    (path) =>
+      Effect.suspend(() => {
+        const text = files.get(path);
+        return text === undefined
+          ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+          : Effect.succeed(new TextEncoder().encode(text));
+      }),
+    (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
+  );
+const files = () =>
+  new Map([
+    ["operation/operation.mjs", 'import { hours } from "./src/helper.mjs"; export default hours;'],
+    ["operation/src/helper.mjs", "export const hours = () => 'synthetic-hours';"],
+    ["operation/wrapped.mjs", "// host wrapper"],
+  ]);
+
+const decision = (value: Record<string, unknown>): ModelResponse["output"][number] => ({
+  type: "message",
+  role: "assistant",
+  status: "completed",
+  content: [
+    {
+      type: "output_text",
+      text: JSON.stringify({ reason: null, findings: null, ...value }),
+    },
+  ],
+});
+const allow = decision({ outcome: "allow", rationale: "Reads the hours only." });
+const read = (id: string, path: string): ModelResponse["output"][number] => ({
+  type: "function_call",
+  callId: id,
+  name: "read_source",
+  status: "completed",
+  arguments: JSON.stringify({ path, offset: 0 }),
+});
+const compact: ModelResponse["output"][number] = {
+  type: "compaction",
+  id: "cmp_layout",
+  encrypted_content: "opaque-compacted-context",
+};
+
+const scripted = (responses: readonly ModelResponse["output"][], usage = () => new Usage()) => {
+  const requests: ModelRequest[] = [];
+  setDefaultModelProvider({
+    getModel: () => ({
+      getResponse: async (request) => {
+        const output = responses[requests.length];
+        requests.push(request);
+        if (output === undefined) throw new Error("No scripted response");
+        return { usage: usage(), output };
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  });
+  return requests;
+};
+
+/** The host's review request: the last user message that is one. */
+const reviewRequest = (request: ModelRequest | undefined): Record<string, unknown> => {
+  const input = request?.input;
+  const items = typeof input === "string" ? [{ role: "user", content: input }] : (input ?? []);
+  for (const item of [...items].reverse()) {
+    const content = "role" in item && item.role === "user" ? item.content : undefined;
+    if (typeof content === "string" && content.startsWith("{"))
+      return JSON.parse(content) as Record<string, unknown>;
+  }
+  throw new Error("No review request");
+};
+
+/** What the provider caches as the request's fixed prefix, as one stable hash. */
+const prefixHash = (request: ModelRequest) =>
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        instructions: request.systemInstructions,
+        tools: request.tools,
+        outputType: request.outputType,
+        modelSettings: request.modelSettings,
+      }),
+    )
+    .digest("hex");
+
+const recording = () => {
+  const events: { name: string; details: unknown }[] = [];
+  const transcripts: unknown[] = [];
+  const diagnostics: GuardianDiagnostics = {
+    emit: (name, details) =>
+      Effect.sync(() => {
+        events.push({ name, details });
+      }),
+    retainModelTranscript: (_name, details) =>
+      Effect.sync(() => {
+        transcripts.push(details);
+      }),
+    retainScreenedSource: () => Effect.void,
+  };
+  return { diagnostics, events, transcripts };
+};
+
+it("keeps instructions, tools and output format identical across all five review kinds", async () => {
+  const requests = scripted([
+    [allow],
+    [decision({ outcome: "allow_business", rationale: "Only the owner knows the branch." })],
+    [allow],
+    [
+      decision({
+        outcome: "allow",
+        rationale: "Nothing private ships.",
+        reason: "approved",
+        findings: [],
+      }),
+    ],
+    [decision({ outcome: "private", rationale: "Names one tenant.", reason: "tenant_specific" })],
+  ]);
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}"),
+    undefined,
+    {},
+    {
+      decodePublication: (_scope, raw) =>
+        Schema.decodeUnknown(GuardianDecision)(raw).pipe(
+          Effect.mapError(() => new ReviewFailure({ code: "InvalidDecision" })),
+        ),
+    },
+  );
+  const reader = sourcesOf(files());
+  const execution = await Effect.runPromise(guardian.review(pending, reader));
+  const question = await Effect.runPromise(
+    guardian.reviewQuestion(
+      pending,
+      {
+        questions: [{ id: "branch", type: "text", prompt: "Which branch?" }],
+        credentialsAvailable: false,
+      },
+      reader,
+    ),
+  );
+  const recovery = await Effect.runPromise(
+    guardian.reviewRecovery(pending, "Synthetic stalled browser", reader),
+  );
+  const publication = await Effect.runPromise(
+    guardian.review(
+      {
+        ...pending,
+        publication: {
+          files: [
+            {
+              path: "operation/operation.mjs",
+              byteLength: 64,
+              published: true,
+              current: true,
+              owner: "minter",
+            },
+          ],
+        },
+      },
+      reader,
+    ),
+  );
+  const shareability = await Effect.runPromise(
+    guardian.reviewShareability(pending, {
+      policy: "Synthetic shareability policy.",
+      evidence: { primaryOrigin: "https://hours.example.test" },
+    }),
+  );
+
+  expect(requests).toHaveLength(5);
+  expect(new Set(requests.map(prefixHash)).size).toBe(1);
+  // Each review continues the one before it, so the provider can reuse the cached history.
+  for (let index = 1; index < requests.length; index++) {
+    const before = requests[index - 1]?.input ?? [];
+    const after = requests[index]?.input ?? [];
+    expect(after.slice(0, before.length)).toEqual(before);
+  }
+  expect(
+    requests.map((request) => (reviewRequest(request).trusted_review as { kind: string }).kind),
+  ).toEqual(["execution", "question", "recovery", "publication", "shareability"]);
+  expect(execution.decision).toEqual({ outcome: "allow", rationale: "Reads the hours only." });
+  expect(question.decision).toEqual({
+    outcome: "allow_business",
+    rationale: "Only the owner knows the branch.",
+  });
+  expect(recovery.decision.outcome).toBe("allow");
+  expect(publication.decision).toMatchObject({
+    outcome: "allow",
+    reason: "approved",
+    findings: [],
+  });
+  expect(shareability.decision).toEqual({
+    visibility: "private",
+    reason: "tenant_specific",
+    rationale: "Names one tenant.",
+  });
+});
+
+it("refuses an outcome the review kind may not return", async () => {
+  const execution = await Effect.runPromise(
+    Effect.either(
+      makeGuardian({
+        run: () => Effect.succeed({ outcome: "public", rationale: "Wrong kind." }),
+      }).review(pending, sourcesOf(files())),
+    ),
+  );
+  expect(execution).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
+  const shareability = await Effect.runPromise(
+    Effect.either(
+      makeGuardian({
+        run: () =>
+          Effect.succeed({ outcome: "allow", rationale: "Wrong kind.", reason: "general_public" }),
+      }).reviewShareability(pending, { policy: "Synthetic policy.", evidence: {} }),
+    ),
+  );
+  expect(shareability).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
+});
+
+it("allows in one model call with the agent's file in view and the host wrapper unread", async () => {
+  const requests = scripted([[allow]]);
+  const reads: string[] = [];
+  const reader = sourcesOf(files());
+  const reviewed = await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {}).review(
+      {
+        ...pending,
+        hostWrapper: {
+          path: "operation/wrapped.mjs",
+          description: "Loads the entrypoint and runs it with the caller's input.",
+        },
+      },
+      (path, offset) =>
+        reader(path, offset).pipe(Effect.tap(() => Effect.sync(() => reads.push(path)))),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(1);
+  expect(reads).toEqual(["operation/operation.mjs"]);
+  const call = reviewRequest(requests[0]).submitted_call as {
+    entrypointSource?: { source?: string };
+  };
+  expect(call.entrypointSource?.source).toBe(files().get("operation/operation.mjs"));
+});
+
+it("ends an allow without the entrypoint in view as EntrypointNotRead after two rounds, without retrying", async () => {
+  const requests = scripted([[compact, allow], [allow], [allow]]);
+  const { diagnostics, events } = recording();
+  const result = await Effect.runPromise(
+    Effect.either(
+      makeGuardian(
+        { ...makeOpenAIReviewer("{{ tenant_policy_config }}"), retry: guardianOutageRetry },
+        diagnostics,
+        {},
+      ).review(pending, sourcesOf(files())),
+    ),
+  );
+  expect(result).toMatchObject({ _tag: "Left", left: { code: "EntrypointNotRead" } });
+  expect(requests).toHaveLength(3);
+  expect(events.map((event) => event.name)).not.toContain("guardian.review_retried");
+});
+
+it("asks for the entrypoint again after a compaction in the review and accepts a ./ path", async () => {
+  const requests = scripted([
+    [compact, allow],
+    [read("reread", "./operation/operation.mjs")],
+    [allow],
+  ]);
+  const reviewed = await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {}).review(
+      pending,
+      sourcesOf(files()),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(3);
+});
+
+it("asks for the entrypoint in the same review when the host could not include it", async () => {
+  const requests = scripted([[allow], [read("late", "operation/operation.mjs")], [allow]]);
+  const reader = sourcesOf(files());
+  let entrypointReads = 0;
+  const reviewed = await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).review(
+      pending,
+      (path, offset) =>
+        path === pending.entrypoint && ++entrypointReads === 1
+          ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+          : reader(path, offset),
+    ),
+  );
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(3);
+  expect(entrypointReads).toBe(2);
+});
+
+it("marks an executed source unchanged since Guardian read it, and not once it changes", async () => {
+  const requests = scripted([
+    [read("helper_1", "operation/src/helper.mjs")],
+    [allow],
+    [allow],
+    [read("helper_2", "operation/src/helper.mjs")],
+    [allow],
+  ]);
+  const workspace = files();
+  const executed: PendingExecution = {
+    ...pending,
+    mintContext: {
+      repeatableRead: false,
+      operationSources: [...workspace.keys()],
+      executedSources: ["operation/operation.mjs", "operation/src/helper.mjs"],
+      browser: "active",
+      executions: [],
+    },
+  };
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const reader = sourcesOf(workspace);
+  await Effect.runPromise(guardian.review(executed, reader));
+  await Effect.runPromise(guardian.review({ ...executed, screenedInput: '{"day":2}' }, reader));
+  workspace.set("operation/src/helper.mjs", "export const hours = () => 'changed-hours';");
+  await Effect.runPromise(guardian.review({ ...executed, screenedInput: '{"day":3}' }, reader));
+  const unchanged = (request: ModelRequest | undefined) =>
+    (reviewRequest(request).trusted_review as { unchangedSources?: string[] }).unchangedSources;
+  expect(requests).toHaveLength(5);
+  expect(unchanged(requests[0])).toBeUndefined();
+  expect(unchanged(requests[2])).toEqual(["operation/src/helper.mjs"]);
+  expect(unchanged(requests[3])).toBeUndefined();
+});
+
+it("reports model diagnostics and token counts for session reviews", async () => {
+  scripted(
+    [[allow]],
+    () =>
+      new Usage({
+        requests: 1,
+        inputTokens: 1000,
+        outputTokens: 50,
+        inputTokensDetails: { cached_tokens: 900, cache_write_tokens: 40 },
+        outputTokensDetails: { reasoning_tokens: 30 },
+      }),
+  );
+  const timing: ModelDiagnosticTiming = {
+    phase: "completed",
+    sequence: 0,
+    occurredAtUtc: "2026-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 0,
+    queueMs: 0,
+  };
+  const observerFactory: ModelObserverFactory = (persist) => {
+    const persisted: Promise<void>[] = [];
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => {
+        persisted.push(persist({ phase: "completed" }, timing));
+      },
+      failed: () => undefined,
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing, value: {} }),
+      flush: async () => {
+        await Promise.all(persisted);
+      },
+    };
+  };
+  const { diagnostics, events, transcripts } = recording();
+  await Effect.runPromise(
+    makeGuardian(
+      makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+      diagnostics,
+      {},
+    ).review(pending, sourcesOf(files())),
+  );
+  expect(transcripts).toHaveLength(1);
+  expect(events.find((event) => event.name === "guardian.usage")?.details).toMatchObject({
+    details: {
+      modelCalls: 1,
+      inputTokens: 1000,
+      cachedInputTokens: 900,
+      cacheWriteInputTokens: 40,
+      outputTokens: 50,
+      reasoningTokens: 30,
+    },
+  });
+});
+
+it("reports each wait for the session as an interval", async () => {
+  scripted([[allow], [allow]]);
+  const { diagnostics, events } = recording();
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), diagnostics, {});
+  const reader = sourcesOf(files());
+  await Effect.runPromise(
+    Effect.all(
+      [
+        guardian.review(pending, reader),
+        guardian.review({ ...pending, screenedInput: "{}" }, reader),
+      ],
+      { concurrency: "unbounded" },
+    ),
+  );
+  const waits = events
+    .filter((event) => event.name === "guardian.session_wait")
+    .map(
+      (event) =>
+        event.details as { kind: string; startedAtUtc: string; endedAtUtc: string; waitMs: number },
+    );
+  expect(waits).toHaveLength(2);
+  for (const wait of waits) {
+    expect(wait.kind).toBe("execution");
+    expect(Date.parse(wait.endedAtUtc) - Date.parse(wait.startedAtUtc)).toBe(wait.waitMs);
+  }
+});

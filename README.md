@@ -195,6 +195,19 @@ Authored operation processes, offline commands and native Playwright page-code w
 </details>
 
 <details>
+<summary>Guardian reviews</summary>
+
+Guardian reviews five kinds of request: execution, question, browser recovery, publication and shareability. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+
+- **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`. Moving from one kind to another therefore keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
+- **Shareability.** `reviewShareability(pending, { policy, evidence }, readSource?)` judges whether a finished tool's package may be listed in a public catalog. It returns `{ visibility, reason, rationale }`. Its evidence reaches the model but no readable diagnostic.
+- **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call. An allow counts only while the entrypoint is in view: after a compaction during the review, Guardian must read it again. Path spellings such as `./x` and `x` name the same file. If an allow still lacks the read after two follow-up rounds in the same review, the review fails with `EntrypointNotRead`. That failure is a verdict, so it is never retried.
+- **Incremental review.** Before an execution review, the host compares each executed source Guardian already read in this conversation, since its last compaction, with the current bytes. It lists the identical ones in `trusted_review.unchangedSources`, and Guardian needn't read them again. The entrypoint is still always included.
+- **Diagnostics.** Each review emits `guardian.usage` with its model calls and input, cached-input, cache-write, output and reasoning token counts. Model diagnostics are reported with or without a session. The wait for a session is emitted as the `guardian.session_wait` interval. Waits between outage retries happen outside the session.
+
+</details>
+
+<details>
 <summary>Library and terminal use</summary>
 
 The existing library and terminal interfaces remain available. A library session can mint and run while retaining the same signed-in browser context.

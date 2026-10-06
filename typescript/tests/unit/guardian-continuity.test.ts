@@ -39,13 +39,13 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
         return {
           usage: new Usage(),
           output:
-            call % 2 === 1
+            call === 1
               ? [
                   {
                     type: "function_call" as const,
                     callId: `read_${call}`,
                     name: "read_source",
-                    arguments: JSON.stringify({ path: pending.entrypoint, offset: 0 }),
+                    arguments: JSON.stringify({ path: "operation/helper.mjs", offset: 0 }),
                     status: "completed" as const,
                   },
                 ]
@@ -91,10 +91,12 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
   await Effect.runPromise(guardian.review({ ...pending, screenedInput: '{"day":2}' }, read));
   const other = makeGuardian(reviewer, undefined, {});
   await Effect.runPromise(other.review({ ...pending, invocationId: "other_mint" }, read));
-  expect(sourceReads).toBe(3);
+  // Each review's request carries its current entrypoint; the first review also read a helper.
+  expect(sourceReads).toBe(4);
+  expect(requests).toHaveLength(4);
   expect(JSON.stringify(requests[2]?.input)).toContain("opaque-first-review-reasoning");
   expect(JSON.stringify(requests[2]?.input)).toContain("read_1");
-  expect(JSON.stringify(requests[4]?.input)).not.toContain("opaque-first-review-reasoning");
+  expect(JSON.stringify(requests[3]?.input)).not.toContain("opaque-first-review-reasoning");
 });
 
 const message = (outcome: "allow" | "deny" = "allow"): ModelResponse["output"][number] => ({
@@ -139,7 +141,7 @@ const readCurrent = () =>
     }),
   );
 
-it("restores a completed review checkpoint but requires a fresh source read", async () => {
+it("restores a completed review checkpoint and puts the current entrypoint in the next request", async () => {
   const requests: ModelRequest[] = [];
   provide([[call("first")], [reason, message()], [message()]], requests);
   let saved: typeof GuardianSessionSnapshot.Type | undefined;
@@ -157,10 +159,15 @@ it("restores a completed review checkpoint but requires a fresh source read", as
   const replacement = makeGuardian(reviewer, undefined, {
     initial: Schema.decodeUnknownSync(GuardianSessionSnapshot)(saved),
   });
+  let current = 0;
   const result = await Effect.runPromise(
-    Effect.either(replacement.review({ ...pending, attemptId: "takeover" }, readCurrent)),
+    replacement.review({ ...pending, attemptId: "takeover" }, () =>
+      readCurrent().pipe(Effect.tap(() => Effect.sync(() => current++))),
+    ),
   );
-  expect(result).toMatchObject({ _tag: "Left", left: { code: "SourceUnavailable" } });
+  expect(result.decision.outcome).toBe("allow");
+  expect(current).toBe(1);
+  expect(requests).toHaveLength(3);
   expect(JSON.stringify(requests[2]?.input)).toContain("opaque-first-review-reasoning");
 });
 
@@ -212,7 +219,10 @@ it("continues from provider compaction after takeover without replaying the olde
     id: "cmp_one",
     encrypted_content: "opaque-compacted-context",
   };
-  provide([[call("first")], [reason, compact, message()], [call("second")], [message()]], requests);
+  provide(
+    [[call("first")], [reason, compact, call("after_compaction")], [message()], [message()]],
+    requests,
+  );
   const reviewer = makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}");
   const first = makeGuardian(reviewer, undefined, {});
   await Effect.runPromise(first.review(pending, readCurrent));
@@ -220,13 +230,13 @@ it("continues from provider compaction after takeover without replaying the olde
     initial: Schema.decodeUnknownSync(GuardianSessionSnapshot)(first.session?.snapshot()),
   });
   await Effect.runPromise(replacement.review({ ...pending, attemptId: "takeover" }, readCurrent));
-  expect(requests[2]?.input[0]).toMatchObject({
+  expect(requests[3]?.input[0]).toMatchObject({
     type: "compaction",
     encrypted_content: "opaque-compacted-context",
   });
-  expect(JSON.stringify(requests[2]?.input)).not.toContain("opaque-first-review-reasoning");
-  expect(requests[2]?.modelSettings.reasoning?.context).toBe("all_turns");
-  expect(requests[2]?.modelSettings.providerData).toMatchObject({
+  expect(JSON.stringify(requests[3]?.input)).not.toContain("opaque-first-review-reasoning");
+  expect(requests[3]?.modelSettings.reasoning?.context).toBe("all_turns");
+  expect(requests[3]?.modelSettings.providerData).toMatchObject({
     context_management: [{ type: "compaction", compact_threshold: 240000 }],
   });
 });
