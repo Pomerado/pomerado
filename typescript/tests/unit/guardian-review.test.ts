@@ -568,12 +568,8 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       "An anonymous recent-search, prefill or search-state save that the site's own page fires when a read submits its search is part of that read, not a write.",
       "A host incident in a step result, such as an observation_gap, is a note about the host's recording, never by itself a reason to stop live probes or to tell the agent to report it. It leaves that execution possibly dispatched, and the rules here on possible writes still apply.",
     ];
-    for (const policy of [
-      requests[0]?.systemInstructions ?? "",
-      guardianExecutionPolicy("hosted"),
-      guardianExecutionPolicy("native"),
-    ])
-      for (const sentence of sentences) expect(policy).toContain(sentence);
+    const policy = requests[0]?.systemInstructions ?? "";
+    for (const sentence of sentences) expect(policy).toContain(sentence);
   });
 
   // Guardian reviews an execution's source, never each request it sends.

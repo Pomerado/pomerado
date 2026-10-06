@@ -185,7 +185,7 @@ const unreadable: ReviewTurn["readSource"] = () =>
 it("tells the question review that host sign-in rules are never an owner's prohibition", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       question,
       unreadable,
