@@ -38,7 +38,9 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - Every change goes through a pull request. Never push to `main`.
 - Never run `gh pr merge`. A maintainer merges.
 - Bring `main` into your branch with a merge, not a rebase. Never force-push.
-- A pull request merges only after an independent review and green CI. Maintainers enforce this by hand today.
+- A pull request merges only after an independent review and green CI.
+- A branch rule on `main` enforces this. It requires a pull request, a green `CI` check and a `review/clear` check on the current head, and a branch that is up to date with `main`.
+- Maintainers merge by hand with a merge commit until a merge queue takes over.
 - A push after a review needs a new independent review.
 - Write the failing test first for a change in behavior.
 - Keep `#N` style references out of commit messages, where N is a number. The content scan rejects them. Link a public issue by its full URL.
