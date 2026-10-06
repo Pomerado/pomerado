@@ -23,10 +23,9 @@
 ## What Pomerado does
 
 Pomerado builds MCP integrations for websites, including sites without an API.
-
-- You give Pomerado any website and a plain-language description of a task. It outputs an MCP integration that does the task.
-- The integration is deterministic and runs the same way every time. That makes it much faster and more reliable than computer use.
-- Pomerado works on any site, including sites behind a login and two-factor authentication.
+- Our tool builds integrations with only a natural language description of the task. No HAR file or recording is needed
+- Integrations are deterministic, making them much faster and more reliable than computer use
+- Pomerado works on any site, including sites behind a login and two-factor authentication
 
 <p align="center"><img src="docs/assets/pomerado-diagram.png" alt="Websites, legacy portals and internal tools go into Pomerado, which builds, hosts and maintains a deterministic API that product agents, internal agents and personal assistants call" width="900"></p>
 
