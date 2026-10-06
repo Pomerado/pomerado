@@ -1,6 +1,6 @@
 # Contributing
 
-Pomerado does not accept outside pull requests yet. We will open contributions once a Contributor License Agreement is in place. Until then we close pull requests from outside the team without review.
+Pomerado does not accept outside pull requests yet. We will open contributions once a Contributor License Agreement is in place. Until then we close pull requests from anyone other than the maintainers without review.
 
 Issues are welcome. Open one for a bug, a question or an idea. Report security problems privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
 
@@ -21,12 +21,11 @@ npm pack --dry-run
 
 Tests use synthetic sites and scripted model responses. They need no model API key or Pomerado account.
 
-## Pull requests
+## Changes
 
-- Every change reaches `main` through a pull request.
-- A code owner reviews and approves each pull request.
-- CI runs typecheck, build, unit tests, the packed package check and browser tests. All of them must pass.
-- Approved pull requests merge through the merge queue, which runs CI again on the combined change.
+- The maintainers, Alan ([@alanmrsa](https://github.com/alanmrsa)) and Akshay ([@AkshayM21](https://github.com/AkshayM21)), push to `main` directly or open a pull request.
+- CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check and browser tests.
+- A maintainer may merge their own pull request.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
 
 ## License
