@@ -29,8 +29,8 @@
 - The minter and Guardian read today's date and time in UTC from the build's observations. Guardian's review of a contract run says what that run does.
 - `pomerado/core/mint/review-context` and `pomerado/core/mint/step-checks` export these rules for other hosts, and `secretHandleRefusal` joins `pomerado/core/mint/secret-handles`.
 - Guardian's review of a contract run carries the input that run decodes: the example's input, or the write session's.
-- A page with more than 10,000 elements is not captured for Guardian, which reads that the page was too large. A capture is cut to 256 KiB in the browser, before it reaches the host.
-- A caller's secret is also redacted in the forms a page or URL shows it: trimmed, with its whitespace collapsed, and form-encoded with `+` for a space. A capture cut at 256 KiB keeps no prefix of a secret the cut split.
+- A page with more than 10,000 elements is not captured for Guardian, which reads that the page was too large. A page that does not answer within the capture's time, as when its scripts keep it busy, is not captured either, and the browser keeps running. A capture is cut to 256 KiB in the browser, before it reaches the host.
+- A caller's secret is also redacted in the forms a page or URL shows it: trimmed, with its whitespace collapsed, with each `'` doubled or its control characters escaped as a page snapshot writes them, and percent-encoded as a form or any part of a URL carries it, in either hex case. A capture cut at 256 KiB keeps no prefix of a secret the cut split. A secret that cannot be percent-encoded no longer fails its registration.
 
 ## 0.2.0
 
