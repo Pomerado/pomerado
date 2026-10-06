@@ -120,6 +120,7 @@ Authority decides what an integration is allowed to do, so choose it deliberatel
 - Use `write` only when the task changes something, such as submitting a form or making a booking
 - A write mint performs the action once while it builds, then reviews the final source without repeating it
 - A read mint that finds the task needs a change asks to switch to write, and your agent's answer decides
+- A run doesn't check authority, intent or sign-in origins, and edits to `src/` or `deployment.json` aren't reviewed
 
 Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 

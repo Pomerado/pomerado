@@ -135,10 +135,13 @@ key.
 
 ## Call it
 
-Call ${deployment.name} with its discovered input schema. Its URL, intent, authority and
-authentication origins are pinned in deployment.json. A call that needs an answer or more time
-returns a job ID. Continue that job with get_job, provide_input and cancel_job. Polling never
-resubmits an operation.
+Call ${deployment.name} with its discovered input schema. Each call opens the URL in
+deployment.json. The authority there only sets the tool's read-only and destructive hints. A run
+doesn't check authority, intent or sign-in origins, and edits to src/ or deployment.json aren't
+reviewed.
+
+A call that needs an answer or more time returns a job ID. Continue that job with get_job,
+provide_input and cancel_job. Polling never resubmits an operation.
 
 Answers sent through provide_input are visible to your MCP client and its model provider.
 Restarting the server loses live jobs.

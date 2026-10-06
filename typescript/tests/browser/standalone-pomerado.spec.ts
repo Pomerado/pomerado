@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
-import { mkdtemp, rm, symlink, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -65,6 +65,11 @@ const objects = (value: unknown): readonly Record<string, unknown>[] => {
     ? []
     : [record.right, ...Object.values(record.right).flatMap(objects)];
 };
+/** The standalone host tells Guardian it runs natively. A hosted review gets the hosted policy. */
+const reviewedNative = (request: ModelRequest) =>
+  objects(request.input).find((item) => "trusted_execution_environment" in item)?.[
+    "trusted_execution_environment"
+  ] === "native";
 const guardian = (
   requests: ModelRequest[],
   outcome: "allow" | "deny" | ((request: ModelRequest) => "allow" | "deny") = "allow",
@@ -82,10 +87,11 @@ const guardian = (
       ];
     if (sourcePending) {
       sourcePending = false;
+      const decided = typeof outcome === "function" ? outcome(request) : outcome;
       return [
         message(
           JSON.stringify({
-            outcome: typeof outcome === "function" ? outcome(request) : outcome,
+            outcome: reviewedNative(request) ? decided : "deny",
             rationale: "Recorded fixture review",
           }),
         ),
@@ -412,9 +418,28 @@ test("terminal CLI help requires no provider credentials", async () => {
   const code = closed[0];
   expect(code, errors).toBe(0);
   expect(output).toContain("pomerado mint --url URL");
+  expect(output).toContain("A run ignores --intent and --effect.");
 });
 
-test("terminal run needs no model key or provider", async () => {
+/** Runs the built terminal CLI with only PATH, so it has no model key or provider. */
+const terminal = async (args: readonly string[]) => {
+  const child = spawn(process.execPath, ["dist/typescript/src/standalone/cli.js", ...args], {
+    env: { PATH: process.env["PATH"] ?? "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const closed: readonly unknown[] = await once(child, "close");
+  return { code: closed[0], stdout, stderr };
+};
+
+test("terminal run needs no model key, provider or intent", async () => {
   const server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html");
     response.end("<h1>Terminal fixture</h1>");
@@ -424,10 +449,11 @@ test("terminal run needs no model key or provider", async () => {
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("No fixture address");
   const directory = await mkdtemp(join(tmpdir(), "pomerado-cli-run-"));
+  const url = `http://127.0.0.1:${address.port}/`;
   try {
     await Effect.runPromise(
       Effect.scoped(
-        writeArtifact(directory, {
+        writeArtifact(join(directory, "artifact"), {
           entrypoint: "src/tool.mjs",
           files: [
             { path: "src/tool.mjs", content: operation },
@@ -441,32 +467,22 @@ test("terminal run needs no model key or provider", async () => {
         }),
       ),
     );
-    // Only PATH, so the run has no model key and no injected provider.
-    const child = spawn(
-      process.execPath,
-      [
-        "dist/typescript/src/standalone/cli.js",
-        "run",
-        "--artifact",
-        directory,
-        "--url",
-        `http://127.0.0.1:${address.port}/`,
-        "--intent",
-        "Read the fixture heading",
-      ],
-      { env: { PATH: process.env["PATH"] ?? "" }, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let output = "";
-    let errors = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      errors += chunk.toString();
-    });
-    const closed: readonly unknown[] = await once(child, "close");
-    expect(closed[0], errors).toBe(0);
-    expect(JSON.parse(output)).toEqual({ heading: "Terminal fixture" });
+    // A run ignores --effect, so even the mint-only value ask is accepted.
+    const ran = await terminal([
+      "run",
+      "--artifact",
+      join(directory, "artifact"),
+      "--url",
+      url,
+      "--effect",
+      "ask",
+    ]);
+    expect(ran.code, ran.stderr).toBe(0);
+    expect(JSON.parse(ran.stdout)).toEqual({ heading: "Terminal fixture" });
+    const minted = await terminal(["mint", "--url", url, "--out", join(directory, "minted")]);
+    expect(minted.code).toBe(1);
+    expect(minted.stderr).toContain("--intent is required to mint.");
+    expect(await readdir(directory)).toEqual(["artifact"]);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1113,6 +1129,28 @@ test("a generated integration serves and runs with no model key or provider", as
     } finally {
       await connection.client.close();
     }
+    // An unclassified run failure names no model, because a run makes no model request.
+    const failing = await saveMcpFixture(
+      directory,
+      "failing_fixture",
+      `http://127.0.0.1:${address.port}/`,
+      "read",
+      source.replace("const response =", 'throw new Error("Fixture failure"); const response ='),
+    );
+    const failed = await stdioMcp([join(failing, "mcp.mjs"), runtime]);
+    try {
+      const result = await failed.client.callTool({
+        name: "failing_fixture",
+        arguments: { input: {} },
+      });
+      expect(result.structuredContent, failed.stderr()).toMatchObject({
+        status: "failed",
+        error:
+          "Operation failed. Check the local browser and integration configuration. A dispatched website action may have taken effect; this job will not be replayed.",
+      });
+    } finally {
+      await failed.client.close();
+    }
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1215,6 +1253,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
           (item) => typeof item["source"] === "string" && item["source"].includes(shop.origin),
         );
         const allowed =
+          reviewedNative(request) &&
           readSource !== undefined &&
           [...authority.allowedOrigins, ...(authority.ownerNamedOrigins ?? [])].includes(
             shop.origin,

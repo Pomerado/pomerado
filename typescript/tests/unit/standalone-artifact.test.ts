@@ -136,6 +136,11 @@ it("packages a client-neutral MCP server entry that holds no key", async () => {
     expect(readme).toContain("The server needs no model key");
     expect(readme).not.toContain("OPENAI_API_KEY");
     expect(readme).not.toContain("env_vars");
+    // A run uses only the URL and the authority's tool hints from deployment.json.
+    expect(readme.replaceAll(/\s+/gu, " ")).toContain(
+      "A run doesn't check authority, intent or sign-in origins, and edits to src/ or deployment.json aren't reviewed.",
+    );
+    expect(readme).not.toContain("pinned");
     expect(readme).not.toContain("codex-mcp.toml");
     expect(await readFile(launcher, "utf8")).not.toContain("Codex");
   } finally {

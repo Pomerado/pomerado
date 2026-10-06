@@ -235,7 +235,7 @@ Pomerado owns its browser context on an attached server. Closing a job closes th
 - An error says "Model provider authentication failed". OpenAI rejected the key the server sent. Check that the key is current.
 - A mint ends with a summary saying the account's model quota is spent. Add credit or raise the limit on your OpenAI account, then mint again.
 - A job fails with "Model provider quota or rate limit was reached". Your OpenAI account hit a rate limit or quota. Wait, or check its limits, then try again.
-- A job fails at once with "Operation failed. Check the local model, browser and integration configuration." One cause is a missing Chromium. Run `npx -y -p pomerado playwright install chromium`.
+- A mint fails at once with "Operation failed. Check the local model, browser and integration configuration." An integration call fails the same way with "Operation failed. Check the local browser and integration configuration." One cause is a missing Chromium. Run `npx -y -p pomerado playwright install chromium`.
 - The client reports a closed connection or a startup timeout. Check `node --version`, run `npx -y -p pomerado pomerado-mcp --help` once to fill npm's cache, and raise the client's startup timeout.
 - `pomerado-mcp` exits at once with no output. Versions 0.1.2 and earlier don't start through `npx` or a global install. Use `pomerado@latest` in the `-p` argument.
 - A call fails with "The server is busy". The server runs one job at a time. Wait for the job or cancel it with `cancel_job`.
