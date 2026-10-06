@@ -43,9 +43,9 @@ const host = async (page: Page) => {
     Effect.sync(() => calls.push(code)).pipe(
       Effect.zipRight(
         Effect.promise(() =>
-      kernel.browsers.playwright.execute("local", {
-        code,
-        ...(timeoutSec === undefined ? {} : { timeout_sec: timeoutSec }),
+          kernel.browsers.playwright.execute("local", {
+            code,
+            ...(timeoutSec === undefined ? {} : { timeout_sec: timeoutSec }),
           }),
         ),
       ),
@@ -93,7 +93,7 @@ test("resets to the site root with no exploration cookies, storage or tabs", asy
       sessionStorage.setItem("recent", "SFO-NYC");
     });
     await page.context().newPage();
-    await reset({ siteData: "clear", origins: [] });
+    await reset({ siteData: "clear" });
     expect(page.context().pages().map((open) => open.url())).toEqual([`${site.origin}/`]);
     expect(await page.context().cookies()).toEqual([]);
     await page.goto(`${site.origin}/claims`);
@@ -112,7 +112,7 @@ test("keeps a restored session and lets the step go deeper when the root fails t
     const session = await save();
     await page.evaluate(() => localStorage.setItem("login", "changed"));
     await page.context().route(`${site.origin}/`, (route) => route.abort("failed"));
-    await reset({ siteData: "restore", session, origins: [] });
+    await reset({ siteData: "restore", session });
     await page.goto(`${site.origin}/claims`, { waitUntil: "domcontentloaded" });
     expect(page.url()).toBe(`${site.origin}/claims`);
     await expect.poll(() => page.evaluate(() => localStorage.getItem("login"))).toBe("member");
@@ -129,7 +129,7 @@ test("keeps the session while returning to the site root", async ({ page }) => {
       localStorage.setItem("login", "member");
       sessionStorage.setItem("login", "member");
     });
-    await reset({ siteData: "keep", origins: [] });
+    await reset({ siteData: "keep" });
     expect(page.url()).toBe(`${site.origin}/`);
     expect(stopped()).toBe(false);
     expect(site.hits("/")).toBe(1);
@@ -150,7 +150,7 @@ test("clears the site's tab storage when exploration left the site before the re
     await page.goto(`${site.origin}/claims`);
     await page.evaluate(() => sessionStorage.setItem("recent", "SFO-NYC"));
     await page.goto("about:blank");
-    await reset({ siteData: "clear", origins: [] });
+    await reset({ siteData: "clear" });
     // Cleanup stays local, then the root is loaded once.
     expect(site.hits("/")).toBe(1);
     await page.goto(`${site.origin}/claims`);
@@ -167,8 +167,13 @@ test("clears storage exploration left on another origin before a signed-out step
       route.fulfill({ contentType: "text/html", body: "<html></html>" }),
     );
     await page.goto(`${other}/`);
-    await page.evaluate(() => localStorage.setItem("recent", "SFO-NYC"));
-    await reset({ siteData: "clear", origins: [other] });
+    await page.evaluate(() => {
+      document.cookie = "recent=SFO-NYC; max-age=3600";
+      localStorage.setItem("recent", "SFO-NYC");
+    });
+    // Nothing names the other origin: the reset clears every origin the browser visited.
+    await reset({ siteData: "clear" });
+    expect(await page.context().cookies()).toEqual([]);
     await page.goto(`${other}/`);
     expect(await page.evaluate(() => localStorage.getItem("recent"))).toBeNull();
   });
@@ -190,7 +195,7 @@ test("restores the session saved after sign-in and drops what exploration added"
       localStorage.setItem("recent", "SFO-NYC");
       sessionStorage.setItem("recent", "SFO-NYC");
     });
-    await reset({ siteData: "restore", session, origins: [] });
+    await reset({ siteData: "restore", session });
     expect(
       (await page.context().cookies()).map((cookie) => `${cookie.name}=${cookie.value}`),
     ).toEqual(["login=member-1"]);

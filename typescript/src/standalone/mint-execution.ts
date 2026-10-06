@@ -51,6 +51,13 @@ const executeCommand = (
       observations: yield* projection.json(result),
     };
   });
+/** A page check before any sign-in step sent the login proves nothing about this build. */
+const credentialsNotSubmitted = {
+  signedIn: false,
+  failed: "credentials_not_submitted",
+  nextStep:
+    "No sign-in step since the last sign-in started sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. Send the sign-in screens' signInSteps first, then check again.",
+} as const;
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
@@ -61,20 +68,27 @@ const executeAuthentication = (
     const { projection } = state.session;
     const id = randomUUID();
 
-    yield* start.before({ purpose: "authenticate", target: "liveBrowser" });
+    yield* start.enter;
 
     let result: unknown;
     let authenticated = false;
-    if ("fields" in signIn) result = yield* auth.step(signIn, beforeDispatch);
-    else if ("signedIn" in signIn) {
-      const checked = yield* auth.signedIn(signIn.signedIn);
-      authenticated = checked.signedIn;
-      if (authenticated) start.verified();
-      result = checked;
+    if ("fields" in signIn) {
+      start.signIn();
+      const report = yield* auth.step(signIn, beforeDispatch);
+      start.sent(report);
+      result = report;
+    } else if ("signedIn" in signIn) {
+      if (start.submitted) {
+        const checked = yield* auth.signedIn(signIn.signedIn);
+        authenticated = checked.signedIn && start.verified();
+        result = checked;
+      } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
+      start.signIn();
       auth.rejected(signIn.rejected.slot);
       result = { outcome: "correction_requested" };
-    } else
+    } else {
+      start.signIn();
       result = yield* mintAsk(
         noticeRequest(
           randomUUID(),
@@ -82,6 +96,8 @@ const executeAuthentication = (
           `Complete the ${signIn.approval.replaceAll("_", " ")} sign-in for ${context.siteOrigin}, then confirm.`,
         ),
       );
+      start.approved();
+    }
     return {
       executionId: id,
       status: "completed" as const,

@@ -4,10 +4,16 @@ import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
-import type { ExecutionRequest } from "../mint/contracts.js";
+import {
+  identifierPreference,
+  type AutofillSlot,
+  type AutofillStepReport,
+} from "../destinations/autofill-step.js";
+import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
+import { failureDetail } from "../runtime/failure-detail.js";
 import type { InputAsker } from "../runtime/input-request.js";
 import {
   localStartHooks,
@@ -19,16 +25,23 @@ import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
+const identifiers: ReadonlySet<AutofillSlot> = new Set(identifierPreference);
+/** A step that could not start its page: the browser call failed, so nothing ran. */
+const unavailable = (operation: string) => (error: unknown) =>
+  new MintFailure({
+    code: "Unavailable",
+    failureDetail: failureDetail("mint_host_dependency_failed", { operation, error }),
+  });
 /**
  * Where a build's live steps start. The first step that is not reset loads the request's URL once.
  * A live example, a live test and a write session's first step reset the page and load the site
- * root; see `startStateFor`. Sign-in steps drop the session saved after the last sign-in.
+ * root; see `startStateFor`. A new sign-in drops the session saved after the last one, and a
+ * check counts the build signed in only once a sign-in step sent the login (see `sent`).
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
   siteOrigin: string,
   enterRequest: Effect.Effect<void, Error>,
-  origins: readonly string[],
 ) => {
   const tracker = makeStartTracker();
   const hooks = localStartHooks(browser.execute, browser.targetId);
@@ -45,27 +58,59 @@ export const makeBuildStart = (
         ),
   );
   return {
-    /** The site showed the build signed in. */
+    /** Loads the request's URL, unless a live step already loaded a page. */
+    enter,
+    /** A sign-in step; see `makeStartTracker`. */
+    signIn: tracker.signIn,
+    /**
+     * What a host fill step sent. Without a request recorder, a field counts as sent when the
+     * fill filled it and then clicked the step's submit, or the step named no submit.
+     */
+    sent: (report: AutofillStepReport) => {
+      if (report.outcome !== "filled") return;
+      if (report.submit !== "clicked" && report.submit !== "none") return;
+      for (const field of report.fields) {
+        if (field.status !== "filled") continue;
+        if (identifiers.has(field.slot)) tracker.sent("identifier");
+        if (field.slot === "password" || field.slot === "code") tracker.sent("proof");
+      }
+    },
+    /** The user completed the sign-in's approval. */
+    approved: () => tracker.sent("proof"),
+    /** Whether the current sign-in sent the login. */
+    get submitted() {
+      return tracker.submitted;
+    },
+    /** The site showed the build signed in. Returns whether it counted. */
     verified: tracker.verified,
     /** Saves the session when due, then resets the page or enters the site, before `step` runs. */
     before: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
       Effect.gen(function* () {
         const live = step.target === "liveBrowser";
-        if (step.purpose === "authenticate") tracker.invalidate();
-        const plan = tracker.plan({ purpose: step.purpose, live });
-        if (plan.save) tracker.save(yield* browser.execute(saveSessionCode, 60));
+        const planned = { purpose: step.purpose, live };
+        if (step.purpose === "authenticate") tracker.signIn();
+        const plan = tracker.plan(planned);
+        if (plan.save)
+          tracker.save(
+            yield* browser
+              .execute(saveSessionCode, 60)
+              .pipe(Effect.mapError(unavailable("standalone.saveSession"))),
+          );
         if (plan.start === "none") {
           if (live) yield* enter;
-          return;
+        } else {
+          yield* startPage(
+            browser.execute,
+            browser.targetId,
+            siteOrigin,
+            plan.start === "restore"
+              ? { siteData: "restore", session: tracker.saved }
+              : { siteData: plan.start },
+            hooks,
+          ).pipe(Effect.mapError(unavailable("standalone.startPage")));
+          entered = true;
         }
-        yield* startPage(
-          browser.execute,
-          browser.targetId,
-          siteOrigin,
-          { siteData: plan.start, session: tracker.saved, origins },
-          hooks,
-        );
-        entered = true;
+        tracker.dispatched(planned);
       }),
   };
 };
@@ -124,12 +169,7 @@ export const mintState = (
     let claimed = false;
     let buildEffect: "read" | "write" | undefined =
       request.effect === "read" || request.effect === "write" ? request.effect : undefined;
-    const start = makeBuildStart(
-      browser,
-      context.siteOrigin,
-      context.navigate,
-      request.authenticationOrigins ?? [],
-    );
+    const start = makeBuildStart(browser, context.siteOrigin, context.navigate);
     return {
       session,
       context,

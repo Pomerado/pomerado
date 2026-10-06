@@ -65,29 +65,66 @@ export const shouldSaveSession = (
   !step.sessionSaved;
 
 /**
- * One build's start state: whether its write session started, whether it is signed in, and the
- * session saved after its sign-in. A host calls `invalidate()` on each sign-in step and each new
- * browser, `verified()` when the site shows the build signed in, and `plan(step)` before each
- * step. When the plan says `save`, the host saves the session with `save(session)` before it
- * starts the page; a failed save stops the step, and the next step's plan asks again.
+ * One build's start state: whether its write session started, whether it is signed in, what its
+ * current sign-in sent, and the session saved after that sign-in. A host calls `signIn()` on each
+ * sign-in step, `sent(...)` for what a sign-in step submitted, `verified()` when the site shows
+ * the build signed in, `plan(step)` before each step and `dispatched(step)` once the step's page
+ * is ready. When the plan says `save`, the host saves the session with `save(session)` before it
+ * starts the page. A failed save or page start stops the step and changes nothing, so the next
+ * step's plan asks again.
  */
 export const makeStartTracker = <Session = unknown>() => {
   let writeSessionStarted = false;
   let signedIn = false;
   let signInSettled = false;
+  let signInOpen = false;
+  let sentIdentifier = false;
+  let sentProof = false;
   let saved: { readonly session: Session } | undefined;
+  const invalidate = () => {
+    saved = undefined;
+    signInSettled = false;
+    signInOpen = false;
+    sentIdentifier = false;
+    sentProof = false;
+  };
   return {
-    /** A new sign-in or browser: nothing saved describes the browser until a verified sign-in. */
-    invalidate: () => {
-      saved = undefined;
-      signInSettled = false;
+    /** A new browser: nothing saved or sent describes it until a new verified sign-in. */
+    invalidate,
+    /**
+     * A sign-in step. The first one after a verified sign-in, or the build's first, starts a new
+     * sign-in, which drops the saved session and what the last sign-in sent. Later steps of the
+     * same sign-in, each screen of it, add to what it sent.
+     */
+    signIn: () => {
+      if (signInOpen) return;
+      invalidate();
+      signInOpen = true;
     },
-    /** The site shows the build signed in. */
+    /**
+     * What a sign-in step submitted: the login's identifier, or what proves it (a password, a
+     * code or an approval the user completed).
+     */
+    sent: (kind: "identifier" | "proof") => {
+      if (kind === "identifier") sentIdentifier = true;
+      else sentProof = true;
+    },
+    /** Whether this sign-in sent the login's identifier and what proves it. */
+    get submitted() {
+      return sentIdentifier && sentProof;
+    },
+    /**
+     * The site shows the build signed in. It counts only once the sign-in submitted the login, so
+     * a page that already showed an account proves nothing. Returns whether it counted.
+     */
     verified: () => {
+      if (!(sentIdentifier && sentProof)) return false;
       signedIn = true;
       signInSettled = true;
+      signInOpen = false;
+      return true;
     },
-    /** What to do before `step` runs. A write session's first step starts the session. */
+    /** What to do before `step` runs. Planning changes nothing. */
     plan: (step: StartStep): { readonly save: boolean; readonly start: StartState } => {
       const save = shouldSaveSession({
         ...step,
@@ -101,13 +138,16 @@ export const makeStartTracker = <Session = unknown>() => {
         signedIn,
         sessionSaved: save || saved !== undefined,
       });
-      if (isFirstWriteStep(step.purpose, writeSessionStarted)) writeSessionStarted = true;
       return { save, start };
+    },
+    /** The step's page is ready and it runs now: a write session's first step starts it. */
+    dispatched: (step: StartStep) => {
+      if (isFirstWriteStep(step.purpose, writeSessionStarted)) writeSessionStarted = true;
     },
     save: (session: Session) => {
       saved = { session };
     },
-    /** The session saved after sign-in, until `invalidate()`. */
+    /** The session saved after sign-in, until a new sign-in or browser. */
     get saved(): Session | undefined {
       return saved?.session;
     },
@@ -125,26 +165,29 @@ export const stopLoadingCode = (targetId: string) => `${primaryPageCode(targetId
 const stopped = await context.newCDPSession(primary);
 try { await stopped.send("Page.stopLoading"); } finally { await stopped.detach(); }`;
 
-/** How a reset leaves the browser's site data, and what it clears or restores. */
-export interface PageStart {
-  readonly siteData: Exclude<StartState, "none">;
-  /** What a `restore` puts back: the value `saveSessionCode` returned. */
-  readonly session?: unknown;
-  /** Origins whose site data a `clear` or `restore` removes with the site's own. */
-  readonly origins: readonly string[];
-}
+/**
+ * How a reset leaves the browser's site data. `restore` puts back `session`, the value
+ * `saveSessionCode` returned.
+ */
+export type PageStart =
+  | { readonly siteData: "clear" | "keep" }
+  | { readonly siteData: "restore"; readonly session: unknown };
 
 /**
  * Browser code that closes every other tab and leaves the primary tab on a blank document at the
- * site root. Unless site data is kept, it also clears the tab's session storage, the data of the
- * site and each given origin, and every cookie and every visited origin's storage, and then puts
- * back the saved session for a `restore`. It sends no request: the blank root is served locally,
- * since session storage belongs to the tab and only a document of that origin can clear it.
+ * site root. Unless site data is kept, it also clears the tab's session storage, the site's data,
+ * and every cookie and every visited origin's storage, and then puts back the saved session for a
+ * `restore`. It sends no request: the blank root is served locally, since session storage belongs
+ * to the tab and only a document of that origin can clear it.
  */
-export const resetPageCode = (targetId: string, origin: string, start: PageStart) => `${primaryPageCode(targetId)}
+export const resetPageCode = (
+  targetId: string,
+  origin: string,
+  start: PageStart,
+) => `${primaryPageCode(targetId)}
 const primaryOrigin = ${JSON.stringify(origin)};
 const siteData = ${JSON.stringify(start.siteData)};
-const cleared = ${JSON.stringify(start.siteData === "keep" ? [] : [...new Set([origin, ...start.origins])])};
+const cleared = ${JSON.stringify(start.siteData === "keep" ? [] : [origin])};
 const restored = ${JSON.stringify(start.siteData === "restore" ? (start.session ?? null) : null)};
 for (const other of context.pages()) if (other !== primary) await other.close();
 if (siteData !== "keep")
@@ -204,7 +247,8 @@ try {
 
 /**
  * Resets the primary tab as `start` says and then loads the site root. A root that does not load
- * leaves the reset in place: the step still runs and may navigate deeper itself.
+ * leaves the reset in place: the step still runs and may navigate deeper itself. A `restore`
+ * without a saved session fails before it touches the browser.
  */
 export const startPage = (
   execute: HostExecute,
@@ -213,7 +257,9 @@ export const startPage = (
   start: PageStart,
   hooks: StartPageHooks,
 ): Effect.Effect<void, Error> =>
-  execute(resetPageCode(targetId, origin, start), 60).pipe(
-    Effect.zipRight(hooks.beforeEntry),
-    Effect.zipRight(hooks.navigateRoot(new URL("/", origin).href)),
-  );
+  start.siteData === "restore" && start.session === undefined
+    ? Effect.fail(new Error("No saved session to restore"))
+    : execute(resetPageCode(targetId, origin, start), 60).pipe(
+        Effect.zipRight(hooks.beforeEntry),
+        Effect.zipRight(hooks.navigateRoot(new URL("/", origin).href)),
+      );

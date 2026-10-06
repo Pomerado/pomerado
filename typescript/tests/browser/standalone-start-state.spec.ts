@@ -469,3 +469,41 @@ test("each live test starts clean at the root, as the example does", async () =>
     tabs: 1,
   });
 });
+
+test("a page that shows the account before any sign-in leaves the example signed out", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const checked: Record<string, unknown>[] = [];
+  await build(site, { url: `${site.origin}/entry`, effect: "read" }, [
+    () =>
+      patch({
+        // Exploration sets the site's member cookie itself, so its account page shows the account.
+        "explore/look.mjs": operation(
+          "look",
+          `await page.evaluate(() => { document.cookie = "member=signed; path=/"; });
+await page.goto(new URL("/account", page.url()).href);
+return true;`,
+        ),
+        "src/tool.mjs": operation("probe", probe("example")),
+      }),
+    () => [execution("explore", "explore/look.mjs")],
+    () => [
+      execution(
+        "authenticate",
+        "src/tool.mjs",
+        { signInStep: { signedIn: { selector: "#account" } } },
+        "signed_in",
+      ),
+    ],
+    (request) => {
+      checked.push(...objects(request.input).filter((item) => "signedIn" in item));
+      return [execution("example", "src/tool.mjs")];
+    },
+    finish,
+  ]);
+  // No sign-in step sent the login, so the host does not take the page as signed in.
+  expect(checked).toContainEqual(
+    expect.objectContaining({ signedIn: false, failed: "credentials_not_submitted" }),
+  );
+  expect(site.probe("example")).toMatchObject({ path: "/", cookies: [], tabs: 1 });
+});

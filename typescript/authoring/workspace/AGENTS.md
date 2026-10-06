@@ -195,11 +195,13 @@ prose or a generic error. An unsupported receipt cannot satisfy `finish_build`.
 
 Explorations keep the retained page between probes. A live example, a live test and a
 write session's first act step start on the site origin page, with fresh page state: the
-host closes other tabs and clears the cookies and site storage exploration left, and a
-signed-in build gets back the session saved right after sign-in instead. That source must
-run the flow from the input, including entering search terms, options and dates, not
-read results an exploration left on screen. A write session's later act steps continue on
-the page the previous step left.
+host closes other tabs and clears the cookies and site storage exploration left. A
+signed-in build gets back the session saved right after sign-in instead, so a stale
+session shows up as a login wall that a new sign-in fixes. After a new sign-in starts and
+before the host confirms it, these steps keep the browser's cookies and storage as they
+are. That source must run the flow from the input, including entering search terms,
+options and dates, not read results an exploration left on screen. A write session's
+later act steps continue on the page the previous step left.
 
 <!-- pomerado:section agents.repeatable-reads -->
 

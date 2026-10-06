@@ -24,12 +24,13 @@ export const runOperation = (
     const workspace = yield* createLocalWorkspace();
     yield* seedLocalRuntime(workspace);
     const sources = artifact.files.map(({ path, content }) => [path, content] as const);
-    // A run starts as its example did: at the site root, keeping the browser's session.
+    // A run starts at the site root, as its example did. It clears nothing: the CLI and each
+    // served call run in a new browser context, and a library caller's scope keeps its session.
     yield* startPage(
       browser.execute,
       browser.targetId,
       siteOrigin,
-      { siteData: "keep", origins: [] },
+      { siteData: "keep" },
       localStartHooks(browser.execute, browser.targetId),
     );
     const result = yield* runLocalOperation({
