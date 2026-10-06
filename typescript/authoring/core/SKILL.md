@@ -150,7 +150,8 @@ See the compiling `references/variants.ts` example.
 A signed-in operation needs no login or identity hooks. The host signs in before the
 script runs, through an explicit direct HTTP request or host autofill, and the
 script starts signed in. Each enters private values through the trusted host. The
-script never receives a password.
+script never receives a password. After a full page load mid-script, call
+`ensureSignedIn()`, as the auth skill describes.
 
 When inspection establishes a login entry, pass `loginUrl` directly to `execute` with
 purpose `authenticate`. The host uses it exactly as given and grants it no authority:

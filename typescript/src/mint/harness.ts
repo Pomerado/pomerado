@@ -1852,7 +1852,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               failure?.code === "LoginIdentityConflict"
                 ? ("login_identity_conflict" as const)
                 : ("sign_in_unavailable" as const),
-            summary: signInUnavailableSummary(failure, error.spentSignIn),
+            summary: signInUnavailableSummary(failure, error.spentSignIn, error.sessionLoss),
           };
           signInUnavailable = { answer, outcome };
           if (!publishableReceipt()) terminal ??= outcome;
@@ -1868,6 +1868,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   credentialSent: failure.nothingSubmitted !== true,
                 }),
             spentSignIn: error.spentSignIn,
+            sessionLoss: error.sessionLoss,
           });
         });
       const diagnosticUnavailableFeedback = (error: MintFailure) =>
@@ -2379,6 +2380,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.execution !== undefined ||
                   error.authentication !== undefined ||
                   error.spentSignIn !== undefined ||
+                  error.sessionLoss !== undefined ||
                   error.reason === "login_in_use",
               ),
             ),
