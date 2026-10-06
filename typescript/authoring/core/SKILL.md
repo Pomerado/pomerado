@@ -43,6 +43,14 @@ pomerado:section core.secret-answers:end -->
 **The input schema.** Every caller sees the tool's input schema, so build it from the
 request and the flow, never from one caller's account or example.
 
+A value the request's text supplies, such as a code, a quantity or a choice, is the build's to
+use even when the caller's structured input is empty: pass it through the build's input where
+the host takes one (a read example's `exampleInput`), never as a build-time question. Decide
+from the request and the site whether each input is required. When a required value cannot reach
+the host's input check (a write's check decodes the caller's own structured input), the
+consistent alternative is an optional input plus a declared question the tool asks before any
+effect when the input leaves it out; never make fields optional with nothing that asks.
+
 <!-- pomerado:section core.schema-coverage -->
 
 Typed output, where the site makes it easy:

@@ -32,11 +32,12 @@ use its named phase and current evidence before diagnosing or changing the locat
 Drive every field from the input. Choose the option that matches the input value, by
 the option's value or its observed label pattern, and read back that the field took it.
 Never click a label or option copied from the example, and never reject an input value
-the schema accepts. A closed list of options stays an enum of the site's options. For an
-autocomplete, typeahead or searchable combobox, whose options come from a query, type the
-caller's value and pick the suggestion that matches it: an exact code or name match wins,
-and nothing matching or several matching equally is `InvalidInput` (core skill, the input
-schema).
+the schema accepts. A closed list of options stays an enum of the site's options, as you
+observed them on the site; a caller's answer picks an option but does not show which
+exist. For an autocomplete, typeahead or searchable combobox, whose options come from a
+query, type the caller's value and pick the suggestion that matches it: an exact code or
+name match wins, and nothing matching or several matching equally is `InvalidInput` (core
+skill, the input schema).
 
 Fill every dropdown and date control with the SDK's form controls: import
 `formControlsCode` from the runtime, put it at the top of the call's code, and call its
@@ -115,7 +116,9 @@ A control with exactly one possible value, such as a select or radio group with 
 single option, is not a question, and neither is one the input or an
 earlier answer already settles; an add-on toggle, a pre-selected checkbox or a lone
 saved payment method is still a yes-or-no choice to ask about. Confirm by meaningful resource/readback, not merely a generic toast or
-200 response.
+200 response. Match a confirmation message only against text the site showed for this
+submission, never wording you expect; when no such message was observed, read back the saved
+state (the record, its quantity or status) instead.
 
 Once that read-back matches the request, call the context's `verified()` just before
 returning, so the run reports the write as landed; a confirmation the site shows for

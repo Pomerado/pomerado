@@ -148,6 +148,15 @@ words such as synthetic, sample or test data settle no value or choice. A caller
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field.
 
+An answer can change what is left to do. When the owner's `request_input` answer clarifies that a
+prerequisite the request named, such as a check before the action, is unavailable on the site or
+not needed, drop it from the remaining work and from the tool's contract: it no longer blocks the
+build or publication, and the tool does not promise it. Checking whether an earlier attempt already
+acted is your own reconciliation, not a capability the tool offers. No answer removes the requested
+action itself or the rule against repeating a write that may have committed, adds a capability the
+site lacks, or waives a Guardian decision or a constraint the owner set. A write the session
+already confirmed is done: compose and publish from its evidence, never run it again.
+
 ## Authentication
 
 For authenticated requests, read .agents/auth/SKILL.md before authoring or executing
@@ -229,7 +238,11 @@ never with final text, which the host treats as unfinished work:
 
 - `site_lacks_capability`: the site does not offer what the task needs, such as a form, option,
   service or data it never shows, after you have looked where a person would find it (and asked
-  for directions when stuck).
+  for directions when stuck). Data shown under another word than the request's is not absent:
+  compare the headings, the values around it and the task. When they settle that it is the
+  requested field, use it; when they do not, ask the user one focused question with
+  `request_input`. Report absence only when the evidence shows the site lacks it, and never
+  invent a value or substitute a different field.
 - `policy`: a Guardian decision, or a constraint the owner set, refuses what the task needs, and
   no change within your authority gets past it, such as a requirement the site cannot meet.
 
