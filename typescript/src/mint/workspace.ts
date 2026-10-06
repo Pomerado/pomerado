@@ -73,7 +73,7 @@ export const questionOnlyWorkspace = (session: SandboxSession): SandboxSession =
   };
 };
 
-/** A patch that did not apply to the file's current text; the job workspace left it unchanged. */
+/** A patch that did not apply to the file's current text; the editor left the file unchanged. */
 const patchFailure = (error: object) => {
   const reason =
     "message" in error && typeof error.message === "string"
@@ -86,8 +86,9 @@ const patchFailure = (error: object) => {
 };
 
 /**
- * An edit the job workspace refused before changing anything (`mint/job-workspace.ts`): a patch
- * that did not apply, or a file that exists or does not. Only the stage and errno name are shown.
+ * An edit the workspace editor refused before changing anything, named by the stage it stopped at
+ * (the local editor's `refusedEdit`): a patch that did not apply, a file that exists or does not,
+ * or a size limit. Only the stage, the errno name and the limit are shown.
  */
 const stagedEditFailure = (error: unknown) => {
   if (typeof error !== "object" || error === null || !("stage" in error)) return undefined;
@@ -97,7 +98,7 @@ const stagedEditFailure = (error: unknown) => {
     "code" in error && typeof error.code === "string" && /^E[A-Z0-9]{1,15}$/.test(error.code)
       ? ` (${error.code})`
       : "";
-  // The job workspace's refusals name their limit; none carries file content.
+  // A size refusal names its limit; no refusal carries file content.
   const limit =
     "message" in error && typeof error.message === "string" && /at most/.test(error.message)
       ? ` ${error.message}.`
