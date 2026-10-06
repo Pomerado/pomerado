@@ -280,3 +280,50 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
   });
   expect(executions).toBe(1);
 });
+
+// A submit the page keeps disabled after the fields were filled is no refusal of a field: the host
+// typed the password and never clicked, and the agent reads that the submit stayed disabled.
+it("tells the agent a submit stayed disabled after the fields were filled, as no field refusal", async () => {
+  const answers: unknown[] = [inspected, focusAnswers.typing_refused];
+  const executed: string[] = [];
+  const auth = makeLiveAuthentication({
+    page: {
+      targetId: "primary",
+      execute: (code) =>
+        Effect.sync(() => {
+          executed.push(code);
+          return answers.shift() ?? { submit: "disabled", url: login };
+        }),
+    },
+    keyboard: { insertText: () => Effect.succeed("inserted" as const) },
+    siteOrigin: site,
+    authenticationOrigins: [],
+    ask: (request) =>
+      Effect.succeed(
+        Object.fromEntries(
+          request.questions.map((question) => [
+            question.id,
+            { type: "secret" as const, value: "synthetic-password" },
+          ]),
+        ),
+      ),
+    registerSecret: () => {},
+    review: () => Effect.void,
+  });
+  const started = Date.now();
+  const report = await Effect.runPromise(
+    auth.step({ fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" }),
+  );
+  expect(report).toEqual({
+    outcome: "filled",
+    fields: [{ slot: "password", status: "filled" }],
+    submit: "stayed_disabled",
+    url: login,
+    failureDetail: expect.objectContaining({ phase: "submit_disabled" }),
+    typed: true,
+  });
+  // The host asked the page again while it waited, then stopped.
+  expect(Date.now() - started).toBeGreaterThanOrEqual(5_000);
+  expect(executed.length).toBeGreaterThan(3);
+  expect(JSON.stringify(report)).not.toContain("synthetic-password");
+}, 15_000);
