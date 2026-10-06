@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { Context, Data, Effect, Either, Schema } from "effect";
+import { Context, Data, Effect, Either, Schema, SchemaAST } from "effect";
 import type { Deadline } from "./deadline.js";
 import {
   ConfirmQuestion,
   InputRequest,
   QuestionId,
+  questionIdPattern,
   SecretQuestion,
   TextQuestion,
   validateAnswer,
@@ -56,9 +57,26 @@ export const ScriptQuestionDeclaration = Schema.Union(
   Schema.Struct({ prompt: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(500)) }),
 );
 export type ScriptQuestionDeclaration = typeof ScriptQuestionDeclaration.Type;
-export const ScriptQuestionDeclarations = Schema.Record({
+const QuestionDeclarations = Schema.Record({
   key: QuestionId,
   value: ScriptQuestionDeclaration,
+});
+export const ScriptQuestionDeclarations = Schema.Unknown.pipe(
+  // Check original keys before record construction can discard __proto__ or another invalid id.
+  Schema.filter(
+    (questions) =>
+      typeof questions !== "object" ||
+      questions === null ||
+      Object.keys(questions).every((id) => questionIdPattern.test(id)),
+    {
+      message: () =>
+        "question ids must start with a lowercase letter and contain only lowercase letters, digits, or underscores (up to 64 characters)",
+    },
+  ),
+  Schema.compose(QuestionDeclarations),
+).annotations({
+  // Schema generation still describes the declarations rather than the unvalidated input.
+  [SchemaAST.SurrogateAnnotationId]: QuestionDeclarations.ast,
 });
 export type ScriptQuestionDeclarations = Readonly<Record<string, ScriptQuestionDeclaration>>;
 

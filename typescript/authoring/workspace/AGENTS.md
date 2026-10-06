@@ -121,11 +121,12 @@ continues, when:
 
 Never ask for a fact the site shows (a choice it offers is askable when the input leaves it
 open), for host or infrastructure failures, for permission to do what was requested, for
-credentials (the host asks for logins itself) or for CAPTCHAs. On a write, you never assume a
-missing business choice: ask about add-ons, pre-selected paid options and saved payment actually
-observed on the site, and about any other optional field only when the request's purpose
-clearly depends on its value (an unset optional input keeps the page's default; it is still a
-tool input). A control with exactly one possible value (a select or radio group with a single option),
+credentials (the host asks for logins itself) or for CAPTCHAs. Asking which sign-in method or
+account to use is a different question and is expected, as the sign-in branch rule above says.
+On a write, you never assume a missing business choice: ask about add-ons, pre-selected paid
+options and saved payment actually observed on the site, and about any other optional field
+only when the request's purpose clearly depends on its value (an unset optional input keeps the
+page's default; it is still a tool input). A control with exactly one possible value (a select or radio group with a single option),
 or one the input or an earlier answer already settles, is no choice: never ask about it. An
 add-on toggle, a pre-selected checkbox or a lone saved payment method is still a yes-or-no choice
 to ask about. Read the path's options with read-only exploration where you can and settle them before

@@ -278,6 +278,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "site_metadata_required"
     /** Another enabled tool in the integration this would join has the same tool name. */
     | "tool_name_taken"
+    /** The definition to publish quotes the build's account reference; refused every time. */
+    | "definition_login_reference"
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
@@ -898,6 +900,8 @@ export type MintEntryNavigation =
   | {
       readonly state: "not_opened";
       readonly outcome: "failed" | "timeout" | "skipped";
+      /** `prior_effect`: the host skipped the entry because an earlier attempt of this job already ran on the website. */
+      readonly reason?: "prior_effect";
       readonly requestedUrl: string;
       readonly resolvedUrl?: string;
       readonly redirects?: readonly { readonly url: string; readonly status: number | null }[];
@@ -1165,6 +1169,13 @@ export interface MintDependencies {
     ids?: { readonly reviewId?: string; readonly requestId?: string },
   ) => Effect.Effect<ValidAnswers, MintFailure>;
   /**
+   * Removes host-private values, such as the build's account reference, from text the agent
+   * writes for its caller: each request's notice, prompts and option labels, and its blocked
+   * explanation. Applied before review; the agent's own transcript keeps what it wrote. Absent,
+   * the text is shown as written.
+   */
+  readonly redactCallerText?: (text: string) => string;
+  /**
    * Raises the system login request Guardian routed a question to. `held` means the host already
    * has a login; `unavailable` means this job may not ask for one. The model never sees values.
    */
@@ -1201,6 +1212,11 @@ export interface MintDependencies {
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */
   readonly initialExample?: ExecutionEvidence;
   readonly priorReadExecutions?: readonly ExecutionEvidence[];
+  /**
+   * An earlier attempt of this write build ended after steps that may have changed the website,
+   * and this attempt starts over. The agent's first input tells it to read back before any write.
+   */
+  readonly priorAttemptMayHaveChanged?: boolean;
   /** Host-owned state, independent of model prose and publication. */
   readonly currentInvocation?: () => CurrentInvocation | undefined;
   readonly canPublishRepair?: (executionId: string) => boolean;

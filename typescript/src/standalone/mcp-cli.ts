@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -121,8 +122,14 @@ export const startMcpCli = (
   });
 };
 
-if (
-  process.argv[1] !== undefined &&
-  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
-)
-  startMcpCli();
+/** npm links a bin to this file, so the entry path counts once its links are resolved. */
+const isEntrypoint = (path: string | undefined) => {
+  if (path === undefined) return false;
+  try {
+    return pathToFileURL(realpathSync(path)).href === import.meta.url;
+  } catch {
+    return false;
+  }
+};
+
+if (isEntrypoint(process.argv[1])) startMcpCli();

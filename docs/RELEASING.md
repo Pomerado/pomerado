@@ -2,7 +2,7 @@
 
 Every npm release of `pomerado` comes from GitHub Actions with npm provenance. Maintainers never publish from their own machines. GitHub stores no npm token.
 
-1. A maintainer pushes a commit to `main` that sets the new `version` in `package.json` and records the release's changes under that version in [CHANGELOG.md](../CHANGELOG.md). Breaking changes get migration steps and, while the major version is 0, a new minor version.
+1. A maintainer merges a pull request into `main` that sets the new `version` in `package.json` and records the release's changes under that version in [CHANGELOG.md](../CHANGELOG.md). Breaking changes get migration steps and, while the major version is 0, a new minor version.
 2. A maintainer tags that commit with `v` and the same version, then pushes the tag.
 
    ```sh
