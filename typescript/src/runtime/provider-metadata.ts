@@ -9,7 +9,7 @@ export type RetainedProviderStage =
   | "login_already_running"
   | "login_response_decode"
   | "submit_state"
-  /** Kernel answered the submission `accepted: false`. */
+  /** The provider answered the submission `accepted: false`. */
   | "submit_rejected"
   | "submit_response_decode"
   | "cleanup_identity_decode";
@@ -20,15 +20,15 @@ export type RetainedProviderCode =
   | "InvalidConfiguration"
   | "ProxyUnavailable"
   | "AllocationUncertain"
-  /** Kernel answered the create with a definite refusal, so no browser exists. */
+  /** The provider answered the create with a definite refusal, so no browser exists. */
   | "AllocationRejected"
   | "StopUnconfirmed"
   | "UnexpectedBrowserState"
   | "StorageUnavailable"
   | "BindingNotFound";
 
-/** Proxy failure codes retained in sign-in diagnostics. */
-export type RetainedProxyError =
+/** Network failure codes a host retains in sign-in diagnostics, as its provider reported them. */
+export type RetainedNetworkError =
   | "upstream_timeout"
   | "provider_unreachable"
   | "upstream_connect_failed"
@@ -58,7 +58,8 @@ export type RetainedProxyError =
   | "proxy_rate_limited"
   | "other";
 
-export type ProxySwitchSummary =
+/** How the host replaced a browser after a failure, as the agent sees it. */
+export type BrowserRecoverySummary =
   | {
       readonly kind: "switched";
       readonly egress: "proxy" | "direct";
@@ -67,7 +68,7 @@ export type ProxySwitchSummary =
       readonly possiblySent: boolean;
       readonly inFlightPossiblySent: true;
       readonly repeated: false;
-      /** The browser's cookies, cache and site storage were cleared for the new proxy. */
+      /** The browser's cookies, cache and site storage were cleared for the replacement. */
       readonly stateCleared: true;
       /** Set when the clear ended the site's signed-in session. */
       readonly signIn?: "again_once" | "unavailable";
