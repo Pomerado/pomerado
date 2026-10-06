@@ -16,7 +16,7 @@ import {
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { noticeRequest, InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
-import { siteDomain } from "../runtime/same-site.js";
+import { siteDomain, trustedUrl } from "../runtime/same-site.js";
 import type { MintState } from "./mint-state.js";
 import { error, inputValue, mintError } from "./errors.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
@@ -303,15 +303,20 @@ const authoredExecution = (
       handles.misplaced(new Map(sources), context.siteOrigin) !== undefined
     )
       return yield* Effect.fail(new MintFailure({ code: "ScopeDenied" }));
-    // A code the site sent for the sign-in under way, which an explore typed into the page,
+    // A code the site sent for the sign-in under way, which an explore typed on the site,
     // finished that sign-in: it counts as the proof, as a code the host fills does. Only a typing
-    // call that delivered the code's value and completed counts, never the source text.
+    // call that delivered the code's value in a frame on the site or a configured sign-in origin
+    // and completed counts, never the source text.
     const known = new Map(handles.snapshot());
     const codes =
       execution.purpose === "explore" && execution.target === "liveBrowser"
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
-    const watch = codes.length === 0 ? undefined : browser.watchTyping(codes);
+    const signInOrigins = request.authenticationOrigins ?? [];
+    const watch =
+      codes.length === 0
+        ? undefined
+        : browser.watchTyping(codes, (url) => trustedUrl(context.siteOrigin, signInOrigins, url));
     yield* beforeDispatch ?? Effect.void;
     yield* start.before(execution);
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
