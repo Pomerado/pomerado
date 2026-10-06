@@ -80,8 +80,9 @@ public schema (core's input schema rules).
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: the site's confirmation for this submission, or a read-back
-of the saved state matched to the input. Compose it from the steps that worked, also when a
-commit step returned an uncertain result and a later read-back showed the write landed.
+of the saved state matched to the input, unless the site offers neither; then declare it
+`unverifiable`. Compose it from the steps that worked, also when a commit step returned an
+uncertain result and a later read-back showed the write landed.
 
 <!-- pomerado:section writes.alternate-version -->
 

@@ -146,14 +146,14 @@ words such as synthetic, sample or test data settle no value or choice. A caller
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field.
 
-An answer can change what is left to do. When the user clarifies that a prerequisite the request
-named, such as a check before the action, is unavailable on the site or not needed, drop it from
-the remaining work and from the tool's contract: it no longer blocks the build or publication, and
-the tool does not promise it. Checking whether an earlier attempt already acted is your own
-reconciliation, not a capability the tool offers. No answer removes the requested action itself
-or the rule against repeating a write that may have committed, and none adds a capability the site
-lacks. A write the session already confirmed is done: compose and publish from its evidence, never
-run it again.
+An answer can change what is left to do. When the owner's `request_input` answer clarifies that a
+prerequisite the request named, such as a check before the action, is unavailable on the site or
+not needed, drop it from the remaining work and from the tool's contract: it no longer blocks the
+build or publication, and the tool does not promise it. Checking whether an earlier attempt already
+acted is your own reconciliation, not a capability the tool offers. No answer removes the requested
+action itself or the rule against repeating a write that may have committed, adds a capability the
+site lacks, or waives a Guardian decision or a constraint the owner set. A write the session
+already confirmed is done: compose and publish from its evidence, never run it again.
 
 ## Authentication
 
