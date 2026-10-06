@@ -26,9 +26,7 @@ Pomerado builds MCP integrations for websites, including sites without an API.
 
 - Our tool builds integrations with only a natural language description of the task. No HAR file or recording is needed
 - Integrations are deterministic, making them much faster and more reliable than computer use
-- Pomerado works on any site, including sites behind a login and two-factor authentication
-
-<p align="center"><img src="docs/assets/pomerado-diagram.png" alt="Websites, legacy portals and internal tools go into Pomerado, which builds, hosts and maintains a deterministic API that product agents, internal agents and personal assistants call" width="900"></p>
+- Pomerado works on sites behind a login and two-factor authentication
 
 ## How it works
 
@@ -41,7 +39,7 @@ flowchart LR
   try --> complete --> publish --> use
 ```
 
-For more details, please see [How it works](docs/how-it-works.md).
+For more details, see [How it works](docs/how-it-works.md).
 
 ## Get started
 
@@ -50,7 +48,7 @@ Prerequisites
 - macOS or Linux
 - Node 24.21 or a later Node 24 release, which you can check with `node --version`
 - An OpenAI API key, since Pomerado uses OpenAI models to build and review integrations. Your agent can run on any model
-- An MCP client that runs local servers, such as Claude Code, Codex, Cursor, Claude Desktop or Gemini CLI
+- An MCP client that runs local servers, such as Claude Code, Codex, Cursor, VS Code, Claude Desktop or Gemini CLI
 
 Install Pomerado and the Chromium build it drives.
 
@@ -121,7 +119,7 @@ Authority decides what an integration is allowed to do, so choose it deliberatel
 - Use `read` when the task only looks at a website
 - Use `write` only when the task changes something, such as submitting a form or making a booking
 - A write mint performs the action once while it builds, then reviews the final source without repeating it
-- A read mint that finds the task needs a change asks to switch to write, and your answer decides
+- A read mint that finds the task needs a change asks to switch to write, and your agent's answer decides
 
 Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 
@@ -155,7 +153,7 @@ Each integration appears to your agent as its own MCP server.
 
 ## Open source and Pomerado Cloud
 
-This repository is the complete Pomerado core, released under the MIT license. Everything you need to mint integrations and run them yourself is here, with no account required.
+This repository is the complete Pomerado core, released under the MIT license. Everything you need to mint integrations and run them yourself is here, with no Pomerado account required.
 
 - The minter, which builds integrations in a real Chromium browser
 - The minting harness and prompts that Pomerado Cloud also builds on
@@ -185,7 +183,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 | Path | Contents |
 | --- | --- |
 | `typescript/src/` | Minter, Guardian, runtime, browser helpers and the local MCP host |
-| `typescript/authoring/` | Shared prompts and examples for local and hosted minting |
+| `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
 | `typescript/tests/` | Unit tests and browser tests with local fixture sites |
 | `tools/` | Build helpers and the CI scans |
 | `docs/` | Guides for users, agents and maintainers |
