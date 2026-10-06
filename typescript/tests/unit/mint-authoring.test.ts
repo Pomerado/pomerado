@@ -121,6 +121,25 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
   expect(auth).not.toContain("enabled submit");
 });
 
+// A write committed values the page never showed matching the input; a page's own recent-search
+// save looked like an unintended write; a value the site keeps a few clicks away was called
+// invalid input.
+it("has the minter read back a write, accept recent-search saves and look before invalid input", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  const text = (name: string) =>
+    (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "- Before committing, read back from the page what you are about to submit and check each value against the caller's input, in the session and on every branch of the composed script. Fail before the commit if one does not match. Never read back a field filled with a secret handle.",
+  );
+  expect(text("core")).toContain(
+    "Telemetry, analytics and bot-sensor POSTs are normal and need no change. So is an anonymous recent-search, prefill or search-state save the site fires when you submit a search.",
+  );
+  expect(guide.instructions.replace(/\s+/g, " ")).toContain(
+    "Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of our automation. Not finding a value where you first looked is not that evidence. Before you call a value unavailable, look everywhere the site keeps it, such as later calendar months, other tabs or more results.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -137,13 +156,13 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["2486b41337525cf33d86b346278d870f131204f0fe3b98db2d5be1170e1b3213", "core"],
+    ["43687c3a072436628b4694bc0fc788b2d6ab126200dfaf504fcc393358eb58f4", "core"],
     ["3b569c6f058ac70c7a68d930aae8bad26cc42947fdfc6545db38ad77692bce3a", "auth"],
     ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
     ["97287c44e1b4629efa00f066d65ba0859cb4a4625d44b97faea7784b0a084afd", "forms"],
-    ["ef7f6b139f6ea7c920e1c294ae10300f0f9bf2c4148b8f0836b5cc9fe60783dd", "writes"],
+    ["4b99ef8281a9e202be17a353f7a7b25e7c4da7bc00afc84088e2077be6d0683f", "writes"],
     ["c6f95c20707e9f3e799ffe71999997aa887c0ffa0c893af0f8c408c5d04ab179", "caller-input"],
-    ["627613e21924a2f5974ee0309846051eb20150d5353bca128705047139080d35", "workspace/AGENTS.md"],
+    ["1476c2ae5a2ef3250df463e2a87951bcf2cfda2afe36e5fd95896da6338606c2", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });
