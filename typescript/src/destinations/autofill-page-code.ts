@@ -4,6 +4,7 @@ import type { AutofillPopup, DateOfBirthFormat } from "./autofill-contracts.js";
 import { locateCode } from "./autofill-locate-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
+import { pageControlsCode } from "./page-controls.js";
 
 /**
  * Page code: the step's controls and visible native and ARIA actions, for the host and Guardian.
@@ -44,9 +45,10 @@ return {
  * - `submit`: guards the submission as it fires (`submissionGuardCode`, under the host's
  *   `guardKey` and armed for `guardCall`, with every form action and link destination as the
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
- *   as judged, and how each field's secret is found by value, if it is one), clicks the submit and
- *   waits for the page to settle. A disabled submit it never clicks: it says so and does nothing,
- *   and the host calls again while the page may still enable it.
+ *   as judged, and how each field's secret is found by value, if it is one), clicks the submit,
+ *   waits for the page to settle and reads its controls (`pageControlsCode`). A disabled submit it
+ *   never clicks: it says so and does nothing, and the host calls again while the page may still
+ *   enable it.
  */
 export type AutofillFillCall =
   | { readonly kind: "focus"; readonly index: number; readonly bindingKey: string }
@@ -204,7 +206,11 @@ let submission = await refusedSubmission();
 if (submission === null && (await navigated))
   await primary.waitForLoadState("domcontentloaded", { timeout: ${call.settleMs} }).catch(() => undefined);
 submission ??= await refusedSubmission();
-return submission === null ? { submit: "clicked", url: primary.url() } : { submission, url: primary.url() };`;
+if (submission !== null) return { submission, url: primary.url() };
+${pageControlsCode}
+// What the page shows once the submit settled, never a value, for the minter's next step.
+const controls = await pageControls().catch(() => null);
+return { submit: "clicked", url: primary.url(), ...(controls === null ? {} : { controls }) };`;
 };
 
 /** Resolves only a real child of the stable primary opener, on the recorded origin. */

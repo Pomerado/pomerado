@@ -34,6 +34,7 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
+import { PageControls } from "./page-controls.js";
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -56,6 +57,7 @@ const FillAnswer = Schema.Union(
     /** `disabled`: the submit was disabled, so the call clicked nothing. */
     submit: Schema.Literal("clicked", "failed", "disabled", "none"),
     url: Schema.String,
+    controls: Schema.optional(PageControls),
   }),
   GuardRefusal,
 );
@@ -525,5 +527,6 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
           ...foundEvidence(answer.url, undefined, evidenceOrigins(input, progress)),
         }),
       );
-    return filledReport(step, progress, answer.submit, answer.url);
+    const report = filledReport(step, progress, answer.submit, answer.url);
+    return answer.controls === undefined ? report : { ...report, controls: answer.controls };
   });

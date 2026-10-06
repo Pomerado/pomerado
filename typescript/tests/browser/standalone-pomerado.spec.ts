@@ -1,15 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createServer as createTlsServer } from "node:https";
+import { promisify } from "node:util";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { startShop, shopAccount } from "./shop-fixture.js";
+import { startShop, shopAccount, shopHelpLinks } from "./shop-fixture.js";
 import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
@@ -18,6 +22,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
+import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/page-controls.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 
@@ -1422,4 +1427,473 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
     );
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("a sign-in code asked during sign-in is typed into the code screen; a later action code is not marked", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs drive a two-screen native sign-in and two explores in Chromium",
+  });
+  test.setTimeout(60_000);
+  const codesReceived: string[] = [];
+  const body = async (request: AsyncIterable<unknown>) => {
+    let text = "";
+    for await (const chunk of request) text += String(chunk);
+    return new URLSearchParams(text);
+  };
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-code-"));
+  await promisify(execFile)("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-keyout",
+    join(directory, "key.pem"),
+    "-out",
+    join(directory, "cert.pem"),
+    "-subj",
+    "/CN=www.codes.test",
+    "-days",
+    "1",
+  ]);
+  const tls = {
+    key: await readFile(join(directory, "key.pem")),
+    cert: await readFile(join(directory, "cert.pem")),
+  };
+  const server = createTlsServer(tls, (request, response) => {
+    void (async () => {
+      const cookie = request.headers.cookie ?? "";
+      if (request.method === "POST" && request.url === "/login") {
+        await body(request);
+        response.writeHead(303, { "Set-Cookie": "stage=code; Path=/", Location: "/" });
+        return response.end();
+      }
+      if (request.method === "POST" && request.url === "/code") {
+        const code = (await body(request)).get("code") ?? "";
+        codesReceived.push(code);
+        response.writeHead(303, {
+          ...(code === "135790" ? { "Set-Cookie": "signed=yes; Path=/" } : {}),
+          Location: "/",
+        });
+        return response.end();
+      }
+      response.setHeader("Content-Type", "text/html");
+      response.end(
+        cookie.includes("signed=yes")
+          ? `<title>Account</title><h1>Account</h1><div id="account">Your orders</div><form><label>Confirmation code<input name="confirm" autocomplete="one-time-code"></label></form>`
+          : cookie.includes("stage=code")
+            ? `<title>Verify</title><form method="post" action="/code"><label>We texted you a code<input name="code" autocomplete="one-time-code" inputmode="numeric"></label><button>Verify</button></form>`
+            : `<title>Sign in</title><form method="post" action="/login"><label>User<input name="username" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>`,
+      );
+    })();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const remote = await chromium.launchServer({
+    args: [
+      "--host-resolver-rules=MAP www.codes.test 127.0.0.1",
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  /** A probe whose one browser call runs `code`. */
+  const probe = (code: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(code)},timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return response.result;
+});`;
+  const files: readonly (readonly [string, string])[] = [
+    [
+      "explore/code.mjs",
+      probe(
+        "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.getByRole('button', { name: 'Verify' }).click(); await page.locator('#account').waitFor({ timeout: 3000 }); return page.url();",
+      ),
+    ],
+  ];
+  // Written once its handle is issued: a handle the attempt never issued refuses every execution.
+  const confirm = probe(
+    "await page.locator('input[name=confirm]').fill('{{secret.s2}}'); return null;",
+  );
+  const created = (entries: readonly (readonly [string, string])[]): ModelResponse["output"] =>
+    entries.map(([path, content]) => ({
+      type: "apply_patch_call",
+      callId: `patch_${path}`,
+      status: "completed",
+      operation: {
+        type: "create_file",
+        path,
+        diff:
+          content
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n") + "\n",
+      },
+    }));
+  const secretQuestion = (id: string, prompt: string) =>
+    call(
+      "request_input",
+      {
+        intent: prompt,
+        questions: [{ id, type: "secret", secretKind: "one_time_code", prompt }],
+      },
+      id,
+    );
+  const explore = (entrypoint: string) =>
+    call("execute", { ...execution, purpose: "explore", entrypoint }, entrypoint);
+  const steps: ModelResponse["output"][] = [
+    created(files),
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+        },
+        "sign_in",
+      ),
+    ],
+    [secretQuestion("code", "Enter the code the site texted you to finish signing in.")],
+    [explore("explore/code.mjs")],
+    [
+      call(
+        "execute",
+        {
+          ...execution,
+          purpose: "authenticate",
+          signInStep: { signedIn: { selector: "#account" } },
+        },
+        "signed_in",
+      ),
+    ],
+    [secretQuestion("confirm", "Enter the confirmation code the site sent for this action.")],
+    created([["explore/confirm.mjs", confirm]]),
+    [explore("explore/confirm.mjs")],
+  ];
+  const mintRequests: ModelRequest[] = [];
+  // The scenario ends after the second probe; final text without a tool call ends the attempt.
+  const minterProvider = provider(
+    (_request, index) => steps[index] ?? [message("Stopping after the probes.")],
+    mintRequests,
+  );
+  /** The trusted context of each execution review, by the entrypoint it reviewed. */
+  const contexts = new Map<string, Record<string, unknown>>();
+  const reviewRequests: ModelRequest[] = [];
+  const guardianProvider = guardian(reviewRequests, (request) => {
+    const current = objects(request.input)
+      .filter((item) => "submitted_call" in item)
+      .at(-1);
+    const entrypoint = objects(current?.["submitted_call"]).at(0)?.["entrypoint"];
+    const context = objects(current?.["trusted_execution_context"]).at(0) ?? {};
+    if (typeof entrypoint === "string") contexts.set(entrypoint, context);
+    // The recorded Guardian follows the policy: typing a handle into the sign-in form is allowed
+    // only for a code the host lists as asked during this sign-in.
+    if (entrypoint !== "operation/explore/code.mjs") return "allow";
+    const listed = context["signInCodes"];
+    return Array.isArray(listed) && listed.includes("{{secret.s1}}") ? "allow" : "deny";
+  });
+  const answers: Record<string, string> = {
+    username: "ada@example.test",
+    password: "fixture-password-4417",
+    code: "135790",
+    confirm: "246802",
+  };
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider,
+            guardianProvider,
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, answers[question.id] ?? ""]),
+                ),
+              ),
+            ),
+            timeoutMs: 45_000,
+          });
+          yield* service.mint({
+            url: `https://www.codes.test:${address.port}/`,
+            intent: "Read my account page title",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    // The site took the code the caller supplied for this sign-in, typed by the agent's probe.
+    expect(codesReceived).toEqual(["135790"]);
+    expect(contexts.get("operation/explore/code.mjs")?.["signInCodes"]).toEqual([
+      "{{secret.s1}}",
+    ]);
+    // A code asked after the sign-in was verified is an action's code, reviewed as before.
+    expect(contexts.get("operation/explore/confirm.mjs")).toBeDefined();
+    expect(contexts.get("operation/explore/confirm.mjs")?.["signInCodes"]).toBeUndefined();
+    for (const value of Object.values(answers).slice(1))
+      expect(JSON.stringify([mintRequests, reviewRequests])).not.toContain(value);
+  } finally {
+    await remote.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const SavedControls = Schema.parseJson(
+  Schema.Struct({
+    controls: Schema.Array(
+      Schema.Struct({
+        role: Schema.String,
+        name: Schema.NullOr(Schema.String),
+        type: Schema.NullOr(Schema.String),
+        required: Schema.Boolean,
+        visible: Schema.Boolean,
+        enabled: Schema.Boolean,
+      }),
+    ),
+    total: Schema.Number,
+  }),
+);
+const LastScreen = Schema.Struct({
+  lastScreen: Schema.Struct({
+    path: Schema.Literal("captures/after-submit/1.json"),
+    controls: Schema.Array(Schema.Unknown),
+    truncated: Schema.optional(Schema.String),
+  }),
+});
+
+/**
+ * A synthetic 169-character identifier, longer than a control's shown name, so cutting a name
+ * before screening would leave a long piece of it.
+ */
+const longIdentifier = `${Array.from({ length: 156 }, (_, index) => "abcdefghijklmnopqrstuvwxyz0123456789"[(index * 7) % 36]).join("")}@example.test`;
+/** Every 12-character piece of `value` that `text` contains. */
+const piecesIn = (text: string, value: string) =>
+  Array.from({ length: value.length - 11 }, (_, at) => value.slice(at, at + 12)).filter((piece) =>
+    text.includes(piece),
+  );
+
+/**
+ * A mint that signs in on the shop's two-screen sign-in: the identifier step, a read of the saved
+ * controls, then (with `failNext`) a step whose field the next screen lacks. It answers every
+ * sign-in question with `identifier` and returns the file as saved on disk after the first submit,
+ * and each tool result by call id.
+ */
+const twoScreenSignIn = async (options: {
+  readonly identifier: string;
+  readonly loginPath: string;
+  readonly failNext: boolean;
+}) => {
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-after-submit-"));
+  const shop = await startShop(directory);
+  // Marks this sign-in's help links, so the test finds its own saved file among parallel tests'.
+  const tag = `tag${randomUUID().slice(0, 8)}`;
+  const remote = await chromium.launchServer({
+    args: [
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  // The minter reads the saved file on its next turn; the test reads it from disk then.
+  const savedFile = () =>
+    readdirSync(tmpdir())
+      .filter((entry) => entry.startsWith("pomerado-workspace-"))
+      .map((entry) => join(tmpdir(), entry, "captures/after-submit/1.json"))
+      .filter((path) => existsSync(path))
+      .map((path) => readFileSync(path, "utf8"))
+      .find((text) => text.includes(tag));
+  let saved: string | undefined;
+  const mintRequests: ModelRequest[] = [];
+  const signInStep = (step: unknown, callId: string) =>
+    call("execute", { ...execution, purpose: "authenticate", signInStep: step }, callId);
+  const minter = provider((_request, index) => {
+    if (index === 0)
+      return [
+        signInStep(
+          { fields: [{ selector: "#username", accepts: ["email"] }], submit: "#next" },
+          "identifier",
+        ),
+      ];
+    if (index === 1) {
+      saved = savedFile();
+      return [
+        call(
+          "read_source",
+          { path: "captures/after-submit/1.json", offset: null, limit: null },
+          "read_controls",
+        ),
+      ];
+    }
+    if (index === 2 && options.failNext)
+      return [
+        signInStep(
+          { fields: [{ selector: "#pin", slot: "password" }], submit: "#sign-in" },
+          "wrong_screen",
+        ),
+      ];
+    return [message("Stopping here.")];
+  }, mintRequests);
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint: remote.wsEndpoint() },
+            minterProvider: minter,
+            guardianProvider: guardian([]),
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, options.identifier]),
+                ),
+              ),
+            ),
+            timeoutMs: 30_000,
+          });
+          yield* service.mint({
+            url: `${shop.origin}${options.loginPath}${options.loginPath.includes("?") ? "&" : "?"}tag=${tag}`,
+            intent: "Read the account heading",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+  } finally {
+    await remote.close();
+    await shop.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+  const toolResult = (callId: string) => {
+    const result = objects(mintRequests.at(-1)?.input).find(
+      (item) => item["type"] === "function_call_result" && item["callId"] === callId,
+    );
+    if (result === undefined) throw new Error(`No ${callId} result`);
+    return result;
+  };
+  return { saved, toolResult, mintRequests };
+};
+
+test("a two-screen sign-in saves the next screen's controls and inlines them when the next step fails", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const email = shopAccount.username;
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: email,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  // The file is saved after the first submit, with the next screen's controls and no value.
+  expect(saved).toBeDefined();
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(saved).not.toContain(email);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ role: "button", name: "Trouble signing in", enabled: false }),
+  );
+  expect(file.controls).toContainEqual(expect.objectContaining({ name: "Code", visible: false }));
+  expect(file.total).toBe(shopHelpLinks + 4);
+  // The step result names the file and adds no control list.
+  const identifier = JSON.stringify(toolResult("identifier"));
+  expect(identifier).toContain("captures/after-submit/1.json");
+  expect(identifier).not.toContain("Help topic");
+  // The minter reads it like any other workspace file.
+  const read = JSON.stringify(toolResult("read_controls"));
+  expect(read).toContain("Help topic 0");
+  expect(read).not.toContain(email);
+  // A step that cannot find its screen carries the saved controls inline, capped.
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  const lastScreen = Schema.decodeUnknownSync(LastScreen)(failed).lastScreen;
+  expect(lastScreen.controls).toHaveLength(30);
+  expect(lastScreen.truncated).toBeDefined();
+  expect(JSON.stringify(mintRequests)).not.toContain(email);
+});
+
+test("a long typed identifier the next screen echoes in a label never appears in its saved or inline controls, even in part", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const identifier = longIdentifier;
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  expect(saved).toBeDefined();
+  const failed = JSON.stringify(
+    objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item),
+  );
+  expect(failed).toContain("Password for");
+  for (const text of [saved ?? "", failed, JSON.stringify(mintRequests)])
+    expect(piecesIn(text, identifier)).toEqual([]);
+});
+
+test("a label padded so a typed identifier crosses the text limit leaves the field unnamed, with no piece of the identifier", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  // Only the identifier's first 64 characters fit under the limit.
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: longIdentifier,
+    loginPath: `/sign-in?pad=${pageControlTextLimit - 64}`,
+    failNext: true,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null, visible: true }),
+  );
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  expect(Schema.decodeUnknownSync(LastScreen)(failed).lastScreen.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null }),
+  );
+  for (const text of [saved ?? "", JSON.stringify(failed), JSON.stringify(mintRequests)])
+    expect(piecesIn(text, longIdentifier)).toEqual([]);
+});
+
+test("a next screen whose first hundred controls are hidden still saves its visible sign-in field", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and a host autofill step through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const { saved } = await twoScreenSignIn({
+    identifier: shopAccount.username,
+    loginPath: `/sign-in?hidden=${pageControlsLimit}`,
+    failNext: false,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.total).toBe(pageControlsLimit + shopHelpLinks + 4);
+  expect(file.controls).toHaveLength(pageControlsLimit);
+  expect(file.controls[0]).toEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
 });
