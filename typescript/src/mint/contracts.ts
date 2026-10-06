@@ -505,7 +505,10 @@ export interface ExecutionEvidence {
    * The confirmation a write session step read when the host did not accept its result, such as
    * one that returned a credential. It leaves the session open, so a later step that only reads
    * the confirmation back can confirm it. The step publishes only when publication says no
-   * read-back is possible (`readBackUnavailable`).
+   * read-back is possible (`readBackUnavailable`). The write went out, so a host that sets it
+   * must treat the commit marks this step entered as settled for every later act step (pass them
+   * as `settledCommits` to `makeEffectJournalWith`), so entering one again fails with
+   * `CommitAlreadySent`. Ignored when `confirmation` is set.
    */
   readonly withheldConfirmation?: "message" | "readback";
   /** Screened, finite supporting observation; never a replacement execution failure. */
@@ -631,7 +634,7 @@ export const PublicationRequest = Schema.Struct({
    * host did not accept its result. Only then does that step publish, with no output kept.
    */
   readBackUnavailable: Schema.optional(
-    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(500)).annotations({
+    Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
       description:
         "Only for a write step whose result the host did not accept after it read the confirmation: why no act step can read that confirmation or the saved state back, such as the site showing neither again",
     }),
