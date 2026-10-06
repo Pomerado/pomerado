@@ -997,27 +997,6 @@ export const withFailureContext = (
 };
 
 /**
- * Ends an existing detail's cause chain with another error, such as a failed ROLLBACK beside
- * the statement error that caused it. The entry is described, redacted and capped like every
- * chain entry; it replaces the innermost cause when the chain is full, and the detail keeps its
- * size bound and its archive-only serialization (a spread copy would lose both).
- */
-export const withCauseEntry = (detail: FailureDetail, error: unknown): FailureDetail => {
-  const entry = describeError(error).underlying;
-  if (entry === undefined) return archiveOnly(fitSize({ ...detail }));
-  const bounded =
-    entry.message === undefined
-      ? entry
-      : { ...entry, message: truncate(entry.message, bounds.chainMessage) };
-  return archiveOnly(
-    fitSize({
-      ...detail,
-      causeChain: [...(detail.causeChain ?? []).slice(0, bounds.chainDepth - 1), bounded],
-    }),
-  );
-};
-
-/**
  * A detail nested in a failure object is invisible to JSON serialization: RPC encoders,
  * public responses and `JSON.stringify(failure)` omit it. Only `failureDetailMetadata` and
  * `failureDetailOf` project it, into the archive and the maintenance evidence files, and
@@ -1165,18 +1144,6 @@ export const failureFiniteNames = (
       ...(errorName === undefined ? {} : { errorName }),
       ...(errorCode === undefined ? {} : { errorCode }),
     },
-  };
-};
-
-/** Operational-log projection: finite names only, never messages, stacks or context. */
-export const failureDetailFiniteMetadata = (
-  value: unknown,
-): { readonly subCause: FailureSubCause; readonly operation?: string } | undefined => {
-  const detail = failureDetailMetadata(value)?.failureDetail;
-  if (detail === undefined) return undefined;
-  return {
-    subCause: detail.subCause,
-    ...(detail.operation === undefined ? {} : { operation: detail.operation }),
   };
 };
 

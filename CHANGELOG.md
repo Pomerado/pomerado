@@ -11,8 +11,9 @@
 
 The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
 
-- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. `guardianExecutionPolicy` takes the same object. The local host passes `nativeExecutionEnvironment`, so its policy text is unchanged. The `"hosted"` text is gone.
-  - Migrate by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
+- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
+  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
+  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
   - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
 - `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
@@ -27,6 +28,7 @@ The package now holds only code the local host runs, plus the hook interfaces an
   - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
   - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
   - `boundaryError` from `pomerado/core/execution/boundary`
+  - `withCauseEntry` and `failureDetailFiniteMetadata` from `pomerado/core/runtime/failure-detail`
   - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
 - Migrate from any removed module or export by keeping your own copy in your host.
 

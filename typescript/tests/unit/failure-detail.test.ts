@@ -7,7 +7,6 @@ import {
   failureDetailMetadata,
   failureDetailOf,
   redactDiagnosticText,
-  withCauseEntry,
 } from "../../src/runtime/failure-detail.js";
 
 class StorageFailure extends Data.TaggedError("StorageFailure")<{
@@ -110,79 +109,6 @@ describe("failure detail", () => {
       region: "us",
     });
     expect(JSON.stringify(failureDetailMetadata({ failureDetail: detail }))).not.toMatch(/masked-/);
-  });
-
-  describe("withCauseEntry", () => {
-    const rollbackError = (message: string) =>
-      Object.assign(new Error(message), { code: "57P01", severity: "FATAL" });
-
-    it("appends the cause entry and retains it in the detail's serialization", () => {
-      const detail = withCauseEntry(
-        failureDetail("job_storage_failed", { error: new Error("statement failed") }),
-        rollbackError("ROLLBACK failed: rollback-canary"),
-      );
-      expect(detail.causeChain?.at(-1)).toMatchObject({
-        name: "Error",
-        code: "57P01",
-        message: "ROLLBACK failed: rollback-canary",
-      });
-      expect(JSON.stringify(detail)).toContain("rollback-canary");
-    });
-
-    it("leaves the cause chain empty when there is nothing to add", () => {
-      const detail = withCauseEntry(
-        failureDetail("job_storage_failed", { error: new Error("statement-canary") }),
-        undefined,
-      );
-      expect(detail.causeChain).toBeUndefined();
-    });
-
-    it("keeps the chain depth, dropping the newest inner cause for the entry", () => {
-      const depth = failureDetailBounds.chainDepth;
-      const nested = Array.from({ length: depth }, (_, index) => depth - index).reduce<Error>(
-        (cause, index) => new Error(`cause-${index}`, { cause }),
-        new Error(`cause-${depth + 1}`),
-      );
-      const base = failureDetail("job_storage_failed", {
-        error: new Error("outer", { cause: nested }),
-      });
-      expect(base.causeChain).toHaveLength(depth);
-      const detail = withCauseEntry(base, rollbackError("rollback entry"));
-      expect(detail.causeChain?.map((entry) => entry.message)).toEqual([
-        ...Array.from({ length: depth - 1 }, (_, index) => `cause-${index + 1}`),
-        "rollback entry",
-      ]);
-    });
-
-    it("bounds and redacts the entry's message like every other chain entry", () => {
-      const detail = withCauseEntry(
-        failureDetail("job_storage_failed", { error: new Error("statement failed") }),
-        rollbackError(`password=rollback-secret ${"r".repeat(failureDetailBounds.chainMessage)}`),
-      );
-      const message = detail.causeChain?.at(-1)?.message;
-      expect(message).toMatch(/…\[truncated \d+\]$/u);
-      expect(message?.length).toBeLessThan(failureDetailBounds.chainMessage + 40);
-      expect(JSON.stringify(detail)).not.toContain("rollback-secret");
-    });
-
-    it("re-applies the serialized bound to a detail that was already near it", () => {
-      const base = failureDetail("job_storage_failed", {
-        error: new Error("statement failed"),
-        context: Object.fromEntries(
-          Array.from({ length: failureDetailBounds.contextKeys }, (_, index) => [
-            `key${index}`,
-            "é".repeat(1_000),
-          ]),
-        ),
-      });
-      const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
-      expect(size(base)).toBeGreaterThan(failureDetailBounds.serialized - 4_096);
-      const detail = withCauseEntry(base, rollbackError("é".repeat(5_000)));
-      expect(size(detail)).toBeLessThanOrEqual(failureDetailBounds.serialized);
-      expect(failureDetailMetadata({ failureDetail: detail })?.failureDetail.subCause).toBe(
-        "job_storage_failed",
-      );
-    });
   });
 
   const jsonSyntaxError = (text: string) => {
