@@ -23,6 +23,7 @@
 ## What Pomerado does
 
 Pomerado builds MCP integrations for websites, including sites without an API.
+
 - Our tool builds integrations with only a natural language description of the task. No HAR file or recording is needed
 - Integrations are deterministic, making them much faster and more reliable than computer use
 - Pomerado works on any site, including sites behind a login and two-factor authentication
@@ -40,16 +41,16 @@ flowchart LR
   try --> complete --> publish --> use
 ```
 
-Guardian is a second model that reviews each browser action and the finished source. [How it works](docs/how-it-works.md) covers the minter, Guardian, the runtime and jobs.
+For more details, please see [How it works](docs/how-it-works.md).
 
 ## Get started
 
-You need these first.
+Prerequisites
 
-- macOS or Linux.
-- Node 24.21 or a later Node 24 release. Check with `node --version`.
-- An OpenAI API key. Pomerado calls OpenAI models to build and review integrations. Your agent can run on any model.
-- An MCP client that runs local servers, such as Claude Code, Codex, Cursor, VS Code, Claude Desktop or Gemini CLI.
+- macOS or Linux
+- Node 24.21 or a later Node 24 release. Check with `node --version`
+- An OpenAI API key. Pomerado uses OpenAI models to build and review integrations. Your agent can run on any model
+- An MCP client that runs local servers, such as Claude Code, Codex, Cursor, Claude Desktop or Gemini CLI
 
 Install Pomerado and its browser.
 
@@ -58,9 +59,7 @@ npx -y -p pomerado pomerado-mcp --help
 npx -y -p pomerado playwright install chromium
 ```
 
-- The first command downloads Pomerado and prints its usage. Running it once lets your client start Pomerado from npm's cache.
-- The second command installs the Chromium build that Pomerado's Playwright expects. Playwright may warn about project dependencies. The browser installs anyway.
-- On Linux, add `--with-deps` after `install` if Chromium's system libraries are missing.
+On Linux, add `--with-deps` after `install` if Chromium's system libraries are missing.
 
 Pomerado is a standard MCP stdio server. This is its entry for clients that read an `mcpServers` file.
 
