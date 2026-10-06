@@ -16,6 +16,8 @@
   - Migrate by sending the sign-in screens' `signInStep` fields before the `signedIn` check, and checking once per sign-in.
 - `MintDependencies.priorAttemptMayHaveChanged` is removed, with the notice it added to the agent's first input.
   - Migrate by giving the agent your own notice through `drainStartIncidents` if a restarted write build must read back before it writes again.
+- In `pomerado/core/destinations/autofill-step`, `AutofillInspection.screen` adds a required `origin`, which `inspectAutofillStep` sets. A filled `AutofillStepReport`'s `submit` adds `"stayed_disabled"`: the fields were filled, but the submit stayed disabled through the wait, so the host never clicked it.
+  - Migrate by setting `origin` on any inspection you build yourself, and by handling `"stayed_disabled"` in any exhaustive check on `submit`.
 
 ### Other changes
 
@@ -24,6 +26,8 @@
 - `pomerado/core/runtime/start-state` holds the start-state decision (`startStateFor`, `shouldSaveSession`, `isFirstWriteStep`), the per-build `makeStartTracker`, and the page reset: `startPage` with its required `StartPageHooks`, `localStartHooks`, and the `resetPageCode`, `stopLoadingCode` and `saveSessionCode` browser code.
 - A signed-in build's saved session must fit the page-code worker's 1 MiB result cap. A larger one fails the save and every later live step other than a sign-in step, and a new sign-in hits the same cap.
 - Every merge to `main` publishes a canary, `X.Y.Z-canary.N`, under the `canary` dist-tag: `npm install pomerado@canary`. `latest` moves to the canary that Pomerado's hosted service promotes to production, so `npm install pomerado` gets the build production runs. The range it saves, such as `^0.2.1-canary.57`, also matches later canaries, so install with `--save-exact` or keep a lockfile. See [Releasing](docs/RELEASING.md).
+- A host sign-in step fills a form whose submit is disabled, `aria-disabled` or in a disabled fieldset until the fields hold input. The host waits up to 5 seconds for the page to enable the submit, then clicks it, and never clicks it while it is disabled. A submit in an `inert` region is still refused before anything is typed.
+- Guardian's review of a host sign-in step shows the origin of the document the step's controls are in, and no longer requires the submit to be enabled. The auth skill likewise lets the minter record a submit the page has not enabled yet.
 
 ### Fixes
 

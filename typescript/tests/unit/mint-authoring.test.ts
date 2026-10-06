@@ -110,6 +110,17 @@ it("loads a host-composed directory in hosted mode exactly as composed", async (
   }
 });
 
+// Many sign-in forms enable their submit only once the fields hold input, and the host waits for
+// it. The minter records such a submit as it observes it, disabled or not.
+it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const auth = contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "";
+  expect(auth.replace(/\s+/g, " ")).toContain(
+    "Record a field only after observing its unique visible enabled match in the intended frame and form, and a submit after observing its unique visible match there, even one the page enables only once the fields hold input.",
+  );
+  expect(auth).not.toContain("enabled submit");
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -127,7 +138,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["268e442bc5c427b4ccabf26b9c073c59bbef758cffaa801cfa7aa9ce3b70c327", "core"],
-    ["d22b06f5fbd185d359f2bcc7c9a37f0b63208d7caea1efee38d06181df6b18c4", "auth"],
+    ["3b569c6f058ac70c7a68d930aae8bad26cc42947fdfc6545db38ad77692bce3a", "auth"],
     ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
     ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
     ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
