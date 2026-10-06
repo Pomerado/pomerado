@@ -13,7 +13,8 @@
   - Migrate by dropping any repeatable-read check from your `claimExample`.
 - A local build follows the read and write rules a hosted build follows:
   - A read build may run its live example again. Its owner may approve turning it into a write build before it runs one.
-  - `testInput` runs only on a read build's live test, as JSON text, at most twice per attempt. `exampleInput` runs only on a read build's example when the caller's input is empty. Any other use is refused before review.
+  - `testInput` runs only on a read build's live test, as JSON text, at most twice per attempt. Any other use is refused before review.
+  - `exampleInput` is a JSON object and runs only when the caller's input is empty: on a read build's example, or on a write build's act steps. The first act step Guardian allows fixes it for the session. Later act steps run it, and may repeat it unchanged or omit it. A different one, or one added after the session started without it, is refused before review. Guardian reviews these act steps under a stricter effect that admits only values the request or an answered question states, and publication decodes the composed contract against that input.
   - A write build refuses a live example or live test, and a live explore once its first act step ran. An unchanged act step right after one that may have changed the site is refused until another act step reads the result.
   - A misplaced or unknown secret handle is refused before Guardian reviews the step, with its file and line, instead of failing after review. An offline step runs handle text as written.
   - A Guardian outage is retried for up to five minutes before the step reports the review as unavailable. A spent model quota ends the build with `model_quota_exhausted`.
