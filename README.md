@@ -28,26 +28,7 @@ Pomerado builds MCP integrations for websites, including sites without an API.
 - The integration is deterministic and runs the same way every time. That makes it much faster and more reliable than computer use.
 - Pomerado works on any site, including sites behind a login and two-factor authentication.
 
-```mermaid
-flowchart LR
-  subgraph sources["No existing API required"]
-    direction LR
-    websites["<b>Everyday websites</b><br/>Shopping · Travel · Reservations"]
-    portals["<b>Legacy portals</b><br/>Healthcare · Finance · Government"]
-    tools["<b>Internal tools</b><br/>CRMs · ERPs · Admin apps"]
-  end
-  pomerado["<b>Pomerado</b><br/><br/>Build · Host · Maintain<br/><br/>Creates a deterministic API in real time"]
-  subgraph agents["Agents that use the integration"]
-    direction LR
-    product["<b>Product agents</b><br/>Operational workflows"]
-    internal["<b>Internal agents</b><br/>Internal workflows"]
-    personal["<b>Personal assistants</b><br/>Your own agent, e.g. OpenClaw"]
-  end
-  sources --> pomerado
-  pomerado -- "API / MCP" --> agents
-  classDef core stroke:#c71f3e,stroke-width:2px
-  class pomerado core
-```
+<p align="center"><img src="docs/assets/pomerado-diagram.png" alt="Websites, legacy portals and internal tools go into Pomerado, which builds, hosts and maintains a deterministic API that product agents, internal agents and personal assistants call" width="900"></p>
 
 ## How it works
 
