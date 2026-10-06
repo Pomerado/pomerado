@@ -1,0 +1,342 @@
+import { DateTime, Effect } from "effect";
+import { describe, expect, it } from "vitest";
+import { ReviewFailure } from "../../src/guardian/review.js";
+import { ownerNamedOrigins } from "../../src/guardian/owner-named-origins.js";
+import { failureDetail } from "../../src/runtime/failure-detail.js";
+import {
+  allowedEffectsFor,
+  contractExtractionNote,
+  currentDateObservations,
+  intentWithApproval,
+  makeStepResults,
+  mintReviewContext,
+  pageLocation,
+  reviewDenied,
+  reviewFailureOf,
+  type CurrentExecution,
+  type ExecutionEntry,
+  type MintReviewHost,
+  type ObservedPage,
+} from "../../src/mint/review-context.js";
+import { portableMintProjection } from "../support/portable-mint.js";
+
+const projection = portableMintProjection(["private-schema-value"]);
+const page: ObservedPage = {
+  origin: "https://site.invalid",
+  path: "/search?q=lamp#results",
+  capture: "captures/current-page.aria.yml",
+};
+/** A host whose facts the test sets between reviews. */
+const fakeHost = () => {
+  const state = {
+    repeatableRead: false,
+    browser: "active" as ReturnType<MintReviewHost["browser"]>,
+    observed: undefined as ObservedPage | undefined,
+    fresh: false,
+    executions: [] as ExecutionEntry[],
+    inputSchema: undefined as unknown,
+  };
+  const host: MintReviewHost = {
+    repeatableRead: () => state.repeatableRead,
+    browser: () => state.browser,
+    observedPage: () => state.observed,
+    startsOnFreshPage: () => state.fresh,
+    executions: () => state.executions,
+    inputSchema: () => state.inputSchema,
+  };
+  return { state, host };
+};
+const sources = new Map([
+  ["operation/src/tool.mjs", `import { readPage } from "./flow.mjs";\nexport default readPage;`],
+  ["operation/src/flow.mjs", "export const readPage = `return document.title;`;"],
+  ["operation/src/step.mjs", `import { readPage } from "./flow.mjs";\nexport default readPage;`],
+  ["operation/command.sh", "ls src"],
+]);
+const context = (host: MintReviewHost, currentExecution?: CurrentExecution, entrypoint?: string) =>
+  Effect.runPromise(
+    mintReviewContext(host, projection, {
+      sources,
+      entrypoint: entrypoint ?? "operation/src/tool.mjs",
+      ...(currentExecution === undefined ? {} : { currentExecution }),
+    }),
+  );
+const live = (purpose: CurrentExecution["purpose"]): CurrentExecution => ({
+  purpose,
+  target: "liveBrowser",
+});
+
+describe("allowedEffectsFor", () => {
+  it("gives a live act step the write session's text and other live steps the exploration text", () => {
+    expect(allowedEffectsFor(live("act"))[0]).toMatch(/^The caller's requested task, done once/u);
+    for (const purpose of ["explore", "test", "example"] as const)
+      expect(allowedEffectsFor(live(purpose))[0]).toMatch(/^Authorized repeatable reads/u);
+  });
+
+  it("gives a live sign-in step the host's sign-in text and every offline step the offline text", () => {
+    expect(allowedEffectsFor(live("authenticate"))[0]).toContain("sign-in page");
+    for (const purpose of ["command", "contract", "test", "example"] as const)
+      expect(allowedEffectsFor({ purpose, target: "pureFiles" })).toEqual([
+        "Offline local files, source checks and computation only. No live website, credentials or network.",
+      ]);
+  });
+
+  it("names no hosted service in any text", () => {
+    for (const purpose of ["act", "explore", "authenticate"] as const)
+      expect(allowedEffectsFor(live(purpose)).join(" ")).not.toMatch(/kernel|vault|managed auth/iu);
+  });
+});
+
+describe("mintReviewContext", () => {
+  it("gives Guardian the page the host last observed", async () => {
+    const { state, host } = fakeHost();
+    const pages: unknown[] = [];
+    const review = async (current?: CurrentExecution) =>
+      pages.push((await context(host, current)).currentPage);
+    await review({ purpose: "command", target: "pureFiles" });
+    await review(live("explore"));
+    state.observed = page;
+    await review(live("explore"));
+    // A step that starts on a fresh page does not read the page left open.
+    state.fresh = true;
+    await review(live("example"));
+    state.fresh = false;
+    await review(live("explore"));
+    await review({ purpose: "command", target: "pureFiles" });
+    // An observation that could not say which page is current leaves none.
+    state.observed = undefined;
+    await review(live("explore"));
+    expect(pages).toEqual([undefined, undefined, page, undefined, page, page, undefined]);
+  });
+
+  it("gives a question review only the observed page, and no page from a browser that is not active", async () => {
+    const { state, host } = fakeHost();
+    state.observed = page;
+    const question = await context(host);
+    expect(question.currentPage).toEqual(page);
+    expect(question).not.toHaveProperty("currentExecution");
+    expect(question).not.toHaveProperty("executedSources");
+    for (const browser of ["not_opened", "closed", "unavailable"] as const) {
+      state.browser = browser;
+      expect(await context(host, live("explore"))).not.toHaveProperty("currentPage");
+    }
+  });
+
+  it("tells an execution review which operation files its entrypoint imports", async () => {
+    const { host } = fakeHost();
+    const reviewed = await context(host, live("explore"));
+    expect(reviewed.operationSources).toEqual([...sources.keys()]);
+    expect(reviewed.executedSources).toEqual(
+      expect.arrayContaining(["operation/src/tool.mjs", "operation/src/flow.mjs"]),
+    );
+    expect(reviewed.executedSources).not.toContain("operation/src/step.mjs");
+    expect(reviewed.executedSources).not.toContain("operation/command.sh");
+  });
+
+  it.each([
+    ["a query", `import op from "./step.mjs?v=1";\nexport default op;`, {}],
+    ["eval", `const op = await eval('import("./step.mjs")');\nexport default op.default;`, {}],
+    [
+      "a package import",
+      `import op from "#step";\nexport default op;`,
+      { "operation/src/package.json": JSON.stringify({ imports: { "#step": "./step.mjs" } }) },
+    ],
+  ] as const)(
+    "keeps every candidate file when the entrypoint loads one through %s",
+    async (_, tool, extra) => {
+      const { host } = fakeHost();
+      const reviewed = await Effect.runPromise(
+        mintReviewContext(host, projection, {
+          sources: new Map([
+            ["operation/src/tool.mjs", tool],
+            ["operation/src/step.mjs", "export default {};"],
+            ...Object.entries(extra),
+          ]),
+          entrypoint: "operation/src/tool.mjs",
+          currentExecution: live("explore"),
+        }),
+      );
+      expect(reviewed.executedSources).toContain("operation/src/step.mjs");
+    },
+  );
+
+  it("gives an offline command its sandbox facts and no executed files or input schema", async () => {
+    const { state, host } = fakeHost();
+    state.inputSchema = { type: "object" };
+    const command: CurrentExecution = {
+      purpose: "command",
+      target: "pureFiles",
+      commandSandbox: { cwd: "/tmp/workspace", timeoutSeconds: 30, maxOutputBytes: 1_048_576 },
+    };
+    const reviewed = await context(host, command, "operation/command.sh");
+    expect(reviewed.currentExecution).toEqual(command);
+    expect(reviewed).not.toHaveProperty("executedSources");
+    expect(reviewed).not.toHaveProperty("inputSchema");
+  });
+
+  it("gives each execution review the input schema the host last read, screened", async () => {
+    const { state, host } = fakeHost();
+    expect(await context(host, live("example"))).not.toHaveProperty("inputSchema");
+    state.inputSchema = {
+      type: "object",
+      properties: { guests: { type: "integer", description: "private-schema-value" } },
+    };
+    const reviewed = await context(host, { purpose: "test", target: "liveBrowser" });
+    expect(JSON.parse(reviewed.inputSchema ?? "null")).toEqual({
+      type: "object",
+      properties: { guests: { type: "integer", description: "[private]" } },
+    });
+    expect(await context(host)).not.toHaveProperty("inputSchema");
+  });
+
+  it("carries the host's read authority, browser state and step history", async () => {
+    const { state, host } = fakeHost();
+    state.repeatableRead = true;
+    state.browser = "not_opened";
+    state.executions = [
+      {
+        executionId: "unresolved_1",
+        attempt: "current",
+        purpose: "test",
+        target: "liveBrowser",
+        status: "running",
+        effect: "possible",
+        input: "agent_chosen",
+      },
+    ];
+    expect(await context(host, live("test"))).toMatchObject({
+      repeatableRead: true,
+      browser: "not_opened",
+      executions: state.executions,
+    });
+  });
+});
+
+describe("makeStepResults", () => {
+  it("gives each execution review the last six step results the agent saw, capped at 4 KiB", () => {
+    const results = makeStepResults();
+    expect(results.forReview(live("explore"))).toEqual({ stepResults: [] });
+    for (let step = 1; step <= 7; step++)
+      results.record(`step_${step}`, {
+        url: `https://www.site.invalid/booking/${step}?venue=42`,
+        ...(step === 7 ? { page: "<p>seat é</p>".repeat(900) } : {}),
+      });
+    results.record("step_8", "Error: no Book button on the redirected page");
+    const { stepResults = [] } = results.forReview(live("example"));
+    expect(stepResults.map((step) => step.executionId)).toEqual([
+      "step_3",
+      "step_4",
+      "step_5",
+      "step_6",
+      "step_7",
+      "step_8",
+    ]);
+    for (const step of stepResults)
+      expect(new TextEncoder().encode(step.result).byteLength).toBeLessThanOrEqual(4096);
+    expect(stepResults[4]?.result).toContain("https://www.site.invalid/booking/7?venue=42");
+    expect(stepResults[4]?.result.endsWith("…[truncated at 4 KiB]")).toBe(true);
+    expect(stepResults[4]?.result).not.toContain("�");
+    expect(stepResults[5]?.result).toBe("Error: no Book button on the redirected page");
+  });
+
+  it("keeps step results out of question reviews", () => {
+    const results = makeStepResults();
+    results.record("step_1", { value: 1 });
+    expect(results.forReview(undefined)).toEqual({});
+  });
+});
+
+describe("pageLocation", () => {
+  it("reads an origin and a path with its query and fragment", () => {
+    expect(pageLocation(new URL("https://site.invalid/search?q=lamp#results"))).toEqual({
+      origin: "https://site.invalid",
+      path: "/search?q=lamp#results",
+    });
+  });
+
+  it("keeps a blank page and gives no page for a browser error page", () => {
+    expect(pageLocation(new URL("about:blank"))).toEqual({ origin: "about:blank", path: "" });
+    expect(pageLocation(new URL("chrome-error://chromewebdata/"))).toBeUndefined();
+  });
+});
+
+describe("observations", () => {
+  it("dates a build with the host's clock in UTC", () => {
+    expect(currentDateObservations(DateTime.unsafeMake("2026-03-14T09:26:53.589Z"))).toEqual({
+      todayUtc: "2026-03-14",
+      nowUtc: "2026-03-14T09:26:53.589Z",
+    });
+  });
+
+  it("describes contract extraction without hosted services", () => {
+    expect(contractExtractionNote).toContain("never calls operation.run");
+    expect(contractExtractionNote).not.toMatch(/kernel|sandbox|capture/iu);
+  });
+});
+
+describe("reviewFailureOf", () => {
+  it("preserves finite review phase before any browser or executor dispatch", () => {
+    const failure = reviewFailureOf(
+      new ReviewFailure({ code: "Unavailable", reviewPhase: "review_deadline" }),
+      "not_sent",
+    );
+    expect(failure).toMatchObject({
+      code: "ReviewUnavailable",
+      reviewFailure: "Unavailable",
+      reviewPhase: "review_deadline",
+      reviewDispatch: "not_sent",
+    });
+    expect(failure).not.toHaveProperty("modelOutage");
+  });
+
+  it("marks a spent model quota and keeps the failure's detail", () => {
+    const failure = reviewFailureOf(
+      new ReviewFailure({
+        code: "Unavailable",
+        modelQuotaExhausted: true,
+        failureDetail: failureDetail("guardian_dependency_failed", { operation: "guardian.model" }),
+      }),
+    );
+    expect(failure).toMatchObject({
+      code: "ReviewUnavailable",
+      reviewFailure: "Unavailable",
+      modelOutage: "quota_exhausted",
+      failureDetail: { operation: "guardian.model" },
+    });
+    expect(failure).not.toHaveProperty("reviewDispatch");
+  });
+});
+
+describe("reviewDenied", () => {
+  it("turns a deny or an escalation into a ReviewDenied refusal with its rationale", () => {
+    expect(reviewDenied("review_1", { outcome: "deny", rationale: "Denied" })).toMatchObject({
+      code: "ReviewDenied",
+      review: { outcome: "deny", rationale: "Denied", reviewId: "review_1" },
+    });
+    expect(reviewDenied("review_2", { outcome: "escalate", rationale: "Ask" }).review).toEqual({
+      outcome: "escalate",
+      rationale: "Ask",
+      reviewId: "review_2",
+    });
+  });
+});
+
+describe("intentWithApproval", () => {
+  it("adds an approved write upgrade's question to the intent, and nothing without one", () => {
+    expect(intentWithApproval("Create a workspace", undefined)).toBe("Create a workspace");
+    expect(intentWithApproval("Create a workspace", "May this build create it?")).toBe(
+      "Create a workspace\nThe owner approved turning this read build into a write build, answering this reviewed question: May this build create it?",
+    );
+  });
+
+  it("never takes an off-site origin in an approved write upgrade's question as owner-named", () => {
+    const requestedIntent = "Create a workspace for the team";
+    const screenedIntent = intentWithApproval(
+      requestedIntent,
+      "May this build create the workspace at https://other.example/new for you?",
+    );
+    expect(screenedIntent).toContain("https://other.example/new");
+    expect(
+      ownerNamedOrigins({ requestedIntent, allowedOrigins: ["https://site.example"] }),
+    ).toEqual([]);
+  });
+});
