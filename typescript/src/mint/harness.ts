@@ -261,6 +261,7 @@ const VisibleReceipt = Schema.Struct({
   status: Schema.Literal("completed", "failed", "unsupported", "needs_input"),
   effect: Schema.Literal("not_sent", "possible", "verified"),
   confirmation: Schema.optional(Schema.Literal("message", "readback")),
+  withheldConfirmation: Schema.optional(Schema.Literal("message", "readback")),
   preflight: Schema.optional(Schema.Literal("rejected_before_claim")),
   checks: Schema.optional(
     Schema.Struct({
@@ -356,6 +357,14 @@ const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic
   return undefined;
 };
 
+/**
+ * What the agent does after a write step whose confirmation the host withheld with its result:
+ * the write went out, so it is never repeated; a step that only reads the confirmation back
+ * confirms the session, and the withheld step publishes only when no read-back is possible.
+ */
+const withheldConfirmationInstruction =
+  "This step read the write's confirmation, so the write went out, but the host did not accept its result, so it confirms nothing yet. Never repeat the write: entering its commit steps again is refused. Fix the source if the host said why, then run one act step that only reads the confirmation or the saved state back and records it, and publish against that step. Only if no step can read it back, call finish_build naming this step with readBackUnavailable saying why; it then publishes with no output kept.";
+
 /** Copy known receipt fields without invoking an optional hostile accessor. */
 const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence => {
   const siteAccess = siteAccessDiagnostic(evidence);
@@ -373,6 +382,10 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
     ...(evidence.preflight === undefined ? {} : { preflight: evidence.preflight }),
     ...(evidence.resultRef === undefined ? {} : { resultRef: evidence.resultRef }),
     ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
+    // A recorded confirmation wins: a step carries a withheld one only in its place.
+    ...(evidence.withheldConfirmation === undefined || evidence.confirmation !== undefined
+      ? {}
+      : { withheldConfirmation: evidence.withheldConfirmation }),
     ...(evidence.checks === undefined ? {} : { checks: evidence.checks }),
     ...(siteAccess === undefined ? {} : { siteAccess }),
   };
@@ -870,7 +883,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               purposes.get(entry.executionId) === "act") &&
               entry.status === "completed" &&
               entry.resultRef !== undefined) ||
-            (purposes.get(entry.executionId) === "act" && entry.confirmation !== undefined) ||
+            (purposes.get(entry.executionId) === "act" &&
+              (entry.confirmation !== undefined || entry.withheldConfirmation !== undefined)) ||
             dependencies.canPublishRepair?.(entry.executionId) === true,
         );
       const hostIsUnavailable = () => dependencies.executionAvailability?.() === "host_unavailable";
@@ -1021,12 +1035,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const visible = (evidence: ExecutionEvidence) =>
         Effect.gen(function* () {
           const siteAccess = siteAccessDiagnostic(evidence);
+          const withheld = safeExecutionEvidence(evidence).withheldConfirmation;
           const receipt = yield* decode(VisibleReceipt, {
             executionId: evidence.executionId,
             status: evidence.status,
             effect: evidence.effect,
             ...(evidence.authentication ? { authentication: evidence.authentication } : {}),
             ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
+            ...(withheld === undefined ? {} : { withheldConfirmation: withheld }),
             ...(evidence.preflight === undefined ? {} : { preflight: evidence.preflight }),
             ...(evidence.checks === undefined ? {} : { checks: evidence.checks }),
           });
@@ -1059,6 +1075,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               : yield* screenMintText(dependencies, evidence.observations);
           return JSON.stringify({
             ...receipt,
+            ...(withheld === undefined ? {} : { instruction: withheldConfirmationInstruction }),
             ...(evidence.review === undefined
               ? {}
               : {
@@ -2391,12 +2408,30 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (entry) => entry.executionId === proposed.executionId,
               );
               const repair = dependencies.canPublishRepair?.(proposed.executionId) === true;
+              const actStep =
+                evidence !== undefined && purposes.get(evidence.executionId) === "act";
+              // A step whose confirmation the host withheld with its result confirms nothing: a
+              // later step that only reads the confirmation back publishes the session, and this
+              // one does only when no read-back is possible.
+              const withheld = actStep && evidence.withheldConfirmation !== undefined;
+              if (withheld && (writeSession === "closed" || !proposed.readBackUnavailable)) {
+                const reason = "read_back_required";
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    writeSession === "closed"
+                      ? "A later act step confirmed this write session. Publish against that step."
+                      : withheldConfirmationInstruction,
+                  executionContext: yield* executionContext(),
+                });
+              }
               // The step that read the site's confirmation publishes its session even when its
               // own output failed: the write happened once, and publication never runs it again.
-              const confirmedWrite =
-                evidence !== undefined &&
-                purposes.get(evidence.executionId) === "act" &&
-                evidence.confirmation !== undefined;
+              const confirmedWrite = actStep && (evidence.confirmation !== undefined || withheld);
               if (
                 !evidence ||
                 (!repair &&
@@ -2432,6 +2467,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               const coverage = yield* screenMintText(dependencies, proposed.coverage);
               const assumptions = yield* screenAssumptions(proposed.assumptions);
+              const readBackUnavailable = withheld
+                ? yield* screenMintText(dependencies, proposed.readBackUnavailable ?? "")
+                : undefined;
               const publication = yield* dependencies
                 .publish(
                   {
@@ -2439,6 +2477,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     executionId: proposed.executionId,
                     metadata: proposed.metadata,
                     coverage,
+                    ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
                   },
                   evidence,
                 )
