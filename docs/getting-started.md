@@ -44,13 +44,13 @@ Pomerado is a standard MCP stdio server.
 
 ## Client settings
 
-Each entry says how to add Pomerado, how the key reaches the server, and which timeouts apply. "Verified" means we added Pomerado with that client and saw the server connect. "From the docs" means the entry follows the client's own documentation.
+Each entry says how to add Pomerado, how the key reaches the server, and which timeouts apply. "Verified" means we added Pomerado with that client and saw the server connect. "From the docs" means the entry follows the client's own documentation. Each entry links the docs it follows.
 
-Pomerado's tool calls are short. `get_job` waits at most 30 seconds. A call to a generated integration returns within 20 seconds, with the output or a job ID. A tool-call timeout of 60 seconds or more is enough. The startup timeout matters more, because a cold `npx` start downloads the package.
+`mint` and `provide_input` return at once. `get_job` waits at most 30 seconds. A call to a generated integration returns within 20 seconds, with the output or a job ID. `cancel_job` returns once the job's browser and child processes have closed. Set the tool-call timeout to 60 seconds or more. The startup timeout matters more, because a cold `npx` start downloads the package.
 
 ### Claude Code
 
-Verified with Claude Code 2.1.291.
+Verified with Claude Code 2.1.291, following [Claude Code's MCP docs](https://code.claude.com/docs/en/mcp) and its [environment variable list](https://code.claude.com/docs/en/env-vars).
 
 ```sh
 claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations
@@ -59,12 +59,12 @@ claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --r
 - Claude Code passes its own environment to stdio servers. Export `OPENAI_API_KEY` in the shell that starts `claude`.
 - In a shared `.mcp.json`, reference the key as `"env": { "OPENAI_API_KEY": "${OPENAI_API_KEY}" }`. Claude Code expands it from its environment.
 - Avoid `-e OPENAI_API_KEY=...`, which writes the value into Claude Code's config file.
-- `MCP_TIMEOUT` sets the startup wait in milliseconds. It defaults to 30000.
+- `MCP_TIMEOUT` sets the startup wait in milliseconds.
 - `claude mcp list` should show `pomerado` as connected.
 
 ### Codex
 
-Verified with Codex CLI 0.160.0.
+Verified with Codex CLI 0.160.0, following [Codex's MCP docs](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) and its [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 ```sh
 codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations
@@ -87,7 +87,7 @@ startup_timeout_sec = 60
 
 ### Gemini CLI
 
-Verified with Gemini CLI 0.62.0.
+Verified with Gemini CLI 0.62.0, following [Gemini CLI's MCP docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
 
 ```sh
 gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations
@@ -101,7 +101,7 @@ gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p po
 
 ### Cursor
 
-From the docs.
+From [Cursor's MCP docs](https://cursor.com/docs/mcp).
 
 - Add the entry to `~/.cursor/mcp.json`, or to `.cursor/mcp.json` in a project.
 - Add `"env": { "OPENAI_API_KEY": "${env:OPENAI_API_KEY}" }` to the entry. Cursor resolves `${env:NAME}` from its own environment.
@@ -109,11 +109,17 @@ From the docs.
 
 ### VS Code
 
-From the docs.
+From VS Code's docs on [MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers) and [MCP configuration](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
 
 - Add the entry to `.mcp.json` in your workspace or to `~/.copilot/mcp-config.json`. Both use `mcpServers`.
-- `code --add-mcp` adds a server to your user profile. It takes one JSON object with `name`, `command` and `args`.
-- VS Code's docs say to keep API keys out of these files.
+- Or run this command, which adds the server to your user profile.
+
+  ```sh
+  code --add-mcp '{"name":"pomerado","command":"npx","args":["-y","-p","pomerado","pomerado-mcp","mint","--root","/absolute/path/to/pomerado-integrations"]}'
+  ```
+
+- VS Code's docs don't say whether a server inherits VS Code's environment. They say to keep API keys out of config files and to use an environment file or an input variable instead.
+- For an environment file, add `"envFile": "/absolute/path/to/pomerado.env"` to the entry. That file holds one line, `OPENAI_API_KEY=` followed by the key. Keep it outside any repository.
 - VS Code's own `mcp.json` format, which uses `servers` in place of `mcpServers`, can ask for the key once and store it. Declare an input with `"password": true`, then reference it in the server's `env` as `"OPENAI_API_KEY": "${input:openai-key}"`.
 
   ```json
@@ -128,7 +134,7 @@ From the docs.
 
 ### Claude Desktop
 
-From the docs.
+From the MCP docs on [connecting local servers](https://modelcontextprotocol.io/docs/develop/connect-local-servers) and [debugging](https://modelcontextprotocol.io/docs/tools/debugging).
 
 - Add the entry to `claude_desktop_config.json`. On macOS it is in `~/Library/Application Support/Claude/`.
 - Claude Desktop passes servers a limited set of variables and documents no way to reference one. A key in the entry's `env` block is stored as plain text in that file.
@@ -221,17 +227,17 @@ When a job needs something from you, `get_job` returns `"status": "input_require
 node --input-type=module -e 'import { chromium } from "playwright"; const server = await chromium.launchServer({ headless: true }); console.log(server.wsEndpoint());'
 ```
 
-Pomerado owns its browser context on an attached server. Closing a job closes that context and leaves the server and other clients' contexts alone.
+Pomerado owns its browser context on an attached server. Closing a job closes that context and leaves the server and other clients' contexts alone. A failed browser transport is dropped without replaying the request.
 
 ## Troubleshooting
 
-- A mint finishes within seconds with `"build": "incomplete"` and the summary "Minting stopped before publication". This is what happens when the server has no `OPENAI_API_KEY`. Check [Client settings](#client-settings) for your client.
+- A mint ends with `"build": "incomplete"` and the summary "Minting stopped before publication". One cause is a server without `OPENAI_API_KEY`, which ends the mint this way within seconds. Check [Client settings](#client-settings) for your client.
 - An error says "Model provider authentication failed". OpenAI rejected the key the server sent. Check that the key is current.
 - A mint ends with a summary saying the account's model quota is spent. Add credit or raise the limit on your OpenAI account, then mint again.
 - A job fails with "Model provider quota or rate limit was reached". Your OpenAI account hit a rate limit or quota. Wait, or check its limits, then try again.
-- A job fails at once with "Operation failed. Check the local model, browser and integration configuration." This is what happens when Chromium is missing. Run `npx -y -p pomerado playwright install chromium`.
+- A job fails at once with "Operation failed. Check the local model, browser and integration configuration." One cause is a missing Chromium. Run `npx -y -p pomerado playwright install chromium`.
 - The client reports a closed connection or a startup timeout. Check `node --version`, run `npx -y -p pomerado pomerado-mcp --help` once to fill npm's cache, and raise the client's startup timeout.
 - `pomerado-mcp` exits at once with no output. Versions 0.1.2 and earlier don't start through `npx` or a global install. Use `pomerado@latest` in the `-p` argument.
 - A call fails with "The server is busy". The server runs one job at a time. Wait for the job or cancel it with `cancel_job`.
 - A call fails with "Unknown or expired job". The server restarted, or the job ended more than 15 minutes ago. Restarting loses running jobs but keeps saved integrations.
-- A tool call times out in your client. Pomerado's calls return within about 30 seconds, so raise the client's tool-call timeout to 60 seconds or more.
+- A tool call times out in your client. Raise the client's tool-call timeout to 60 seconds or more. `get_job` waits at most 30 seconds, and `cancel_job` waits until the job's browser has closed.

@@ -92,13 +92,13 @@ The package has these entry points.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
 
-`pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
+`npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
 
 ## Pomerado Cloud
 
 - This repository is the only source for the shared core, the portable tests, the authoring assets and the local MCP adapters.
 - Cloud installs the same core as a pinned library package and calls it directly. Its hosted MCP frontend, with accounts, permissions and durable jobs, lives in a private repository.
-- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop, credential storage and its own hosted authoring text.
+- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop and credential storage.
 - Cloud adopts a tested release through an exact dependency pin with locked integrity, and updates its controller and sandbox images together.
 - Cloud rolls back by restoring its previous package pin and matching image versions. Public commits don't update Cloud.
 - Contributors can test Cloud against a locally built package before a version is published.

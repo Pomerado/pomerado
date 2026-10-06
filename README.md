@@ -25,7 +25,7 @@
 Pomerado builds MCP integrations for websites, including sites without an API. Each integration is code you own, and it runs on your computer.
 
 - Each tool does what it says. Pomerado runs the task in a real browser while it builds, then validates every input and output against the tool's schema.
-- Guardian reviews each browser action before it runs and the finished source before it is saved. Write access always needs your choice.
+- Guardian reviews each browser action before it runs and the finished source before it is saved. Your agent picks read or write access for each mint, and Pomerado's tools tell it to ask you before it picks write.
 - Your agent calls the integration like any other MCP tool. It works with any MCP client and any model your agent runs on.
 
 ```text
@@ -86,10 +86,10 @@ Add Pomerado to your client.
 | Codex | `codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations`, then add `env_vars` | Verified |
 | Gemini CLI | `gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` | Verified |
 | Cursor | Add the entry to `~/.cursor/mcp.json` | From Cursor's docs |
-| VS Code | Add the entry to `.mcp.json` in your workspace, or run `code --add-mcp` with it | From VS Code's docs |
+| VS Code | `code --add-mcp '{"name":"pomerado","command":"npx","args":["-y","-p","pomerado","pomerado-mcp","mint","--root","/absolute/path/to/pomerado-integrations"]}'`, or add the entry to `.mcp.json` in your workspace | From VS Code's docs |
 | Claude Desktop | Add the entry to `claude_desktop_config.json` | From the MCP docs |
 
-Each client passes the key differently. Codex needs `env_vars = ["OPENAI_API_KEY"]` in its config. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client in the table.
+Each client passes the key differently. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client in the table.
 
 Ask your agent which Pomerado tools it has. It should list `mint`, `get_job`, `provide_input` and `cancel_job`.
 
@@ -116,12 +116,12 @@ Your agent uses four tools.
 - `provide_input` sends your answer to a question. Pomerado checks the answer against the question's format.
 - `cancel_job` stops the job and closes its browser. An action already sent to a website may have taken effect.
 
-Choose the authority before you start.
+Tell your agent which authority to use. It picks one when it calls `mint`, and the tool's description tells it to ask you before it picks `write`.
 
 - Choose `read` when the task only looks at the website.
 - Choose `write` only when the task changes something, such as submitting a form.
 - A write mint performs that action once while it builds, then checks the final source without repeating it.
-- A read mint that finds the task needs a change asks you before it switches to write.
+- A read mint that finds the task needs a change can ask to switch to write. That question reaches your agent like any other, and the answer it sends switches the job.
 
 Names start with a lowercase letter and use lowercase letters, digits and underscores. The integration's folder must not exist yet. A mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count.
 
@@ -202,7 +202,7 @@ Pomerado has three parts.
 - Security problems go privately through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security).
 - [CONTRIBUTING.md](CONTRIBUTING.md) has the clone, build and test steps.
 
----
+## License
 
 Copyright (c) 2026 Pomerado AI, Inc. Licensed under the MIT License (`MIT`). See [LICENSE](LICENSE).
 

@@ -58,7 +58,7 @@ claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --r
 codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root /absolute/path/to/pomerado-integrations
 ```
 
-- This always writes `~/.codex/config.toml`, so it needs the user's consent from step 3.
+- Ask the user before you run it. Codex keeps MCP servers in its global `~/.codex/config.toml`, or `$CODEX_HOME/config.toml`, so the server appears in every project.
 - Then add `env_vars = ["OPENAI_API_KEY"]` and `startup_timeout_sec = 60` to the `[mcp_servers.pomerado]` section. These lines name the variable and hold no key.
 
 ### Gemini CLI
@@ -90,7 +90,7 @@ Add this entry to the client's `mcpServers` file, in the place [Client settings]
 - Tell the user the server needs `OPENAI_API_KEY` in its environment, and that Pomerado calls OpenAI models to build and review integrations.
 - Ask the user to set the key themselves, in their shell profile or the client's own key setting. Point them to their client in [Client settings](getting-started.md#client-settings).
 - Tell the user not to paste the key into chat.
-- Claude Desktop documents no way to reference a variable. Tell the user that its `env` block would store the key as plain text, and let them decide.
+- Claude Desktop documents no way to reference a variable. Tell the user the key would sit as plain text in the entry's `env` block. If they accept that, they add the key to the `env` block themselves.
 
 ## 6. Verify
 
