@@ -189,6 +189,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       setEffect: (value: "read" | "write") => {
         allowedEffect = value;
       },
+      /** The handles `askedByAgent` noted, while no sign-in of this attempt is verified. */
+      signInCodes,
       navigate,
     };
   });

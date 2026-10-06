@@ -10,7 +10,13 @@ import { BrowserExecuteResponse, type BrowserExecute } from "../runtime/browser-
 import type { HostExecute } from "../runtime/host-execute.js";
 
 export const NativeWorkerRequest = Schema.Union(
-  Schema.Struct({ id: Schema.String, kind: Schema.Literal("execute"), code: Schema.String }),
+  Schema.Struct({
+    id: Schema.String,
+    kind: Schema.Literal("execute"),
+    code: Schema.String,
+    /** Values to watch for: the worker answers which ones a typing call delivered (`typed`). */
+    watch: Schema.optional(Schema.Array(Schema.String)),
+  }),
   Schema.Struct({
     id: Schema.String,
     kind: Schema.Literal("credential"),
@@ -45,10 +51,29 @@ export interface PlaywrightOptions {
   readonly startupTimeoutMs?: number;
   readonly cleanupTimeoutMs?: number;
 }
+/** An answered script and which watched values its typing calls delivered, by index. */
+const WatchedResponse = Schema.Struct({
+  ...BrowserExecuteResponse.fields,
+  typed: Schema.optionalWith(Schema.Array(Schema.Number), { exact: true }),
+});
+
+/**
+ * Page code run while the host watches for `values`. A value counts as typed once a `fill`,
+ * `type` or `pressSequentially` call on a page, frame, locator or keyboard got it as the text to
+ * enter and completed without error. A call that failed, or code that never ran, types nothing.
+ */
+export interface TypingWatch {
+  readonly executeResponse: BrowserExecute;
+  /** The indexes into `values` that a completed typing call delivered so far. */
+  readonly typed: () => ReadonlySet<number>;
+}
+
 export interface PlaywrightExecutor {
   readonly sessionId: string;
   readonly targetId: string;
   readonly executeResponse: BrowserExecute;
+  /** Runs page code as `executeResponse` does, watching which of `values` it types. */
+  readonly watchTyping: (values: readonly string[]) => TypingWatch;
   readonly execute: HostExecute;
   readonly keyboard: CredentialKeyboard;
   readonly close: Effect.Effect<void, Error>;
@@ -337,6 +362,21 @@ export const makePlaywrightExecutor = (
         Effect.flatMap((response) => Schema.decodeUnknown(BrowserExecuteResponse)(response)),
         Effect.mapError(asError),
       );
+    const watchTyping = (values: readonly string[]): TypingWatch => {
+      const typed = new Set<number>();
+      return {
+        executeResponse: (code, timeoutSec = 60) =>
+          call({ kind: "execute", code, watch: values }, timeoutSec).pipe(
+            Effect.flatMap((response) => Schema.decodeUnknown(WatchedResponse)(response)),
+            Effect.map(({ typed: delivered, ...response }) => {
+              for (const index of delivered ?? []) typed.add(index);
+              return response;
+            }),
+            Effect.mapError(asError),
+          ),
+        typed: () => typed,
+      };
+    };
     const execute: HostExecute = (code, timeoutSec = 30) =>
       executeResponse(code, timeoutSec).pipe(
         Effect.flatMap((response) => {
@@ -357,6 +397,7 @@ export const makePlaywrightExecutor = (
       sessionId: randomUUID(),
       targetId: ready.targetId,
       executeResponse,
+      watchTyping,
       execute,
       keyboard,
       close,

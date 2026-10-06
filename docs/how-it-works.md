@@ -6,6 +6,10 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 - The minter is a model agent with a local workspace and a real Chromium browser, driven through native Playwright.
 - It reads the site, writes operation modules under `src/`, and runs them against the live site to check them.
+- A live example, a live test and a write's first step start over at the site's root, after other tabs close. A build that hasn't signed in starts without the cookies and site storage exploration left. A signed-in build starts from the session saved right after sign-in.
+- Its first live step opens the URL you gave, unless that step is one of those resets. Explorations then continue on whatever page the last step left.
+- A build counts as signed in only after its own sign-in steps typed the login's identifier and a password or code, or you completed an approval, and the page then shows the account. A code the site sent for that sign-in counts too once the agent asked you for it and an explore actually typed it in the page: a `fill`, `type` or `pressSequentially` call that entered it and completed. A page that already showed an account proves nothing. Every sign-in step drops the saved session, a check included, and a check after a confirmed sign-in starts a new sign-in.
+- A signed-in build saves its session before its first live step after sign-in, other than another sign-in step. The save passes through the page-code worker, which caps a result at 1 MiB. A larger session, usually from a big IndexedDB, fails the save. Every later live step except a sign-in step then fails too, since each tries the save first. Signing in again hits the same cap.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
@@ -44,6 +48,8 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+- Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
+- `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
@@ -131,7 +137,7 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas and browser call contract |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract and the page each live step starts from |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |

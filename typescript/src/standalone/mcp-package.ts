@@ -135,10 +135,10 @@ key.
 
 ## Call it
 
-Call ${deployment.name} with its discovered input schema. Each call opens the URL in
-deployment.json. The authority there only sets the tool's read-only and destructive hints. A run
-doesn't check authority, intent or sign-in origins, and edits to src/ or deployment.json aren't
-reviewed.
+Call ${deployment.name} with its discovered input schema. Each call starts at the site root of
+the URL in deployment.json and opens any deeper page itself. The authority there only sets the
+tool's read-only and destructive hints. A run doesn't check authority, intent or sign-in origins,
+and edits to src/ or deployment.json aren't reviewed.
 
 A call that needs an answer or more time returns a job ID. Continue that job with get_job,
 provide_input and cancel_job. Polling never resubmits an operation.

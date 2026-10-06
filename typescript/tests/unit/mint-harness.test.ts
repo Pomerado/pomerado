@@ -3717,6 +3717,133 @@ it.each([
   },
 );
 
+// A write step that read the site's confirmation, but whose result the host did not accept,
+// confirms nothing. Fails when that step publishes without a stated reason, when a later
+// read-only step cannot confirm the session, or when no fallback remains once no read-back can.
+it.each(["read_back", "fallback"] as const)(
+  "publishes a write whose confirming result was withheld through a %s",
+  async (path) => {
+    const published: { executionId: string; readBackUnavailable?: string }[] = [];
+    const responses: unknown[] = [];
+    let steps = 0;
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          const act = { ...execution, purpose: "act", target: "liveBrowser" };
+          // The agent hears at once that the write went out and must be read back, not redone.
+          expect(JSON.parse(yield* turn.actions.execute(act))).toMatchObject({
+            withheldConfirmation: "message",
+            instruction: expect.stringContaining("Never repeat the write") as unknown,
+          });
+          const finish = (executionId: string, readBackUnavailable?: string) =>
+            turn.actions.finish({
+              ...publication,
+              executionId,
+              ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
+            });
+          responses.push(JSON.parse(yield* finish("act_1")));
+          if (path === "fallback") {
+            expect(yield* Effect.either(finish("act_1", "   "))).toMatchObject({
+              _tag: "Left",
+              left: { code: "InvalidRequest" },
+            });
+            yield* finish("act_1", "The site shows the confirmation once and keeps no record");
+            return;
+          }
+          yield* turn.actions.execute(act);
+          responses.push(JSON.parse(yield* finish("act_1", "Not needed")));
+          yield* finish("act_2");
+        }),
+      {
+        reviewAndExecute: () =>
+          Effect.sync((): ExecutionEvidence => {
+            steps++;
+            return steps === 1
+              ? {
+                  executionId: "act_1",
+                  status: "failed",
+                  effect: "verified",
+                  withheldConfirmation: "message",
+                  observations: "Result not accepted",
+                }
+              : {
+                  executionId: "act_2",
+                  status: "completed",
+                  effect: "verified",
+                  confirmation: "message",
+                  resultRef: "result_read_back",
+                  observations: "Read the confirmation back",
+                };
+          }),
+        publish: (candidate) =>
+          Effect.sync(() => {
+            published.push({
+              executionId: candidate.executionId,
+              ...(candidate.readBackUnavailable === undefined
+                ? {}
+                : { readBackUnavailable: candidate.readBackUnavailable }),
+            });
+            return { publicationRef: "published", diagnostics: [] };
+          }),
+      },
+    );
+    expect(await f.run({ ...request, effect: "write" })).toMatchObject({ build: "published" });
+    for (const response of responses)
+      expect(response).toMatchObject({ status: "not_published", reason: "read_back_required" });
+    expect(published).toEqual([
+      path === "fallback"
+        ? {
+            executionId: "act_1",
+            readBackUnavailable: "The site shows the confirmation once and keeps no record",
+          }
+        : { executionId: "act_2" },
+    ]);
+  },
+);
+
+// The fallback is for a read-back that cannot run, such as once the execution host is lost. It
+// fails when the withheld step does not keep the attempt open for publication.
+it("publishes a withheld write confirmation through the fallback after the execution host is lost", async () => {
+  let availability = "open" as "open" | "host_unavailable";
+  const published: string[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute({ ...execution, purpose: "act", target: "liveBrowser" });
+        availability = "host_unavailable";
+        expect(
+          JSON.parse(
+            yield* turn.actions.execute({ ...execution, purpose: "act", target: "liveBrowser" }),
+          ),
+        ).toMatchObject({ status: "execution_unavailable" });
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.finish({
+          ...publication,
+          executionId: "act_1",
+          readBackUnavailable: "The execution host is unavailable, so no step can read it back",
+        });
+      }),
+    {
+      executionAvailability: () => availability,
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "act_1",
+          status: "failed" as const,
+          effect: "verified" as const,
+          withheldConfirmation: "message" as const,
+          observations: "Result not accepted",
+        }),
+      publish: (candidate) =>
+        Effect.sync(() => {
+          published.push(candidate.executionId);
+          return { publicationRef: "published", diagnostics: [] };
+        }),
+    },
+  );
+  expect(await f.run({ ...request, effect: "write" })).toMatchObject({ build: "published" });
+  expect(published).toEqual(["act_1"]);
+});
+
 // Host-owned evidence and an already executed write step have no agent-side source fix. Their
 // refusals remain visible, without turning the publication gate into a terminal mint outcome.
 it("keeps the build open and reports uneditable host-written evidence", async () => {
