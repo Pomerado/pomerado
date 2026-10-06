@@ -15,6 +15,12 @@
 - In `pomerado/core/destinations/autofill-step`, `AutofillInspection.screen` adds a required `origin`, which `inspectAutofillStep` sets. A filled `AutofillStepReport`'s `submit` adds `"stayed_disabled"`: the fields were filled, but the submit stayed disabled through the wait, so the host never clicked it.
   - Migrate by setting `origin` on any inspection you build yourself, and by handling `"stayed_disabled"` in any exhaustive check on `submit`.
 
+### Fixes
+
+- A local edit the minter can't apply now says the edit was not applied and why. That covers a patch that doesn't match, a file that already exists or is missing, and a file past the size or file-count limit. The file is unchanged, and no new folder is left behind. These edits no longer report "Workspace edit outcome unknown".
+- The minter's `read_source` now reads local workspace files. Through 0.2.0 every local read failed as unavailable, because the local workspace refused the one extra byte the minter asks for to detect an oversized file. A file past 8 MiB is still refused.
+- Local runs stage authored source a level below the SDK, as the workspace guide describes. The documented `../../runtime/index.js` import from `src/` and the skill references' imports now load. Integrations saved with `../runtime/index.js` still run unchanged.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.

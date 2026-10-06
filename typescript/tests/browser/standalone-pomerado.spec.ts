@@ -911,12 +911,13 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
   }
 });
 
+/** Saves an integration as `pomerado-mcp mint` writes it, from `src/tool.mjs` or a set of files. */
 const saveMcpFixture = (
   root: string,
   name: string,
   url: string,
   effect: "read" | "write",
-  source: string,
+  source: string | Readonly<Record<string, string>>,
   inputSchema: unknown = { type: "object", properties: {}, additionalProperties: false },
 ) =>
   Effect.runPromise(
@@ -929,7 +930,9 @@ const saveMcpFixture = (
         });
         yield* publish({
           entrypoint: "src/tool.mjs",
-          files: [{ path: "src/tool.mjs", content: source }],
+          files: Object.entries(
+            typeof source === "string" ? { "src/tool.mjs": source } : source,
+          ).map(([path, content]) => ({ path, content })),
           inputSchema,
           outputSchema: {
             type: "object",
@@ -1175,6 +1178,71 @@ test("a generated integration serves and runs with no model key or provider", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+/*
+ * A saved integration imports the SDK at `sdk` from src/ and at `nested` from a module in src/lib/.
+ * Under 0.2.0's executor, an entrypoint in src/ reached the SDK one level up and a nested module two
+ * levels up; the workspace guide documents one level more. Integrations saved either way run
+ * through `pomerado run` and serve through their saved `mcp.mjs`.
+ */
+for (const { title, sdk, nested } of [
+  {
+    title: "an integration saved with 0.2.0's one-level-up SDK imports still runs and serves",
+    sdk: "../runtime/index.js",
+    nested: "../../runtime/index.js",
+  },
+  {
+    title: "an integration saved with the documented SDK import runs and serves",
+    sdk: "../../runtime/index.js",
+    nested: "../../../runtime/index.js",
+  },
+])
+  test(title, async () => {
+    test.setTimeout(60_000);
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "text/html");
+      response.end("<h1>  Saved fixture  </h1>");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("No fixture address");
+    const url = `http://127.0.0.1:${address.port}/`;
+    const root = await mkdtemp(join(tmpdir(), "pomerado-saved-imports-"));
+    try {
+      const directory = await saveMcpFixture(root, "read_saved", url, "read", {
+        "src/tool.mjs": operation
+          .replace('"../runtime/index.js"', JSON.stringify(sdk))
+          .replace('"./heading.mjs"', '"./lib/heading.mjs"'),
+        "src/lib/heading.mjs": `import { defineOperation } from ${JSON.stringify(nested)};
+export const heading = (value) => (typeof defineOperation === "function" ? String(value).trim() : "");`,
+      });
+      const ran = await terminal(["run", "--artifact", directory, "--url", url]);
+      expect(ran.code, ran.stderr).toBe(0);
+      expect(JSON.parse(ran.stdout)).toEqual({ heading: "Saved fixture" });
+      const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href;
+      const served = await stdioMcp([join(directory, "mcp.mjs"), runtime]);
+      try {
+        expect((await served.client.listTools()).tools.map((tool) => tool.name)).toContain(
+          "read_saved",
+        );
+        const result = await served.client.callTool({
+          name: "read_saved",
+          arguments: { input: {} },
+        });
+        expect(result, served.stderr()).toMatchObject({
+          structuredContent: { heading: "Saved fixture" },
+        });
+      } finally {
+        await served.client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
 test("MCP concurrent original input callbacks remain answerable", async () => {
   await Effect.runPromise(
