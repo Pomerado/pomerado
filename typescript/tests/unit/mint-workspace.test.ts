@@ -102,6 +102,57 @@ it("does not claim success from an explicit failed SDK edit result", async () =>
   });
 });
 
+it("leaves a file unchanged and says the patch did not apply when it does not match", async () => {
+  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
+  cleanup.push(workspace.close);
+  const editor = editorWorkspace(workspace, (original) => original).createEditor?.();
+  if (!editor) throw new Error("Expected a model editor");
+  const result = await editor.updateFile({
+    type: "update_file",
+    path: "src/tool.mjs",
+    diff: "@@\n-export const absent = 1;\n+export const value = 2;\n",
+  });
+  expect(result).toMatchObject({ status: "failed" });
+  expect(result?.output).toContain("patch did not apply");
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+  const exists = await editor.createFile({
+    type: "create_file",
+    path: "src/tool.mjs",
+    diff: "+export const value = 3;\n",
+  });
+  expect(exists).toMatchObject({ status: "failed" });
+  expect(exists?.output).toContain("(EEXIST)");
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+});
+
+it("says a missing file or an oversized file was not edited, and changes nothing", async () => {
+  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
+  cleanup.push(workspace.close);
+  const editor = editorWorkspace(workspace, (original) => original).createEditor?.();
+  if (!editor) throw new Error("Expected a model editor");
+  const unchanged = "The file is unchanged.";
+  for (const result of [
+    await editor.updateFile({ type: "update_file", path: "src/missing.mjs", diff: "@@\n+x\n" }),
+    await editor.deleteFile({ type: "delete_file", path: "src/missing.mjs" }),
+  ]) {
+    expect(result).toMatchObject({ status: "failed" });
+    expect(result?.output).toContain("(ENOENT)");
+    expect(result?.output).toContain(unchanged);
+  }
+  const oversized = await editor.createFile({
+    type: "create_file",
+    path: "src/large.mjs",
+    diff: `+${"x".repeat(8 * 1024 * 1024 + 1)}\n`,
+  });
+  expect(oversized).toMatchObject({ status: "failed" });
+  expect(oversized?.output).toContain("(EFBIG)");
+  expect(oversized?.output).toContain("may hold at most 8388608 bytes");
+  expect(oversized?.output).toContain(unchanged);
+  expect(await workspace.pathExists?.("src/missing.mjs")).toBe(false);
+  expect(await workspace.pathExists?.("src/large.mjs")).toBe(false);
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+});
+
 it("does not invoke the SDK editor for path or admission refusal", async () => {
   const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
   cleanup.push(workspace.close);
