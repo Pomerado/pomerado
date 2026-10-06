@@ -513,7 +513,7 @@ test("credential queued behind cancelled browser work is never inserted", async 
               "native-control",
             ),
           ),
-        ).toBe(true);
+        ).toBe("inserted");
         await expect.poll(fixture.credentialRequests).toBe(1);
         await Effect.runPromise(
           executor.execute(`
