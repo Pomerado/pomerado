@@ -1,3 +1,5 @@
+import { Schema } from "effect";
+
 /**
  * The shape of a form control, as the page code reads it: a native date input, a text box, a
  * native select, or a custom ARIA dropdown (a combobox or a button that opens a listbox).
@@ -37,6 +39,31 @@ export const formatDate = (iso: string, format: string, locale = "en-US"): strin
   };
   return format.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D/gu, (token) => tokens[token] ?? token);
 };
+
+/**
+ * A date-only input or output, `YYYY-MM-DD`, that is a real calendar date: `2026-02-30` fails to
+ * decode, so an operation refuses it before it runs. Its JSON Schema is `format: "date"`, so a
+ * caller's JSON Schema validator refuses it too. It checks the calendar with `formatDate`, the
+ * check `fillDate` makes in the page, and sets no range: an earliest or latest date, a past date
+ * or a range's order is the task's or the site's rule, which the operation checks itself.
+ */
+export const CalendarDate = Schema.String.pipe(
+  Schema.filter(
+    (value) => {
+      try {
+        formatDate(value, "");
+        return true;
+        // error-reporting-allow: typed-recovery formatDate throws only date_invalid: the answer
+      } catch {
+        return false;
+      }
+    },
+    {
+      description: "a calendar date, YYYY-MM-DD",
+      jsonSchema: { format: "date", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+    },
+  ),
+);
 
 /**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
