@@ -23,6 +23,24 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - Guardian doesn't review a saved integration's runs. It approved the source while minting, so running an integration makes no model request and needs no model key.
 - Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
 
+### Review requests
+
+Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+
+- **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
+- **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
+  - The `request` gives the kind's name, its policy (sent as `trusted_review.policy`), its evidence (sent as `host_review`) and the subset of the shared outcomes it may return.
+  - It can also give the `labels` its decision may carry and a `private` flag.
+  - It returns `{ outcome, rationale, label? }`. The host refuses any other outcome or label.
+  - A private kind's evidence, transcript and rationale reach no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder, including after a compaction.
+- **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
+  - If the host's read fails, the source is left out and Guardian reads it itself.
+  - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.
+  - An allow counts only while the entrypoint is in view, so after a compaction during the review, Guardian must read it again. `./x` and `x` name the same file.
+  - If an allow still lacks the read after two follow-up rounds in the same review, the review fails with `EntrypointNotRead`. That failure is a verdict, so it is never retried.
+- **Incremental review.** Before an execution review, the host compares each executed source Guardian already read in this conversation since its last compaction with the current bytes. It lists the identical ones in `trusted_review.unchangedSources`, and Guardian needn't read them again. The entrypoint is still always included.
+- **Diagnostics.** Each review emits `guardian.usage` with its model calls and its input, cached, cache-write, output and reasoning token counts. Model diagnostics are reported with or without a session. The wait for a session is emitted as the `guardian.session_wait` interval, and waits between outage retries happen outside the session.
+
 ## The runtime
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
