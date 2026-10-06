@@ -192,9 +192,18 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
             jsonSchema: { input: () => json, output: () => json },
             validate: (value) => {
               const result = validate(value);
+              // Ajv names each failing path and the schema rule it breaks, never the value.
               return result.valid
                 ? { value: result.data }
-                : { issues: [{ message: "Input does not match the operation schema." }] };
+                : {
+                    issues: [
+                      {
+                        message: `Input does not match the operation schema: ${
+                          result.errorMessage ?? "unknown error"
+                        }.`,
+                      },
+                    ],
+                  };
             },
           },
         };

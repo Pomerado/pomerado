@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `pomerado/runtime` exports `CalendarDate`, a date-only `YYYY-MM-DD` schema that refuses a date that does not exist, such as `2026-02-30`, with the calendar check `fillDate` already made. Its JSON Schema is `format: "date"`. It sets no date range. The forms skill and the date examples use it, and say that a range's order, a past date or a booking limit is the tool's own `InvalidInput` check.
+- A generated integration's MCP tool names the failing input path and rule when arguments do not match its schema, and a failed job reports the tool's own `InvalidInput` message.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.

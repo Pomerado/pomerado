@@ -87,6 +87,15 @@ alone does not establish it.
 When an overlay such as a cookie or consent banner covers the target, dismiss it with any
 of its controls, including accept.
 
+Type each date-only input and output as the runtime's `CalendarDate`, imported beside
+`formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
+the format and that the date exists, the check `fillDate` makes, so the host refuses an
+impossible date before the run, in a browser or an HTTP tool alike. It sets no range: never
+narrow it to the example's date or a guessed window. A rule of the task or the site, such as
+a range that ends before it starts, a past date or a booking limit, is the tool's own check:
+fail as `InvalidInput` with a message naming the field and the rule, before any site action
+when the input alone breaks it, and when the site refuses the date.
+
 Date ranges, calendar-only pickers, validation messages, uploads, staged forms and
 autosave need site-specific semantic checks. A date field that takes typing goes
 through `fillDate`; one that opens a calendar and takes no typing does not.

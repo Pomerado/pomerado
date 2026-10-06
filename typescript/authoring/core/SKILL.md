@@ -47,7 +47,8 @@ request and the flow, never from one caller's account or example.
 
 Typed output, where the site makes it easy:
 - Prefer numbers for prices, amounts and counts, with the currency or unit in its own field.
-- Prefer ISO 8601 for dates and times, and minutes for durations.
+- Prefer ISO 8601 for dates and times, and minutes for durations. Type a date-only value as
+  the runtime's `CalendarDate` (forms skill).
 - Keep one field per fact. Split a combined line into separate fields.
 - If a value does not parse cleanly, returning the site's own text is fine.
 

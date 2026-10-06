@@ -14,6 +14,8 @@ import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
+import { CalendarDate } from "../../src/browser/index.js";
+import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
@@ -974,6 +976,74 @@ test("MCP malformed saved schema fails before models and Guardian denial never d
       expect(denied.status, connection.stderr()).toBe("failed");
       expect(hits).toBe(0);
       expect(await readFile(fixture.ledger, "utf8")).toContain("guardian");
+    } finally {
+      await connection.client.close();
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("MCP refuses an impossible calendar date and the tool's own date rule before its search", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Actual stdio SDK and original Guardian over one invalid and two native runs",
+  });
+  test.setTimeout(60_000);
+  const searches: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith("/search") === true) searches.push(request.url);
+    response.end("<h1>Stays</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing stays address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-dates-"));
+  const url = `http://127.0.0.1:${address.port}/`;
+  // A synthetic stay search: CalendarDate checks each date is real, and the tool checks the
+  // task's own rule, that the stay ends after it starts, before it sends the search.
+  const source = `import { Schema } from "effect";
+import { CalendarDate, defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"search_stays",input:Schema.Struct({check_in:CalendarDate,check_out:CalendarDate}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId,input,errors}) => {
+  if (input.check_out <= input.check_in) throw new errors.InvalidInput("check_out must be after check_in");
+  const query = new URLSearchParams(input).toString();
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/search?" + query + "', page.url()).href); return await page.locator('h1').textContent();",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result)};
+});`;
+  try {
+    const saved = await saveMcpFixture(
+      directory,
+      "search_stays",
+      url,
+      "read",
+      source,
+      contractJsonSchema(Schema.Struct({ check_in: CalendarDate, check_out: CalendarDate })),
+    );
+    const fixture = await mcpRuntime(directory);
+    const connection = await stdioMcp([join(saved, "mcp.mjs"), pathToFileURL(fixture.file).href]);
+    const search = (input: Record<string, string>) =>
+      connection.client
+        .callTool({ name: "search_stays", arguments: { input } })
+        .catch((error: unknown) => ({ isError: true, content: [{ text: String(error) }] }));
+    try {
+      const impossible = await search({ check_in: "2026-02-30", check_out: "2026-03-02" });
+      expect(impossible.isError).toBe(true);
+      expect(JSON.stringify(impossible)).toMatch(/check_in.*format.*date/);
+      await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+      const reversed = viewOf(await search({ check_in: "2026-03-05", check_out: "2026-03-01" }));
+      expect(reversed.status, connection.stderr()).toBe("failed");
+      expect(reversed.error).toContain("check_out must be after check_in");
+
+      const valid = await search({ check_in: "2026-03-01", check_out: "2026-03-05" });
+      expect(objects(valid).find((value) => value["heading"] === "Stays")).toBeDefined();
+      expect(searches).toEqual(["/search?check_in=2026-03-01&check_out=2026-03-05"]);
     } finally {
       await connection.client.close();
     }
