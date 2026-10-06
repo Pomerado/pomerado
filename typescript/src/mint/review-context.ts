@@ -43,10 +43,11 @@ export interface MintReviewHost {
 /**
  * What Guardian may approve for an anonymous read or exploration. Opening the public sign-in
  * page, including the site's own redirects to its sign-in origin, is discovery; entering or
- * submitting any credential is the host-owned sign-in step, never authored exploration.
+ * submitting any credential is the host-owned sign-in step, never authored exploration. A read
+ * keeps the limits the request states; context it gives, such as today's date, is no filter.
  */
 const explorationAllowedEffect =
-  "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect explicit request constraints. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Entering or submitting a username, email, phone number, password or code, starting a sign-in, or switching accounts is not: credential submission belongs only to the host-owned authenticate step. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.";
+  "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Entering or submitting a username, email, phone number, password or code, starting a sign-in, or switching accounts is not: credential submission belongs only to the host-owned authenticate step. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.";
 
 /**
  * What Guardian may approve for a write build's `act` step. The write is the whole task the
