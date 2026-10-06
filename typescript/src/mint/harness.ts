@@ -343,6 +343,9 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
     ...(evidence.preflight === undefined ? {} : { preflight: evidence.preflight }),
     ...(evidence.resultRef === undefined ? {} : { resultRef: evidence.resultRef }),
     ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
+    ...(evidence.withheldConfirmation === undefined
+      ? {}
+      : { withheldConfirmation: evidence.withheldConfirmation }),
     ...(evidence.checks === undefined ? {} : { checks: evidence.checks }),
     ...(siteAccess === undefined ? {} : { siteAccess }),
   };
@@ -2335,12 +2338,30 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (entry) => entry.executionId === proposed.executionId,
               );
               const repair = dependencies.canPublishRepair?.(proposed.executionId) === true;
+              const actStep =
+                evidence !== undefined && purposes.get(evidence.executionId) === "act";
+              // A step whose confirmation the host withheld with its result confirms nothing: a
+              // later step that only reads the confirmation back publishes the session, and this
+              // one does only when no read-back is possible.
+              const withheld = actStep && evidence.withheldConfirmation !== undefined;
+              if (withheld && (writeSession === "closed" || !proposed.readBackUnavailable)) {
+                const reason = "read_back_required";
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    writeSession === "closed"
+                      ? "A later act step confirmed this write session. Publish against that step."
+                      : "This step read the write's confirmation, but the host did not accept its result, so it confirms nothing. Never repeat the write. Run one act step that only reads the confirmation or the saved state back and records it, then publish against that step. Only if no step can read it back, call finish_build again naming this step with readBackUnavailable saying why; it then publishes with no output kept.",
+                  executionContext: yield* executionContext(),
+                });
+              }
               // The step that read the site's confirmation publishes its session even when its
               // own output failed: the write happened once, and publication never runs it again.
-              const confirmedWrite =
-                evidence !== undefined &&
-                purposes.get(evidence.executionId) === "act" &&
-                evidence.confirmation !== undefined;
+              const confirmedWrite = actStep && (evidence.confirmation !== undefined || withheld);
               if (
                 !evidence ||
                 (!repair &&
@@ -2376,6 +2397,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               const coverage = yield* screenMintText(dependencies, proposed.coverage);
               const assumptions = yield* screenAssumptions(proposed.assumptions);
+              const readBackUnavailable = withheld
+                ? yield* screenMintText(dependencies, proposed.readBackUnavailable ?? "")
+                : undefined;
               const publication = yield* dependencies
                 .publish(
                   {
@@ -2383,6 +2407,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     executionId: proposed.executionId,
                     metadata: proposed.metadata,
                     coverage,
+                    ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
                   },
                   evidence,
                 )

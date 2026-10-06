@@ -496,6 +496,13 @@ export interface ExecutionEvidence {
   readonly effect: "not_sent" | "possible" | "verified";
   /** The confirmation a write session step recorded; it closes the session. */
   readonly confirmation?: "message" | "readback";
+  /**
+   * The confirmation a write session step read when the host did not accept its result, such as
+   * one that returned a credential. It leaves the session open, so a later step that only reads
+   * the confirmation back can confirm it. The step publishes only when publication says no
+   * read-back is possible (`readBackUnavailable`).
+   */
+  readonly withheldConfirmation?: "message" | "readback";
   /** Screened, finite supporting observation; never a replacement execution failure. */
   readonly siteAccess?: SiteAccessDiagnostic;
   /** Trusted host marker from a failed live runner result after cleanup and retention. */
@@ -542,6 +549,9 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   status: Schema.Literal("completed", "failed", "unsupported", "needs_input"),
   effect: Schema.Literal("not_sent", "possible", "verified"),
   confirmation: Schema.optionalWith(Schema.Literal("message", "readback"), { exact: true }),
+  withheldConfirmation: Schema.optionalWith(Schema.Literal("message", "readback"), {
+    exact: true,
+  }),
   siteAccess: Schema.optionalWith(
     Schema.Union(
       Schema.Struct({
@@ -611,6 +621,16 @@ export const PublicationRequest = Schema.Struct({
     ),
   }),
   coverage: Schema.String,
+  /**
+   * Why no step can read a write's confirmation back, when the step named here read it but the
+   * host did not accept its result. Only then does that step publish, with no output kept.
+   */
+  readBackUnavailable: Schema.optional(
+    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(500)).annotations({
+      description:
+        "Only for a write step whose result the host did not accept after it read the confirmation: why no act step can read that confirmation or the saved state back, such as the site showing neither again",
+    }),
+  ),
   /**
    * Site defaults the build took instead of asking: only non-credential, non-write, reversible
    * choices. The host keeps each one that passes privacy screening unchanged.

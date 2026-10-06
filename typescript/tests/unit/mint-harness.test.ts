@@ -3473,6 +3473,82 @@ it.each([
   },
 );
 
+// A write step that read the site's confirmation, but whose result the host did not accept,
+// confirms nothing. Fails when that step publishes without a stated reason, when a later
+// read-only step cannot confirm the session, or when no fallback remains once no read-back can.
+it.each(["read_back", "fallback"] as const)(
+  "publishes a write whose confirming result was withheld through a %s",
+  async (path) => {
+    const published: { executionId: string; readBackUnavailable?: string }[] = [];
+    const responses: unknown[] = [];
+    let steps = 0;
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          const act = { ...execution, purpose: "act", target: "liveBrowser" };
+          yield* turn.actions.execute(act);
+          const finish = (executionId: string, readBackUnavailable?: string) =>
+            turn.actions.finish({
+              ...publication,
+              executionId,
+              ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
+            });
+          responses.push(JSON.parse(yield* finish("act_1")));
+          if (path === "fallback") {
+            yield* finish("act_1", "The site shows the confirmation once and keeps no record");
+            return;
+          }
+          yield* turn.actions.execute(act);
+          responses.push(JSON.parse(yield* finish("act_1", "Not needed")));
+          yield* finish("act_2");
+        }),
+      {
+        reviewAndExecute: () =>
+          Effect.sync((): ExecutionEvidence => {
+            steps++;
+            return steps === 1
+              ? {
+                  executionId: "act_1",
+                  status: "failed",
+                  effect: "verified",
+                  withheldConfirmation: "message",
+                  observations: "Result not accepted",
+                }
+              : {
+                  executionId: "act_2",
+                  status: "completed",
+                  effect: "verified",
+                  confirmation: "message",
+                  resultRef: "result_read_back",
+                  observations: "Read the confirmation back",
+                };
+          }),
+        publish: (candidate) =>
+          Effect.sync(() => {
+            published.push({
+              executionId: candidate.executionId,
+              ...(candidate.readBackUnavailable === undefined
+                ? {}
+                : { readBackUnavailable: candidate.readBackUnavailable }),
+            });
+            return { publicationRef: "published", diagnostics: [] };
+          }),
+      },
+    );
+    expect(await f.run({ ...request, effect: "write" })).toMatchObject({ build: "published" });
+    for (const response of responses)
+      expect(response).toMatchObject({ status: "not_published", reason: "read_back_required" });
+    expect(published).toEqual([
+      path === "fallback"
+        ? {
+            executionId: "act_1",
+            readBackUnavailable: "The site shows the confirmation once and keeps no record",
+          }
+        : { executionId: "act_2" },
+    ]);
+  },
+);
+
 // Host-owned evidence and an already executed write step have no agent-side source fix. Their
 // refusals remain visible, without turning the publication gate into a terminal mint outcome.
 it("keeps the build open and reports uneditable host-written evidence", async () => {
