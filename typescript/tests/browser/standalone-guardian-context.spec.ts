@@ -132,8 +132,13 @@ test("a read build's reviews carry each step's own context", async () => {
     // Each step gets the authority its own kind of work needs.
     expect(effectsOf(command)).toEqual([offline]);
     expect(effectsOf(contract)).toEqual([offline]);
-    for (const review of [explore, liveTest, example1, example2])
+    for (const review of [explore, liveTest, example1, example2]) {
       expect(effectsOf(review)[0]).toMatch(/^Authorized repeatable reads/u);
+      // Each read review is told the request's context, such as today's date, is not a filter.
+      expect(effectsOf(review)[0]).toContain(
+        "Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it.",
+      );
+    }
 
     // The command runs before any page is open, with its sandbox's facts.
     expect(currentOf(command!)).toEqual({

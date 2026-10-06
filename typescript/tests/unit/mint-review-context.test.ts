@@ -88,6 +88,14 @@ describe("allowedEffectsFor", () => {
       expect(allowedEffectsFor(live(purpose))[0]).toMatch(/^Authorized repeatable reads/u);
   });
 
+  it("gives a live read step a text that keeps the request's context out of its constraints", () => {
+    // A date or place the request gives as context must not become a filter Guardian enforces.
+    for (const purpose of ["explore", "test", "example", "inspect", "residual"] as const)
+      expect(allowedEffectsFor(live(purpose))).toEqual([
+        "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Entering or submitting a username, email, phone number, password or code, starting a sign-in, or switching accounts is not: credential submission belongs only to the host-owned authenticate step. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.",
+      ]);
+  });
+
   it("gives a live sign-in step the sign-in text and every offline step the offline text", () => {
     // The host fills a signInStep itself; an authored sign-in writes secret handles in its source.
     expect(allowedEffectsFor(live("authenticate"))).toEqual([
