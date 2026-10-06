@@ -545,4 +545,14 @@ describe("failure detail", () => {
     expect(failureDetailMetadata({ code: "AuthorityChanged" })).toBeUndefined();
     expect(failureDetailOf(new Error("plain"))).toBeUndefined();
   });
+
+  it("keeps a browser page call failure distinct from an unresponsive browser", () => {
+    const detail = failureDetail("browser_page_call_failed", {
+      operation: "page_reset",
+      error: new Error("script threw"),
+    });
+    const revalidated = failureDetailMetadata({ failureDetail: detail })?.failureDetail;
+    expect(revalidated?.subCause).toBe("browser_page_call_failed");
+    expect(revalidated?.operation).toBe("page_reset");
+  });
 });
