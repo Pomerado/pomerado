@@ -36,7 +36,7 @@ const { contractJsonSchema } = await import("../runtime/operation.js");
 const { makeEffectJournal } = await import("../runtime/context.js");
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
-const { InvalidOutput } = await import("../runtime/errors.js");
+const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
 const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
 const { makeScriptInput, ScriptInputFailure } = await import("../runtime/script-input.js");
 const { InputAnswers } = await import("../runtime/input-request.js");
@@ -240,6 +240,9 @@ await Effect.runPromise(
             error: error.message || error.name,
             ...metadata,
             ...("_tag" in error && typeof error._tag === "string" ? { tag: error._tag } : {}),
+            ...(error instanceof InvalidInput && error.issues !== undefined
+              ? { inputIssues: error.issues }
+              : {}),
             ...("code" in error && typeof error.code === "string"
               ? { code: error.code }
               : "_tag" in error && typeof error._tag === "string"
