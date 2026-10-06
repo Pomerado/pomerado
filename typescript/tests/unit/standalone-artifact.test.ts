@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -44,7 +44,18 @@ it("preserves an artifact roundtrip and refuses metadata collisions before writi
   }
 });
 
-it.each(["MCP.mjs", "readme.md/main.mjs"])(
+it.each([
+  "MCP.mjs",
+  "Mcp.Json",
+  "readme.md/main.mjs",
+  "Codex-MCP.toml",
+  ".MCP.json",
+  ".vscode/mcp.json",
+  ".Cursor/mcp.json",
+  ".codex/config.toml",
+  ".GEMINI/settings.json",
+  ".claude/settings.json",
+])(
   "refuses packaging collision %s and removes the incomplete integration",
   async (path) => {
     const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
@@ -74,3 +85,59 @@ it.each(["MCP.mjs", "readme.md/main.mjs"])(
     }
   },
 );
+
+it("packages a client-neutral MCP server entry that holds no key", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
+  try {
+    const published = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const publish = yield* prepareIntegration({
+            root,
+            name: "example_reader",
+            request: { url: "https://example.test", intent: "Read page", effect: "read" },
+          });
+          return yield* publish({
+            entrypoint: "src/main.mjs",
+            files: [{ path: "src/main.mjs", content: "export default {};" }],
+            inputSchema: { type: "object" },
+            outputSchema: { type: "object" },
+          });
+        }),
+      ),
+    );
+    const directory = join(await realpath(root), "example_reader");
+    expect(published.configPath).toBe(join(directory, "mcp.json"));
+    expect((await readdir(directory)).sort()).toEqual([
+      "README.md",
+      "deployment.json",
+      "mcp.json",
+      "mcp.mjs",
+      "pomerado.json",
+      "src",
+    ]);
+    const launcher = join(directory, "mcp.mjs");
+    expect(JSON.parse(await readFile(published.configPath, "utf8"))).toEqual({
+      mcpServers: {
+        example_reader: {
+          command: process.execPath,
+          args: [launcher, expect.stringMatching(/^file:\/\/.+\/mcp-cli\.js$/)],
+        },
+      },
+    });
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    for (const command of [
+      "claude mcp add example_reader -- ",
+      "codex mcp add example_reader -- ",
+      "gemini mcp add -e 'OPENAI_API_KEY=$OPENAI_API_KEY' example_reader ",
+    ])
+      expect(readme).toContain(command);
+    expect(readme).toContain('env_vars = ["OPENAI_API_KEY"]');
+    expect(readme).toContain("~/.codex/config.toml");
+    expect(readme).toContain("$CODEX_HOME/config.toml");
+    expect(readme).not.toContain("codex-mcp.toml");
+    expect(await readFile(launcher, "utf8")).not.toContain("Codex");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

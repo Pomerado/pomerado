@@ -1,0 +1,45 @@
+# Changelog
+
+## 0.2.0
+
+This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
+
+License: MIT from 0.2.0 (was AGPL-3.0-only through 0.1.2). No CLA.
+
+### Breaking changes
+
+- Authoring files carry standalone text with named sections, `<!-- pomerado:section ID -->`. Each ID starts with its file's key: the skill name in `<skill>/SKILL.md`, `agents.` in `workspace/AGENTS.md` and `guide.` in `workspace/README.md`. A section's standalone text, if it has any, is its default.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` default to `"standalone"`, which renders each section's standalone text. `"hosted"` no longer renders host text from the package. It loads a directory the host composed first and refuses any section left in it.
+  - Migrate by copying `getAuthoringDirectory()`, replacing every section with your own text, and loading the copy with an explicit `"hosted"`.
+- The skill catalog lists only the skills the package ships: `core`, `auth`, `pagination`, `forms`, `writes` and `caller-input`. The `testing`, `recovery`, `captcha`, `browser-recovery`, `http-mcp` and `publication` entries are gone. The workspace guide installs only `README.md` beside `AGENTS.md`, without the four `reference/` sections. `writes` has one description in both modes.
+  - Migrate by loading your own skills and reference sections beside the package's, in the order your model should see them.
+- In `pomerado/core/runtime/provider-metadata`, `ProxySwitchSummary` is now `BrowserRecoverySummary` and `RetainedProxyError` is now `RetainedNetworkError`. Their shapes and values are unchanged.
+  - Migrate by renaming the imports, or by declaring your own type of the same shape.
+- `MintEntryNavigation`'s replaced-browser `reason` is open: `"sign_in"`, `"recovery"` or a reason the host defines and explains in `instruction`.
+  - Migrate by giving any exhaustive check on `reason` a default branch.
+- The optional `captcha_state` and `request_browser_recovery` tools get generic descriptions. `MintDependencies.hostToolDescriptions` takes a host's own.
+  - Migrate by passing the descriptions your host relied on.
+- A generated integration writes `mcp.json`, a standard `mcpServers` entry with no key, in place of `codex-mcp.toml`. Its README lists the add command for Claude Code, Codex and Gemini CLI.
+  - `configPath` from `prepareIntegration()`, and `integration.configPath` in a finished `mint` job's output, now point to that JSON file instead of the TOML.
+  - Authored source may no longer use these top-level names, compared case-insensitively: `mcp.json`, `.mcp.json`, `.vscode`, `.cursor`, `.codex`, `.gemini` and `.claude`. `deployment.json`, `mcp.mjs`, `readme.md` and `codex-mcp.toml` stay reserved.
+  - Migrate by adding the integration with the command in its README, or by copying the entry in `mcp.json` into your client. Read `configPath` as JSON. Integrations minted earlier keep their TOML and still run.
+- `MintFailure` adds the reason `definition_login_reference`. A host may refuse publication with it when a tool's definition quotes the build's account reference, and the agent is told which part to rewrite.
+  - Migrate by giving any exhaustive check on `reason` a default branch.
+
+### Other changes
+
+- Seven headings that rendered empty in standalone mode now have standalone text, in `core/SKILL.md`, `auth/SKILL.md` and `workspace/AGENTS.md`.
+- Section markers are checked strictly in both modes: an unterminated, unspaced, duplicated or foreign section, a stray end marker, a section inside a code fence and any other `pomerado:`, in any case, all fail the load.
+- The `pomerado-mcp` bin starts when run through npx or a global install. Earlier versions exited without starting the server.
+- The shared core skill suggests typed output: numbers for prices, amounts and counts with the currency or unit in its own field, ISO 8601 for dates and times, minutes for durations and one field per fact. These are suggestions, not checks.
+- Guardian's question review allows a question about which sign-in method or account to use, or how to reach the sign-in, when the choices it names match what the page shows. The shared workspace guide says asking it is expected. Guardian also no longer rewords any question only because `allowedEffects` is empty.
+- `ScriptQuestionDeclarations` refuses the whole record when any question id is invalid, instead of dropping that entry. A question id starts with a lowercase letter and uses only lowercase letters, digits and underscores, up to 64 characters.
+- `MintDependencies.redactCallerText` lets a host remove private values, such as the build's account reference, from what the agent writes for its caller: a request's notice, prompts and option labels, and a blocked explanation. The agent's own transcript is unchanged.
+- `MintDependencies.priorAttemptMayHaveChanged` tells the agent of a restarted write build that an earlier attempt may have changed the website, so it reads back before any write. A `not_opened` entry navigation may carry `reason: "prior_effect"` when the host skipped it for that reason.
+
+## 0.1.2
+
+- Guardian's upstream policy, adapted from OpenAI Codex, carries its Apache-2.0 notice, and the package ships `third-party/codex/LICENSE` and `third-party/codex/NOTICE`. Guardian drops the notice before the policy reaches the model.
+- Failure-detail comments no longer name a hosted service's internal paths.
+- `FailureSubCause` adds `browser_page_call_failed`, for a page command the browser answered with a failure, such as a script error or a timeout.
+- This is the first release published with npm provenance.
