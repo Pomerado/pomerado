@@ -12,12 +12,20 @@ export class UpstreamPolicySlotInvalid extends Data.TaggedError("UpstreamPolicyS
 }
 
 /**
+ * The policy file's opening licence notice, which is for readers and never reaches the model. A
+ * byte order mark or whitespace before it, and any line endings after it, go with it.
+ */
+const leadingNotice = /^\uFEFF?\s*<!--[\s\S]*?-->\s*/;
+
+/**
  * Puts Pomerado's policy in the upstream policy's one slot. An adapter calls it when it is built,
  * so a policy file without the slot stops startup instead of Guardian reviewing without
- * Pomerado's policy.
+ * Pomerado's policy. A leading HTML comment is dropped first, so the file's licence notice is
+ * neither sent to the model nor counted as a slot.
  */
 export const withTenantPolicy = (upstreamPolicy: string, tenantPolicy: string): string => {
-  const slots = upstreamPolicy.split(tenantPolicySlot).length - 1;
+  const policy = upstreamPolicy.replace(leadingNotice, "");
+  const slots = policy.split(tenantPolicySlot).length - 1;
   if (slots !== 1) throw new UpstreamPolicySlotInvalid({ slots });
-  return upstreamPolicy.replace(tenantPolicySlot, tenantPolicy);
+  return policy.replace(tenantPolicySlot, tenantPolicy);
 };

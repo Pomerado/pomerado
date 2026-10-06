@@ -246,7 +246,7 @@ corepack pnpm test:browser
 
 This repository owns the portable tests for its shared core and local runtime, with synthetic fixtures and the existing Vitest and Playwright runners. Browser tests exercise native Playwright, minting through MCP, generated integration MCPs, authentication and autofill using local fixture sites and scripted model responses. They need no Cloud account or model API key. Tests for hosted services stay in the application repository.
 
-Open shared core and local adapter pull requests here. Shared changes land here first.
+Outside pull requests are not accepted until a Contributor License Agreement is in place. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
 
 Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions.
 
@@ -259,3 +259,5 @@ The clone and build quickstart works independently of npm releases. Contributors
 ---
 
 Copyright (c) 2026 Pomerado. Licensed under GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+
+Third-party code keeps its own license. The Guardian policy in `typescript/src/guardian/upstream-policy.md` is adapted from [OpenAI Codex](https://github.com/openai/codex) under the Apache License 2.0. Its license and notice are in [third-party/codex/](third-party/codex/) and ship with the npm package.
