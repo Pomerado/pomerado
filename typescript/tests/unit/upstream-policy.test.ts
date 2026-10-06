@@ -9,13 +9,16 @@ import {
   nativeExecutionEnvironment,
 } from "../../src/guardian/execution-policy.js";
 import type { GuardianExecutionEnvironment } from "../../src/guardian/execution-policy.js";
-import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { makeOpenAIReviewer, nativeExecutionEnvironment as packagedNative } from "../../src/guardian/openai.js";
+import type { GuardianExecutionEnvironment as PackagedEnvironment } from "../../src/guardian/openai.js";
 import { UpstreamPolicySlotInvalid, withTenantPolicy } from "../../src/guardian/upstream-policy.js";
 import { markedUpstreamPolicy } from "../support/tenant-policy.js";
 
 const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
+// sha256 of the local host's execution policy. A deliberate policy edit updates it.
+const nativePolicySha256 = "c69fb86e95370c2bd879ba2039c74dd0f209027795c92773eea1ccb321feeac6";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
@@ -179,5 +182,25 @@ describe("Guardian execution environment", () => {
     expect(JSON.stringify(requests[0]?.input)).toContain(
       String.raw`\"trusted_execution_environment\":\"other-host\"`,
     );
+  });
+
+  it("keeps the local host's execution policy byte for byte", () => {
+    expect(sha256(guardianExecutionPolicy(nativeExecutionEnvironment))).toBe(nativePolicySha256);
+  });
+
+  it("exports the environment type and the local environment from the package's Guardian entry", async () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { readonly exports: Readonly<Record<string, { readonly import?: string }>> };
+    const target = manifest.exports["./core/guardian/openai"]?.import;
+    expect(target).toBe("./dist/typescript/src/guardian/openai.js");
+    const source = new URL(
+      `../../../${String(target).replace("./dist/", "").replace(/\.js$/u, ".ts")}`,
+      import.meta.url,
+    );
+    const entry = (await import(source.href)) as { readonly nativeExecutionEnvironment?: unknown };
+    expect(entry.nativeExecutionEnvironment).toBe(nativeExecutionEnvironment);
+    const environment: PackagedEnvironment = packagedNative;
+    expect(environment).toBe(nativeExecutionEnvironment);
   });
 });

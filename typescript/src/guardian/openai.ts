@@ -22,6 +22,9 @@ import type { ModelFailureMetadata } from "../models/model-failure.js";
 import type { AgentOutputType, ModelProvider } from "@openai/agents";
 import type { Cause } from "effect";
 
+export { nativeExecutionEnvironment } from "./execution-policy.js";
+export type { GuardianExecutionEnvironment } from "./execution-policy.js";
+
 export interface GuardianModelOptions {
   /**
    * The host that runs reviewed code, as the execution policy describes it. The local host passes

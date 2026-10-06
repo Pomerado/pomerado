@@ -22,6 +22,10 @@ import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 import { loadStandaloneAuthoring } from "../../src/mint/skills.js";
 import { getAuthoringDirectory } from "../../src/assets.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 
 const message = (text: string): ModelResponse["output"][number] => ({
   type: "message",
@@ -1341,8 +1345,8 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
   }
 });
 
-// What the local host sends its two models: Guardian the native execution policy and none of a
-// hosted service's, and the minter the workspace guide with every section rendered.
+// What the local host sends its two models: Guardian the native execution policy, and the minter
+// the workspace guide with every section rendered.
 test("a local mint sends Guardian the native policy and the minter the rendered workspace guide", async () => {
   test.setTimeout(45_000);
   const server = createServer((_request, response) => {
@@ -1398,16 +1402,7 @@ test("a local mint sends Guardian the native policy and the minter the rendered 
         "confirms only executor cleanup",
       ])
         expect(policy).toContain(native);
-      for (const hosted of [
-        "Operations are Kernel scripts.",
-        "attempts to bypass isolation",
-        "Offline work (pureFiles, savedDOM, savedHTTP) enters nothing on the site",
-        "runs a shell command in an isolated sandbox",
-        "Kernel Managed Auth",
-        "automatic CAPTCHA solver is part of the host's stealth browser",
-        "confirms only sandbox cleanup",
-      ])
-        expect(policy).not.toContain(hosted);
+      expect(policy).toContain(guardianExecutionPolicy(nativeExecutionEnvironment));
     }
     const guide = await Effect.runPromise(loadStandaloneAuthoring(getAuthoringDirectory()));
     expect(mintRequests.length).toBeGreaterThan(0);
