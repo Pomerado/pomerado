@@ -16,6 +16,27 @@ describe("script question declarations", () => {
     },
   );
 
+  it("rejects an invalid own prototype key before decoding the record", () => {
+    const input: unknown = JSON.parse(
+      '{"page_title":{"type":"text","prompt":"Which page?"},"__proto__":{"type":"text","prompt":"Which page?"}}',
+    );
+    expect(Either.isLeft(Schema.decodeUnknownEither(ScriptQuestionDeclarations)(input))).toBe(true);
+  });
+
+  it("keeps ordinary question-value decoding", () => {
+    const decoded = Schema.decodeUnknownEither(ScriptQuestionDeclarations)({
+      page_title: { ...question, extra: "ignored" },
+    });
+    expect(decoded).toEqual(Either.right({ page_title: question }));
+  });
+
+  it("preserves explicitly strict question-value decoding", () => {
+    const decoded = Schema.decodeUnknownEither(ScriptQuestionDeclarations, {
+      onExcessProperty: "error",
+    })({ page_title: { ...question, extra: "refused" } });
+    expect(Either.isLeft(decoded)).toBe(true);
+  });
+
   it("preserves every valid id", () => {
     const decoded = Schema.decodeUnknownEither(ScriptQuestionDeclarations)({
       page_title: question,
