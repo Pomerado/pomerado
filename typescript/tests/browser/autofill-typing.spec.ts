@@ -264,9 +264,54 @@ test("replacing the bound field before insertion leaves the replacement empty", 
       },
     }),
   );
-  expect(report).toMatchObject({ outcome: "refused", reason: "credential_target_refused" });
+  expect(report).toMatchObject({
+    outcome: "refused",
+    reason: "credential_target_refused",
+    failureDetail: { context: { check: "typing_refused", insertion: "binding_not_in_world" } },
+  });
   expect(await page.locator("input[name=password]").inputValue()).toBe("");
 });
+
+// Chromium decides the bound field's document and focus state at the moment of insertion.
+for (const { cause, fault } of [
+  { cause: "focus_moved", fault: () => document.getElementById("other")?.focus() },
+  {
+    cause: "detached",
+    fault: () => document.querySelector("input[name=password]")?.remove(),
+  },
+] as const)
+  test(`a native insertion refused as ${cause} says so, naming no binding, selector or value`, async ({
+    page,
+  }) => {
+    const received = await serve(page, `${loginScreen}<input id="other" aria-label="Other">`);
+    const step: AutofillStep = {
+      fields: [{ selector: "input[name=password]", slot: "password" }],
+    };
+    const host = await hostPage(page);
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
+    );
+    if ("outcome" in inspection) throw new Error("Fixture inspection refused");
+    const { keyboard } = await hostKeyboard(page, () => page.evaluate(fault));
+    const report = await Effect.runPromise(
+      fillAutofillStep({ step, values: [password], inspection, page: host, keyboard }),
+    );
+    expect(report).toMatchObject({
+      outcome: "refused",
+      reason: "credential_target_refused",
+      target: 0,
+      failureDetail: {
+        phase: "typing_refused",
+        context: { check: "typing_refused", insertion: cause, documentOrigin: site },
+      },
+    });
+    expectOriginsOnly(report);
+    const recorded = JSON.stringify(report);
+    for (const secret of [password, "__pomerado_autofill_", step.fields[0]?.selector ?? ""])
+      expect(recorded).not.toContain(secret);
+    expect(await page.locator("#other").inputValue()).toBe("");
+    expect(received).toEqual([]);
+  });
 
 test("a page cannot copy a credential binding onto a replacement control", async ({ page }) => {
   const received = await serve(page, loginScreen);
