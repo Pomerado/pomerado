@@ -9,7 +9,6 @@ import {
   type Browser,
   type BrowserContext,
   type CDPSession,
-  type ElementHandle,
   type Frame,
   type Page,
 } from "playwright";
@@ -59,27 +58,40 @@ const identify = (context: BrowserContext, page: Page) =>
     );
   });
 
-/** A watched value's index and the URL of the frame a completed typing call entered it in. */
-type Delivery = readonly [index: number, url: string];
+/**
+ * A watched value's index and the URLs of the frame a completed typing call entered it in, when
+ * the call started and once it completed.
+ */
+type Delivery = readonly [index: number, urls: readonly string[]];
 
-/** The focused element, followed into open shadow roots. */
-const focusedElement =
-  "(() => { let element = document.activeElement; while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement; return element; })()";
+/** How a frame locator's selector enters the frame its next part matches in. */
+const enterFrame = " >> internal:control=enter-frame >> ";
 
 /**
- * The URL of the frame that holds `page`'s focus: from the top frame, each focused frame element
- * passes the focus on to its own frame.
+ * The frame a frame's `fill` or `type` with `selector` types in: the frame itself, or the content
+ * of the last frame element the selector enters, found the way Playwright finds it. Undefined when
+ * that element isn't there, or the selector enters a frame in a way this can't follow.
  */
-const focusedFrameUrl = async (page: Page) => {
-  const visited = new Set<Frame>();
-  for (let frame = page.mainFrame(); !visited.has(frame); ) {
-    visited.add(frame);
-    const focused = await frame.evaluateHandle(focusedElement);
-    const element = focused.asElement() as ElementHandle | null;
-    const inner = element === null ? null : await element.contentFrame();
+const selectorFrame = async (frame: Frame, selector: string) => {
+  const at = selector.lastIndexOf(enterFrame);
+  if (selector.slice(at < 0 ? 0 : at + enterFrame.length).includes("enter-frame")) return undefined;
+  if (at < 0) return frame;
+  const owner = await frame.$(selector.slice(0, at));
+  const content = owner === null ? null : await owner.contentFrame();
+  await owner?.dispose();
+  return content ?? undefined;
+};
+
+/**
+ * The frame of `page` whose document holds the focused element, by the browser's own `:focus`
+ * match, which Playwright runs apart from the page's scripts: only the focused frame matches it.
+ */
+const focusedFrame = async (page: Page) => {
+  for (const frame of page.frames()) {
+    const focused = await frame.$(":focus").catch(() => null);
+    if (focused === null) continue;
     await focused.dispose();
-    if (inner === null) return frame.url();
-    frame = inner;
+    return frame;
   }
   return undefined;
 };
@@ -87,10 +99,11 @@ const focusedFrameUrl = async (page: Page) => {
 /**
  * Wraps, for one script, the calls a handle may type through: a frame's `fill` and `type`, which a
  * page's and a locator's `fill`, `type` and `pressSequentially` go through, and the keyboard's
- * `type`. One that completed with a watched value as its text adds the value to `typed`, with the
- * URL of the frame that holds the focus once it completed: the frame it typed in. A call that
- * throws adds nothing. The methods are shared by every page, so the returned restore puts the
- * originals back once the script ends.
+ * `type`. Before a call with a watched value as its text, it finds the frame the call types in:
+ * the selector's frame for a frame's call, the focused frame for the keyboard's. Once the call
+ * completed, it adds the value to `typed` with that frame's URL then and now, read without
+ * waiting for any page the typing started to load. A call that throws adds nothing. The methods
+ * are shared by every page, so the returned restore puts the originals back once the script ends.
  */
 const watchTypingCalls = (
   page: Page,
@@ -98,19 +111,23 @@ const watchTypingCalls = (
   values: readonly string[],
   typed: Delivery[],
 ) => {
-  const keyboardPage = (keyboard: unknown) =>
-    browser
+  const keyboardFrame = (keyboard: unknown) => {
+    const owner = browser
       .contexts()
       .flatMap((context) => context.pages())
       .find((candidate) => candidate.keyboard === keyboard);
-  const framePage = (frame: unknown) => (frame as Frame).page();
+    return owner === undefined ? Promise.resolve(undefined) : focusedFrame(owner);
+  };
+  // A frame element that wasn't there yet may be once the call found its field.
+  const frameOf = (frame: unknown, args: readonly unknown[]) =>
+    selectorFrame(frame as Frame, String(args[0]));
   const framePrototype = Object.getPrototypeOf(page.mainFrame()) as object;
   const sinks = [
-    [framePrototype, "fill", 1, framePage],
-    [framePrototype, "type", 1, framePage],
-    [Object.getPrototypeOf(page.keyboard) as object, "type", 0, keyboardPage],
+    [framePrototype, "fill", 1, frameOf, true],
+    [framePrototype, "type", 1, frameOf, true],
+    [Object.getPrototypeOf(page.keyboard) as object, "type", 0, keyboardFrame, false],
   ] as const;
-  const restores = sinks.map(([prototype, method, index, pageOf]) => {
+  const restores = sinks.map(([prototype, method, index, target, again]) => {
     const own = Object.getOwnPropertyDescriptor(prototype, method);
     const original: unknown = Reflect.get(prototype, method);
     if (typeof original !== "function") return () => undefined;
@@ -118,14 +135,16 @@ const watchTypingCalls = (
       configurable: true,
       writable: true,
       value: async function (this: unknown, ...args: unknown[]) {
-        const result: unknown = await Reflect.apply(original, this, args);
         const text = args[index];
         const at = typeof text === "string" ? values.indexOf(text) : -1;
-        const owner = at >= 0 ? pageOf(this) : undefined;
-        if (owner !== undefined) {
-          const url = await focusedFrameUrl(owner).catch(() => undefined);
-          if (url !== undefined) typed.push([at, url]);
-        }
+        if (at < 0) return (await Reflect.apply(original, this, args)) as unknown;
+        const before = await target(this, args).catch(() => undefined);
+        const started = before?.url();
+        const result: unknown = await Reflect.apply(original, this, args);
+        const frame =
+          before ?? (again ? await target(this, args).catch(() => undefined) : undefined);
+        if (frame !== undefined)
+          typed.push([at, [...new Set([started ?? frame.url(), frame.url()])]]);
         return result;
       },
     });

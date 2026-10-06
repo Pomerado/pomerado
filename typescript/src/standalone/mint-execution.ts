@@ -16,7 +16,8 @@ import {
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { noticeRequest, InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
-import { siteDomain, trustedUrl } from "../runtime/same-site.js";
+import { siteDomain } from "../runtime/same-site.js";
+import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import { error, inputValue, mintError } from "./errors.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];

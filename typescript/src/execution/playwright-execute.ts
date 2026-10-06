@@ -56,20 +56,22 @@ export interface PlaywrightOptions {
 }
 /**
  * An answered script and which watched values its typing calls delivered, by index, each with the
- * URL of the frame it went into.
+ * URLs of the frame it went into when the call started and once it completed.
  */
 const WatchedResponse = Schema.Struct({
   ...BrowserExecuteResponse.fields,
-  typed: Schema.optionalWith(Schema.Array(Schema.Tuple(Schema.Number, Schema.String)), {
-    exact: true,
-  }),
+  typed: Schema.optionalWith(
+    Schema.Array(Schema.Tuple(Schema.Number, Schema.Array(Schema.String))),
+    { exact: true },
+  ),
 });
 
 /**
  * Page code run while the host watches for `values`. A value counts as typed once a `fill`,
  * `type` or `pressSequentially` call on a page, frame, locator or keyboard got it as the text to
- * enter, completed without error and typed it in a frame whose URL `where` accepts. A call that
- * failed or typed elsewhere, or code that never ran, types nothing.
+ * enter, completed without error and typed it in a frame whose URL `where` accepts both when the
+ * call started and once it completed. A call that failed or typed elsewhere, or code that never
+ * ran, types nothing.
  */
 export interface TypingWatch {
   readonly executeResponse: BrowserExecute;
@@ -384,7 +386,8 @@ export const makePlaywrightExecutor = (
           call({ kind: "execute", code, watch: values }, timeoutSec).pipe(
             Effect.flatMap((response) => Schema.decodeUnknown(WatchedResponse)(response)),
             Effect.map(({ typed: delivered, ...response }) => {
-              for (const [index, url] of delivered ?? []) if (where(url)) typed.add(index);
+              for (const [index, urls] of delivered ?? [])
+                if (urls.length > 0 && urls.every(where)) typed.add(index);
               return response;
             }),
             Effect.mapError(asError),

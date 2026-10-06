@@ -100,16 +100,45 @@ test("generated calls retain their selected page and full success or failure res
   });
 });
 
-/** Two local origins serving the same page: a code field, and a frame from each origin. */
+/** How long the page after a code screen takes to answer: far longer than typing takes. */
+const nextPageDelayMs = 8_000;
+/**
+ * Two local origins serving the same page: a code field in a form, a frame from each origin, a
+ * frame of the page's own making and another origin's frame in a closed shadow root. With `how`,
+ * typing the sixth character leaves the page at once (`submit`, `href`), after a request (`fetch`)
+ * or a task (`timeout`), or moves the focus into the other origin's frame (`captcha`). A frame that
+ * gets six characters tells the page, which moves the focus back to its own field.
+ */
 const typingSites = async () => {
   const origins: string[] = [];
   const servers = [0, 1].map(() =>
     createServer((request, response) => {
+      const path = new URL(request.url ?? "/", "http://fixture").pathname;
+      if (path === "/next") {
+        setTimeout(() => response.end("<p>Next</p>"), nextPageDelayMs);
+        return;
+      }
       response.writeHead(200, { "content-type": "text/html" });
+      if (path === "/api") return response.end("{}");
+      if (path === "/frame")
+        return response.end(
+          `<input id="inner"><script>document.getElementById('inner').addEventListener('input', (event) => { if (event.target.value.length >= 6) parent.postMessage('typed', '*'); });</script>`,
+        );
       response.end(
-        request.url === "/frame"
-          ? '<input id="inner">'
-          : `<label>Code<input id="code"></label><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe>`,
+        `<form id="form" action="/next"><label>Code<input id="code" name="code"></label></form><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe><iframe id="srcdoc" srcdoc="<input id=inner>"></iframe><div id="closed"></div>
+<script>
+document.getElementById('closed').attachShadow({ mode: 'closed' }).innerHTML = '<iframe src="${origins[1] ?? ""}/frame?closed"></iframe>';
+addEventListener('message', () => document.getElementById('code').focus());
+const how = new URLSearchParams(location.search).get('how');
+document.getElementById('code').addEventListener('input', (event) => {
+  if (event.target.value.length < 6) return;
+  if (how === 'submit') document.getElementById('form').submit();
+  if (how === 'href') location.href = '/next';
+  if (how === 'fetch') fetch('/api').then(() => { location.href = '/next'; });
+  if (how === 'timeout') setTimeout(() => { location.href = '/next'; }, 0);
+  if (how === 'captcha') document.getElementById('other').focus();
+});
+</script>`,
       );
     }),
   );
@@ -124,67 +153,133 @@ const typingSites = async () => {
     other: origins[1] ?? "",
     close: () =>
       Promise.all(
-        servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+        servers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              server.closeAllConnections();
+              server.close(() => resolve());
+            }),
+        ),
       ),
   };
 };
+
+/**
+ * Runs `code`, after loading `url` when given, while watching for two values, counting typing
+ * only on `site`.
+ */
+const watchedRun =
+  (executor: PlaywrightExecutor, site: string) => async (url: string, code: string) => {
+    const watch = executor.watchTyping(
+      ["111111", "222222"],
+      (frameUrl) => URL.parse(frameUrl)?.origin === site,
+    );
+    const open = url === "" ? "" : `await page.goto('${url}');`;
+    const response = await Effect.runPromise(watch.executeResponse(`${open} ${code}`, 30));
+    const typed = [...watch.typed()].sort();
+    return { success: response.success, error: response.error, typed, result: response.result };
+  };
 
 test("a typing watch marks a value typed only by a typing call on the site that completed", async () => {
   const { site, other, close } = await typingSites();
   try {
     await native(async (executor) => {
-      const open = `await page.goto('${site}/');`;
-      const typed = async (code: string) => {
-        const watch = executor.watchTyping(
-          ["111111", "222222"],
-          (url) => URL.parse(url)?.origin === site,
-        );
-        const response = await Effect.runPromise(watch.executeResponse(`${open} ${code}`, 10));
-        const typed = [...watch.typed()].sort();
-        return { success: response.success, error: response.error, typed };
-      };
-      // Each call a handle may type through, on a locator, the page, a frame and the keyboard.
-      for (const code of [
-        "await page.locator('#code').fill('111111');",
-        "await page.locator('#code').pressSequentially('111111');",
-        "await page.getByLabel('Code').type('111111');",
-        "await page.fill('#code', '111111');",
-        "await page.mainFrame().type('#code', '111111');",
-        "await page.frameLocator('#same').locator('#inner').fill('111111');",
-        `await page.frames().find((frame) => frame.url() === '${site}/frame').fill('#inner', '111111');`,
-        "await page.locator('#code').focus(); await page.keyboard.type('111111');",
-        "await page.frameLocator('#same').locator('#inner').focus(); await page.keyboard.type('111111');",
-      ])
-        expect(await typed(code), code).toEqual({ success: true, typed: [0] });
-      // The same calls typing off the site: in another origin's frame, a page of the code's own
-      // and another tab.
+      const run = watchedRun(executor, site);
+      const typed = (code: string) => run(`${site}/`, code);
+      // Each call a handle may type through, on a locator, the page, a frame and the keyboard,
+      // in this tab or another, even when the site then moves the focus into another origin.
+      const onSite: readonly (readonly [code: string, url?: string])[] = [
+        ["await page.locator('#code').fill('111111');"],
+        ["await page.locator('#code').pressSequentially('111111');"],
+        ["await page.getByLabel('Code').type('111111');"],
+        ["await page.fill('#code', '111111');"],
+        ["await page.mainFrame().type('#code', '111111');"],
+        ["await page.frameLocator('#same').locator('#inner').fill('111111');"],
+        [
+          `await page.frames().find((frame) => frame.url() === '${site}/frame').fill('#inner', '111111');`,
+        ],
+        ["await page.locator('#code').focus(); await page.keyboard.type('111111');"],
+        [
+          "await page.frameLocator('#same').locator('#inner').focus(); await page.keyboard.type('111111');",
+        ],
+        [
+          `const tab = await context.newPage(); await tab.goto('${site}/'); await tab.locator('#code').focus(); await tab.keyboard.type('111111'); await tab.close();`,
+        ],
+        ["await page.locator('#code').fill('111111');", `${site}/?how=captcha`],
+        [
+          "await page.locator('#code').focus(); await page.keyboard.type('111111');",
+          `${site}/?how=captcha`,
+        ],
+      ];
+      for (const [code, url = `${site}/`] of onSite)
+        expect(await run(url, code), code).toEqual({ success: true, typed: [0] });
+      // The same calls typing off the site: in another origin's frame, open or in a closed shadow
+      // root, even once the focus came back; in a frame of the page's own making; in a page of the
+      // code's own; in another tab; and with the page's focus redefined to point at the site.
       for (const code of [
         "await page.frameLocator('#other').locator('#inner').fill('111111');",
         "await page.frameLocator('#other').locator('#inner').pressSequentially('111111');",
         `await page.frames().find((frame) => frame.url() === '${other}/frame').fill('#inner', '111111');`,
         "await page.frameLocator('#other').locator('#inner').focus(); await page.keyboard.type('111111');",
+        "await page.frames().find((frame) => frame.url().endsWith('?closed')).fill('#inner', '111111');",
+        "await page.frames().find((frame) => frame.url().endsWith('?closed')).locator('#inner').focus(); await page.keyboard.type('111111');",
+        "await page.frameLocator('#other').locator('#inner').fill('111111'); await page.waitForTimeout(200);",
+        "await page.frameLocator('#srcdoc').locator('#inner').fill('111111');",
         "await page.goto('data:text/html,<input id=code>'); await page.locator('#code').fill('111111');",
         "const tab = await context.newPage(); await tab.goto('data:text/html,<input id=code>'); await tab.fill('#code', '111111'); await tab.close();",
+        `const tab = await context.newPage(); await tab.goto('${other}/'); await tab.fill('#code', '111111'); await tab.close();`,
+        `const tab = await context.newPage(); await tab.goto('${other}/'); await tab.locator('#code').focus(); await tab.keyboard.type('111111'); await tab.close();`,
+        "await page.evaluate(() => Object.defineProperty(Document.prototype, 'activeElement', { configurable: true, get() { return document.getElementById('code'); } })); await page.frameLocator('#other').locator('#inner').focus(); await page.keyboard.type('111111');",
       ])
         expect(await typed(code), code).toEqual({ success: true, typed: [] });
-      // A call that failed, a value that no typing call entered and code that stopped first type nothing.
+      // A call that failed, a value no typing call entered and code that stopped first type nothing.
       expect(
         await typed(
           "try { await page.locator('#missing').fill('222222', { timeout: 500 }); } catch {} return '222222';",
         ),
-      ).toEqual({ success: true, typed: [] });
+      ).toEqual({ success: true, typed: [], result: "222222" });
       expect(
         await typed("throw new Error('stopped'); await page.locator('#code').fill('111111');"),
       ).toEqual({ success: false, error: "stopped", typed: [] });
       // Unwatched calls report nothing, and a later watch starts empty.
       const plain = await Effect.runPromise(
-        executor.executeResponse(`${open} await page.locator('#code').fill('111111');`, 5),
+        executor.executeResponse(
+          `await page.goto('${site}/'); await page.locator('#code').fill('111111');`,
+          5,
+        ),
       );
       expect(plain).toEqual({ success: true, stdout: "", stderr: "" });
       expect(await typed("await page.locator('#code').fill('222222');")).toEqual({
         success: true,
         typed: [1],
       });
+    });
+  } finally {
+    await close();
+  }
+});
+
+test("a code typed on a screen that leaves as soon as it is typed counts, without waiting for the next page", async () => {
+  test.setTimeout(120_000);
+  const { site, close } = await typingSites();
+  try {
+    await native(async (executor) => {
+      const run = watchedRun(executor, site);
+      for (const how of ["submit", "href", "fetch", "timeout"])
+        for (const [before, typing] of [
+          ["", "await tab.locator('#code').fill('111111');"],
+          ["", "await tab.locator('#code').pressSequentially('111111');"],
+          ["await tab.locator('#code').focus();", "await tab.keyboard.type('111111');"],
+        ]) {
+          // Each in a tab of its own, closed while its next page is still loading.
+          const outcome = await run(
+            "",
+            `const tab = await context.newPage(); await tab.goto('${site}/?how=${how}'); ${before} const started = Date.now(); ${typing} const took = Date.now() - started; await tab.close(); return took;`,
+          );
+          expect(outcome, `${how}: ${typing}`).toMatchObject({ success: true, typed: [0] });
+          // The call returned long before the next page could answer.
+          expect(outcome.result, `${how}: ${typing}`).toBeLessThan(nextPageDelayMs / 2);
+        }
     });
   } finally {
     await close();
@@ -205,16 +300,22 @@ return [await message(() => page.locator('#missing').fill('x', { timeout: 200 })
     expect(
       Array.isArray(before) ? before.map((text) => String(text).split("\n")[0]) : before,
     ).toEqual(["locator.fill: Timeout 200ms exceeded.", "page.fill: Timeout 200ms exceeded."]);
-    const watched = await Effect.runPromise(
-      executor
-        .watchTyping(["111111"], () => true)
-        .executeResponse(
-          "await page.setContent('<input id=code>'); await page.locator('#code').fill('111111');",
-          5,
-        ),
-    );
-    expect(watched.success, watched.error).toBe(true);
-    expect(await messages()).toEqual(before);
+    // After a watched script that completed, and one that threw after typing.
+    for (const [ending, success] of [
+      ["", true],
+      ["throw new Error('stopped');", false],
+    ] as const) {
+      const watched = await Effect.runPromise(
+        executor
+          .watchTyping(["111111"], () => true)
+          .executeResponse(
+            `await page.setContent('<input id=code>'); await page.locator('#code').fill('111111'); ${ending}`,
+            5,
+          ),
+      );
+      expect(watched.success, watched.error).toBe(success);
+      expect(await messages()).toEqual(before);
+    }
   });
 });
 

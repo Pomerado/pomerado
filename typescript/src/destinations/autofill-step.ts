@@ -20,7 +20,8 @@ import {
   withCheck,
   withEvidence,
 } from "./autofill-refusal.js";
-import { sameSite, siteDomain, trustedUrl } from "../runtime/same-site.js";
+import { sameSite, siteDomain } from "../runtime/same-site.js";
+import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { PageControls } from "./page-controls.js";
 import type {
   AutofillPopup,

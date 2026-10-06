@@ -278,6 +278,23 @@ const startSite = async () => {
             `<title>Sign in</title><form id="identify"><input name="username"><button>Continue</button></form><form id="verify" hidden><input name="code" autocomplete="one-time-code"><button id="verify-button">Verify</button></form>
 <script>document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/identify',{method:'POST',body:JSON.stringify({username:new FormData(event.target).get('username')})});if(sent.ok){event.target.hidden=true;document.querySelector('#verify').hidden=false}});document.querySelector('#verify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/verify',{method:'POST',body:JSON.stringify({code:new FormData(event.target).get('code')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
           );
+        // A code screen that sends itself the moment the sixth digit is typed.
+        if (path === "/verify-code") {
+          const sent = new URL(request.url ?? "/", "https://fixture").searchParams.get("code");
+          const matches = sent === signInCode;
+          response.writeHead(302, {
+            location: matches ? "/account" : "/login-code-self",
+            ...(matches ? { "set-cookie": "member=signed; Path=/; Secure; HttpOnly" } : {}),
+          });
+          response.end();
+          return;
+        }
+        if (path === "/login-code-self")
+          return page(
+            response,
+            `<title>Sign in</title><form id="identify"><input name="username"><button>Continue</button></form><form id="verify" action="/verify-code" hidden><input name="code" autocomplete="one-time-code"></form>
+<script>document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/identify',{method:'POST',body:JSON.stringify({username:new FormData(event.target).get('username')})});if(sent.ok){event.target.hidden=true;document.querySelector('#verify').hidden=false}});const verify=document.querySelector('#verify');verify.code.addEventListener('input',()=>{if(verify.code.value.length===6)verify.submit()})</script>`,
+          );
         if (path === "/framed")
           return page(
             response,
@@ -862,6 +879,32 @@ test("a code typed into a frame on a configured sign-in origin counts as typed o
   );
   expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
   // The same explore as the frame above, but that origin is where this site signs in.
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
+    token: null,
+    tabs: 1,
+  });
+});
+
+test("a code typed into a code screen that sends itself at once counts as its proof", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const built = await build(
+    site,
+    { url: `${site.origin}/login-code-self`, effect: "read" },
+    passwordlessSteps(
+      {
+        "explore/code.mjs": operation(
+          "code",
+          "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#account').waitFor({ timeout: 5000 }); return true;",
+        ),
+      },
+      ["explore/code.mjs"],
+    ),
+  );
+  expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
   expect(site.probe("example")).toMatchObject({
     path: "/",
     cookies: ["member"],
