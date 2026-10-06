@@ -111,6 +111,29 @@ describe("failure detail", () => {
     expect(JSON.stringify(failureDetailMetadata({ failureDetail: detail }))).not.toMatch(/masked-/);
   });
 
+  it("keeps the outermost causes up to the chain depth", () => {
+    const depth = failureDetailBounds.chainDepth;
+    const nested = Array.from({ length: depth }, (_, index) => depth - index).reduce<Error>(
+      (cause, index) => new Error(`cause-${index}`, { cause }),
+      new Error(`cause-${depth + 1}`),
+    );
+    expect(describeError(new Error("outer", { cause: nested })).causeChain).toHaveLength(depth);
+    const detail = failureDetail("dependency_failed", {
+      error: new Error("outer", { cause: nested }),
+    });
+    expect(detail.causeChain?.map((entry) => entry.message)).toEqual(
+      Array.from({ length: depth }, (_, index) => `cause-${index + 1}`),
+    );
+    // A wrapped failure's own detail goes beneath the new one, within the same depth.
+    const wrapped = failureDetail("dependency_failed", {
+      error: Object.assign(new Error("wrapper"), { failureDetail: detail }),
+    });
+    expect(wrapped.causeChain?.map((entry) => entry.message)).toEqual([
+      "outer",
+      ...Array.from({ length: depth - 1 }, (_, index) => `cause-${index + 1}`),
+    ]);
+  });
+
   const jsonSyntaxError = (text: string) => {
     try {
       JSON.parse(text);

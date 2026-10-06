@@ -1113,40 +1113,6 @@ export const failureDetailOf = (
   };
 };
 
-const finiteName = /^[A-Za-z][A-Za-z0-9_.:/-]{0,95}$/;
-const finiteNameOf = (value: unknown) =>
-  typeof value === "string" && finiteName.test(value) ? value : undefined;
-
-/** The finite identifiers beside full detail in a retained publication refusal. */
-export const failureFiniteNames = (
-  value: unknown,
-):
-  | {
-      readonly failure: {
-        readonly subCause: FailureSubCause;
-        readonly operation?: string;
-        readonly errorName?: string;
-        readonly errorCode?: string | number;
-      };
-    }
-  | Record<string, never> => {
-  const detail = failureDetailOf(value)?.failureDetail;
-  if (detail === undefined) return {};
-  const operation = finiteNameOf(detail.operation);
-  const errorName = finiteNameOf(detail.underlying?.name);
-  const code = detail.underlying?.code;
-  const errorCode =
-    typeof code === "number" && Number.isSafeInteger(code) ? code : finiteNameOf(code);
-  return {
-    failure: {
-      subCause: detail.subCause,
-      ...(operation === undefined ? {} : { operation }),
-      ...(errorName === undefined ? {} : { errorName }),
-      ...(errorCode === undefined ? {} : { errorCode }),
-    },
-  };
-};
-
 const rootCauseName = /^[A-Za-z][A-Za-z0-9_.:/-]{0,95}$/;
 const rootCauseToken = (value: unknown) =>
   typeof value === "string" && rootCauseName.test(value) ? value : undefined;

@@ -28,7 +28,7 @@ The package now holds only code the local host runs, plus the hook interfaces an
   - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
   - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
   - `boundaryError` from `pomerado/core/execution/boundary`
-  - `withCauseEntry` and `failureDetailFiniteMetadata` from `pomerado/core/runtime/failure-detail`
+  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
   - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
 - Migrate from any removed module or export by keeping your own copy in your host.
 
