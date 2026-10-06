@@ -168,7 +168,7 @@ export const LocatedError = Schema.Struct({
   /** The primary page then, which a fill call reports once it typed. */
   url: Schema.optional(Schema.String),
   searched: Schema.optional(Searched),
-  /** A disabled submit: where it was found. */
+  /** An inert submit: where it was found. */
   located: Schema.optional(FoundIn),
 });
 const Located = Schema.Union(
@@ -232,6 +232,11 @@ export interface AutofillInspection {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly screen: {
+    /**
+     * The origin of the document the host found the step's controls in: its submit's, or its
+     * fields' when it names no submit.
+     */
+    readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: AutofillSlot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
@@ -260,8 +265,18 @@ export type AutofillStepReport =
         readonly slot: AutofillSlot;
         readonly status: AutofillFieldStatus;
       }[];
-      /** `refused`: after the fill the host refused a control where it then sat or submitted. */
-      readonly submit: "clicked" | "failed" | "not_attempted" | "refused" | "none";
+      /**
+       * `refused`: after the fill the host refused a control where it then sat or submitted.
+       * `stayed_disabled`: the submit stayed disabled after the fields were filled, through the
+       * host's wait for the page to enable it, so the host never clicked it.
+       */
+      readonly submit:
+        | "clicked"
+        | "failed"
+        | "not_attempted"
+        | "refused"
+        | "stayed_disabled"
+        | "none";
       /**
        * The host clicked a submit that is `refused`: its guard stopped the submission as it fired,
        * after the page's own handlers ran on the click, so what the step filled may have gone out.
@@ -431,6 +446,8 @@ export const inspectAutofillStep = (input: {
       siteOrigin,
       authenticationOrigins,
       screen: {
+        origin:
+          found.submit?.target.documentOrigin ?? found.fields[0]?.target.documentOrigin ?? "",
         fields: found.fields.map(({ described }, index) => {
           const field = step.fields[index];
           return {

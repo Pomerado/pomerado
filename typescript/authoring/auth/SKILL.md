@@ -65,10 +65,11 @@ ask with `request_input` right away. A preselected option says nothing about the
 
 <!-- pomerado:section auth.signed-out-flow -->
 
-Record a field or submit only after observing its unique visible enabled match in the intended
-frame and form. Validate the complete live login and a fresh signed-out replay from the stable
-login URL. A saved DOM supports locator matching and extraction; it cannot prove live controls
-are actionable, their event handlers work or authentication succeeds.
+Record a field only after observing its unique visible enabled match in the intended frame and
+form, and a submit after observing its unique visible match there, even one the page enables only
+once the fields hold input. Validate the complete live login and a fresh signed-out replay from
+the stable login URL. A saved DOM supports locator matching and extraction; it cannot prove live
+controls are actionable, their event handlers work or authentication succeeds.
 
 <!-- pomerado:section auth.partial-flow -->
 
@@ -176,7 +177,7 @@ A direct sign-in request signs in with one host-filled HTTP request instead of a
 
 ## Standalone live authentication
 
-Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and enabled submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
+Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
 
 Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
 

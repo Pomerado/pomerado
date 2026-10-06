@@ -8,7 +8,7 @@ const inspection: AutofillInspection = {
   targets: { fields: [], submit: null },
   siteOrigin: "https://member.example.com",
   authenticationOrigins: [],
-  screen: { fields: [], submit: null, buttons: [] },
+  screen: { origin: "https://member.example.com", fields: [], submit: null, buttons: [] },
 };
 
 const lostReply = (step: AutofillStep, values: readonly string[], siteMutation: () => void) =>

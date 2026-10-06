@@ -5,6 +5,7 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { guardianExecutionPolicy } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
@@ -539,6 +540,22 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(() => reviewer(upstreamPolicy)).toThrow(UpstreamPolicySlotInvalid);
     },
   );
+
+  // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
+  // the page to enable it before it clicks. Guardian judges what the submit is, not whether the page
+  // has enabled it yet.
+  it("asks Guardian for an observed sign-in submit, enabled or not", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
+    for (const policy of [requests[0]?.systemInstructions ?? "", guardianExecutionPolicy("hosted")]) {
+      expect(policy).toContain(sentence);
+      expect(policy).not.toContain("enabled control");
+    }
+  });
 
   // Guardian reviews an execution's source, never each request it sends.
   it("an execution review carries no destination review", async () => {
