@@ -64,6 +64,10 @@ const authoringCopy = async (edit: (path: string, text: string) => string) => {
   return root;
 };
 
+/** What a host does before loading in hosted mode: every section gets the host's text. */
+const composeHostText = (text: string) =>
+  text.replace(sectionMarker, (_match, id: string) => `host text for ${id}`);
+
 const contents = (skills: readonly SkillDescriptor[]) =>
   skills.map((skill) => {
     if (!(skill.content instanceof Uint8Array)) throw new Error(`${skill.name} is not bytes`);
@@ -88,9 +92,7 @@ it("loads standalone text by default and refuses uncomposed sections in hosted m
 });
 
 it("loads a host-composed directory in hosted mode exactly as composed", async () => {
-  const root = await authoringCopy((_path, text) =>
-    text.replace(sectionMarker, (_match, id: string) => `host text for ${id}`),
-  );
+  const root = await authoringCopy((_path, text) => composeHostText(text));
   try {
     const skills = await Effect.runPromise(loadAuthoringSkills(root, "hosted"));
     const guide = await Effect.runPromise(loadWorkspaceGuide(root, "hosted"));
@@ -145,17 +147,24 @@ it.each([
     "a section inside a code fence",
     "```md\n<!-- pomerado:section core.fenced:start\nshown\npomerado:section core.fenced:end -->\n```\n",
   ],
+  ["a 0.1.1 end marker", "pomerado:hosted:end -->\n"],
+  ["an uppercase marker", "<!-- Pomerado:section core.upper -->\n"],
+  ["an uppercase end marker", "POMERADO:SECTION core.upper:end -->\n"],
 ])("refuses %s in either mode", async (_case, appended) => {
-  const root = await authoringCopy((path, text) =>
-    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text,
-  );
+  const append = (path: string, text: string) =>
+    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text;
+  // The hosted copy is composed as in the test above, which loads, so only the marker fails it.
+  const roots = {
+    standalone: await authoringCopy(append),
+    hosted: await authoringCopy((path, text) => append(path, composeHostText(text))),
+  };
   try {
-    for (const mode of ["standalone", "hosted"] as const)
+    for (const [mode, root] of Object.entries(roots) as [keyof typeof roots, string][])
       expect(await Effect.runPromise(Effect.either(loadAuthoringSkills(root, mode)))).toMatchObject(
         { _tag: "Left", left: { code: "Unavailable" } },
       );
   } finally {
-    await rm(root, { recursive: true, force: true });
+    for (const root of Object.values(roots)) await rm(root, { recursive: true, force: true });
   }
 });
 

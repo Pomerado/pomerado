@@ -80,8 +80,11 @@ export type AuthoringMode = "hosted" | "standalone";
  */
 const section =
   /<!-- pomerado:section ([a-z0-9.-]+)(?: -->|:start\n([\s\S]*?)\npomerado:section \1:end -->)(?:\n(?=$))?/g;
-/** Anything left that reads as a section marker, however it is spaced, is malformed. */
-const sectionTrace = /<!--\s*pomerado:|pomerado:section/;
+/**
+ * Anything left that reads as a marker, in any case or spacing, is malformed: a broken section, or
+ * a 0.1.1 block such as `pomerado:hosted:end -->`. Authoring text never says `pomerado:` itself.
+ */
+const sectionTrace = /pomerado:/i;
 const fence = /^\s*(`{3,}|~{3,})/;
 
 /** A section marker belongs to the file's own text, never to a fenced example. */
