@@ -33,6 +33,7 @@ const mint = async (options: {
   readonly turns: readonly Turn[];
   readonly guardian: ReturnType<typeof recordingGuardian>;
   readonly answer?: (request: InputRequest) => Record<string, unknown>;
+  readonly input?: Readonly<Record<string, unknown>>;
 }) => {
   const requests: ModelRequest[] = [];
   const asked: InputRequest[] = [];
@@ -58,7 +59,7 @@ const mint = async (options: {
           url: options.url,
           intent: "Read the fixture heading",
           effect: options.effect,
-          input: {},
+          input: options.input ?? {},
         });
       }),
     ),
@@ -472,6 +473,171 @@ test("a write build refuses a blind repeat of a write, and live tests and explor
     const acts = executions(guardian.reviews);
     expect(acts.map((review) => currentOf(review)?.["purpose"])).toEqual(["act", "act", "act"]);
     expect(effectsOf(acts[0])[0]).toMatch(/^The caller's requested task, done once/u);
+  } finally {
+    await site.close();
+  }
+});
+
+/** A site whose Save button posts the note the page holds, and what it received. */
+const noteSite = () => {
+  const saved: string[] = [];
+  return {
+    saved,
+    start: () =>
+      startSite((request, response, body) => {
+        if (request.method === "POST") {
+          saved.push(body);
+          response.end("saved");
+          return;
+        }
+        html(
+          response,
+          `<title>Note</title><button id="save" onclick="fetch('/save',{method:'POST',body:document.body.dataset.note}).then(()=>document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
+        );
+      }),
+  };
+};
+/** A write step that saves its input's note once and confirms it. */
+const saveNote = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"save_note",input:Schema.Struct({note:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"message",commits:["save"]}},
+async ({kernel,sessionId,input,enteringCommit,verified}) => {
+  enteringCommit("save");
+  const result = await kernel.browsers.playwright.execute(sessionId,{code:"await page.evaluate((note) => { document.body.dataset.note = note; }, " + JSON.stringify(input.note) + "); await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:10});
+  if(!result.success || result.result !== true) throw new Error("Save not confirmed");
+  verified({confirmation:"message"});
+  return {saved:true};
+});`;
+const readNote = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_note",input:Schema.Struct({note:Schema.String}),output:Schema.Unknown},
+async ({input}) => ({note:input.note}));`;
+const act = (entrypoint: string, exampleInput?: unknown) =>
+  execution(
+    "act",
+    entrypoint,
+    exampleInput === undefined
+      ? {}
+      : {
+          exampleInput:
+            typeof exampleInput === "string" ? exampleInput : JSON.stringify(exampleInput),
+        },
+  );
+
+test("a write session runs the input its first act step read from the request, and publishes against it", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({ "src/read.mjs": readNote, "src/save.mjs": saveNote, "src/tool.mjs": saveNote }),
+        () => [call("execute", act("src/read.mjs", { note: "kept" }), "read")],
+        () => [call("execute", act("src/save.mjs", { note: "other" }), "changed")],
+        () => [call("execute", act("src/save.mjs"), "save")],
+        (request) => [
+          call("finish_build", {
+            intent: "Return the composed write without running it",
+            entrypoint: "src/tool.mjs",
+            executionId: executionIdOf(request, "save"),
+            metadata: { name: "save_note", description: "Save the requested note once" },
+            coverage: "One confirmed act session on the note the request gave",
+          }),
+        ],
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.inputSchema).toMatchObject({ required: ["note"] });
+    expect(fixture.saved).toEqual(["kept"]);
+    expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "changed")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "changed"))).toContain("Repeat it unchanged or omit it");
+    const reviewed = executions(guardian.reviews);
+    expect(reviewed.map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "act",
+      "act",
+      "contract",
+    ]);
+    for (const review of reviewed) {
+      expect((review.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+        '{"note":"kept"}',
+      );
+    }
+    for (const review of reviewed.slice(0, 2)) {
+      expect(currentOf(review)?.["input"]).toBe("intent_derived");
+      expect(effectsOf(review)[0]).toContain("must be stated by the trusted intent");
+    }
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write session refuses exampleInput that is not an object, or once it started without one", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/look.mjs": probe() }),
+        () => [call("execute", act("src/look.mjs", "[1]"), "not_object")],
+        () => [call("execute", act("src/look.mjs"), "started")],
+        () => [call("execute", act("src/look.mjs", { note: "late" }), "late")],
+      ],
+    });
+    expect(toolResult(last, "started")).toMatchObject({ status: "completed" });
+    for (const [id, reason] of [
+      ["not_object", "exampleInput must be JSON text of the tool's input object"],
+      ["late", "only the session's first act step can pass exampleInput"],
+    ] as const) {
+      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
+      expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
+    }
+    expect(executions(guardian.reviews)).toHaveLength(1);
+    expect(currentOf(executions(guardian.reviews)[0]!)).not.toHaveProperty("input");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write session runs the caller's own input and refuses exampleInput beside it", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      input: { note: "given" },
+      turns: [
+        () => patch({ "src/read.mjs": readNote }),
+        () => [call("execute", act("src/read.mjs", { note: "other" }), "beside")],
+        () => [call("execute", act("src/read.mjs"), "read")],
+      ],
+    });
+    expect(toolResult(last, "beside")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "beside"))).toContain(
+      "The caller supplied input, and the session runs it as it is.",
+    );
+    expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
+    const [review] = executions(guardian.reviews);
+    expect((review?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+      '{"note":"given"}',
+    );
+    expect(effectsOf(review)[0]).toMatch(
+      /^The caller's requested task, done once with the caller's values/u,
+    );
   } finally {
     await site.close();
   }

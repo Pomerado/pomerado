@@ -68,6 +68,10 @@ const live = (purpose: CurrentExecution["purpose"]): CurrentExecution => ({
 describe("allowedEffectsFor", () => {
   it("gives a live act step the write session's text and other live steps the exploration text", () => {
     expect(allowedEffectsFor(live("act"))[0]).toMatch(/^The caller's requested task, done once/u);
+    // A session on the agent's reading of the request may hold only values the request states.
+    const derived = allowedEffectsFor({ ...live("act"), input: "intent_derived" })[0];
+    expect(derived).toMatch(/^The caller's requested task, done once across this session's steps/u);
+    expect(derived).toContain("must be stated by the trusted intent or an answered question");
     for (const purpose of ["explore", "test", "example"] as const)
       expect(allowedEffectsFor(live(purpose))[0]).toMatch(/^Authorized repeatable reads/u);
   });

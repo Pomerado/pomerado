@@ -85,43 +85,113 @@ describe("preflightTestInput", () => {
 
 describe("exampleInputRefusal", () => {
   const exampleInput = JSON.stringify({ venue: "Venue X", date: "2026-10-04", partySize: 2 });
+  const order = { item: "lamp", quantity: 2 };
+  const notStarted = { started: false, input: undefined };
+  const act = (input: unknown = order) =>
+    request({ purpose: "act", target: "liveBrowser", exampleInput: JSON.stringify(input) });
+  const scope = (
+    buildEffect: "read" | "write",
+    callerInput: unknown = {},
+    writeSession: {
+      readonly started: boolean;
+      readonly input: Readonly<Record<string, unknown>> | undefined;
+    } = notStarted,
+  ) => ({ buildEffect, callerInput, writeSession });
+
   it("lets a read's example run the agent's reading of an empty caller input", () => {
+    expect(exampleInputRefusal(request({ exampleInput }), scope("read"))).toBeUndefined();
+    expect(exampleInputRefusal(request(), scope("write"))).toBeUndefined();
+  });
+
+  it("lets a write's first act step fix the session's input, and later steps repeat it", () => {
+    expect(exampleInputRefusal(act(), scope("write"))).toBeUndefined();
+    // A step Guardian denied never started the session, so a corrected input may follow.
+    expect(exampleInputRefusal(act({ ...order, quantity: 1 }), scope("write"))).toBeUndefined();
+    const running = { started: true, input: order };
+    expect(exampleInputRefusal(act(), scope("write", {}, running))).toBeUndefined();
     expect(
-      exampleInputRefusal(request({ exampleInput }), { buildEffect: "read", callerInput: {} }),
-    ).toBeUndefined();
-    expect(
-      exampleInputRefusal(request(), { buildEffect: "write", callerInput: {} }),
+      exampleInputRefusal(
+        request({ purpose: "act", target: "liveBrowser" }),
+        scope("write", {}, running),
+      ),
     ).toBeUndefined();
   });
 
   it.each([
-    ["the caller's own input", { exampleInput }, "read", { venue: "Venue Y" }],
-    ["a write build", { exampleInput }, "write", {}],
-    ["text that is not JSON", { exampleInput: '{"venue":' }, "read", {}],
-    ["JSON that is not an input object", { exampleInput: "[2]" }, "read", {}],
-    ["a purpose other than example", { exampleInput, purpose: "test" as const }, "read", {}],
+    ["the caller's own input", request({ exampleInput }), scope("read", { venue: "Venue Y" })],
+    ["a write build's example", request({ exampleInput }), scope("write")],
+    ["text that is not JSON", request({ exampleInput: '{"venue":' }), scope("read")],
+    ["JSON that is not an input object", request({ exampleInput: "[2]" }), scope("read")],
+    ["a test", request({ exampleInput, purpose: "test" }), scope("read")],
     [
       "an explore",
-      { exampleInput, purpose: "explore" as const, target: "liveBrowser" as const },
-      "read",
-      {},
+      request({ exampleInput, purpose: "explore", target: "liveBrowser" }),
+      scope("read"),
     ],
-  ] as const)("refuses exampleInput beside %s", (_, overrides, buildEffect, callerInput) => {
-    const refusal = exampleInputRefusal(request(overrides), { buildEffect, callerInput });
+    ["a read build's act step", act(), scope("read")],
+    ["a write's act step beside the caller's own input", act(), scope("write", { item: "desk" })],
+    ["a write's act step that is not an input object", act([order]), scope("write")],
+    [
+      "a session that started on the caller's empty input",
+      act(),
+      scope("write", {}, { started: true, input: undefined }),
+    ],
+    [
+      "a session that runs another input",
+      act({ ...order, quantity: 3 }),
+      scope("write", {}, { started: true, input: order }),
+    ],
+  ] as const)("refuses exampleInput on %s", (_, submitted, given) => {
+    const refusal = exampleInputRefusal(submitted, given);
     expect(refusal).toMatchObject({ supported: false });
     expect(refusal?.reason).toContain("exampleInput");
     expect(refusal?.reason).toContain("Nothing was executed.");
   });
+
+  it("says why a session's step cannot change or add its input", () => {
+    expect(
+      exampleInputRefusal(act(), scope("write", {}, { started: true, input: undefined }))?.reason,
+    ).toContain("only the session's first act step can pass exampleInput");
+    expect(
+      exampleInputRefusal(
+        act({ ...order, quantity: 3 }),
+        scope("write", {}, { started: true, input: order }),
+      )?.reason,
+    ).toContain("Repeat it unchanged or omit it");
+  });
 });
 
 describe("stepInput", () => {
-  const run = (submitted: ExecutionRequest, callerInput: unknown) =>
-    Effect.runPromise(Effect.either(stepInput(submitted, callerInput)));
+  const run = (
+    submitted: ExecutionRequest,
+    callerInput: unknown,
+    sessionInput?: Readonly<Record<string, unknown>>,
+  ) => Effect.runPromise(Effect.either(stepInput(submitted, { callerInput, sessionInput })));
   it("runs a read's example on the input the agent read from the prompt, marked intent_derived", async () => {
     const reservation = { venue: "Venue X", date: "2026-10-04", partySize: 2 };
     expect(await run(request({ exampleInput: JSON.stringify(reservation) }), {})).toMatchObject({
       _tag: "Right",
       right: { input: reservation, mark: "intent_derived" },
+    });
+  });
+
+  it("runs a write session's act steps on the input its first act step passed", async () => {
+    const order = { item: "lamp", quantity: 2 };
+    const act = (extra: Partial<ExecutionRequest> = {}) =>
+      request({ purpose: "act", target: "liveBrowser", ...extra });
+    expect(await run(act({ exampleInput: JSON.stringify(order) }), {})).toMatchObject({
+      _tag: "Right",
+      right: { input: order, mark: "intent_derived" },
+    });
+    // A later step that omits it, or repeats it, runs the session's input.
+    expect(await run(act(), {}, order)).toMatchObject({
+      _tag: "Right",
+      right: { input: order, mark: "intent_derived" },
+    });
+    expect(
+      await Effect.runPromise(stepInput(act(), { callerInput: {}, sessionInput: undefined })),
+    ).toEqual({
+      input: {},
     });
   });
 
@@ -131,7 +201,10 @@ describe("stepInput", () => {
       right: { input: { amountMinor: 12 }, mark: "agent_chosen" },
     });
     const plain = await Effect.runPromise(
-      stepInput(request({ purpose: "test", target: "liveBrowser" }), { a: 1 }),
+      stepInput(request({ purpose: "test", target: "liveBrowser" }), {
+        callerInput: { a: 1 },
+        sessionInput: undefined,
+      }),
     );
     expect(plain).toEqual({ input: { a: 1 } });
   });

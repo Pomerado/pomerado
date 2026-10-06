@@ -46,11 +46,6 @@ const example = {
   maxWorkers: 1,
   timeoutSeconds: 30,
 };
-const publication = {
-  entrypoint: "src/tool.ts",
-  metadata: { name: "read_public", description: "Read public data" },
-  coverage: "One actual example.",
-};
 const resultOf = (request: ModelRequest | undefined, callId: string) => {
   const input = request?.input;
   if (!Array.isArray(input)) throw new Error("Missing history");
@@ -84,32 +79,9 @@ const countingHost = () => {
   return { counts, overrides };
 };
 
-it.each([false, true])(
-  "runs a repeatable read's example again without claiming it (repeatableRead=%s)",
-  async (repeatableRead) => {
-    const host = countingHost();
-    const f = await fixture(
-      (_request, index) =>
-        [
-          call("execute", example, "first_read"),
-          call("execute", example, "second_read"),
-          call("finish_build", {
-            ...publication,
-            executionId: repeatableRead ? "execution_two" : "execution_one",
-          }),
-        ][index] ?? prose(),
-      { repeatableRead, ...host.overrides },
-    );
-    expect(await f.run()).toMatchObject({ build: "published" });
-    expect(host.counts).toEqual(
-      repeatableRead ? { executions: 2, claims: 0 } : { executions: 1, claims: 1 },
-    );
-    if (!repeatableRead)
-      expect(resultOf(f.requests[2], "second_read")).toContain("AlreadyExecuted");
-  },
-);
-
-it("refuses a write upgrade once a repeatable read has run its example", async () => {
+// The shared harness tests cover a repeatable read running its example twice. This one adds
+// what the host sees: no claim, and the example still blocks a later write upgrade.
+it("claims nothing for a repeatable read's example, and still refuses a later write upgrade", async () => {
   const host = countingHost();
   let upgrades = 0;
   const f = await fixture(
