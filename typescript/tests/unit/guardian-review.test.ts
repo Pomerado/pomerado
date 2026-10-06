@@ -10,7 +10,7 @@ import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
 import { UpstreamPolicySlotInvalid } from "../../src/guardian/upstream-policy.js";
-import { makeSourceInspector } from "../../src/guardian/source.js";
+import { makeSourceInspector, sourceChunk } from "../../src/guardian/source.js";
 import { readScopedFile } from "../../src/filesystem/read.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import {
@@ -115,6 +115,37 @@ describe("Guardian modeled reviewer contract", () => {
     // Each review includes the entrypoint, and this reviewer also reads it itself.
     expect(reads).toEqual(Array.from({ length: 4 }, () => ({ path: "operation.ts", offset: 0 })));
     expect(new Set(seenReviewIds).size).toBe(2);
+  });
+
+  it("names an unreadable source offset by its check, keeping only the offset", async () => {
+    const inspect = makeSourceInspector(
+      () => Effect.succeed(new TextEncoder().encode("é")),
+      (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
+    );
+    const negative = await Effect.runPromise(Effect.flip(inspect(pending.entrypoint, -1)));
+    const midCharacter = await Effect.runPromise(Effect.flip(inspect(pending.entrypoint, 1)));
+    const fractional = await Effect.runPromise(Effect.flip(sourceChunk("a.ts", "a", 0.5)));
+    expect([negative, midCharacter, fractional].map((failure) => failure.code)).toEqual([
+      "SourceUnavailable",
+      "SourceUnavailable",
+      "SourceUnavailable",
+    ]);
+    expect(negative.failureDetail).toMatchObject({
+      subCause: "invalid_input",
+      operation: "guardian.source.offset_invalid",
+      context: { offset: -1 },
+    });
+    expect(midCharacter.failureDetail).toMatchObject({
+      subCause: "invalid_input",
+      operation: "guardian.source.offset_mid_character",
+      context: { offset: 1 },
+    });
+    expect(fractional.failureDetail).toMatchObject({
+      operation: "guardian.source.offset_invalid",
+      context: { offset: 0.5 },
+    });
+    for (const failure of [negative, midCharacter, fractional])
+      expect(Object.keys(failure.failureDetail?.context ?? {})).toEqual(["offset"]);
   });
 
   it.each([
@@ -520,7 +551,10 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     );
     const sentence =
       "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
-    for (const policy of [requests[0]?.systemInstructions ?? "", guardianExecutionPolicy("hosted")]) {
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy("hosted"),
+    ]) {
       expect(policy).toContain(sentence);
       expect(policy).not.toContain("enabled control");
     }

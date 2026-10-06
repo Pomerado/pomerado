@@ -39,6 +39,19 @@ export interface GuardianDiagnostics {
   ) => Effect.Effect<void, Error>;
   readonly retainModelTranscript: GuardianDiagnostics["emit"];
   readonly retainRuntimeRecord?: (record: RuntimeRecordInput) => Effect.Effect<void, Error>;
+  /**
+   * Finite model and tool timing of a review whose model transcript is not retained, such as a
+   * private host kind's. A review that retains its transcript carries the timing there instead,
+   * so no model call is reported twice. Must not fail.
+   */
+  readonly observeModelTrace?: (
+    name: "guardian.model",
+    timing: ModelDiagnosticTiming,
+    correlation?: {
+      readonly reviewId?: string;
+      readonly reviewKind?: "execution" | "publication" | "question" | "host";
+    },
+  ) => Effect.Effect<void>;
   readonly retainScreenedSource: (args: {
     readonly reviewId: string;
     readonly observation: string;
@@ -354,6 +367,8 @@ export interface ReviewTurn {
   ) => Effect.Effect<void, ReviewFailure>;
   /** Required traced original model/tool record; a failure ends the review unavailable. */
   readonly retainRuntimeRecord?: (record: RuntimeRecordInput) => Effect.Effect<void, ReviewFailure>;
+  /** Finite timing only, for a review whose transcript is not retained (no `reportDiagnostic`). */
+  readonly observeTiming?: (timing: ModelDiagnosticTiming) => Effect.Effect<void>;
 }
 
 /** The retention failure's own detail (operation, underlying error) beneath the review's. */
@@ -420,6 +435,27 @@ export interface Reviewer {
   readonly run: (turn: ReviewTurn) => Effect.Effect<unknown, ReviewFailure>;
   /** Host retry for outages. Absent, a failed review returns at once. */
   readonly retry?: ReviewRetry;
+}
+
+/**
+ * One run of a review inside the outage retry loop. Offsets are `performance.now()` readings.
+ * Each attempt is a fresh review with its own ID and its own `guardian.started` record, closed
+ * by one `guardian.completed` or `guardian.failed`. The follow-up rounds an execution review
+ * gets for a skipped entrypoint read stay inside its attempt, under the same review ID, and its
+ * closing record counts them as `followUpRounds`.
+ */
+interface ReviewAttempt {
+  /** 1-based, counting outage retries only. */
+  readonly ordinal: number;
+  /** This attempt's own wait for the session permit, when it ran under one. */
+  readonly permitWait?: {
+    readonly startOffsetMs: number;
+    readonly endOffsetMs: number;
+  };
+  readonly started: (correlation: {
+    readonly reviewId: string;
+    readonly reviewKind: "execution" | "publication" | "question" | "host";
+  }) => void;
 }
 
 const completeSession = (session?: GuardianSession) =>
@@ -501,15 +537,24 @@ export const makeGuardian = (
    */
   const retryReview = <A>(
     kind: ReviewKind,
-    attempt: Effect.Effect<A, ReviewFailure>,
+    attempt: (run: ReviewAttempt) => Effect.Effect<A, ReviewFailure>,
   ): Effect.Effect<A, ReviewFailure> => {
     const retry = reviewer.retry;
-    if (retry === undefined) return attempt;
+    if (retry === undefined) return attempt({ ordinal: 1, started: () => undefined });
     const budgetMs = Duration.toMillis(retry.budget);
     return Effect.gen(function* () {
       const startedMs = yield* Clock.currentTimeMillis;
       for (let retries = 0; ; retries++) {
-        const outcome = yield* Effect.either(attempt);
+        // The failed attempt's review, so its retry interval is tied to it.
+        let correlation: Parameters<ReviewAttempt["started"]>[0] | undefined;
+        const outcome = yield* Effect.either(
+          attempt({
+            ordinal: retries + 1,
+            started: (started) => {
+              correlation = started;
+            },
+          }),
+        );
         if (outcome._tag === "Right") return outcome.right;
         const failure = outcome.left;
         const waitMs = Duration.toMillis(
@@ -517,16 +562,24 @@ export const makeGuardian = (
         );
         const outageMs = (yield* Clock.currentTimeMillis) - startedMs;
         if (!retriableOutage(failure) || outageMs + waitMs > budgetMs) return yield* failure;
+        const startOffsetMs = performance.now();
         yield* bestEffort(
-          diagnostics?.emit("guardian.review_retried", {
-            kind,
-            retry: retries + 1,
-            code: failure.code,
-            ...(failure.reviewPhase === undefined ? {} : { reviewPhase: failure.reviewPhase }),
-            ...failureDetailMetadata(failure),
-            waitMs,
-            outageMs,
-          }) ?? Effect.void,
+          diagnostics?.emit(
+            "guardian.review_retried",
+            {
+              kind,
+              retry: retries + 1,
+              attempt: retries + 1,
+              code: failure.code,
+              ...(failure.reviewPhase === undefined ? {} : { reviewPhase: failure.reviewPhase }),
+              ...failureDetailMetadata(failure),
+              waitMs,
+              outageMs,
+              startOffsetMs,
+              endOffsetMs: startOffsetMs + waitMs,
+            },
+            correlation,
+          ) ?? Effect.void,
           "guardian.review_retried",
         );
         yield* Effect.sleep(Duration.millis(waitMs));
@@ -537,30 +590,40 @@ export const makeGuardian = (
    * One review attempt holds the session alone. The wait for it is reported as an interval, and
    * the waits between retries run outside it, so another review can use the session meanwhile.
    */
-  const exclusive = <A>(kind: ReviewKind, work: Effect.Effect<A, ReviewFailure>) =>
+  const exclusive = <A>(
+    kind: ReviewKind,
+    run: ReviewAttempt,
+    work: (run: ReviewAttempt) => Effect.Effect<A, ReviewFailure>,
+  ) =>
     session === undefined
-      ? work
+      ? work(run)
       : Effect.gen(function* () {
           const requestedMs = yield* Clock.currentTimeMillis;
+          const startOffsetMs = performance.now();
           return yield* session.exclusive(
             Effect.gen(function* () {
               const acquiredMs = yield* Clock.currentTimeMillis;
+              const endOffsetMs = performance.now();
               yield* bestEffort(
                 diagnostics?.emit("guardian.session_wait", {
                   kind,
+                  attempt: run.ordinal,
                   startedAtUtc: new Date(requestedMs).toISOString(),
                   endedAtUtc: new Date(acquiredMs).toISOString(),
                   waitMs: acquiredMs - requestedMs,
                 }) ?? Effect.void,
                 "guardian.session_wait",
               );
-              return yield* work;
+              return yield* work({ ...run, permitWait: { startOffsetMs, endOffsetMs } });
             }),
           );
         });
-  const withOutageRetry = <A>(kind: ReviewKind, attempt: Effect.Effect<A, ReviewFailure>) =>
-    retryReview(kind, exclusive(kind, attempt));
+  const withOutageRetry = <A>(
+    kind: ReviewKind,
+    attempt: (run: ReviewAttempt) => Effect.Effect<A, ReviewFailure>,
+  ) => retryReview(kind, (run) => exclusive(kind, run, attempt));
   const review = <Decision extends { readonly outcome: string }>(
+    run: ReviewAttempt,
     pending: PendingExecution,
     readSource: ReviewTurn["readSource"],
     decode: (raw: unknown) => Effect.Effect<Decision, ReviewFailure>,
@@ -603,6 +666,31 @@ export const makeGuardian = (
               }),
           ),
         );
+      run.started({ reviewId, reviewKind });
+      const observeModelTrace = diagnostics?.observeModelTrace;
+      // Follow-up rounds for a skipped entrypoint read, sent within this attempt.
+      let followUpRounds = 0;
+      const startOffsetMs = performance.now();
+      const timing = {
+        attempt: run.ordinal,
+        startOffsetMs,
+        ...(run.permitWait === undefined
+          ? {}
+          : {
+              permitWaitStartOffsetMs: run.permitWait.startOffsetMs,
+              permitWaitEndOffsetMs: run.permitWait.endOffsetMs,
+            }),
+      };
+      const endTiming = () => {
+        const endOffsetMs = performance.now();
+        return {
+          attempt: run.ordinal,
+          startOffsetMs,
+          endOffsetMs,
+          elapsedMs: endOffsetMs - startOffsetMs,
+          ...(followUpRounds === 0 ? {} : { followUpRounds }),
+        };
+      };
       yield* emit(
         "guardian.started",
         privateKind
@@ -611,9 +699,10 @@ export const makeGuardian = (
               ...hostKind,
               invocationId: pending.invocationId,
               attemptId: pending.attemptId,
+              timing,
             }
           : pending.publication === undefined
-            ? pending
+            ? { ...pending, timing }
             : {
                 mode: "publication",
                 ...pending,
@@ -622,6 +711,7 @@ export const makeGuardian = (
                   (total, file) => total + file.byteLength,
                   0,
                 ),
+                timing,
               },
       );
       return yield* Effect.gen(function* () {
@@ -648,6 +738,31 @@ export const makeGuardian = (
                     }),
                 ),
               );
+        /**
+         * One read of the host's reader, with its interval as `performance.now()` offsets for the
+         * read's failure record. A retention failure after the read carries the read's interval.
+         */
+        const timedRead = (path: string, offset: number) => {
+          let startOffsetMs = 0;
+          let endOffsetMs = 0;
+          return {
+            effect: Effect.suspend(() => {
+              startOffsetMs = performance.now();
+              return readSource(path, offset);
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  endOffsetMs = performance.now();
+                }),
+              ),
+            ),
+            interval: () => ({
+              elapsedMs: endOffsetMs - startOffsetMs,
+              startOffsetMs,
+              endOffsetMs,
+            }),
+          };
+        };
         const sourceFailed = (path: string, offset: number, error: ReviewFailure) => ({
           ...(publication === undefined
             ? { path, offset }
@@ -672,10 +787,14 @@ export const makeGuardian = (
         /** Guardian's own reads, through its tool: tracked for required evidence. */
         const read: ReviewTurn["readSource"] = (requested, offset) => {
           const path = sourcePath(requested);
-          return readSource(path, offset).pipe(
+          const timed = timedRead(path, offset);
+          return timed.effect.pipe(
             Effect.tap(retain),
             Effect.tapError((error) =>
-              emit("guardian.source_failed", sourceFailed(path, offset, error)),
+              emit("guardian.source_failed", {
+                ...sourceFailed(path, offset, error),
+                ...timed.interval(),
+              }),
             ),
             Effect.tap((observation) =>
               publication === undefined
@@ -712,11 +831,13 @@ export const makeGuardian = (
           // is the host's read, kept apart from Guardian's: when it fails the source is left out
           // and Guardian reads it itself, and when only retaining the screened copy fails, the
           // source stays in view and the gap is recorded.
-          const included = yield* Effect.either(readSource(entrypoint, 0));
+          const hostRead = timedRead(entrypoint, 0);
+          const included = yield* Effect.either(hostRead.effect);
           const gap = (error: ReviewFailure) =>
             bestEffort(
               emit("guardian.source_failed", {
                 ...sourceFailed(entrypoint, 0, error),
+                ...hostRead.interval(),
                 automatic: true,
               }),
               "guardian.source_failed",
@@ -758,11 +879,17 @@ export const makeGuardian = (
           pending,
           ...(sources === undefined ? {} : { sources }),
           ...(retainRuntimeRecord === undefined ? {} : { retainRuntimeRecord }),
+          // A private kind's transcript is never kept, so only its finite timing is reported.
           ...(privateKind
-            ? {}
+            ? observeModelTrace === undefined
+              ? {}
+              : {
+                  observeTiming: (modelTiming: ModelDiagnosticTiming) =>
+                    observeModelTrace("guardian.model", modelTiming, { reviewId, reviewKind }),
+                }
             : {
-                reportDiagnostic: (value: unknown, timing?: ModelDiagnosticTiming) =>
-                  emit("guardian.model", value, timing),
+                reportDiagnostic: (value: unknown, modelTiming?: ModelDiagnosticTiming) =>
+                  emit("guardian.model", value, modelTiming),
               }),
           reportUsage: (usage) =>
             bestEffort(
@@ -773,10 +900,11 @@ export const makeGuardian = (
               ) ?? Effect.void,
               "guardian.usage",
             ),
-          missingRead: (output) =>
-            unread(output)
-              ? `The host did not accept this allow: an allow needs the submitted entrypoint ${entrypoint} in view in this review, and it is not, because the host could not include it or the conversation was compacted since. Read ${entrypoint} from offset 0 with read_source, then decide again.`
-              : undefined,
+          missingRead: (output) => {
+            if (!unread(output)) return undefined;
+            followUpRounds++;
+            return `The host did not accept this allow: an allow needs the submitted entrypoint ${entrypoint} in view in this review, and it is not, because the host could not include it or the conversation was compacted since. Read ${entrypoint} from offset 0 with read_source, then decide again.`;
+          },
           readSource: read,
         });
         const unavailableSource = unavailableSources.values().next().value;
@@ -792,10 +920,10 @@ export const makeGuardian = (
         yield* emit(
           "guardian.completed",
           privateKind
-            ? { mode: "private", ...hostKind, outcome: decision.outcome }
+            ? { mode: "private", ...hostKind, outcome: decision.outcome, timing: endTiming() }
             : publication === undefined
-              ? decision
-              : { mode: "publication", ...decision },
+              ? { ...decision, timing: endTiming() }
+              : { mode: "publication", ...decision, timing: endTiming() },
         );
         yield* completeSession(session);
         return { reviewId, decision };
@@ -808,6 +936,7 @@ export const makeGuardian = (
                 ...(privateKind ? { mode: "private", ...hostKind } : {}),
                 cause: Cause.map(exit.cause, withoutDetail),
                 ...failureDetailMetadata(Option.getOrUndefined(Cause.failureOption(exit.cause))),
+                timing: endTiming(),
               }).pipe((emitted) => bestEffort(emitted, "guardian.review_diagnostic"))
             : Effect.void,
         ),
@@ -824,9 +953,8 @@ export const makeGuardian = (
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         const scope = pending.publication;
-        return withOutageRetry(
-          scope === undefined ? "execution" : "publication",
-          review(pending, readSource, (raw) =>
+        return withOutageRetry(scope === undefined ? "execution" : "publication", (run) =>
+          review(run, pending, readSource, (raw) =>
             scope === undefined
               ? decodeExecution(raw)
               : (options.decodePublication?.(scope, boundedRationale(raw)) ??
@@ -852,9 +980,13 @@ export const makeGuardian = (
           pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
-        return withOutageRetry(
-          "recovery",
-          review({ ...pending, recoveryCandidate: { rationale } }, readSource, decodeExecution),
+        return withOutageRetry("recovery", (run) =>
+          review(
+            run,
+            { ...pending, recoveryCandidate: { rationale } },
+            readSource,
+            decodeExecution,
+          ),
         );
       }),
     /**
@@ -873,9 +1005,8 @@ export const makeGuardian = (
           pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
-        return withOutageRetry(
-          "question",
-          review({ ...pending, questionCandidate: question }, readSource, (raw) =>
+        return withOutageRetry("question", (run) =>
+          review(run, { ...pending, questionCandidate: question }, readSource, (raw) =>
             Schema.decodeUnknown(QuestionDecision)(raw, {
               onExcessProperty: "error",
             }).pipe(Effect.mapError(decisionFailure)),
@@ -901,9 +1032,8 @@ export const makeGuardian = (
           pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
-        return withOutageRetry(
-          "host",
-          review({ ...pending, hostReview: request }, readSource, decodeHost(request)),
+        return withOutageRetry("host", (run) =>
+          review(run, { ...pending, hostReview: request }, readSource, decodeHost(request)),
         );
       }),
   };

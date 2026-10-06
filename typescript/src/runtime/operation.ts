@@ -5,6 +5,7 @@ import type { EffectJournal } from "./context.js";
 import {
   DeadlineExceeded,
   InvalidInput,
+  inputIssues,
   InvalidOutput,
   WriteConfirmationRefused,
 } from "./errors.js";
@@ -164,8 +165,15 @@ export const executeOperation = <Input, EncodedInput, Output, EncodedOutput, Err
     yield* context.journal.declareCommits(
       Array.isArray(declared) ? declared.filter((name) => typeof name === "string") : [],
     );
-    const input = yield* Schema.decodeUnknown(operation.input)(rawInput).pipe(
-      Effect.mapError(() => new InvalidInput({ operation: operation.name })),
+    // Every rejected path, not only the first, so one correction can fix them all.
+    const input = yield* Schema.decodeUnknown(operation.input, { errors: "all" })(rawInput).pipe(
+      Effect.mapError(
+        (error) =>
+          new InvalidInput({
+            operation: operation.name,
+            issues: inputIssues(operation.input, error),
+          }),
+      ),
     );
     const remainingMs = context.deadline.remainingMs();
     if (remainingMs <= 0) {
