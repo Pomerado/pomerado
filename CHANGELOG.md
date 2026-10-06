@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Every merge to `main` publishes a canary, `X.Y.Z-canary.N`, under the `canary` dist-tag: `npm install pomerado@canary`. `latest` moves to the canary that Pomerado's hosted service promotes to production, so `npm install pomerado` gets the build production runs. See [Releasing](docs/RELEASING.md).
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.

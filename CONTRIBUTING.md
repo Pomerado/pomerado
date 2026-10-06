@@ -56,9 +56,10 @@ Tests use synthetic sites and scripted model responses. They need no model API k
 - The maintainers are Alan ([@alanmrsa](https://github.com/alanmrsa)) and Akshay ([@AkshayM21](https://github.com/AkshayM21)).
 - Every change goes through a pull request, the maintainers' own included. Nobody pushes to `main` directly.
 - A pull request merges only after an independent review and green CI.
-- A branch rule on `main` enforces this. It requires a pull request, a green `CI` check and a `review/clear` check on the current head, and a branch that is up to date with `main`.
+- Branch rules on `main` enforce this. They require a pull request, a green `CI` check and a `review/clear` check on the current head, a branch that is up to date with `main`, and an approval from a maintainer other than the author. A push after the approval needs a new one.
 - Maintainers merge by hand with a merge commit until a merge queue takes over.
 - Outside pull requests will also need a maintainer's approval, and a maintainer approves each of their CI runs.
+- Each merge to `main` publishes a canary to npm. [Releasing](docs/RELEASING.md) describes canaries and how `latest` moves.
 - CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check, browser tests, a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
 
