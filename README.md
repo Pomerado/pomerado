@@ -9,10 +9,11 @@
 </p>
 
 <p align="center">
+  <a href="#how-it-works">How it works</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#create-an-integration">Create an integration</a> ·
   <a href="#use-your-integration">Use your integration</a> ·
-  <a href="#how-it-works">How it works</a> ·
+  <a href="#open-source-and-pomerado-cloud">Open source and Cloud</a> ·
   <a href="#documentation-for-humans-and-agents">Docs</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -21,24 +22,45 @@
 
 ## What Pomerado does
 
-Pomerado builds MCP integrations for websites, including sites without an API. Each integration is code you own, and it runs on your computer.
+Pomerado builds MCP integrations for websites, including sites without an API.
 
-- Each tool does what it says. Pomerado runs the task in a real browser while it builds, then validates every input and output against the tool's schema.
-- Guardian reviews each browser action before it runs and the finished source before it is saved. Your agent picks read or write access for each mint, and the `mint` tool's description tells it to ask you before it picks write.
-- Your agent calls the integration like any other MCP tool. It works with any MCP client and any model your agent runs on.
+- You give Pomerado any website and a plain-language description of a task. It outputs an MCP integration that does the task.
+- The integration is deterministic and runs the same way every time. That makes it much faster and more reliable than computer use.
+- Pomerado works on any site, including sites behind a login and two-factor authentication.
 
-```text
-"Read the main heading from example.com"     you describe a task
-                  │
-                  ▼
-Pomerado drives the site in Chromium          mint, get_job, provide_input
-                  │
-                  ▼
-pomerado-integrations/example_reader/         Pomerado saves an MCP integration
-                  │
-                  ▼
-your agent calls example_reader               validated output
+```mermaid
+flowchart LR
+  subgraph sources["No existing API required"]
+    direction LR
+    websites["<b>Everyday websites</b><br/>Shopping · Travel · Reservations"]
+    portals["<b>Legacy portals</b><br/>Healthcare · Finance · Government"]
+    tools["<b>Internal tools</b><br/>CRMs · ERPs · Admin apps"]
+  end
+  pomerado["<b>Pomerado</b><br/><br/>Build · Host · Maintain<br/><br/>Creates a deterministic API in real time"]
+  subgraph agents["Agents that use the integration"]
+    direction LR
+    product["<b>Product agents</b><br/>Operational workflows"]
+    internal["<b>Internal agents</b><br/>Internal workflows"]
+    personal["<b>Personal assistants</b><br/>Your own agent, e.g. OpenClaw"]
+  end
+  sources --> pomerado
+  pomerado -- "API / MCP" --> agents
+  classDef core stroke:#c71f3e,stroke-width:2px
+  class pomerado core
 ```
+
+## How it works
+
+```mermaid
+flowchart LR
+  try["<b>1. Try the site</b><br/>Pomerado generates<br/>a script that tries<br/>the site in Chromium"]
+  complete["<b>2. Complete the example</b><br/>Pomerado generates<br/>code that completes<br/>your example in Chromium"]
+  publish["<b>3. Generalize and publish</b><br/>Pomerado turns that code<br/>into a general integration<br/>that takes new inputs"]
+  use["<b>4. Your agent calls it</b><br/>Your agent calls<br/>the integration and<br/>gets validated output"]
+  try --> complete --> publish --> use
+```
+
+Guardian is a second model that reviews each browser action and the finished source. [How it works](docs/how-it-works.md) covers the minter, Guardian, the runtime and jobs.
 
 ## Get started
 
@@ -79,14 +101,14 @@ Pomerado is a standard MCP stdio server. This is its entry for clients that read
 
 Add Pomerado to your client.
 
-| Client | Add Pomerado | Checked |
-| --- | --- | --- |
-| Claude Code | `claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` | Verified |
-| Codex | `codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations`, then add `env_vars` | Verified |
-| Gemini CLI | `gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` | Verified |
-| Cursor | Add the entry to `~/.cursor/mcp.json` | From Cursor's docs |
-| VS Code | `code --add-mcp '{"name":"pomerado","command":"npx","args":["-y","-p","pomerado","pomerado-mcp","mint","--root","/absolute/path/to/pomerado-integrations"]}'`, or add the entry to `.mcp.json` in your workspace | From VS Code's docs |
-| Claude Desktop | Add the entry to `claude_desktop_config.json` | From the MCP docs |
+| Client | Add Pomerado |
+| --- | --- |
+| Claude Code | `claude mcp add --scope user pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` |
+| Codex | `codex mcp add pomerado -- npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations`, then add `env_vars` |
+| Gemini CLI | `gemini mcp add -s user -e 'OPENAI_API_KEY=$OPENAI_API_KEY' pomerado npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations` |
+| Cursor | Add the entry to `~/.cursor/mcp.json` |
+| VS Code | `code --add-mcp '{"name":"pomerado","command":"npx","args":["-y","-p","pomerado","pomerado-mcp","mint","--root","/absolute/path/to/pomerado-integrations"]}'`, or add the entry to `.mcp.json` in your workspace |
+| Claude Desktop | Add the entry to `claude_desktop_config.json` |
 
 Each client passes the key differently. [Client settings](docs/getting-started.md#client-settings) covers the key and the timeouts for every client in the table.
 
@@ -150,27 +172,23 @@ pomerado-integrations/example_reader/
 - Calling the tool again starts a new run. With write authority that means another write.
 - The integration runs on the Pomerado installation that minted it. For a fixed path, install with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`.
 
-## Questions, logins and safety
+## Open source and Pomerado Cloud
 
-- Guardian reviews every browser action against your task and refuses actions outside it.
-- Pomerado asks for logins, codes and choices as job questions. Your agent answers them with `provide_input`.
-- A question expires after 10 minutes.
-- Answers sent through `provide_input`, passwords and codes included, are visible to your MCP client and its model provider. Your agent should tell you this before it collects a password.
-- Pomerado saves no logins. It has no credential vault, saved login recipe or submission ledger, and it reads no SMS or authenticator codes for you.
-- Each job gets a fresh browser context and closes it at the end. An integration doesn't inherit the signed-in session from its mint.
-- Website content reaches the model provider. Secrets you supply are masked in what the minting model sees and checked for in generated source.
-- Operation outputs come back without secret redaction. Error messages mask values that look like credentials.
-- Generated code runs with your user account's file and network access. Guardian review is not an operating system sandbox.
+This repository is the complete Pomerado core. You can mint and run integrations with it without a Pomerado account.
 
-## How it works
+- The minter builds integrations in a real Chromium browser.
+- The minting harness and prompts are the same ones Pomerado Cloud builds on.
+- Guardian reviews each browser action and the finished source.
+- The standalone host runs each integration as an MCP server on your own computer.
+- Each integration is source code in your own folder, and you own it.
 
-Pomerado has three parts.
+[Pomerado Cloud](https://pomerado.ai) runs this same core and adds hosting and operations.
 
-- The minter drives Chromium through Playwright and writes the integration's source.
-- Guardian reviews each action and the finished source.
-- The runtime runs a saved integration as its own MCP server.
-
-[How it works](docs/how-it-works.md) covers jobs, the browser runtime, the library and the source layout. A hosted version of Pomerado runs at [pomerado.ai](https://pomerado.ai).
+- It hosts your integrations and runs their jobs.
+- It brokers OAuth and keeps saved logins.
+- It controls who can use each integration.
+- It runs a managed browser fleet that handles bot protection.
+- It detects when a site change breaks an integration and repairs it automatically.
 
 ## Documentation for humans and agents
 
