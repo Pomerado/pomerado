@@ -86,7 +86,7 @@ export const makeStartTracker = <Session = unknown>() => {
      * A sign-in step, a signed-in check included. The first one after a verified sign-in, or the
      * build's first, starts a new sign-in: nothing saved describes the browser until that sign-in
      * is verified, and nothing sent counts for it yet. Later steps of the same sign-in, each
-     * screen of it, add to what it sent. A host that replaces the browser calls it too.
+     * screen of it, add to what it sent.
      */
     signIn: () => {
       if (signInOpen) return;
