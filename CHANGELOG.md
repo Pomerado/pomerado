@@ -7,6 +7,11 @@
 - `pomerado run` no longer requires `--intent`, and it ignores `--intent` and `--effect`.
 - A failed run that has no more specific message now reads "Operation failed. Check the local browser and integration configuration." Minting keeps its message.
 
+### Fixes
+
+- A local edit the minter can't apply now says the edit was not applied and why. That covers a patch that doesn't match, a file that already exists or is missing, and a file past the size limit. The file is unchanged. These edits no longer report "Workspace edit outcome unknown".
+- Local runs stage authored source a level below the SDK, as the workspace guide describes. The documented `../../runtime/index.js` import from `src/` and the skill references' imports now load. Integrations saved with `../runtime/index.js` still run unchanged.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
