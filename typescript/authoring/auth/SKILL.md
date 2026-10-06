@@ -150,7 +150,10 @@ visibility and retains every rejected value so it cannot send that value again.
 question screen and stop rather than resending the same answer.
 Do not mark sign-in complete while a recorded answer or verification field is still visible,
 including one inside a provider frame. Account search, support and security-settings forms are
-not sign-in evidence.
+not sign-in evidence. Inspect and record each new authentication screen before checking completion.
+The host checks recorded challenge fields and also recognizes some authentication routes. It cannot
+distinguish an unrecorded challenge on an ordinary account page from a security-settings form; a
+successful host check does not replace inspecting the screen and verifying authenticated access.
 
 <!-- pomerado:hosted:start
 On a combined password-and-code screen that returns empty, an explicit code rejection permits a
@@ -222,8 +225,8 @@ with `signInStep: { signedIn: { selector } }` (or `urlPath`, the observed signed
 When the landing page shows no such evidence, add `openPath`, the observed path of an account page
 that does, and the host opens it and checks there; never guess a protected route. The host checks
 that the submitted sign-in's recorded controls/form no longer show a password entry awaiting
-sign-in, and that a marker in an unfinished form or a visible security-answer or verification-code
-field is not mistaken for completion; unrelated account forms do not fail this check. It also checks
+sign-in, and that its recorded answer or verification fields are no longer visible; unrelated
+account forms do not fail this check. It also checks
 that this sign-in submitted the login's identifier with its password, code or protected approval,
 then marks it verified; a Personal login locks to this site then. The indicator is part of the
 published tool: runs check it after they sign in. Business work waits for a verified sign-in.

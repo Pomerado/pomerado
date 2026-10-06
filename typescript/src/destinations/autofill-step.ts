@@ -477,9 +477,11 @@ export type AutofillScreens = readonly {
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
  * visible one. It also refuses a visible recorded challenge, including in a provider frame, or a
- * challenge control on a site's active authentication route. An ordinary account search, support
- * or security-settings form does not count. Another form's password field does not count unless a recorded
- * selector matches in it. Screens with no field leave any visible password field failing it.
+ * challenge control on a recognized authentication route. The route check is supplemental:
+ * unrecorded controls on other account routes cannot be distinguished from security settings.
+ * Callers must inspect and record each authentication screen before checking completion.
+ * Another form's password field does not count unless a recorded selector matches in it.
+ * Screens with no field leave any visible password field failing it.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
