@@ -195,8 +195,9 @@ export interface PendingExecution {
       readonly target: "pureFiles" | "savedHTTP" | "savedDOM" | "liveBrowser";
       /**
        * agent_chosen: a read's live test on an input the minting agent chose instead of the
-       * caller's. intent_derived: a read's example whose caller sent empty input runs the agent's
-       * reading of the intent and the owner's answered questions as its submitted input.
+       * caller's. intent_derived: a read's example or a write's act step whose caller sent empty
+       * input runs the agent's reading of the intent and the owner's answered questions as its
+       * submitted input.
        */
       readonly input?: "agent_chosen" | "intent_derived";
       /**
