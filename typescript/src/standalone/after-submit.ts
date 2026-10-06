@@ -1,0 +1,46 @@
+import { Effect, Schema } from "effect";
+import type { AutofillStepReport } from "../destinations/autofill-step.js";
+import {
+  afterSubmitPath,
+  inlineControls,
+  PageControls,
+  presentControls,
+  type PageControls as Saved,
+} from "../destinations/page-controls.js";
+import type { LocalWorkspace } from "../execution/local-workspace.js";
+
+/** Whether a step did not resolve: refused, uncertain, or filled without its submit going out. */
+const failed = (report: AutofillStepReport) =>
+  report.outcome !== "filled" || (report.submit !== "clicked" && report.submit !== "none");
+
+/**
+ * Each sign-in step's result as the minter reads it. After a clicked submit the host saves the
+ * page's controls, screened like other workspace data, to `captures/after-submit/<step>.json`
+ * (read-only) and names the file in one line. A step that fails carries the last saved controls
+ * inline as well, capped.
+ */
+export const makeAfterSubmit = (options: {
+  readonly workspace: Pick<LocalWorkspace, "install">;
+  readonly screen: (value: unknown) => Effect.Effect<unknown, Error>;
+}) => {
+  let step = 0;
+  let last: { readonly path: string; readonly saved: Saved } | undefined;
+  return (report: AutofillStepReport) =>
+    Effect.gen(function* () {
+      step += 1;
+      if (report.outcome === "filled" && report.controls !== undefined) {
+        const { controls, ...shown } = report;
+        const path = afterSubmitPath(step);
+        // Screened whole first: shortening a name before would leave part of a typed value.
+        const saved = presentControls(
+          yield* options.screen(controls).pipe(Effect.flatMap(Schema.decodeUnknown(PageControls))),
+        );
+        yield* options.workspace.install(path, `${JSON.stringify(saved, null, 2)}\n`);
+        last = { path, saved };
+        return { ...shown, nextScreen: `The next screen's controls are in ${path}.` };
+      }
+      return failed(report) && last !== undefined
+        ? { ...report, lastScreen: inlineControls(last.path, last.saved) }
+        : report;
+    });
+};

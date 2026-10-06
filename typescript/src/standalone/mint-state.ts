@@ -22,6 +22,7 @@ import {
   saveSessionCode,
   startPage,
 } from "../runtime/start-state.js";
+import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
@@ -172,6 +173,7 @@ export const mintState = (
           )
           .pipe(Effect.asVoid),
     });
+    const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     let claimed = false;
     let buildEffect: "read" | "write" | undefined =
       request.effect === "read" || request.effect === "write" ? request.effect : undefined;
@@ -188,6 +190,7 @@ export const mintState = (
       runs,
       auth,
       start,
+      afterSubmit,
       get claimed() {
         return claimed;
       },

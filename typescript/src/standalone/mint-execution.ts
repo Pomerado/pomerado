@@ -64,7 +64,7 @@ const executeAuthentication = (
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { start, auth, mintAsk, context } = state;
+    const { start, auth, afterSubmit, mintAsk, context } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
@@ -76,7 +76,7 @@ const executeAuthentication = (
       start.signIn();
       const report = yield* auth.step(signIn, beforeDispatch);
       start.sent(report, signIn.fields);
-      result = report;
+      result = yield* afterSubmit(report);
     } else if ("signedIn" in signIn) {
       // A check is a sign-in step too: after a verified sign-in it starts a new one.
       start.signIn();

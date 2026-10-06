@@ -2386,8 +2386,12 @@ it("answers request_input in place through the actual pinned Runner and SandboxA
   expect(sent).toContain("semicolon_values_answer");
   expect(sent).not.toContain("secret-canary");
   expect(requests[0]?.modelSettings.store).toBe(false);
-  // Minting requests provider-readable summaries.
-  expect(requests[0]?.modelSettings.reasoning).toEqual({ effort, summary: "auto" });
+  // Minting requests provider-readable summaries and all-turns reasoning context.
+  expect(requests[0]?.modelSettings.reasoning).toEqual({
+    effort,
+    summary: "auto",
+    context: "all_turns",
+  });
   expect(f.seen).toHaveLength(0);
 }, 30_000);
 

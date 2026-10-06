@@ -3,7 +3,12 @@ import type { MintRecoveryFactory } from "./recovery-contracts.js";
 import { failureDetail, failureRootCause } from "../runtime/failure-detail.js";
 import { modelCauseMetadata, modelFailureMetadata } from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
-import { withReasoningContinuity } from "../models/reasoning-settings.js";
+import {
+  effectiveReasoningContext,
+  withReasoningContinuity,
+} from "../models/reasoning-settings.js";
+import { modelUsageCounts } from "../models/model-usage.js";
+import { makeIdleCompaction, mintIdleCompactionTokens } from "./idle-compaction.js";
 import { solModel } from "../models/models.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { MaxTurnsExceededError, RunContext, RunState, Runner, Usage, tool } from "@openai/agents";
@@ -13,6 +18,7 @@ import type {
   Editor,
   FunctionTool,
   ModelProvider,
+  ModelResponse,
 } from "@openai/agents";
 import {
   SandboxAgent,
@@ -617,7 +623,7 @@ export const makeOpenAIMinter = (
             const requestInput = tool({
               ...hostTool(
                 "request_input",
-                "Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues. Follow the instructions' try-hard-then-ask rule. Question and option ids are your own short lowercase ids; a secret is a code or private text the caller types, and its answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. One request at a time. intent states why only the caller can supply this.",
+                "Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues. Follow the instructions' try-hard-then-ask rule. Question and option ids are your own short lowercase ids; a secret is private text the caller types, or a code the site sends to confirm a protected action after sign-in; a code that is part of signing in (by text message, email or an authenticator app) is a code field of execute purpose authenticate, which asks the caller itself, so never ask for it here. A secret's answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. One request at a time. intent states why only the caller can supply this.",
                 "The question was not asked. Inspect the finite failure; correct the request or continue without it.",
                 (request) => turn.actions.requestInput(request),
               ),
@@ -678,10 +684,12 @@ export const makeOpenAIMinter = (
               // SDK's default sandbox prompt stays in front of it.
               instructions: turn.instructions,
               // Summaries and encrypted reasoning continuity are always on; absence of a
-              // summary is recorded per response.
+              // summary is recorded per response. Reasoning from earlier turns stays rendered
+              // after a continuation or host notice, so the cached prompt is never rewritten
+              // from the first earlier reasoning item; the applied context is recorded per call.
               modelSettings: withReasoningContinuity({
                 parallelToolCalls: false,
-                reasoning: { effort: reasoningEffort },
+                reasoning: { effort: reasoningEffort, context: "all_turns" },
               }),
               // The effect question turn gets no filesystem, shell or skill tools. Its only
               // permitted action is request_input, and the harness session refuses every other call.
@@ -724,6 +732,32 @@ export const makeOpenAIMinter = (
             let finalsWithoutTool = turn.recovery?.initial?.finalsWithoutTool ?? 0;
             let activeState: { toString(): string } | undefined;
             const totalUsage = new Usage();
+            /** Finite per-call counts, so the host can store the cache hit rate per call. */
+            const reportUsage = (
+              response: Pick<ModelResponse, "usage" | "providerData">,
+              call: number,
+              purpose: "turn" | "compaction",
+              compactedInput: boolean,
+            ) =>
+              turn.reportTrace?.({
+                phase: "model_usage",
+                call,
+                purpose,
+                ...modelUsageCounts(response.usage),
+                reasoningContext: effectiveReasoningContext(response.providerData),
+                ...(compactedInput ? { compactedInput: true } : {}),
+              }).pipe(Effect.ignore) ?? Effect.void;
+            const idle = turn.effectQuestion
+              ? undefined
+              : makeIdleCompaction({
+                  watermarkTokens: mintIdleCompactionTokens,
+                  report: (event) =>
+                    turn
+                      .runTool(
+                        turn.reportTrace?.({ phase: "idle_compaction", ...event }) ?? Effect.void,
+                      )
+                      .catch(() => undefined),
+                });
             const provider =
               diagnostics?.provider(runner.config.modelProvider) ?? runner.config.modelProvider;
             runner.config.modelProvider = {
@@ -737,18 +771,36 @@ export const makeOpenAIMinter = (
                     // context of whatever woke it (a recovery save completed by another fiber),
                     // so the call always runs in the context the SDK called from.
                     const inSdkContext = AsyncLocalStorage.snapshot();
+                    // A compaction that ran while the tools ran replaces the prefix it covers.
+                    const input = idle?.view(request.input) ?? request.input;
+                    const sent = input === request.input ? request : { ...request, input };
                     // The SDK's client has already retried; an outage it could not get past is
                     // retried here with the same request, within the attempt's deadline.
                     const respond = Effect.gen(function* () {
+                      const call = modelCalls;
                       let firstFailureAt: number | undefined;
                       for (let retries = 0; ; retries++) {
                         const outcome = yield* Effect.either(
                           Effect.tryPromise({
-                            try: () => inSdkContext(() => model.getResponse(request)),
+                            try: () => inSdkContext(() => model.getResponse(sent)),
                             catch: (error) => thrownError(error, "Model call failed"),
                           }),
                         );
-                        if (Either.isRight(outcome)) return outcome.right;
+                        if (Either.isRight(outcome)) {
+                          const response = outcome.right;
+                          yield* reportUsage(response, call, "turn", sent !== request);
+                          idle?.afterTurn(request, sent, response, (compaction) =>
+                            inSdkContext(() => model.getResponse(compaction)).then(
+                              async (compacted) => {
+                                await turn
+                                  .runTool(reportUsage(compacted, call, "compaction", false))
+                                  .catch(() => undefined);
+                                return compacted;
+                              },
+                            ),
+                          );
+                          return response;
+                        }
                         const error = outcome.left;
                         const now = yield* Clock.currentTimeMillis;
                         firstFailureAt ??= now;
@@ -912,6 +964,7 @@ export const makeOpenAIMinter = (
               diagnostics?.failed(error);
               throw error;
             } finally {
+              await idle?.close();
               await diagnostics?.flush();
             }
           } catch (error) {
