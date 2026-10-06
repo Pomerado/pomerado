@@ -75,11 +75,15 @@ const mintDependencies = (state: MintState) => {
         const { buildEffect } = context;
         const refusal =
           preflightTestInput(execution, { buildEffect, executionHistory: context.executions() }) ??
-          exampleInputRefusal(execution, { buildEffect, callerInput: request.input ?? {} });
+          exampleInputRefusal(execution, {
+            buildEffect,
+            callerInput: request.input ?? {},
+            writeSession: state.writeSession,
+          });
         if (refusal !== undefined) return refusal;
         const boundary = writeSessionBoundary(execution, {
           buildEffect,
-          writeSessionStarted: state.writeSessionStarted,
+          writeSessionStarted: state.writeSession.started,
         });
         return boundary === undefined
           ? { supported: true as const }

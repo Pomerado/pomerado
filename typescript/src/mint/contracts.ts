@@ -449,8 +449,9 @@ export const ExecutionRequest = Schema.Struct({
   /** Only on authenticate, and only where the host offers autofill sign-in. */
   signInStep: Schema.optional(SignInStep),
   /**
-   * Only on a read build's example when the caller's input is empty (`{}`): the tool's input as
-   * JSON text, which the agent writes from the request and the owner's answers. The example runs it.
+   * Only when the caller's input is empty (`{}`): the tool's input as JSON text, which the agent
+   * writes from the request and the owner's answers. A read's example runs it; a write's first act
+   * step fixes it for its session, and later act steps repeat it unchanged or omit it.
    */
   exampleInput: Schema.optional(Schema.String),
 });

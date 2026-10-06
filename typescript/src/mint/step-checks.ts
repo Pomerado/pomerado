@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { Effect, Option, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { type ExecutionRequest, MintFailure, type MintRequest } from "./contracts.js";
@@ -40,11 +41,11 @@ export const preflightTestInput = (
   if (submitted.testInput === undefined) return undefined;
   if (submitted.purpose !== "test" || submitted.target !== "liveBrowser")
     return refused(
-      "testInput is only for a read's live test: purpose test, target liveBrowser. An example runs the caller's input (or exampleInput when that input is empty), and an offline test and every other purpose run the caller's input. Nothing was executed.",
+      "testInput is only for a read's live test: purpose test, target liveBrowser. An example or a write's act step runs the caller's input (or exampleInput when that input is empty), and an offline test and every other purpose run the caller's input. Nothing was executed.",
     );
   if (scope.buildEffect !== "read")
     return refused(
-      "A write build never runs a live test or an input you chose; its session uses the caller's values. Nothing was executed.",
+      "A write build never runs a live test or an input you chose; its session runs the caller's input, or the exampleInput its first act step passed when that input is empty. Nothing was executed.",
     );
   if (Option.isNone(Schema.decodeUnknownOption(JsonText)(submitted.testInput)))
     return refused(testInputNotJson);
@@ -56,40 +57,79 @@ export const preflightTestInput = (
     : undefined;
 };
 
+type InputObject = Readonly<Record<string, unknown>>;
 const ExampleInput = Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown }));
 /**
- * The input an example runs in place of the caller's empty one: the agent's `exampleInput`, a
- * JSON object it wrote from the request and the owner's answers. Undefined when the step carries
+ * The input a step runs in place of the caller's empty one: the agent's `exampleInput`, a JSON
+ * object it wrote from the request and the owner's answers. A read's example runs it, and so does
+ * a write's act session from the step that first passes it. Undefined when the step carries
  * none, or text that is not a JSON object, which preflight refuses.
  */
-const intentDerivedInput = (submitted: ExecutionRequest) =>
+const intentDerivedInput = (submitted: ExecutionRequest): InputObject | undefined =>
   submitted.exampleInput === undefined
     ? undefined
     : Option.getOrUndefined(Schema.decodeUnknownOption(ExampleInput)(submitted.exampleInput));
 
+/** The write session the `exampleInput` rule reads: whether it started, and the input it runs. */
+interface SessionInput {
+  readonly started: boolean;
+  readonly input: InputObject | undefined;
+}
+
+/** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
+const exampleInputPlaceRefusal = (
+  purpose: ExecutionRequest["purpose"],
+  scope: { readonly buildEffect: MintRequest["effect"] | undefined; readonly callerInput: unknown },
+) => {
+  const act = purpose === "act";
+  if (purpose !== "example" && !act)
+    return "exampleInput is valid only on a read's example or a write's act step.";
+  if (scope.buildEffect !== (act ? "write" : "read"))
+    return act
+      ? "exampleInput is valid on act steps only in a write build."
+      : "A write build passes exampleInput on its act steps, never on an example.";
+  const { callerInput } = scope;
+  const empty =
+    typeof callerInput === "object" &&
+    callerInput !== null &&
+    !Array.isArray(callerInput) &&
+    Object.keys(callerInput).length === 0;
+  return empty
+    ? undefined
+    : `The caller supplied input, and the ${act ? "session" : "example"} runs it as it is.`;
+};
+
+/** Why an act step's `exampleInput` differs from the one input its session runs, if it does. */
+const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
+  session.started && session.input === undefined
+    ? "This write session started on the caller's empty input, and its steps run that input; only the session's first act step can pass exampleInput."
+    : session.input !== undefined && !isDeepStrictEqual(decoded, session.input)
+      ? "This write session already runs the exampleInput its first act step passed. Repeat it unchanged or omit it."
+      : undefined;
+
 /**
  * Preflight's refusal of a step's `exampleInput`, if any: the agent's reading of the request runs
- * only as a read's example where the caller gave it nothing to run.
+ * only where the caller gave it nothing to run, as a read's example or a write's act session. A
+ * session runs one input: the first act step that passes it fixes it, and a later step repeats it
+ * unchanged or omits it.
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
-  scope: { readonly buildEffect: MintRequest["effect"] | undefined; readonly callerInput: unknown },
+  scope: {
+    readonly buildEffect: MintRequest["effect"] | undefined;
+    readonly callerInput: unknown;
+    readonly writeSession: SessionInput;
+  },
 ): Refusal | undefined => {
   if (submitted.exampleInput === undefined) return undefined;
-  const { callerInput } = scope;
+  const decoded = intentDerivedInput(submitted);
   const refusal =
-    submitted.purpose !== "example"
-      ? "exampleInput is valid only for purpose example."
-      : scope.buildEffect !== "read"
-        ? "exampleInput is valid only on a read build; a write runs the caller's values in its act session."
-        : typeof callerInput !== "object" ||
-            callerInput === null ||
-            Array.isArray(callerInput) ||
-            Object.keys(callerInput).length > 0
-          ? "The caller supplied input, and the example runs it as it is."
-          : intentDerivedInput(submitted) === undefined
-            ? "exampleInput must be JSON text of the tool's input object."
-            : undefined;
+    exampleInputPlaceRefusal(submitted.purpose, scope) ??
+    (decoded === undefined
+      ? "exampleInput must be JSON text of the tool's input object."
+      : submitted.purpose === "act"
+        ? sessionInputRefusal(decoded, scope.writeSession)
+        : undefined);
   return refusal === undefined
     ? undefined
     : refused(`${refusal} Correct or remove exampleInput and execute again. Nothing was executed.`);
@@ -97,15 +137,17 @@ export const exampleInputRefusal = (
 
 /**
  * The input a step runs, with its mark for Guardian and the history: a read's live test on an
- * input the agent chose is `agent_chosen`, a read's example on the agent's reading of an empty
- * caller input is `intent_derived`, and every other step runs the caller's input unmarked.
- * Preflight already refused a misplaced input.
+ * input the agent chose is `agent_chosen`; a read's example, or a write's act step, on the agent's
+ * reading of an empty caller input is `intent_derived`, and an act step that omits it runs the
+ * one its session fixed; every other step runs the caller's input unmarked. Preflight already
+ * refused a misplaced input.
  */
 export const stepInput = (
   submitted: ExecutionRequest,
-  callerInput: unknown,
+  scope: { readonly callerInput: unknown; readonly sessionInput: InputObject | undefined },
 ): Effect.Effect<
-  { readonly input: unknown; readonly mark?: "agent_chosen" | "intent_derived" },
+  | { readonly input: unknown; readonly mark?: "agent_chosen" }
+  | { readonly input: InputObject; readonly mark: "intent_derived" },
   MintFailure
 > => {
   if (submitted.testInput !== undefined)
@@ -123,9 +165,16 @@ export const stepInput = (
           }),
       ),
     );
-  const derived = submitted.purpose === "example" ? intentDerivedInput(submitted) : undefined;
+  const derived =
+    submitted.purpose === "example"
+      ? intentDerivedInput(submitted)
+      : submitted.purpose === "act"
+        ? (scope.sessionInput ?? intentDerivedInput(submitted))
+        : undefined;
   return Effect.succeed(
-    derived === undefined ? { input: callerInput } : { input: derived, mark: "intent_derived" },
+    derived === undefined
+      ? { input: scope.callerInput }
+      : { input: derived, mark: "intent_derived" as const },
   );
 };
 

@@ -70,9 +70,16 @@ export const mintState = (
           )
           .pipe(Effect.asVoid),
     });
-    /** The write session's act steps in order, for the blind-repeat guard. */
-    const writeSteps: WriteStep[] = [];
-    let writeSessionStarted = false;
+    /**
+     * The build's one write session: whether its first act step dispatched, the agent's
+     * `exampleInput` it runs when the caller sent none, and its act steps in order for the
+     * blind-repeat guard.
+     */
+    const writeSession: {
+      started: boolean;
+      input: Readonly<Record<string, unknown>> | undefined;
+      readonly steps: WriteStep[];
+    } = { started: false, input: undefined, steps: [] };
     return {
       session,
       context,
@@ -84,13 +91,7 @@ export const mintState = (
       mintAsk,
       runs,
       auth,
-      writeSteps,
-      get writeSessionStarted() {
-        return writeSessionStarted;
-      },
-      startWriteSession() {
-        writeSessionStarted = true;
-      },
+      writeSession,
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;

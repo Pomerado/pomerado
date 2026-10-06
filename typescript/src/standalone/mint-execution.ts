@@ -293,7 +293,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, mintAsk, writeSteps } = state;
+    const { workspace, context, request, handles, mintAsk, writeSession } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -303,9 +303,13 @@ const authoredExecution = (
     const live = execution.target === "liveBrowser";
     const refusal =
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
-      replayedWriteStep(execution, files, writeSteps);
+      replayedWriteStep(execution, files, writeSession.steps);
     if (refusal !== undefined) return unsupported(refusal);
-    const { input, mark } = yield* stepInput(execution, request.input ?? {});
+    const selected = yield* stepInput(execution, {
+      callerInput: request.input ?? {},
+      sessionInput: writeSession.input,
+    });
+    const { input, mark } = selected;
     const sourceMap = new Map(sources.map(([path, text]) => [`operation/${path}`, text]));
     const reviewed = yield* context.review(
       {
@@ -321,7 +325,11 @@ const authoredExecution = (
       "not_sent",
     );
     yield* beforeDispatch ?? Effect.void;
-    if (execution.purpose === "act") state.startWriteSession();
+    if (execution.purpose === "act") {
+      writeSession.started = true;
+      // Guardian allowed the step on this input, so the session runs it from here on.
+      if (selected.mark === "intent_derived") writeSession.input = selected.input;
+    }
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
     return yield* context.running(
@@ -353,7 +361,7 @@ const authoredExecution = (
         );
         if (live) yield* context.observe;
         if (execution.purpose === "act")
-          writeSteps.push({
+          writeSession.steps.push({
             entrypoint: execution.entrypoint,
             sourceDigest: writeStepDigest(files, execution.entrypoint),
             stateChanging:

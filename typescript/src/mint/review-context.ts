@@ -51,6 +51,14 @@ const explorationAllowedEffect =
 const writeSessionAllowedEffect =
   "The caller's requested task, done once with the caller's values across this session's steps. The task may take several write steps: steps may navigate, fill, select, advance, save and submit toward it, and drafts, autosaves and step saves along the way are part of it. Never redo the whole task or a step that already finished; a step may run again only when a fresh read of the page shows it did not finish, or the task cannot complete without it. After the final submission a step may only read the site's confirmation or saved state, or finish the same request's remaining sub-steps; never submit the task a second time. An add-on, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as the caller's input or answer says; when neither settles it, the step stops before choosing it.";
 
+/**
+ * The same, for a session that runs the agent's `exampleInput` because the caller sent none: the
+ * input is the agent's reading of the request, so it settles nothing the request or an answered
+ * question does not.
+ */
+const intentDerivedWriteSessionAllowedEffect =
+  "The caller's requested task, done once across this session's steps with the input the agent read from the trusted intent and the owner's answered questions, because the caller sent no input. Every value in that input, and every value a step types, chooses or submits, must be stated by the trusted intent or an answered question; deny a step whose input or source holds any other value, such as a quantity, amount, recipient, date or account detail the agent derived from the page or chose itself. The task may take several write steps: steps may navigate, fill, select, advance, save and submit toward it, and drafts, autosaves and step saves along the way are part of it. Never redo the whole task or a step that already finished; a step may run again only when a fresh read of the page shows it did not finish, or the task cannot complete without it. After the final submission a step may only read the site's confirmation or saved state, or finish the same request's remaining sub-steps; never submit the task a second time. An add-on, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as the trusted intent or an answered question says, never as that input alone says; when neither settles it, the step stops before choosing it.";
+
 /** What Guardian may approve for a host sign-in step on the site's own page. */
 const signInAllowedEffect =
   "The host signs in on the site's own sign-in page: it fills the step's fields with the login and codes the caller supplied privately, submits them, and checks whether the account is signed in. Nothing else on the site may change.";
@@ -58,14 +66,19 @@ const signInAllowedEffect =
 const offlineAllowedEffect =
   "Offline local files, source checks and computation only. No live website, credentials or network.";
 
-/** The authority one step's review grants: its own kind of work, never the build's whole effect. */
+/**
+ * The authority one step's review grants: its own kind of work, never the build's whole effect.
+ * A write session on the agent's reading of the request gets the stricter session text.
+ */
 export const allowedEffectsFor = (
-  step: Pick<CurrentExecution, "purpose" | "target">,
+  step: Pick<CurrentExecution, "purpose" | "target" | "input">,
 ): readonly string[] => [
   step.target !== "liveBrowser"
     ? offlineAllowedEffect
     : step.purpose === "act"
-      ? writeSessionAllowedEffect
+      ? step.input === "intent_derived"
+        ? intentDerivedWriteSessionAllowedEffect
+        : writeSessionAllowedEffect
       : step.purpose === "authenticate"
         ? signInAllowedEffect
         : explorationAllowedEffect,

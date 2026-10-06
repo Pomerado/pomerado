@@ -34,6 +34,10 @@ export const mintPublication =
       const { runs, workspace, context } = state;
       const { secrets, browser } = state.session;
       const sample = yield* retainedPublicationSample(state, evidence, publication.entrypoint);
+      // A write's composed contract decodes the input its session ran: the agent's exampleInput
+      // when the caller sent none, else the caller's own.
+      const input =
+        sample.purpose === "act" ? (state.writeSession.input ?? sample.input) : sample.input;
       const sources = (yield* workspace.snapshot).filter(([path]) =>
         /^(src|explore|test|scratch)\//u.test(path),
       );
@@ -48,7 +52,7 @@ export const mintPublication =
       yield* context.review({
         entrypoint: `operation/${publication.entrypoint}`,
         sources: new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
-        input: sample.input,
+        input,
         currentExecution: { purpose: "contract", target: "pureFiles" },
         note: contractExtractionNote,
       });
@@ -56,7 +60,7 @@ export const mintPublication =
         workspace,
         entrypoint: publication.entrypoint,
         sources,
-        input: sample.input,
+        input,
         validateInput: true,
         ...(sample.purpose === "act" ? {} : { retainedOutput: { value: sample.output } }),
         browser,
