@@ -87,6 +87,70 @@ test("a secret the page shows with its whitespace collapsed, or form-encoded in 
   }
 });
 
+test("a username with an apostrophe never reaches Guardian, in a quoted snapshot key or a URL's query", async () => {
+  test.setTimeout(90_000);
+  const username = "o'brien@example.com";
+  // The form sends the login, the site redirects with it in the query as written, and the page's
+  // heading holds ": ", so the snapshot single-quotes its key and doubles the apostrophe.
+  const site = await startSite((request, response) => {
+    const url = new URL(request.url ?? "/", "http://fixture.invalid");
+    if (url.pathname === "/signin") {
+      response.statusCode = 302;
+      response.setHeader("Location", `/account?u=${url.searchParams.get("login") ?? ""}`);
+      response.end();
+      return;
+    }
+    if (url.pathname === "/account") {
+      html(
+        response,
+        `<title>Account</title><h1>Account: ${escaped(url.searchParams.get("u") ?? "")}</h1>`,
+      );
+      return;
+    }
+    html(
+      response,
+      `<title>Sign in</title><form method="get" action="/signin"><input name="login" aria-label="Login"><button>Go</button></form>`,
+    );
+  });
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { requests, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ code: username }),
+      turns: [
+        () =>
+          patch({
+            "explore/fill.mjs": probe(
+              "await page.getByLabel('Login').fill('{{secret.s1}}'); return 1;",
+            ),
+            "explore/submit.mjs": probe(
+              `await Promise.all([page.waitForURL("**/account**"), page.getByRole("button").click()]); return 1;`,
+            ),
+            "explore/look.mjs": probe(),
+          }),
+        () => [call("request_input", secretQuestion)],
+        () => [call("execute", execution("explore", "explore/fill.mjs"), "fill")],
+        () => [call("execute", execution("explore", "explore/submit.mjs"), "submit")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+      ],
+    });
+    expect(toolResult(last, "submit"), JSON.stringify(toolResult(last, "submit"))).toMatchObject({
+      status: "completed",
+    });
+    const look = executions(guardian.reviews)[2];
+    expect(contextOf(look!)?.["currentPage"]).toMatchObject({ path: "/account?u=[private]" });
+    expect(captureOf(look)).toContain(`'heading "Account: [private]" [level=1]'`);
+    for (const shown of ["o'brien", "o''brien", "o%27brien"]) {
+      expect(JSON.stringify(guardian.reviews)).not.toContain(shown);
+      expect(JSON.stringify(requests)).not.toContain(shown);
+    }
+  } finally {
+    await site.close();
+  }
+});
+
 test("a page over the element limit is not captured, and the browser keeps working", async () => {
   test.setTimeout(90_000);
   const items = Array.from(
@@ -113,7 +177,9 @@ test("a page over the element limit is not captured, and the browser keeps worki
     const second = executions(guardian.reviews)[1];
     // Guardian still knows where the page is, and why it has no capture.
     expect(contextOf(second!)?.["currentPage"]).toMatchObject({ path: "/" });
-    expect(captureOf(second)).toMatch(/^Page too large to capture: \d+ elements/u);
+    expect(captureOf(second)).toMatch(
+      /^Page too large to capture: [\d,]+ elements, over the 10,000 the host reads\.$/u,
+    );
     expect(captureOf(second)).not.toContain("Item 1");
   } finally {
     await site.close();
@@ -149,6 +215,49 @@ test("a capture cut at 256 KiB keeps no prefix of a secret the cut split, even o
     expect(capture.endsWith("\n…[truncated at 256 KiB]")).toBe(true);
     expect(capture.slice(0, capture.lastIndexOf("\n…"))).toMatch(/x$/u);
     expect(JSON.stringify(guardian.reviews)).not.toContain("fixture-p");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a page that stays busy is not captured, and the browser outlives it", async () => {
+  test.setTimeout(120_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Busy</title><h1>Busy</h1>"),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            // The page's main thread stays busy for longer than the host waits for a capture.
+            "explore/busy.mjs": probe(
+              "await page.evaluate(() => { setTimeout(() => { const end = Date.now() + 25000; while (Date.now() < end); }, 0); }); await new Promise((resolve) => setTimeout(resolve, 300)); return 1;",
+            ),
+            // The next step waits for the page to answer again.
+            "explore/after.mjs": probe().replace("timeout_sec:5", "timeout_sec:60"),
+          }),
+        () => [call("execute", execution("explore", "explore/busy.mjs"), "busy")],
+        () => [
+          call(
+            "execute",
+            execution("explore", "explore/after.mjs", { timeoutSeconds: 60 }),
+            "after",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "busy")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "after"), JSON.stringify(toolResult(last, "after"))).toMatchObject({
+      status: "completed",
+    });
+    const after = executions(guardian.reviews)[1];
+    expect(contextOf(after!)?.["currentPage"]).toMatchObject({ path: "/" });
+    expect(captureOf(after)).toMatch(/^Page not captured: /u);
   } finally {
     await site.close();
   }

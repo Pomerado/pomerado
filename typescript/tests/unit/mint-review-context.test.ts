@@ -89,7 +89,7 @@ describe("allowedEffectsFor", () => {
   it("gives a live sign-in step the sign-in text and every offline step the offline text", () => {
     // The host fills a signInStep itself; an authored sign-in writes secret handles in its source.
     expect(allowedEffectsFor(live("authenticate"))).toEqual([
-      "Signing in on the site's own sign-in page: the step fills the sign-in fields with the login and codes the caller supplied privately, filled by the host or written as secret handles in the step's source, submits them, and checks whether the account is signed in. Nothing else on the site may change.",
+      "Signing in on the site's own sign-in page: the step enters the login and codes the caller supplied privately, either filled by the host or written as secret handles in the step's source, submits them, and checks whether the account is signed in. Nothing else on the site may change.",
     ]);
     for (const purpose of ["command", "contract", "test", "example"] as const)
       expect(allowedEffectsFor({ purpose, target: "pureFiles" })).toEqual([
