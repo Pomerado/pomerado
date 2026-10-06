@@ -18,16 +18,15 @@ import { isSecretKey } from "../privacy/secret-keys.js";
 import { urlSpans } from "../privacy/url-spans.js";
 
 /**
- * Detailed failure record shared by every host failure class. See
- * typescript/src/runtime/ERROR-LOGGING-STANDARD.md. The finite fields (`subCause`, `operation`,
- * `phase`) may reach operational logs; everything else reaches the screened diagnostic archive,
- * where the privacy broker screens it again under the diagnostics area policy, and, for a relayed
- * HTTP failure only, the sandbox's answer through `agentDetail` in `browser/http-relay.ts`.
+ * Detailed failure record shared by every host failure class. The finite fields (`subCause`,
+ * `operation`, `phase`) may reach operational logs; everything else reaches the screened
+ * diagnostic archive, where the privacy broker screens it again under the diagnostics area policy,
+ * and, for a relayed HTTP failure only, the sandbox's answer through a host's HTTP relay.
  */
 
 /** Stable, finite sub-causes. Add a new value rather than reusing one for a different check. */
 const failureSubCauses = [
-  // CDP transport (destinations/cdp-transport.ts)
+  // A host's CDP transport to its browser
   "cdp_endpoint_invalid",
   "cdp_connect_failed",
   "cdp_command_rejected",
@@ -40,12 +39,12 @@ const failureSubCauses = [
   "cdp_envelope_invalid",
   "cdp_transport_closed",
   "cdp_command_not_allowed",
-  // Host HTTP relay and direct sign-in (destinations/http-relay.ts, destinations/direct-login.ts)
+  // A host's HTTP relay and direct sign-in
   "http_relay_transport_failed",
   "direct_login_transport_failed",
   // Host autofill sign-in (destinations/autofill-step.ts); a failed fill keeps no error text
   "autofill_step_failed",
-  // Browser recorder (destinations/browser-recorder.ts)
+  // A host's browser recorder
   "recorder_start_incomplete",
   "recorder_context_ambiguous",
   "recorder_primary_missing",
@@ -54,26 +53,26 @@ const failureSubCauses = [
   "recorder_foreign_target_unclosed",
   "recorder_target_undetached",
   "recorder_request_unseen",
-  // Origin policy reads (worker/origin-boundary.ts, worker/browser.ts)
+  // Origin policy reads a hosted service may make before and while it browses
   "origin_route_blocked",
   "origin_policy_read_failed",
   "origin_policy_timeout",
   "origin_policy_snapshot_stale",
   "origin_url_invalid",
-  // Worker browser (worker/browser.ts)
+  // A hosted service's job browser
   "browser_origin_missing",
   "browser_initial_policy_failed",
   "browser_initial_origin_blocked",
-  // The primary origin is on the site blocklist (origin-policy/site-blocklist.ts)
+  // The primary origin is on a site blocklist a hosted service may keep
   "browser_site_not_supported",
   "browser_entry_url_invalid",
   "browser_primary_page_crashed",
   "browser_primary_page_closed",
   "browser_gone",
   "browser_unresponsive",
-  // A mint browser lost a third time with no agent command since the first (mint/host-browser-recovery.ts)
+  // A mint browser lost a third time with no agent command since the first
   "browser_loss_repeated",
-  // Startup and job authority (worker/startup-authority.ts, worker/mint.ts, worker/run.ts)
+  // Startup and job authority a hosted service may check before and during a job
   "startup_job_read_failed",
   "startup_attempt_superseded",
   "startup_cancel_requested",
@@ -82,10 +81,10 @@ const failureSubCauses = [
   "startup_maintenance_work_failed",
   "startup_original_read_failed",
   "startup_original_cancel_requested",
-  // An attempt's unreadable authority check and the grace that bounds it (worker/authority-grace.ts)
+  // An attempt's unreadable authority check and the grace that bounds it
   "authority_check_unreadable",
   "authority_unavailable_past_grace",
-  // The attempt lease heartbeat and its thread (jobs/lease-heartbeat.ts, jobs/lease-thread.ts)
+  // The heartbeat, and its thread, that a hosted service may use to hold an attempt's lease
   "lease_attempt_inactive",
   "lease_watchdog_expired",
   "lease_thread_failed",
@@ -95,54 +94,50 @@ const failureSubCauses = [
   // A run's in-place login question went unanswered, was refused, or could not be asked.
   "run_login_request_failed",
   "run_expired_auth_site_mismatch",
-  // A run's lost page or browser and its retry (worker/run.ts, decided 2026-09-27)
+  // A run's lost page or browser and its retry
   "run_browser_loss_retried",
   "run_signed_in_session_cleared",
-  // A session a mode or proxy change wiped again past the attempt's relogin cap (worker/browser.ts)
+  // A session a mode or proxy change wiped again past the attempt's relogin cap
   "browser_relogin_spent",
-  // A wiped session whose latest sign-in was never verified (worker/browser.ts)
+  // A wiped session whose latest sign-in was never verified
   "browser_relogin_unverified",
   // A mint's authenticate after its attempt's sign-ins were spent: sign-in is unavailable in the
-  // build (mint/host-execution.ts)
+  // build
   "mint_sign_in_spent",
   "run_browser_loss_retry_declined",
-  // A write mint's accepted confirm it could not screen for secrets, so never kept (mint/host-evidence.ts)
+  // A write mint's accepted confirm it could not screen for secrets, so never kept
   "mint_expected_confirm_unscreened",
-  // Mint host destination authority (mint/host.ts)
+  // A mint host's destination authority
   "mint_admission_generation_changed",
   // A publication whose attempt no longer holds its job, or whose job was told to stop
-  // (registry/postgres.ts)
   "publication_attempt_stopped",
-  // Mint host managed-login identity check (mint/host.ts)
+  // A mint host's managed-login identity check
   "identity_receipt_invalid",
   "identity_check_failed",
   // The site rejected the supplied credentials during managed login; not a dependency failure.
   "managed_login_credentials_rejected",
   // A run's autofill replay: the site showed the password screen again after it took the
-  // password, or the replay did not sign in for another reason, which maintenance repairs
-  // (worker/run.ts).
+  // password, or the replay did not sign in for another reason, which maintenance repairs.
   "autofill_credentials_rejected",
   "operation_credentials_rejected",
   "run_autofill_sign_in_failed",
   // A run's sign-in found an execution VM that could still reach its browser, so nothing was
-  // filled (worker/run.ts).
+  // filled.
   "run_sign_in_executor_attached",
-  // A host resource that did not settle within its bound: the attempt's host close
-  // (mint/host-settle.ts) and a cancel or lost lease's browser stop (worker/mint.ts)
+  // A host resource that did not settle within its bound: the attempt's host close, and the
+  // browser stop after a cancel or a lost lease
   "mint_host_settle_timeout",
   "mint_outside_stop_timeout",
   // A takeover's resource that stayed unavailable for the whole recovery wait
-  // (mint/host-restore-sandbox.ts)
   "mint_recovery_wait_timeout",
-  // A takeover's step whose outcome no later try can confirm (mint/host-restore-execution.ts,
-  // mint/host-restore-browser.ts)
+  // A takeover's step whose outcome no later try can confirm
   "mint_recovery_unconfirmed",
   // The model provider refused a mint's call because the account's quota is spent (mint/openai.ts)
   "model_quota_exhausted",
-  // Input request answers and views (application/input-requests.ts): the request's protected
-  // handoff was deleted or had expired, so the request closed while it was read.
+  // Input request answers and views: the request's protected handoff was deleted or had
+  // expired, so the request closed while it was read.
   "input_request_handoff_closed",
-  // Application host (application/host.ts)
+  // A host's authority reference and its recheck
   "host_authority_reference_invalid",
   "host_authority_recheck_failed",
   // A queued attempt's server renewal and a job whose
@@ -152,9 +147,9 @@ const failureSubCauses = [
   "authority_server_renewal_stopped",
   "authority_server_renewal_unavailable",
   "authority_session_signed_out",
-  // A worker takeover that never settled ended its job as a lost lease (application/recovery-claim.ts)
+  // A takeover that never settled ended its job as a lost lease
   "recovery_unsettled",
-  // A browser create Kernel kept answering with 429 past its wait budget (providers/kernel/controller.ts)
+  // A browser create the provider kept answering with 429 past its wait budget
   "kernel_rate_limited",
   // Dependency failures wrapped by a host failure, by area. `site` names the mapping.
   "mint_execution_failed",
@@ -166,14 +161,14 @@ const failureSubCauses = [
   "executor_boundary_failed",
   "sandbox_workspace_failed",
   "credential_connector_failed",
-  // A credential launcher's refused worker start (credentials/workload/launcher.ts): the
-  // Kubernetes API refused the worker Job, by admission policy or webhook, the namespace quota,
-  // a webhook that can't judge a dry run, or otherwise (authorization, an invalid template)
+  // A hosted service may refuse to start a credential worker: the Kubernetes API refused the
+  // worker, by admission policy or webhook, a quota, a webhook that can't judge a dry run, or
+  // otherwise (authorization, an invalid template)
   "admission_rejected",
   "quota_exceeded",
   "dry_run_unsupported",
   "kubernetes_create_rejected",
-  // ...or the launcher refused before creating one
+  // ...or the service refused before creating one
   "launcher_draining",
   "launcher_at_capacity",
   "launcher_tenant_at_capacity",
@@ -181,11 +176,10 @@ const failureSubCauses = [
   "controller_operation_forbidden",
   "workload_identity_mismatch",
   "launch_superseded",
-  // ...or the start's gateway-signed capability did not cover it (credentials/capability.ts)
+  // ...or the start's signed capability did not cover it
   "capability_refused",
-  // A credential worker's launcher call that never reached the launcher: DNS, connection or TLS
-  // failed, as when the namespace's default deny ships without the worker egress allow
-  // (credentials/workload/worker.ts)
+  // A credential worker's call to start work that never arrived: DNS, connection or TLS failed,
+  // as when network policy blocks the worker's egress
   "worker_launcher_unreachable",
   "job_storage_failed",
   "private_input_storage_failed",
@@ -1025,7 +1019,7 @@ export const withCauseEntry = (detail: FailureDetail, error: unknown): FailureDe
  * A detail nested in a failure object is invisible to JSON serialization: RPC encoders,
  * public responses and `JSON.stringify(failure)` omit it. Only `failureDetailMetadata` and
  * `failureDetailOf` project it, into the archive and the maintenance evidence files, and
- * `agentDetail` in `browser/http-relay.ts`, into a relayed HTTP failure's answer to the sandbox,
+ * a host's HTTP relay, into a relayed HTTP failure's answer to the sandbox,
  * which the agent's execution result carries. The detail itself, serialized at the top level,
  * keeps every field.
  */
