@@ -1,7 +1,6 @@
 <h1 align="center"><a href="https://pomerado.ai">Pomerado</a></h1>
 
 <p align="center">Turn websites into MCP integrations your agent can rely on.</p>
-<p align="center">Describe a task on a website. Pomerado builds a tested integration that any MCP client can call.</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License MIT"></a>
