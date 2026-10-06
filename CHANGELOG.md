@@ -21,4 +21,11 @@ This release changes how a host embeds the minting core's authoring. Standalone 
 ### Other changes
 
 - Seven headings that rendered empty in standalone mode now have standalone text, in `core/SKILL.md`, `auth/SKILL.md` and `workspace/AGENTS.md`.
-- Section markers are checked strictly in both modes: an unterminated, unspaced, duplicated or foreign section, a stray end marker, and a section inside a code fence all fail the load.
+- Section markers are checked strictly in both modes: an unterminated, unspaced, duplicated or foreign section, a stray end marker, a section inside a code fence and any other `pomerado:`, in any case, all fail the load.
+
+## 0.1.2
+
+- Guardian's upstream policy, adapted from OpenAI Codex, carries its Apache-2.0 notice, and the package ships `third-party/codex/LICENSE` and `third-party/codex/NOTICE`. Guardian drops the notice before the policy reaches the model.
+- Failure-detail comments no longer name a hosted service's internal paths.
+- `FailureSubCause` adds `browser_page_call_failed`, for a page command the browser answered with a failure, such as a script error or a timeout.
+- This is the first release published with npm provenance.
