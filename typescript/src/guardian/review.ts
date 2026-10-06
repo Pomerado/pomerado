@@ -274,6 +274,13 @@ export interface PendingExecution {
       };
     };
     readonly browser: "not_opened" | "active" | "closed" | "unavailable";
+    /**
+     * Host fact, present only while no sign-in in this attempt is verified: the `{{secret.<id>}}`
+     * handles answering a one-time or authenticator code question the agent asked after an
+     * authenticate step of this attempt and before any verified sign-in, the code the site sent
+     * as part of that sign-in. A code asked any other time is never listed.
+     */
+    readonly signInCodes?: readonly string[];
     readonly captureIndex?: string;
     /**
      * The host's own notice, present once it replaced the attempt's browser (a proxy, mode or

@@ -1,10 +1,14 @@
 import { mkdtemp, mkdir, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
+import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
+import { UpstreamPolicySlotInvalid } from "../../src/guardian/upstream-policy.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
 import { readScopedFile } from "../../src/filesystem/read.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
@@ -14,6 +18,7 @@ import {
   diagnosticStorageFailure,
 } from "../../src/models/model-diagnostic-failure.js";
 import { EventUnavailable } from "../../src/runtime/errors.js";
+import { markedUpstreamPolicy, tenantPolicyCopies } from "../support/tenant-policy.js";
 
 const makeSourceReader = (root: string) =>
   makeSourceInspector(
@@ -430,5 +435,119 @@ describe("scoped Guardian source reader", () => {
         left: { code: "SourceUnavailable" },
       });
     }
+  });
+});
+
+describe("OpenAI reviewer policy and trusted authority", () => {
+  afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+
+  /** Scripted Guardian model: one entrypoint read_source call, then the given decision. */
+  const readThenDecide = (decision: unknown) => {
+    const requests: ModelRequest[] = [];
+    setDefaultModelProvider({
+      getModel: () => ({
+        getResponse: async (request) => {
+          requests.push(request);
+          return {
+            usage: new Usage(),
+            output:
+              requests.length === 1
+                ? [
+                    {
+                      type: "function_call" as const,
+                      callId: "read_source_once",
+                      name: "read_source",
+                      arguments: JSON.stringify({ path: pending.entrypoint, offset: 0 }),
+                      status: "completed" as const,
+                    },
+                  ]
+                : [
+                    {
+                      type: "message" as const,
+                      role: "assistant" as const,
+                      status: "completed" as const,
+                      content: [{ type: "output_text" as const, text: JSON.stringify(decision) }],
+                    },
+                  ],
+          };
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
+    });
+    return requests;
+  };
+  const readEntrypoint = () => Effect.succeed(sourceEnvelope);
+  const reviewer = (upstreamPolicy: string) =>
+    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: "native" });
+  const modelInput = (requests: readonly ModelRequest[]): unknown => {
+    const input = requests[0]?.input;
+    const [message] = Array.isArray(input) ? input : [];
+    const content = message !== undefined && "content" in message ? message.content : undefined;
+    if (typeof content !== "string") throw new Error("Guardian input is not one text message");
+    return JSON.parse(content);
+  };
+
+  // Failure mode: the adapter fills the upstream policy's slot with the browser policy and then
+  // appends it again, so every review sends the model that policy twice.
+  it("sends the tenant policy once, in the upstream policy's slot", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const copies = requests.map((request) => tenantPolicyCopies(request.systemInstructions ?? ""));
+    expect(copies).toEqual([1, 1]);
+  });
+
+  // Failure mode: an upstream policy file without its slot, or with two, builds a reviewer that
+  // reviews without Pomerado's policy or with it twice.
+  it.each(["Synthetic upstream", `${markedUpstreamPolicy}\n${markedUpstreamPolicy}`])(
+    "refuses to build without exactly one tenant policy slot",
+    (upstreamPolicy) => {
+      expect(() => reviewer(upstreamPolicy)).toThrow(UpstreamPolicySlotInvalid);
+    },
+  );
+
+  // Guardian reviews an execution's source, never each request it sends.
+  it("an execution review carries no destination review", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Relevant listing page." });
+    await Effect.runPromise(
+      makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
+        pending,
+        readEntrypoint,
+      ),
+    );
+    expect(modelInput(requests)).not.toHaveProperty("destination_review");
+  });
+
+  // An entry load can redirect to a sibling subdomain, such as flights. to www. Guardian, seeing
+  // only the exact origin and no observed page, would deny every guarded explore.
+  it("a first explore review names the authorized site's registrable domain", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Guarded on the site." });
+    await Effect.runPromise(
+      makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
+        {
+          ...pending,
+          allowedOrigins: ["https://flights.site.invalid"],
+          mintContext: {
+            repeatableRead: false,
+            operationSources: [pending.entrypoint],
+            currentExecution: { purpose: "explore", target: "liveBrowser" },
+            browser: "active",
+            executions: [],
+          },
+        },
+        readEntrypoint,
+      ),
+    );
+    const input = modelInput(requests);
+    expect(input).toHaveProperty("trusted_authority.allowedOrigins", [
+      "https://flights.site.invalid",
+    ]);
+    expect(input).toHaveProperty("trusted_authority.allowedSites", [
+      { scheme: "https", registrableDomain: "site.invalid" },
+    ]);
+    expect(input).not.toHaveProperty("trusted_execution_context.currentPage");
   });
 });

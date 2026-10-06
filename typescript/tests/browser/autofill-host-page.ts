@@ -110,8 +110,12 @@ export const hostPage = async (
 /**
  * The host's typing on a local page, over a DevTools session of its own, as the recorder's socket
  * types on a worker. Each value it is given to type counts as typed on the page from then on.
+ * `beforeInsert` runs once the binding resolved, just before the atomic insertion's own call.
  */
-export const hostKeyboard = async (page: Page) => {
+export const hostKeyboard = async (
+  page: Page,
+  beforeInsert: () => Promise<void> = () => Promise.resolve(),
+) => {
   const candidates = [
     page.mainFrame(),
     ...page.frames().filter((frame) => {
@@ -142,6 +146,7 @@ export const hostKeyboard = async (page: Page) => {
         const session = sessions.get(id);
         if (session === undefined)
           throw new Error("Fixture CDP session missing");
+        if (method === "Runtime.callFunctionOn") await beforeInsert();
         const send = session.send.bind(session);
         const result: unknown = await Reflect.apply(send, undefined, [
           method,

@@ -43,6 +43,7 @@ const executionReviewer = (
   pending: (entrypoint: string, input: unknown) => PendingExecution,
   readSources: (sources: ReadonlyMap<string, string>) => ReturnType<typeof makeSourceInspector>,
   executions: NonNullable<PendingExecution["mintContext"]>["executions"][number][],
+  signInCodes: () => readonly string[],
 ) => {
   const review = (
     entrypoint: string,
@@ -61,6 +62,7 @@ const executionReviewer = (
             executedSources: [...sources.keys()],
             currentExecution: { purpose, target },
             browser: "active",
+            ...(signInCodes().length === 0 ? {} : { signInCodes: [...signInCodes()] }),
             executions: [...executions],
           },
         },
@@ -84,16 +86,33 @@ const executionReviewer = (
       );
   return review;
 };
-export const requestContext = (session: StandaloneSession, request: PomeradoRequest) =>
+/** The request's checked site and the navigation to it. Builds no Guardian. */
+export const requestSite = (session: StandaloneSession, request: Pick<PomeradoRequest, "url">) =>
   Effect.gen(function* () {
-    const { options, policy, secrets, browser, projection } = session;
     const url = yield* Effect.try({ try: () => new URL(request.url), catch: error });
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password)
       return yield* Effect.fail(new Error("Provide an HTTP or HTTPS site URL without credentials"));
+    return {
+      url,
+      siteOrigin: url.origin,
+      navigate: session.browser
+        .execute(`await page.goto(${JSON.stringify(url.href)}); return null;`, 60)
+        .pipe(Effect.asVoid),
+    };
+  });
+export const requestContext = (session: StandaloneSession, request: PomeradoRequest) =>
+  Effect.gen(function* () {
+    const { options, policy, secrets, projection } = session;
+    const { url, siteOrigin, navigate } = yield* requestSite(session, request);
     const invocationId = randomUUID();
     let allowedEffect = request.effect === "write" ? "write" : "read";
     const executions: NonNullable<PendingExecution["mintContext"]>["executions"][number][] = [];
     const answeredQuestions = new Map<string, AnsweredQuestion>();
+    /** Handles of codes the agent asked for during this attempt's unverified sign-in. */
+    const signInCodeHandles = new Set<string>();
+    const signedIn = () =>
+      executions.some((execution) => execution.authentication?.state === "authenticated");
+    const signInCodes = () => (signedIn() ? [] : [...signInCodeHandles]);
     const guardian = makeGuardian(
       makeOpenAIReviewer(policy, false, {
         executionEnvironment: "native",
@@ -118,9 +137,9 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       answeredQuestions: [...answeredQuestions.values()],
     });
     const readSources = (sources: ReadonlyMap<string, string>) => sourceInspector(session, sources);
-    const review = executionReviewer(guardian, pending, readSources, executions);
+    const review = executionReviewer(guardian, pending, readSources, executions, signInCodes);
     return {
-      siteOrigin: url.origin,
+      siteOrigin,
       guardian,
       pending,
       readSources,
@@ -149,12 +168,28 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           ),
           Effect.asVoid,
         ),
+      /**
+       * Notes the handles the agent received for one-time or authenticator code questions it
+       * asked after an authenticate step and before any verified sign-in: codes the site sent as
+       * part of that sign-in, which the agent may type into its code screen.
+       */
+      askedByAgent: (candidate: Pick<InputRequest, "questions">, issued: ValidAnswers) => {
+        if (signedIn() || !executions.some((execution) => execution.purpose === "authenticate"))
+          return;
+        for (const question of candidate.questions) {
+          const answer = issued[question.id];
+          if (
+            question.type === "secret" &&
+            (question.secretKind === "one_time_code" || question.secretKind === "totp") &&
+            answer?.type === "secret"
+          )
+            signInCodeHandles.add(answer.value);
+        }
+      },
       setEffect: (value: "read" | "write") => {
         allowedEffect = value;
       },
-      navigate: browser
-        .execute(`await page.goto(${JSON.stringify(url.href)}); return null;`, 60)
-        .pipe(Effect.asVoid),
+      navigate,
     };
   });
 export type RequestContext = Effect.Effect.Success<ReturnType<typeof requestContext>>;

@@ -1,6 +1,6 @@
 # How it works
 
-Pomerado has three parts. The minter builds an integration, Guardian reviews what the minter and the integration do, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
+Pomerado has three parts. The minter builds an integration, Guardian reviews the minter's work while it builds, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
 
 ## The minter
 
@@ -14,9 +14,9 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews wha
 ## Guardian
 
 - Guardian is a second model that reviews the minter's work before it takes effect.
-- It reviews each browser call before it runs, each question before it reaches you, and the finished source before Pomerado saves it.
+- While minting, it reviews each browser call before it runs, each question before it reaches you, and the finished source before Pomerado saves it.
 - A denied call never reaches the website.
-- A generated integration keeps Guardian. Each run is reviewed, so a running integration needs a model key too.
+- Guardian doesn't review a saved integration's runs. It approved the source while minting, so running an integration makes no model request and needs no model key.
 - Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
 
 ### Review requests
