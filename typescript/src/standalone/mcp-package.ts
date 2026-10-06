@@ -109,9 +109,9 @@ launcher and your installed Pomerado runtime.
   gemini mcp add -e 'OPENAI_API_KEY=$OPENAI_API_KEY' ${deployment.name} ${command}
   \`\`\`
 
-- Cursor, Claude Desktop and other clients that read an mcpServers JSON file take the entry
-  from mcp.json. In Cursor, add \`"env": { "OPENAI_API_KEY": "\${env:OPENAI_API_KEY}" }\` to it.
-- VS Code takes the same entry under "servers" in .vscode/mcp.json.
+- Cursor, VS Code, Claude Desktop and other clients that read an mcpServers JSON file take the
+  entry from mcp.json. In Cursor, add \`"env": { "OPENAI_API_KEY": "\${env:OPENAI_API_KEY}" }\`
+  to it.
 
 ## Model key
 
