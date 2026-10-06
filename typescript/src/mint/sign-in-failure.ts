@@ -1,4 +1,3 @@
-import type { failureRootCause } from "../runtime/failure-detail.js";
 import type { SpentSignIn } from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 
@@ -105,34 +104,6 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
 };
 
 /**
- * What the agent hears when a browser was to start from the login's saved provider profile, which
- * may be signed in, and the saved login could not be read: the profile was set aside, and the
- * browser started on a new, empty one. Nothing was sent.
- */
-export const savedProfileSetAsideNotice = (
-  failure: SignInDiagnostic,
-  /** The store's own failure beneath the code, in finite fields. */
-  rootCause?: ReturnType<typeof failureRootCause>,
-) => ({
-  kind: "sign_in" as const,
-  state: "saved_profile_set_aside" as const,
-  code: signInRootCode(failure),
-  signInOutcome: "signed_out" as const,
-  nextStep:
-    failure.code === "LoginIdentityConflict"
-      ? ("report_sign_in_unavailable" as const)
-      : ("authenticate" as const),
-  credentialSent: false as const,
-  countsTowardSignInCap: false as const,
-  authentication: failure,
-  ...(rootCause === undefined ? {} : { rootCause }),
-  instruction:
-    failure.code === "LoginIdentityConflict"
-      ? `The saved login cannot be used (${cause(failure)}): it conflicts with the login the owner's Personal account has locked this site to, so it can never sign in here. The browser started on a new, empty profile instead of the login's saved one, which may have been signed in. Nothing was sent. Work that needs no sign-in may go on; report that the build needs the site's locked login.`
-      : `The host could not read the saved login from its credential store (${cause(failure)}), so the browser started on a new, empty profile instead of the login's saved one, which may have been signed in and is kept for a later build. Nothing was sent, and this does not count toward the attempt's sign-in limit. Work that needs no sign-in may go on; call execute purpose authenticate when the build needs to sign in, which reads the login again.`,
-});
-
-/**
  * What the agent hears when it calls authenticate once the attempt's sign-ins are spent and no
  * failed sign-in is pending: the host starts none, and sign-in is unavailable in this build.
  */
@@ -212,12 +183,6 @@ export const signInUnavailableSummary = (
       : `The sign-in failed with ${signInRootCode(failure)} during ${failure.phase} ${failure.nothingSubmitted === true ? "before anything reached the site" : "after the login was sent to the site"}`;
   return `Sign-in was unavailable, so the build stopped without publishing. ${failed}, and ${why}. The host sent nothing again. Recorded effects and receipts are preserved.`;
 };
-
-/** Why a live execution waits, while the last sign-in has not succeeded. */
-export const signInPendingNotice = (failure: SignInDiagnostic | undefined) =>
-  failure === undefined
-    ? "The last sign-in did not succeed and its outcome is unknown. Only authenticate may run live until a sign-in succeeds: call execute purpose authenticate again."
-    : signInFailureFeedback(failure).notice;
 
 /**
  * The guidance a final answer without a tool call gets back, once, while a failed sign-in the

@@ -77,11 +77,6 @@
       "import": "./dist/typescript/src/browser/index.js",
       "default": "./dist/typescript/src/browser/index.js"
     },
-    "./core/browser/promise": {
-      "types": "./dist/typescript/src/browser/promise.d.ts",
-      "import": "./dist/typescript/src/browser/promise.js",
-      "default": "./dist/typescript/src/browser/promise.js"
-    },
     "./core/capabilities/intake-contracts": {
       "types": "./dist/typescript/src/capabilities/intake-contracts.d.ts",
       "import": "./dist/typescript/src/capabilities/intake-contracts.js",
@@ -126,11 +121,6 @@
       "types": "./dist/typescript/src/destinations/autofill-typed-page.d.ts",
       "import": "./dist/typescript/src/destinations/autofill-typed-page.js",
       "default": "./dist/typescript/src/destinations/autofill-typed-page.js"
-    },
-    "./core/destinations/cdp-contracts": {
-      "types": "./dist/typescript/src/destinations/cdp-contracts.d.ts",
-      "import": "./dist/typescript/src/destinations/cdp-contracts.js",
-      "default": "./dist/typescript/src/destinations/cdp-contracts.js"
     },
     "./core/destinations/credential-keyboard": {
       "types": "./dist/typescript/src/destinations/credential-keyboard.d.ts",
@@ -336,11 +326,6 @@
       "types": "./dist/typescript/src/models/reasoning-settings.d.ts",
       "import": "./dist/typescript/src/models/reasoning-settings.js",
       "default": "./dist/typescript/src/models/reasoning-settings.js"
-    },
-    "./core/privacy/common-values": {
-      "types": "./dist/typescript/src/privacy/common-values.d.ts",
-      "import": "./dist/typescript/src/privacy/common-values.js",
-      "default": "./dist/typescript/src/privacy/common-values.js"
     },
     "./core/privacy/credential-policy": {
       "types": "./dist/typescript/src/privacy/credential-policy.d.ts",
