@@ -105,6 +105,8 @@ const atomicInsert = `function(key, origin, text) {
   if (!field.isConnected || field.ownerDocument !== document || document.defaultView !== frame ||
       frame.document !== document || frame.origin !== origin ||
       document.activeElement !== field || !document.hasFocus()) return false;
+  if (binding.questionRequired &&
+      (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return false;
   return document.execCommand("insertText", false, text);
 }`;
 

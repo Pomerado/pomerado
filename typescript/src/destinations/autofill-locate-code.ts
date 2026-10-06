@@ -62,6 +62,26 @@ const kept = (id) =>
         .catch(() => null);
 `;
 
+/** Same value-free question read for inspection and the final synchronous credential guard. */
+export const questionTextCode = `(element) => {
+  if (!element.isConnected ||
+      !element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return null;
+  const box = element.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return null;
+  if (element.matches('input,textarea,select') || element.isContentEditable) return null;
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const words = [];
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest('input,textarea,select,[contenteditable]') ||
+        !parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
+    words.push(node.textContent);
+    if (words.join(' ').length > 8_000) return null;
+  }
+  const text = words.join(' ').trim().replace(/\\s+/g, ' ');
+  return text.length > 0 && text.length <= 2_000 ? text : null;
+}`;
+
 /**
  * Page code: `locate` finds a selector's one visible match across the primary tab's frames. Where
  * it sits is read from the element itself, never from the frame the search started in: its own
@@ -85,21 +105,8 @@ const readQuestion = async (frame, selector) => {
     for (let index = 0; index < count; index++)
       if (await candidates.nth(index).isVisible()) visible.push(candidates.nth(index));
     if (visible.length !== 1) return undefined;
-    const text = await visible[0].evaluate((element) => {
-      if (element.matches('input,textarea,select') || element.isContentEditable) return null;
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      const words = [];
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const parent = node.parentElement;
-        if (!parent || parent.closest('input,textarea,select,[contenteditable]') ||
-            !parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
-        words.push(node.textContent);
-        if (words.join(' ').length > 8_000) return null;
-      }
-      const text = words.join(' ').trim().replace(/\\s+/g, ' ');
-      return text.length > 0 && text.length <= 2_000 ? text : null;
-    });
-    return text ?? undefined;
+    const text = await visible[0].evaluate(${questionTextCode});
+    return text === null ? undefined : { locator: visible[0], text };
   } catch { return undefined; }
 };
 const locate = async (selector, questionSelector) => {
@@ -189,12 +196,13 @@ const locate = async (selector, questionSelector) => {
     };
   });
   const described = Object.fromEntries(Object.entries(found.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
-  const questionText = await readQuestion(frame, questionSelector);
-  if (questionText !== undefined) described.questionText = questionText;
+  const question = await readQuestion(frame, questionSelector);
+  if (question !== undefined) described.questionText = question.text;
   const shape = await formControlShape(locator);
   const control = found.disabled && (shape === "select" || shape === "combobox") ? "other" : shape;
   return {
     locator,
+    question,
     disabled: found.disabled,
     target: {
       ...found.target,

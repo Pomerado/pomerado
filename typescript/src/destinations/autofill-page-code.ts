@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
 import type { AutofillPopup, DateOfBirthFormat } from "./autofill-contracts.js";
-import { locateCode } from "./autofill-locate-code.js";
+import { locateCode, questionTextCode } from "./autofill-locate-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
 
@@ -132,6 +132,7 @@ const fillCallBody = (call: AutofillFillCall) => {
   if (call.kind === "focus")
     return `const field = fields[${call.index}].locator;
 const fieldLocated = located.fields[${call.index}];
+const question = fields[${call.index}].question;
 try {
   // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
   if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0))
@@ -139,19 +140,36 @@ try {
   await field.focus({ timeout: 5000 });
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does.
-  const activeTag = await field.evaluate((element, key) => {
+  const activeTag = await field.evaluate((element, [key, questionRequired]) => {
     const active = element.ownerDocument.activeElement;
     if (active !== element) return active === null ? "none" : active.tagName.toLowerCase();
-    Object.defineProperty(element, key, { value: { document: element.ownerDocument, frame: element.ownerDocument.defaultView }, configurable: true });
+    const binding = { document: element.ownerDocument, frame: element.ownerDocument.defaultView, questionRequired };
+    Object.defineProperty(element, key, { value: binding, configurable: true });
+    // Transfer the guard through this frame's isolated world; no value is involved.
+    if (questionRequired) Object.defineProperty(element.ownerDocument.defaultView, key, { value: binding, configurable: true });
     element.setAttribute(key, "");
     return null;
-  }, ${JSON.stringify(call.bindingKey)}, undefined, true);
+  }, [${JSON.stringify(call.bindingKey)}, question !== undefined], undefined, true);
+  if (activeTag === null && question !== undefined) {
+    await question.locator.evaluate((element, { key, text }) => {
+      const scope = element.ownerDocument.defaultView;
+      const binding = scope[key];
+      delete scope[key];
+      if (!binding) throw new Error("Question binding unavailable");
+      const readQuestionText = ${questionTextCode};
+      binding.checkQuestion = () => readQuestionText(element) === text;
+    }, { key: ${JSON.stringify(call.bindingKey)}, text: question.text }, undefined, true);
+  }
   return activeTag === null
     ? { focused: true, located: fieldLocated, url: primary.url() }
     : { focused: false, unfocused: { activeTag }, located: fieldLocated, url: primary.url() };
 } catch (error) {
   const focusError = error instanceof Error && /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : "unknown";
   return { focused: false, unfocused: { focusError }, located: fieldLocated, url: primary.url() };
+} finally {
+  if (question !== undefined) await field.evaluate((element, key) => {
+    delete element.ownerDocument.defaultView[key];
+  }, ${JSON.stringify(call.bindingKey)}, { timeout: 1000 }, true).catch(() => undefined);
 }`;
   if (call.kind === "date")
     return `try {

@@ -145,17 +145,34 @@ test("question inspection omits uncertain text and never uses a different frame"
   expect(await inspect("#question")).not.toHaveProperty("questionText");
 });
 
-test("does not fill an answer when its observed question changes during protected prompting", async ({ page }) => {
+for (const changeAt of ["protected prompting", "focus", "insertion"] as const) {
+test(`does not fill an answer when its observed question changes during ${changeAt}`, async ({ page }) => {
   const site = "https://bank.example.test";
   await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
     '<p id="question">First pet?</p><label>Security answer<input id="answer"></label>' }));
   await page.goto(`${site}/login`);
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
+  const changeQuestion = () => page.locator("#question").evaluate((element) => {
+    element.textContent = "First school?";
+  });
+  if (changeAt === "focus")
+    await page.locator("#answer").evaluate((element) => {
+      element.addEventListener("focus", () => {
+        const question = document.getElementById("question");
+        if (question) question.textContent = "First school?";
+      });
+    });
   const auth = makeLiveAuthentication({
-    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    page: browser,
+    keyboard: changeAt === "insertion" ? {
+      insertText: (target, text) => Effect.promise(changeQuestion).pipe(
+        Effect.flatMap(() => keyboard.insertText(target, text)),
+      ),
+    } : keyboard,
+    siteOrigin: site, authenticationOrigins: [],
     ask: makeInputAsker(() => Effect.promise(async () => {
-      await page.locator("#question").evaluate((element) => { element.textContent = "First school?"; });
+      if (changeAt === "protected prompting") await changeQuestion();
       return { private_answer: "synthetic-first-pet" };
     })), registerSecret: () => undefined, review: () => Effect.void,
   });
@@ -163,3 +180,4 @@ test("does not fill an answer when its observed question changes during protecte
   expect(await page.locator("#answer").inputValue()).toBe("");
   expectNotCarried(browser.calls, "synthetic-first-pet");
 });
+}
