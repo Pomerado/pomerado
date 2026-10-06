@@ -596,7 +596,9 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "third-party/codex/LICENSE",
+    "third-party/codex/NOTICE"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && node tools/copy-assets.ts",
