@@ -1,6 +1,17 @@
 import { Effect } from "effect";
+import { failureDetail } from "../runtime/failure-detail.js";
 import { ReviewFailure } from "./review.js";
 import type { ReviewTurn } from "./review.js";
+
+/** A read at an offset the model supplied that no chunk can start at; context holds only it. */
+const offsetFailure = (
+  operation: "guardian.source.offset_invalid" | "guardian.source.offset_mid_character",
+  offset: number,
+) =>
+  new ReviewFailure({
+    code: "SourceUnavailable",
+    failureDetail: failureDetail("invalid_input", { operation, context: { offset } }),
+  });
 
 export type SourceProjection = (
   path: string,
@@ -13,7 +24,7 @@ export const sourceChunk = (
 ): Effect.Effect<string, ReviewFailure> =>
   Effect.gen(function* () {
     if (!Number.isSafeInteger(offset) || offset < 0)
-      return yield* new ReviewFailure({ code: "SourceUnavailable" });
+      return yield* offsetFailure("guardian.source.offset_invalid", offset);
     const screened = { text };
     // Offsets address the screened UTF-8 view, not raw private source bytes.
     const visible = new TextEncoder().encode(screened.text);
@@ -29,7 +40,7 @@ export const sourceChunk = (
         source: "",
       });
     if (((visible[offset] ?? 0) & 0xc0) === 0x80)
-      return yield* new ReviewFailure({ code: "SourceUnavailable" });
+      return yield* offsetFailure("guardian.source.offset_mid_character", offset);
     let nextOffset = Math.min(offset + 64 * 1024, visible.byteLength);
     while (nextOffset > offset && ((visible[nextOffset] ?? 0) & 0xc0) === 0x80) nextOffset--;
     return JSON.stringify({
@@ -49,7 +60,7 @@ export const makeSourceInspector =
   (path, offset) =>
     Effect.gen(function* () {
       if (!Number.isSafeInteger(offset) || offset < 0)
-        return yield* new ReviewFailure({ code: "SourceUnavailable" });
+        return yield* offsetFailure("guardian.source.offset_invalid", offset);
       const bytes = yield* read(path);
       const text = yield* project(path, bytes);
       return yield* sourceChunk(path, text, offset);

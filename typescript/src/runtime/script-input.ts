@@ -313,16 +313,19 @@ const askedQuestion = (
 /** The script's own value for one validated answer: option ids become the page's values. */
 const scriptValue = (asked: Asked, answer: ValidAnswer): ScriptAnswer | undefined => {
   switch (answer.type) {
+    // A script's question takes no note, and a multiple choice no own option.
     case "choice": {
-      if (typeof answer.value !== "string") return { other: answer.value.other };
-      return asked.values.get(answer.value);
+      if (typeof answer.value === "string") return asked.values.get(answer.value);
+      return "other" in answer.value ? { other: answer.value.other } : undefined;
     }
     case "multi_choice": {
-      const chosen = answer.value.flatMap((id) => {
+      const selected = answer.value;
+      if ("options" in selected) return undefined;
+      const chosen = selected.flatMap((id) => {
         const value = asked.values.get(id);
         return value === undefined ? [] : [value];
       });
-      return chosen.length === answer.value.length ? chosen : undefined;
+      return chosen.length === selected.length ? chosen : undefined;
     }
     case "confirm":
       return answer.value.text === undefined

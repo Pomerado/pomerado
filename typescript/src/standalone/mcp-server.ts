@@ -105,7 +105,7 @@ const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number, kind: Mcp
     "provide_input",
     {
       description:
-        "Answer the current job questions using its request_id and answers keyed by question ID. Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.",
+        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
       inputSchema: standard(ProvideInput),
     },
     (input, context) =>
@@ -209,9 +209,18 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
             jsonSchema: { input: () => json, output: () => json },
             validate: (value) => {
               const result = validate(value);
+              // Ajv names each failing path and the schema rule it breaks, never the value.
               return result.valid
                 ? { value: result.data }
-                : { issues: [{ message: "Input does not match the operation schema." }] };
+                : {
+                    issues: [
+                      {
+                        message: `Input does not match the operation schema: ${
+                          result.errorMessage ?? "unknown error"
+                        }.`,
+                      },
+                    ],
+                  };
             },
           },
         };

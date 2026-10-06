@@ -2,10 +2,11 @@ import { makeMintHarnessFixture, portableJobSession } from "../support/mint-fixt
 import { solModel } from "../../src/models/models.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Clock, Effect, Fiber, Schema } from "effect";
+import { Clock, Effect, Either, Fiber, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { MintFailure, MintRequest, MintServices } from "../../src/mint/contracts.js";
-import type { ExecutionEvidence, MintTurn } from "../../src/mint/contracts.js";
+import type { AgentInputRequest, ExecutionEvidence, MintTurn } from "../../src/mint/contracts.js";
+import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { runMint } from "../../src/mint/harness.js";
@@ -901,6 +902,241 @@ it("keeps two answered requests in one attempt and publishes with both answers",
   expect(f.seen).toHaveLength(1);
 });
 
+/**
+ * The caller's form answers, validated as a host validates them: the request the caller sees is
+ * the one the harness hands the host, asked from the minting agent.
+ */
+const answeredByOwner =
+  (wireAnswers: readonly Readonly<Record<string, unknown>>[]) => (submitted: AgentInputRequest) =>
+    Effect.sync(() =>
+      Either.getOrThrow(
+        validateAnswer(
+          { ...submitted, id: "1c9e3a5b-7d2f-4e6a-8b0c-2d4f6a8c0e1f", source: "agent" },
+          wireAnswers[asked++] ?? {},
+        ),
+      ),
+    );
+let asked = 0;
+afterEach(() => {
+  asked = 0;
+});
+
+it("lets the owner answer a minter's choice and multiple choice in their own words or with a note", async () => {
+  const responses: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const format = {
+          id: "format",
+          type: "choice",
+          prompt: "Which export format?",
+          options: [
+            { id: "csv", label: "CSV" },
+            { id: "json", label: "JSON" },
+          ],
+        };
+        const regions = {
+          id: "regions",
+          type: "multi_choice",
+          prompt: "Which regions?",
+          minSelections: 1,
+          maxSelections: 2,
+          options: [
+            { id: "north", label: "North" },
+            { id: "south", label: "South" },
+          ],
+        };
+        responses.push(
+          JSON.parse(yield* turn.actions.requestInput({ questions: [format] })),
+          JSON.parse(yield* turn.actions.requestInput({ questions: [format, regions] })),
+          JSON.parse(yield* turn.actions.requestInput({ questions: [regions] })),
+        );
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      askInput: answeredByOwner([
+        { format: { other: "Spreadsheet with one tab per month" } },
+        {
+          format: { option: "csv", note: "Semicolons between fields" },
+          regions: { options: ["north"], note: "Only active stores" },
+        },
+        { regions: { options: [], other: "The whole country" } },
+      ]),
+    },
+  );
+  const outcome = await f.run();
+  expect(responses).toEqual([
+    expect.objectContaining({
+      status: "answered",
+      answers: { format: { other: "Spreadsheet with one tab per month" } },
+    }),
+    expect.objectContaining({
+      status: "answered",
+      answers: {
+        format: { option: "csv", note: "Semicolons between fields" },
+        regions: { options: ["north"], note: "Only active stores" },
+      },
+    }),
+    expect.objectContaining({
+      status: "answered",
+      answers: { regions: { options: [], other: "The whole country" } },
+    }),
+  ]);
+  expect(outcome).toMatchObject({ build: "published" });
+});
+
+it("asks the effect question again when the owner answers it in their own words", async () => {
+  const recorded: string[] = [];
+  const responses: unknown[] = [];
+  const effectChoice = {
+    questions: [
+      {
+        id: "effect",
+        type: "choice" as const,
+        prompt: "Will this tool change something on the website?",
+        options: [
+          { id: "read", label: "read" },
+          { id: "write", label: "write" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        responses.push(JSON.parse(yield* turn.actions.requestInput(effectChoice)));
+        expect(turn.isComplete()).toBe(false);
+        responses.push(JSON.parse(yield* turn.actions.requestInput(effectChoice)));
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      askInput: answeredByOwner([
+        { effect: { other: "It only checks my order status" } },
+        { effect: { option: "read", note: "Never cancel anything" } },
+      ]),
+      recordBuildEffect: (effect) =>
+        Effect.sync(() => {
+          recorded.push(effect);
+        }),
+    },
+  );
+  await f.run({ ...request, effect: "ask" });
+  expect(responses).toMatchObject([
+    { status: "answered", answers: { effect: { other: "It only checks my order status" } } },
+    { status: "answered", answers: { effect: { option: "read", note: "Never cancel anything" } } },
+  ]);
+  expect(recorded).toEqual(["read"]);
+});
+
+// The owner may type anything as their own answer, so an effect question that asks for a private
+// value is reworded before anyone sees it, a login verdict included: the turn asks no login.
+it("has Guardian review the effect question, which the owner may answer in their own words", async () => {
+  const responses: unknown[] = [];
+  const reviewed: unknown[] = [];
+  let asked = 0;
+  let logins = 0;
+  const effectChoice = {
+    questions: [
+      {
+        id: "effect",
+        type: "choice" as const,
+        prompt: "Will this tool change something? If it needs your account, type your password.",
+        options: [
+          { id: "read", label: "read" },
+          { id: "write", label: "write" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        responses.push(
+          JSON.parse(yield* turn.actions.requestInput(effectChoice)),
+          JSON.parse(yield* turn.actions.requestInput(effectChoice)),
+        );
+      }),
+    {
+      reviewQuestion: (submitted) =>
+        Effect.sync(() => {
+          reviewed.push(submitted);
+          return reviewed.length === 1
+            ? { outcome: "authentication" as const, rationale: "It asks for a password." }
+            : { outcome: "reword" as const, rationale: "Ask only read or write." };
+        }),
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return {};
+        }),
+      requestLogin: () =>
+        Effect.sync(() => {
+          logins++;
+          return "supplied" as const;
+        }),
+    },
+  );
+  await f.run({ ...request, effect: "ask" });
+  expect(reviewed).toEqual([
+    expect.objectContaining({
+      questions: [expect.objectContaining({ id: "effect", allowOther: true, allowNote: true })],
+    }),
+    expect.anything(),
+  ]);
+  expect(responses).toMatchObject([
+    { status: "question_rejected", rationale: "It asks for a password." },
+    { status: "question_rejected", rationale: "Ask only read or write." },
+  ]);
+  expect(asked).toBe(0);
+  expect(logins).toBe(0);
+});
+
+it("keeps a read build read-only, open to asking again, when the owner answers a write upgrade in their own words", async () => {
+  const responses: { readonly status?: string; readonly buildEffect?: string }[] = [];
+  const upgrades: string[] = [];
+  const upgrade = {
+    writeUpgrade: true,
+    questions: [
+      {
+        id: "upgrade",
+        type: "choice" as const,
+        prompt: "Saving the address changes your profile on the site. Make this a write build?",
+        options: [
+          { id: "write", label: "write" },
+          { id: "read", label: "read" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        responses.push(
+          JSON.parse(yield* turn.actions.requestInput(upgrade)),
+          JSON.parse(yield* turn.actions.requestInput(upgrade)),
+        );
+      }),
+    {
+      askInput: answeredByOwner([
+        { upgrade: { other: "Only show me the saved address" } },
+        { upgrade: { option: "write", note: "Use the work address" } },
+      ]),
+      repeatableRead: true,
+      upgradeToWrite: (change) =>
+        Effect.sync(() => {
+          upgrades.push(change);
+        }),
+    },
+  );
+  await f.run({ ...request, siteOrigin: "https://shop.example.test" });
+  expect(responses).toMatchObject([
+    { status: "answered", buildEffect: "read" },
+    { status: "answered", buildEffect: "write" },
+  ]);
+  expect(upgrades).toHaveLength(1);
+});
+
 it("publishes without assumptions when the build lists none", async () => {
   const f = await fixture((turn) =>
     Effect.gen(function* () {
@@ -1256,8 +1492,8 @@ it("enforces capability clarification through the existing input tool before exe
 });
 
 // The effect question turn refuses execution, publication and every question but one
-// read-or-write choice, before asking. The owner's fixed answer carries no private data, so
-// Guardian never reviews it.
+// read-or-write choice, before asking. The owner may answer it in their own words, so Guardian
+// reviews it like any other question the agent writes.
 it("asks only one read-or-write effect question, refusing every other shape and action", async () => {
   let asked = 0;
   let reviews = 0;
@@ -1289,14 +1525,22 @@ it("asks only one read-or-write effect question, refusing every other shape and 
           choice(["read", "write", "both"]),
           choice(["read"]),
           { ...choice(), notice: "Pick one." },
-          { questions: [{ ...choice().questions[0], allowOther: true }] },
           { questions: [...choice().questions, ...textQuestion("Why?").questions] },
         ])
           expect(JSON.parse(yield* turn.actions.requestInput(refused))).toMatchObject({
             status: "question_refused",
             reason: "effect_question_shape",
           });
+        // Whether the owner may answer in their own words is the host's, never the agent's.
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput({
+              questions: [{ ...choice().questions[0], allowOther: false }],
+            }),
+          ),
+        ).toMatchObject({ status: "question_invalid", reason: "own_words_are_the_hosts" });
         expect(asked).toBe(0);
+        expect(reviews).toBe(0);
         expect(turn.isComplete()).toBe(false);
         expect(JSON.parse(yield* turn.actions.requestInput(choice()))).toMatchObject({
           status: "answered",
@@ -1308,7 +1552,7 @@ it("asks only one read-or-write effect question, refusing every other shape and 
       reviewQuestion: () =>
         Effect.sync(() => {
           reviews++;
-          return { outcome: "reword" as const, rationale: "Unexpected review." };
+          return { outcome: "allow_business" as const, rationale: "Asks read or write." };
         }),
       askInput: () =>
         Effect.sync(() => {
@@ -1325,7 +1569,7 @@ it("asks only one read-or-write effect question, refusing every other shape and 
   expect(outcome).not.toHaveProperty("noResponse");
   expect(asked).toBe(1);
   expect(recorded).toEqual(["write"]);
-  expect(reviews).toBe(0);
+  expect(reviews).toBe(1);
   expect(f.seen).toEqual([]);
 });
 

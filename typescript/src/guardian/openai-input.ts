@@ -43,9 +43,11 @@ export const guardianReviewInput = (
       allowedEffects: turn.pending.allowedEffects,
       // The `typed` mark is the host's, for ownerNamedOrigins only.
       answeredQuestions: absentWhenEmpty(
-        (turn.pending.answeredQuestions ?? []).map(({ question, answer }) => ({
+        (turn.pending.answeredQuestions ?? []).map(({ question, answer, other, note }) => ({
           question,
           answer,
+          ...(other === undefined ? {} : { other }),
+          ...(note === undefined ? {} : { note }),
         })),
       ),
       ownerNamedOrigins: absentWhenEmpty(ownerNamedOrigins(turn.pending)),

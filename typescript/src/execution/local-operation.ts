@@ -8,6 +8,7 @@ import type { InputAsker } from "../runtime/input-request.js";
 import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
+import type { InputIssue } from "../runtime/errors.js";
 import { createLocalProcess, type LocalProcess, type LocalProcessResult } from "./local-process.js";
 import { localError, localOutputLimit } from "./local-path.js";
 import { LocalOperationMessage, type LocalOperationResult } from "./local-operation-protocol.js";
@@ -41,6 +42,8 @@ export class LocalOperationFailure extends Error {
     readonly journal: LocalOperationJournal,
     readonly code?: string,
     readonly tag?: string,
+    /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
+    readonly inputIssues?: readonly InputIssue[],
   ) {
     super(message);
   }
@@ -128,6 +131,7 @@ const handleTerminalMessage = (
           operationJournal(message),
           message.code,
           message.tag,
+          message.inputIssues,
         ),
       ),
     );

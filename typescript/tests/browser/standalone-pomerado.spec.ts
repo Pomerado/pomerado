@@ -18,6 +18,8 @@ import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
+import { CalendarDate } from "../../src/browser/index.js";
+import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
@@ -652,6 +654,178 @@ async ({kernel,sessionId,enteringCommit,verified}) => {
   }
 });
 
+test("a write runs the values the request gives, asks only the missing choice, and names the rejected input path without a second write", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original model SDKs, native write, a script question and the offline contract child; a real POST proves no write replay",
+  });
+  test.setTimeout(60_000);
+  const saved: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.method === "POST" && request.url === "/save") {
+      let body = "";
+      request.on("data", (chunk: Buffer) => (body += chunk.toString()));
+      request.on("end", () => {
+        saved.push(body);
+        response.end("saved");
+      });
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end(
+      `<button id="save" onclick="fetch('/save',{method:'POST',body:document.body.dataset.order}).then(() => document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No write fixture address");
+  // The request gives the item and quantity; the delivery speed is the caller's to choose.
+  const supplied = { item: "lamp", quantity: 2 };
+  const act = (quantity: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"order_fixture",input:Schema.Struct({item:Schema.String,quantity:${quantity}}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:"choice",prompt:"Which delivery speed?"}},write:{confirmation:"message",commits:["save"]}},
+async ({kernel,sessionId,input,ask,enteringCommit,verified}) => {
+  const answer = await ask({delivery:{options:[{value:"standard",label:"Standard"},{value:"express",label:"Express"}]}});
+  const order = JSON.stringify({item:input.item,quantity:input.quantity,delivery:answer.delivery});
+  enteringCommit("save");
+  const result = await kernel.browsers.playwright.execute(sessionId,{code:"await page.evaluate((order) => { document.body.dataset.order = order; }, " + JSON.stringify(order) + "); await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:10});
+  if(!result.success || result.result !== true) throw new Error("Save not confirmed");
+  verified({confirmation:"message"});
+  return {saved:true};
+});`;
+  const requests: ModelRequest[] = [];
+  const results: unknown[] = [];
+  const patchSource = (path: string, content: string, id: string): ModelResponse["output"] => [
+    {
+      type: "apply_patch_call",
+      callId: id,
+      status: "completed",
+      operation: {
+        type: "create_file",
+        path,
+        diff:
+          content
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n") + "\n",
+      },
+    },
+  ];
+  const finish = (request: ModelRequest): ModelResponse["output"] => {
+    const receipt = objects(request.input)
+      .filter((item) => typeof item["executionId"] === "string")
+      .find((item) => item["effect"] === "verified");
+    if (receipt === undefined) throw new Error("Confirmed act receipt missing");
+    return [
+      call(
+        "finish_build",
+        {
+          intent: "Return the composed write without executing it",
+          entrypoint: "src/final.mjs",
+          executionId: receipt["executionId"],
+          metadata: { name: "order_fixture", description: "Order an item once" },
+          coverage: "One live confirmed act on the values the request gave",
+        },
+        `finish_${requests.length}`,
+      ),
+    ];
+  };
+  const lastResult = (request: ModelRequest) =>
+    objects(request.input)
+      .filter((item) => item["type"] === "function_call_result")
+      .at(-1);
+  const model = provider((request, index) => {
+    if (index === 0) return patchSource("src/act.mjs", act("Schema.Number"), "act_source");
+    if (index === 1)
+      return [
+        call(
+          "execute",
+          {
+            ...execution,
+            purpose: "act",
+            entrypoint: "src/act.mjs",
+            intent: "Order the requested item exactly once",
+            exampleInput: JSON.stringify(supplied),
+          },
+          "act_once",
+        ),
+      ];
+    // The composed script declares the quantity as text, which the session's input is not.
+    if (index === 2) return patchSource("src/final.mjs", act("Schema.String"), "composed_source");
+    if (index === 3) return finish(request);
+    if (index === 4) {
+      results.push(lastResult(request));
+      return [
+        {
+          type: "apply_patch_call",
+          callId: "corrected_source",
+          status: "completed",
+          operation: {
+            type: "update_file",
+            path: "src/final.mjs",
+            diff: "@@\n-export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n+export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.Number}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n",
+          },
+        },
+      ];
+    }
+    if (index === 5) return finish(request);
+    return [message("Return the confirmed write artifact.")];
+  }, requests);
+  const asked: InputRequest[] = [];
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            minterProvider: model,
+            guardianProvider: guardian([]),
+            ask: makeInputAsker((request) =>
+              Effect.sync(() => {
+                asked.push(request);
+                return Object.fromEntries(
+                  request.questions.map((question) => [
+                    question.id,
+                    question.type === "choice" ? (question.options[0]?.id ?? "") : "",
+                  ]),
+                );
+              }),
+            ),
+          });
+          const built = yield* service.mint({
+            url: `http://127.0.0.1:${address.port}/`,
+            intent: "Order 2 brass lamps, delivered at the speed I choose",
+            effect: "write",
+            input: {},
+          });
+          expect(built.build, JSON.stringify(built)).toBe("published");
+          expect(built.artifact?.inputSchema).toMatchObject({
+            required: expect.arrayContaining(["item", "quantity"]),
+          });
+        }),
+      ),
+    );
+    // The first finish_build names the rejected path and reruns nothing.
+    expect(objects(results[0]).find((item) => "inputIssues" in item)).toMatchObject({
+      status: "not_published",
+      reason: "contract_input_mismatch",
+      inputIssues: [{ path: "quantity", issue: "invalid" }],
+    });
+    // Only the delivery speed was asked; the request's values ran as the session's input.
+    expect(asked.flatMap((request) => request.questions.map((question) => question.id))).toEqual([
+      "delivery",
+    ]);
+    expect(saved.map((body) => JSON.parse(body))).toEqual([
+      { item: "lamp", quantity: 2, delivery: "standard" },
+    ]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 // A tiny runtime override supplies recorded providers to the actual compiled stdio entrypoint.
 // Saved launchers import the same module through their existing runtime-URL argument.
 const mcpRuntime = async (
@@ -1101,6 +1275,74 @@ test("MCP malformed saved schema fails before models and a served run calls no m
       expect(result.structuredContent).toEqual({ heading: "Served" });
       expect(hits).toBeGreaterThan(0);
       await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await connection.client.close();
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("MCP refuses an impossible calendar date and the tool's own date rule before its search", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Actual stdio SDK over one invalid and two native runs",
+  });
+  test.setTimeout(60_000);
+  const searches: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith("/search") === true) searches.push(request.url);
+    response.end("<h1>Stays</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing stays address");
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-dates-"));
+  const url = `http://127.0.0.1:${address.port}/`;
+  // A synthetic stay search: CalendarDate checks each date is real, and the tool checks the
+  // task's own rule, that the stay ends after it starts, before it sends the search.
+  const source = `import { Schema } from "effect";
+import { CalendarDate, defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"search_stays",input:Schema.Struct({check_in:CalendarDate,check_out:CalendarDate}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId,input,errors}) => {
+  if (input.check_out <= input.check_in) throw new errors.InvalidInput("check_out must be after check_in");
+  const query = new URLSearchParams(input).toString();
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/search?" + query + "', page.url()).href); return await page.locator('h1').textContent();",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result)};
+});`;
+  try {
+    const saved = await saveMcpFixture(
+      directory,
+      "search_stays",
+      url,
+      "read",
+      source,
+      contractJsonSchema(Schema.Struct({ check_in: CalendarDate, check_out: CalendarDate })),
+    );
+    const fixture = await mcpRuntime(directory);
+    const connection = await stdioMcp([join(saved, "mcp.mjs"), pathToFileURL(fixture.file).href]);
+    const search = (input: Record<string, string>) =>
+      connection.client
+        .callTool({ name: "search_stays", arguments: { input } })
+        .catch((error: unknown) => ({ isError: true, content: [{ text: String(error) }] }));
+    try {
+      const impossible = await search({ check_in: "2026-02-30", check_out: "2026-03-02" });
+      expect(impossible.isError).toBe(true);
+      expect(JSON.stringify(impossible)).toMatch(/check_in.*format.*date/);
+      await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+      const reversed = viewOf(await search({ check_in: "2026-03-05", check_out: "2026-03-01" }));
+      expect(reversed.status, connection.stderr()).toBe("failed");
+      expect(reversed.error).toContain("check_out must be after check_in");
+
+      const valid = await search({ check_in: "2026-03-01", check_out: "2026-03-05" });
+      expect(objects(valid).find((value) => value["heading"] === "Stays")).toBeDefined();
+      expect(searches).toEqual(["/search?check_in=2026-03-01&check_out=2026-03-05"]);
     } finally {
       await connection.client.close();
     }
