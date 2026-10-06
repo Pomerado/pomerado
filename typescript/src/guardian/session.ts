@@ -14,7 +14,7 @@ export const GuardianSessionSnapshot = Schema.Struct({
     Schema.Literal("all_turns", "current_turn", "not_reported"),
   ),
   /**
-   * The items before the history's first request belong to a shareability review whose request
+   * The items before the history's first request belong to a private review whose request
    * a compaction removed, so readable records still withhold them.
    */
   leadingPrivate: Schema.optional(Schema.Literal(true)),

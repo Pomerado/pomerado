@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { Cause, Clock, Data, Duration, Effect, Option, Schema } from "effect";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
-import { PublicationFinding, PublicationReason, ShareabilityDecision } from "./review-contracts.js";
+import { PublicationFinding, PublicationReason } from "./review-contracts.js";
 import type { PublicationScope, PublicationFileBlock } from "./review-contracts.js";
 import {
   decisionForKind,
@@ -22,9 +22,9 @@ import {
   sourcePath,
   unchangedSources,
 } from "./review-layout.js";
-import type { ReviewKind } from "./review-layout.js";
+import type { GuardianOutcome, ReviewKind } from "./review-layout.js";
 export type { PublicationFileBlock } from "./review-contracts.js";
-export type { ReviewKind } from "./review-layout.js";
+export type { GuardianOutcome, ReviewKind } from "./review-layout.js";
 
 export interface GuardianDiagnostics {
   readonly emit: (
@@ -32,7 +32,7 @@ export interface GuardianDiagnostics {
     details: unknown,
     correlation?: {
       readonly reviewId?: string;
-      readonly reviewKind?: "execution" | "publication" | "question" | "shareability";
+      readonly reviewKind?: "execution" | "publication" | "question" | "host";
       readonly modelTiming?: ModelDiagnosticTiming;
       readonly required?: boolean;
     },
@@ -139,6 +139,38 @@ const withoutDetail = (failure: ReviewFailure): ReviewFailure =>
           : { diagnosticStorageFailure: failure.diagnosticStorageFailure }),
       });
 
+/**
+ * One review of a kind the host defines, run on the same Guardian conversation with the same
+ * instructions, tool and output format as every built-in kind, so the cached prefix holds.
+ */
+export interface HostReview {
+  /** The host's name for the kind, sent as trusted_review.kind. */
+  readonly kind: string;
+  /** The host's policy for the kind, sent as trusted_review.policy. */
+  readonly policy: string;
+  /** What the kind judges, sent as host_review. Untrusted unless the policy says otherwise. */
+  readonly evidence: unknown;
+  /** The outcomes, from the shared vocabulary, that this kind may return. */
+  readonly outcomes: readonly [GuardianOutcome, ...GuardianOutcome[]];
+  /**
+   * The finite codes the decision's label may take, which the policy names. Absent, the kind
+   * returns no label.
+   */
+  readonly labels?: readonly [string, ...string[]];
+  /**
+   * Private review context: no readable diagnostic keeps the evidence, the transcript or the
+   * rationale, and later reviews' readable records show the exchange only as a placeholder.
+   */
+  readonly private?: boolean;
+}
+
+/** A host-defined kind's decision: one of its outcomes, a rationale and any label. */
+export interface HostReviewDecision {
+  readonly outcome: GuardianOutcome;
+  readonly rationale: string;
+  readonly label?: string;
+}
+
 export interface PendingExecution {
   readonly invocationId: string;
   readonly attemptId: string;
@@ -174,15 +206,8 @@ export interface PendingExecution {
    * `reviewRecovery`. It runs no code, so no entrypoint read is required.
    */
   readonly recoveryCandidate?: { readonly rationale: string };
-  /**
-   * A finished tool's package to judge for a public catalog, with the host's policy for it; set
-   * only by `reviewShareability`. The evidence is private review context: it reaches the model
-   * but never a readable diagnostic.
-   */
-  readonly shareabilityCandidate?: {
-    readonly policy: string;
-    readonly evidence: unknown;
-  };
+  /** A host-defined review kind's request; set only by `reviewHostKind`. */
+  readonly hostReview?: HostReview;
   readonly allowedEffects: readonly string[];
   /**
    * The questions the owner answered in this job through the host's question flow, each with its
@@ -421,11 +446,17 @@ const decodeExecution = (raw: unknown) =>
     Effect.mapError(decisionFailure),
   );
 
-/** A shareability decision, carried under the shared `outcome` until the hook returns it. */
-interface ShareabilityOutcome {
-  readonly outcome: ShareabilityDecision["visibility"];
-  readonly shareability: ShareabilityDecision;
-}
+const decodeHost = (request: HostReview) => {
+  const shape = Schema.Struct({
+    outcome: Schema.Literal(...request.outcomes),
+    rationale: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(rationaleLimit)),
+    ...(request.labels === undefined ? {} : { label: Schema.Literal(...request.labels) }),
+  });
+  return (raw: unknown): Effect.Effect<HostReviewDecision, ReviewFailure> =>
+    Schema.decodeUnknown(shape)(boundedRationale(raw), { onExcessProperty: "error" }).pipe(
+      Effect.mapError(decisionFailure),
+    );
+};
 
 export const makeGuardian = (
   reviewer: Reviewer,
@@ -516,9 +547,11 @@ export const makeGuardian = (
       const reviewId = randomUUID();
       const kind = reviewKindOf(pending);
       const reviewKind = kind === "recovery" ? "execution" : kind;
-      // A shareability candidate is private review context: no readable copy of it, its
+      // A private host kind's request is private review context: no readable copy of it, its
       // transcript or its rationale is kept.
-      const shareability = kind === "shareability";
+      const privateKind = pending.hostReview?.private === true;
+      const hostKind =
+        pending.hostReview === undefined ? {} : { hostKind: pending.hostReview.kind };
       const retainRuntimeRecord = guardianRuntimeRecords(diagnostics, options);
       const emit = (name: string, details: unknown, timing?: ModelDiagnosticTiming) =>
         (
@@ -550,9 +583,10 @@ export const makeGuardian = (
         );
       yield* emit(
         "guardian.started",
-        shareability
+        privateKind
           ? {
-              mode: "shareability",
+              mode: "private",
+              ...hostKind,
               invocationId: pending.invocationId,
               attemptId: pending.attemptId,
             }
@@ -702,7 +736,7 @@ export const makeGuardian = (
           pending,
           ...(sources === undefined ? {} : { sources }),
           ...(retainRuntimeRecord === undefined ? {} : { retainRuntimeRecord }),
-          ...(shareability
+          ...(privateKind
             ? {}
             : {
                 reportDiagnostic: (value: unknown, timing?: ModelDiagnosticTiming) =>
@@ -725,7 +759,7 @@ export const makeGuardian = (
         });
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
-        const projected = decisionForKind(kind, raw);
+        const projected = decisionForKind(pending, raw);
         if (projected === undefined)
           return yield* decisionFailure(
             new Error(`The outcome is not one a ${kind} review returns`),
@@ -735,8 +769,8 @@ export const makeGuardian = (
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         yield* emit(
           "guardian.completed",
-          shareability
-            ? { mode: "shareability", outcome: decision.outcome }
+          privateKind
+            ? { mode: "private", ...hostKind, outcome: decision.outcome }
             : publication === undefined
               ? decision
               : { mode: "publication", ...decision },
@@ -749,7 +783,7 @@ export const makeGuardian = (
             ? emit("guardian.failed", {
                 state: "failed",
                 ...(pending.publication === undefined ? {} : { mode: "publication" }),
-                ...(shareability ? { mode: "shareability" } : {}),
+                ...(privateKind ? { mode: "private", ...hostKind } : {}),
                 cause: Cause.map(exit.cause, withoutDetail),
                 ...failureDetailMetadata(Option.getOrUndefined(Cause.failureOption(exit.cause))),
               }).pipe((emitted) => bestEffort(emitted, "guardian.review_diagnostic"))
@@ -764,7 +798,7 @@ export const makeGuardian = (
         if (
           pending.questionCandidate !== undefined ||
           pending.recoveryCandidate !== undefined ||
-          pending.shareabilityCandidate !== undefined
+          pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         const scope = pending.publication;
@@ -793,7 +827,7 @@ export const makeGuardian = (
           pending.publication !== undefined ||
           pending.questionCandidate !== undefined ||
           pending.recoveryCandidate !== undefined ||
-          pending.shareabilityCandidate !== undefined
+          pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry(
@@ -814,7 +848,7 @@ export const makeGuardian = (
         if (
           pending.publication !== undefined ||
           pending.questionCandidate !== undefined ||
-          pending.shareabilityCandidate !== undefined
+          pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry(
@@ -827,54 +861,27 @@ export const makeGuardian = (
         );
       }),
     /**
-     * Reviews whether a finished tool's package may be listed in a public catalog, as one more
-     * turn of the same conversation, under the host's policy for it. Its evidence is private:
-     * the model reads it, but no readable diagnostic keeps it, its transcript or its rationale.
-     * Without a reader, a source read fails and Guardian judges the evidence it was given.
+     * Runs one review of a host-defined kind as one more turn of the same conversation, under
+     * the host's policy for it, and returns one of its outcomes. Without a reader, a source read
+     * fails and Guardian judges the evidence it was given.
      */
-    reviewShareability: (
+    reviewHostKind: (
       pending: PendingExecution,
-      candidate: { readonly policy: string; readonly evidence: unknown },
+      request: HostReview,
       readSource: ReviewTurn["readSource"] = () =>
         Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })),
-    ): Effect.Effect<{ reviewId: string; decision: ShareabilityDecision }, ReviewFailure> =>
+    ): Effect.Effect<{ reviewId: string; decision: HostReviewDecision }, ReviewFailure> =>
       Effect.suspend(() => {
         if (
           pending.publication !== undefined ||
           pending.questionCandidate !== undefined ||
           pending.recoveryCandidate !== undefined ||
-          pending.shareabilityCandidate !== undefined
+          pending.hostReview !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry(
-          "shareability",
-          review(
-            { ...pending, shareabilityCandidate: candidate },
-            readSource,
-            (raw): Effect.Effect<ShareabilityOutcome, ReviewFailure> =>
-              Schema.decodeUnknown(ShareabilityDecision)(
-                typeof raw === "object" && raw !== null
-                  ? {
-                      ...Object.fromEntries(
-                        Object.entries(raw).filter(([key]) => key !== "outcome"),
-                      ),
-                      visibility: Reflect.get(raw, "outcome"),
-                    }
-                  : raw,
-                { onExcessProperty: "error" },
-              ).pipe(
-                Effect.map((shareability) => ({
-                  outcome: shareability.visibility,
-                  shareability,
-                })),
-                Effect.mapError(decisionFailure),
-              ),
-          ),
-        ).pipe(
-          Effect.map(({ reviewId, decision }) => ({
-            reviewId,
-            decision: decision.shareability,
-          })),
+          "host",
+          review({ ...pending, hostReview: request }, readSource, decodeHost(request)),
         );
       }),
   };

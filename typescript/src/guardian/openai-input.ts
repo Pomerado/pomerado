@@ -23,8 +23,10 @@ export const guardianReviewInput = (
 ) =>
   JSON.stringify({
     trusted_review: {
-      kind: reviewKindOf(turn.pending),
+      kind: turn.pending.hostReview?.kind ?? reviewKindOf(turn.pending),
       policy,
+      // Marks the exchange so later readable records withhold it, even after a takeover.
+      ...(turn.pending.hostReview?.private === true ? { private: true } : {}),
       ...(turn.pending.hostWrapper === undefined ? {} : { hostWrapper: turn.pending.hostWrapper }),
       ...(turn.sources?.unchangedSources === undefined
         ? {}
@@ -66,9 +68,9 @@ export const guardianReviewInput = (
               : {}),
           },
         }),
-    ...(turn.pending.shareabilityCandidate === undefined
+    ...(turn.pending.hostReview === undefined
       ? {}
-      : { shareability_review: turn.pending.shareabilityCandidate.evidence }),
+      : { host_review: turn.pending.hostReview.evidence }),
     submitted_call: {
       entrypoint: turn.pending.entrypoint,
       input: turn.pending.screenedInput,

@@ -2,7 +2,8 @@
 // and resends the conversation uncached; a review that never reads the host's wrapper fails
 // although the agent's own file is in view; a skipped entrypoint read retries the whole review
 // with backoff; a compaction in the middle of a review keeps an earlier read; an unchanged source
-// is not marked as already read; session reviews drop their model diagnostics and token counts.
+// is not marked as already read; session reviews drop their model diagnostics and token counts;
+// a host-defined private kind's exchange reaches later readable records.
 import { createHash } from "node:crypto";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
@@ -15,7 +16,11 @@ import {
   guardianOutageRetry,
   makeGuardian,
 } from "../../src/guardian/review.js";
-import type { GuardianDiagnostics, PendingExecution } from "../../src/guardian/review.js";
+import type {
+  GuardianDiagnostics,
+  HostReview,
+  PendingExecution,
+} from "../../src/guardian/review.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
 import type { ModelObserverFactory } from "../../src/models/model-observer.js";
 import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
@@ -33,6 +38,16 @@ const pending: PendingExecution = {
   allowedOrigins: ["https://hours.example.test"],
   allowedEffects: ["read"],
 };
+
+/** A synthetic host-defined kind, as a host would define one for its own review. */
+const listing = (evidence: unknown): HostReview => ({
+  kind: "catalog_listing",
+  policy: "Synthetic listing policy: allow to list, deny to keep it unlisted.",
+  evidence,
+  outcomes: ["allow", "deny"],
+  labels: ["listable", "owner_specific"],
+  private: true,
+});
 
 const sourcesOf = (files: Map<string, string>) =>
   makeSourceInspector(
@@ -59,7 +74,7 @@ const decision = (value: Record<string, unknown>): ModelResponse["output"][numbe
   content: [
     {
       type: "output_text",
-      text: JSON.stringify({ reason: null, findings: null, ...value }),
+      text: JSON.stringify({ reason: null, findings: null, label: null, ...value }),
     },
   ],
 });
@@ -150,7 +165,7 @@ it("keeps instructions, tools and output format identical across all five review
         findings: [],
       }),
     ],
-    [decision({ outcome: "private", rationale: "Names one tenant.", reason: "tenant_specific" })],
+    [decision({ outcome: "deny", rationale: "Names one owner.", label: "owner_specific" })],
   ]);
   const guardian = makeGuardian(
     makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}"),
@@ -197,11 +212,8 @@ it("keeps instructions, tools and output format identical across all five review
       reader,
     ),
   );
-  const shareability = await Effect.runPromise(
-    guardian.reviewShareability(pending, {
-      policy: "Synthetic shareability policy.",
-      evidence: { primaryOrigin: "https://hours.example.test" },
-    }),
+  const hosted = await Effect.runPromise(
+    guardian.reviewHostKind(pending, listing({ primaryOrigin: "https://hours.example.test" })),
   );
 
   expect(requests).toHaveLength(5);
@@ -214,7 +226,7 @@ it("keeps instructions, tools and output format identical across all five review
   }
   expect(
     requests.map((request) => (reviewRequest(request).trusted_review as { kind: string }).kind),
-  ).toEqual(["execution", "question", "recovery", "publication", "shareability"]);
+  ).toEqual(["execution", "question", "recovery", "publication", "catalog_listing"]);
   expect(execution.decision).toEqual({ outcome: "allow", rationale: "Reads the hours only." });
   expect(question.decision).toEqual({
     outcome: "allow_business",
@@ -226,10 +238,10 @@ it("keeps instructions, tools and output format identical across all five review
     reason: "approved",
     findings: [],
   });
-  expect(shareability.decision).toEqual({
-    visibility: "private",
-    reason: "tenant_specific",
-    rationale: "Names one tenant.",
+  expect(hosted.decision).toEqual({
+    outcome: "deny",
+    label: "owner_specific",
+    rationale: "Names one owner.",
   });
 });
 
@@ -237,20 +249,22 @@ it("refuses an outcome the review kind may not return", async () => {
   const execution = await Effect.runPromise(
     Effect.either(
       makeGuardian({
-        run: () => Effect.succeed({ outcome: "public", rationale: "Wrong kind." }),
+        run: () => Effect.succeed({ outcome: "reword", rationale: "Wrong kind." }),
       }).review(pending, sourcesOf(files())),
     ),
   );
   expect(execution).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
-  const shareability = await Effect.runPromise(
-    Effect.either(
-      makeGuardian({
-        run: () =>
-          Effect.succeed({ outcome: "allow", rationale: "Wrong kind.", reason: "general_public" }),
-      }).reviewShareability(pending, { policy: "Synthetic policy.", evidence: {} }),
-    ),
-  );
-  expect(shareability).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
+  for (const raw of [
+    { outcome: "escalate", rationale: "Not one of this kind's outcomes.", label: "listable" },
+    { outcome: "allow", rationale: "Not one of this kind's labels.", label: "unlisted_code" },
+  ]) {
+    const hosted = await Effect.runPromise(
+      Effect.either(
+        makeGuardian({ run: () => Effect.succeed(raw) }).reviewHostKind(pending, listing({})),
+      ),
+    );
+    expect(hosted).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
+  }
 });
 
 it("allows in one model call with the agent's file in view and the host wrapper unread", async () => {
@@ -505,15 +519,15 @@ it("ends EntrypointNotRead, without retrying, when the entrypoint can't be inclu
 });
 
 it.each([false, true])(
-  "keeps a shareability exchange out of later reviews' readable model records but in the model's history (compacted: %s)",
+  "keeps a private host kind's exchange out of later reviews' readable model records but in the model's history (compacted: %s)",
   async (compacted) => {
     const requests = scripted([
       [
         ...(compacted ? [compact] : []),
         decision({
-          outcome: "private",
+          outcome: "deny",
           rationale: "Names synthetic-private-rationale-marker.",
-          reason: "tenant_specific",
+          label: "owner_specific",
         }),
       ],
       [allow],
@@ -565,13 +579,13 @@ it.each([false, true])(
       diagnostics,
       {},
     );
-    const shared = await Effect.runPromise(
-      guardian.reviewShareability(pending, {
-        policy: "Synthetic shareability policy.",
-        evidence: { primaryOrigin: "https://synthetic-private-evidence-marker.example.test" },
-      }),
+    const hosted = await Effect.runPromise(
+      guardian.reviewHostKind(
+        pending,
+        listing({ primaryOrigin: "https://synthetic-private-evidence-marker.example.test" }),
+      ),
     );
-    expect(shared.decision.visibility).toBe("private");
+    expect(hosted.decision.outcome).toBe("deny");
     expect(transcripts).toHaveLength(0);
     await Effect.runPromise(guardian.review(pending, sourcesOf(files())));
     expect(transcripts).toHaveLength(1);
@@ -579,7 +593,7 @@ it.each([false, true])(
     expect(readable).not.toContain("synthetic-private-evidence-marker");
     expect(readable).not.toContain("synthetic-private-rationale-marker");
     // The model still continues the whole conversation, so its cached prefix holds. A compaction
-    // in the shareability review leaves only its final output after the compacted context.
+    // in the private review leaves only its final output after the compacted context.
     const sent = JSON.stringify(requests[1]?.input);
     expect(sent).toContain("synthetic-private-rationale-marker");
     if (compacted) expect(requests[1]?.input[0]).toMatchObject({ type: "compaction" });

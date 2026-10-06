@@ -95,34 +95,3 @@ export interface PublicationFileBlock {
   readonly line?: number;
   readonly column?: number;
 }
-
-/**
- * A shareability review's finite reasons: whether a finished tool's package may be listed in a
- * public catalog. `review_failed` is also what a host reports when the review itself failed.
- */
-export const shareabilityPublicReasons = ["general_public"] as const;
-export const shareabilityPrivateReasons = [
-  "tenant_specific",
-  "private_route",
-  "mixed_destinations",
-  "uncertain",
-  "review_failed",
-] as const;
-export const shareabilityReasons = [
-  ...shareabilityPublicReasons,
-  ...shareabilityPrivateReasons,
-] as const;
-const shareabilityRationale = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4000));
-export const ShareabilityDecision = Schema.Union(
-  Schema.Struct({
-    visibility: Schema.Literal("public"),
-    reason: Schema.Literal(...shareabilityPublicReasons),
-    rationale: shareabilityRationale,
-  }),
-  Schema.Struct({
-    visibility: Schema.Literal("private"),
-    reason: Schema.Literal(...shareabilityPrivateReasons),
-    rationale: shareabilityRationale,
-  }),
-);
-export type ShareabilityDecision = typeof ShareabilityDecision.Type;

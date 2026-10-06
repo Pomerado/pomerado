@@ -21,10 +21,14 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews wha
 
 ### Review requests
 
-Guardian reviews five kinds of request: execution, question, browser recovery, publication and shareability. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
 
 - **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
-- **Shareability.** `reviewShareability(pending, { policy, evidence }, readSource?)` judges whether a finished tool's package may be listed in a public catalog and returns `{ visibility, reason, rationale }`. Its evidence reaches the model but no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder.
+- **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
+  - The `request` gives the kind's name, its policy (sent as `trusted_review.policy`), its evidence (sent as `host_review`) and the subset of the shared outcomes it may return.
+  - It can also give the `labels` its decision may carry and a `private` flag.
+  - It returns `{ outcome, rationale, label? }`. The host refuses any other outcome or label.
+  - A private kind's evidence, transcript and rationale reach no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder, including after a compaction.
 - **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
   - If the host's read fails, the source is left out and Guardian reads it itself.
   - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.

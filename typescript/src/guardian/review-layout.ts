@@ -5,7 +5,6 @@ import {
   publicationFindingCategories,
   publicationReasons,
   routePointerParts,
-  shareabilityReasons,
 } from "./review-contracts.js";
 import type { PendingExecution, ReviewFailure } from "./review.js";
 
@@ -14,11 +13,11 @@ import type { PendingExecution, ReviewFailure } from "./review.js";
  * format. Only the per-review user message differs, so a mint's conversation stays cached when
  * it moves from one kind of review to another.
  */
-export type ReviewKind = "execution" | "question" | "recovery" | "publication" | "shareability";
+export type ReviewKind = "execution" | "question" | "recovery" | "publication" | "host";
 
 export const reviewKindOf = (pending: PendingExecution): ReviewKind =>
-  pending.shareabilityCandidate !== undefined
-    ? "shareability"
+  pending.hostReview !== undefined
+    ? "host"
     : pending.publication !== undefined
       ? "publication"
       : pending.questionCandidate !== undefined
@@ -27,14 +26,24 @@ export const reviewKindOf = (pending: PendingExecution): ReviewKind =>
           ? "recovery"
           : "execution";
 
-/** The outcomes each kind may return. The host refuses any other as an invalid decision. */
-export const reviewOutcomes = {
+/** Every outcome the shared format offers; a host-defined kind allows a subset of them. */
+export const guardianOutcomes = [
+  "allow",
+  "deny",
+  "escalate",
+  "allow_business",
+  "authentication",
+  "reword",
+] as const;
+export type GuardianOutcome = (typeof guardianOutcomes)[number];
+
+/** The outcomes each built-in kind may return. The host refuses any other. */
+const reviewOutcomes = {
   execution: ["allow", "deny", "escalate"],
   recovery: ["allow", "deny", "escalate"],
   publication: ["allow", "deny", "escalate"],
   question: ["allow_business", "authentication", "reword"],
-  shareability: ["public", "private"],
-} as const satisfies Record<ReviewKind, readonly string[]>;
+} as const satisfies Record<Exclude<ReviewKind, "host">, readonly GuardianOutcome[]>;
 
 /** The decision fields besides outcome and rationale that each kind uses. */
 const reviewFields: Record<ReviewKind, readonly string[]> = {
@@ -42,7 +51,7 @@ const reviewFields: Record<ReviewKind, readonly string[]> = {
   recovery: [],
   question: [],
   publication: ["reason", "findings"],
-  shareability: ["reason"],
+  host: ["label"],
 };
 
 /**
@@ -58,15 +67,14 @@ export const guardianDecisionFormat: AgentOutputType = {
     properties: {
       outcome: {
         type: "string",
-        enum: [...new Set(Object.values(reviewOutcomes).flat())],
+        enum: [...guardianOutcomes],
       },
       rationale: { type: "string" },
       reason: {
-        anyOf: [
-          { type: "null" },
-          { type: "string", enum: [...publicationReasons, ...shareabilityReasons] },
-        ],
+        anyOf: [{ type: "null" }, { type: "string", enum: [...publicationReasons] }],
       },
+      // A host-defined kind's finite code, one its policy lists; the host checks it.
+      label: { anyOf: [{ type: "null" }, { type: "string" }] },
       findings: {
         anyOf: [
           { type: "null" },
@@ -108,7 +116,7 @@ export const guardianDecisionFormat: AgentOutputType = {
         ],
       },
     },
-    required: ["outcome", "rationale", "reason", "findings"],
+    required: ["outcome", "rationale", "reason", "findings", "label"],
     additionalProperties: false,
   },
 };
@@ -117,10 +125,13 @@ export const guardianDecisionFormat: AgentOutputType = {
  * The kind's own decision from the shared format: other kinds' fields and null placeholders
  * dropped. Undefined when the outcome is not one the kind may return.
  */
-export const decisionForKind = (kind: ReviewKind, raw: unknown): unknown => {
+export const decisionForKind = (pending: PendingExecution, raw: unknown): unknown => {
   if (typeof raw !== "object" || raw === null) return raw;
+  const kind = reviewKindOf(pending);
   const outcome: unknown = Reflect.get(raw, "outcome");
-  if (!(reviewOutcomes[kind] as readonly unknown[]).includes(outcome)) return undefined;
+  const allowed: readonly unknown[] =
+    kind === "host" ? (pending.hostReview?.outcomes ?? []) : reviewOutcomes[kind];
+  if (!allowed.includes(outcome)) return undefined;
   const fields = new Set(["outcome", "rationale", ...reviewFields[kind]]);
   return Object.fromEntries(
     Object.entries(raw).filter(
@@ -274,11 +285,7 @@ const privateReviewRequest = (item: unknown): boolean => {
       typeof request === "object" && request !== null
         ? Reflect.get(request, "trusted_review")
         : undefined;
-    return (
-      typeof review === "object" &&
-      review !== null &&
-      Reflect.get(review, "kind") === "shareability"
-    );
+    return typeof review === "object" && review !== null && Reflect.get(review, "private") === true;
     // error-reporting-allow: parse-predicate a message that is not JSON is no review request
   } catch {
     return false;
@@ -286,14 +293,14 @@ const privateReviewRequest = (item: unknown): boolean => {
 };
 
 /**
- * A conversation as readable records may show it: each shareability review's exchange, its
+ * A conversation as readable records may show it: each private review's exchange, its
  * request and everything up to the next request, replaced by one placeholder message. The
  * model still receives the whole conversation; `restore` maps placeholders back to it.
  */
 export const withholdPrivateReviews = <Item>(
   items: readonly Item[],
   placeholder: (index: number) => Item,
-  /** The items before the first request continue a shareability review a compaction cut. */
+  /** The items before the first request continue a private review a compaction cut. */
   leadingPrivate = false,
 ): { readonly items: Item[]; readonly withheld: ReadonlyMap<string, readonly Item[]> } => {
   const shown: Item[] = [];
@@ -322,7 +329,7 @@ export const withholdPrivateReviews = <Item>(
 };
 
 /**
- * Whether the items a compaction keeps, up to the next request, belong to a shareability
+ * Whether the items a compaction keeps, up to the next request, belong to a private
  * review: the last request among the items it drops says, or else the earlier answer stands.
  */
 export const leadingPrivateAfter = (dropped: readonly unknown[], before: boolean): boolean => {
