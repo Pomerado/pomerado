@@ -1,6 +1,6 @@
 {
   "name": "pomerado",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Pomerado's integration minter and Guardian with local compute and native Playwright",
   "type": "module",
   "license": "MIT",
@@ -595,6 +595,7 @@
   },
   "files": [
     "dist",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "third-party/codex/LICENSE",
