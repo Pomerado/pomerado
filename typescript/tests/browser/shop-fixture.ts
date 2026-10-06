@@ -169,7 +169,8 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
         : "<title>Account</title><p id='signed-out'>Please sign in</p>",
     );
   // The sign-in's query goes on to the password screen: `hidden=N` puts N hidden text fields
-  // ahead of its own field, and `tag` marks its help links, so a test finds its own screen.
+  // ahead of its own field, `pad=N` puts N spaces ahead of the identifier its label echoes in
+  // place of "Password for", and `tag` marks its help links, so a test finds its own screen.
   const queryOf = (request: IncomingMessage) =>
     new URL(request.url ?? "/", "https://www.shop.test").searchParams;
   const identifierScreen: Route = (request, response) =>
@@ -184,13 +185,15 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       { length: shopHelpLinks },
       (_, index) => `<a href="/help/${index}">Help topic ${index} ${queryOf(request).get("tag") ?? ""}</a>`,
     ).join("");
+    const pad = Number(queryOf(request).get("pad") ?? 0);
+    const label = pad > 0 ? `${" ".repeat(pad)}${typed}` : `Password for ${typed}`;
     const hidden = Array.from(
       { length: Number(queryOf(request).get("hidden") ?? 0) },
       (_, index) => `<input name="extra${index}" style="display:none">`,
     ).join("");
     html(
       response,
-      `<title>Password</title><p>Signing in as ${typed}</p><form method="post" action="/sign-in/session"><input type="hidden" name="user" value="${typed}">${hidden}<label>Password for ${typed}<input id="password" name="password" type="password" required placeholder="${typed}"></label><input id="otp" style="display:none" aria-label="Code"><button id="sign-in">Sign in</button><button id="trouble" disabled>Trouble signing in</button></form><nav>${links}</nav>`,
+      `<title>Password</title><p>Signing in as ${typed}</p><form method="post" action="/sign-in/session"><input type="hidden" name="user" value="${typed}">${hidden}<label>${label}<input id="password" name="password" type="password" required placeholder="${typed}"></label><input id="otp" style="display:none" aria-label="Code"><button id="sign-in">Sign in</button><button id="trouble" disabled>Trouble signing in</button></form><nav>${links}</nav>`,
     );
   };
   return new Map([

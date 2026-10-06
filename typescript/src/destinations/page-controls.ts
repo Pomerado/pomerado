@@ -26,8 +26,8 @@ export type PageControls = typeof PageControls.Type;
 export const pageControlsLimit = 100;
 
 /**
- * The longest text page code returns for one control, uncut otherwise: longer than any secret a
- * caller types plus a shown name, so a secret that starts within the shown name ends within it.
+ * The longest role or name text page code returns for one control. Longer text is dropped whole,
+ * never cut: a cut could keep the start of a typed value that screening for the whole value misses.
  */
 export const pageControlTextLimit = 32_768;
 
@@ -35,14 +35,17 @@ export const pageControlTextLimit = 32_768;
  * Page code, with `primary` bound: `pageControls()` reads every frame's form controls, buttons
  * and links as `PageControl`s, or null when the page cannot be read. Values never leave the page.
  * Names and roles come back as the page has them, never trimmed, collapsed or cut short, so the
- * host screens a typed value echoed in them whole before `presentControls` shortens them. The
+ * host screens a typed value echoed in them whole before `presentControls` shortens them; a name
+ * longer than `pageControlTextLimit` is null, and such a role is the element's implicit one. The
  * `pageControlsLimit` it keeps are the most useful: visible ones first, then enabled fields,
  * required ones first, each group in page order.
  */
 export const pageControlsCode = `const pageControls = async () => {
   const read = ({ limit, textLimit }) => {
     // Page text as it is, or null when it has no words.
-    const raw = (value) => (typeof value === "string" && value.trim() !== "" ? value.slice(0, textLimit) : null);
+    const raw = (value) => (typeof value === "string" && value.trim() !== "" ? value : null);
+    // Text past the limit is dropped whole, never cut, so no part of a typed value escapes screening.
+    const capped = (value) => (value !== null && value.length > textLimit ? null : value);
     // A label's own words, without the text of any control inside it.
     const words = (node) => {
       const copy = node.cloneNode(true);
@@ -51,7 +54,7 @@ export const pageControlsCode = `const pageControls = async () => {
     };
     const buttonTypes = ["submit", "button", "reset", "image"];
     const roleOf = (element) => {
-      const explicit = raw(element.getAttribute("role"));
+      const explicit = capped(raw(element.getAttribute("role")));
       if (explicit !== null) return explicit;
       if (element instanceof HTMLInputElement) {
         if (buttonTypes.includes(element.type)) return "button";
@@ -66,7 +69,8 @@ export const pageControlsCode = `const pageControls = async () => {
       if (element instanceof HTMLAnchorElement) return "link";
       return element.tagName.toLowerCase();
     };
-    const nameOf = (element) => {
+    // The first source of a name that has words, as the page has it.
+    const sourceName = (element) => {
       const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
         .split(/\\s+/).map((id) => document.getElementById(id)).filter(Boolean);
       if (labelledBy.length > 0) return raw(labelledBy.map(words).join(" "));
@@ -81,6 +85,8 @@ export const pageControlsCode = `const pageControls = async () => {
         return raw(words(element)) ?? raw(element.getAttribute("title"));
       return raw(element.getAttribute("title"));
     };
+    // The name, or null when it is longer than the limit: never cut, and never a later source's.
+    const nameOf = (element) => capped(sourceName(element));
     const selector = 'input:not([type="hidden"]), select, textarea, button, a[href], [role~="button"], [role~="link"], [role~="checkbox"], [role~="radio"], [role~="switch"], [role~="tab"], [role~="menuitem"], [role~="option"], [role~="textbox"], [role~="combobox"]';
     const found = Array.from(document.querySelectorAll(selector));
     // Rank every control before keeping any: visible first, then enabled fields, required first.

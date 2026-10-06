@@ -20,7 +20,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
-import { pageControlsLimit } from "../../src/destinations/page-controls.js";
+import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/page-controls.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 
@@ -1366,6 +1366,17 @@ const LastScreen = Schema.Struct({
 });
 
 /**
+ * A synthetic 169-character identifier, longer than a control's shown name, so cutting a name
+ * before screening would leave a long piece of it.
+ */
+const longIdentifier = `${Array.from({ length: 156 }, (_, index) => "abcdefghijklmnopqrstuvwxyz0123456789"[(index * 7) % 36]).join("")}@example.test`;
+/** Every 12-character piece of `value` that `text` contains. */
+const piecesIn = (text: string, value: string) =>
+  Array.from({ length: value.length - 11 }, (_, at) => value.slice(at, at + 12)).filter((piece) =>
+    text.includes(piece),
+  );
+
+/**
  * A mint that signs in on the shop's two-screen sign-in: the identifier step, a read of the saved
  * controls, then (with `failNext`) a step whose field the next screen lacks. It answers every
  * sign-in question with `identifier` and returns the file as saved on disk after the first submit,
@@ -1515,11 +1526,7 @@ test("a long typed identifier the next screen echoes in a label never appears in
       "Original SDKs, Chromium and two host autofill steps through a real form navigation",
   });
   test.setTimeout(45_000);
-  // A synthetic identifier longer than a control's shown name, so cutting the name before
-  // screening would leave a long piece of it.
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-  const identifier = `${Array.from({ length: 156 }, (_, index) => alphabet[(index * 7) % 36]).join("")}@example.test`;
-  expect(identifier).toHaveLength(169);
+  const identifier = longIdentifier;
   const { saved, toolResult, mintRequests } = await twoScreenSignIn({
     identifier,
     loginPath: "/sign-in",
@@ -1530,11 +1537,33 @@ test("a long typed identifier the next screen echoes in a label never appears in
     objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item),
   );
   expect(failed).toContain("Password for");
-  const pieces = Array.from({ length: identifier.length - 11 }, (_, at) =>
-    identifier.slice(at, at + 12),
-  );
   for (const text of [saved ?? "", failed, JSON.stringify(mintRequests)])
-    expect(pieces.filter((piece) => text.includes(piece))).toEqual([]);
+    expect(piecesIn(text, identifier)).toEqual([]);
+});
+
+test("a label padded so a typed identifier crosses the text limit leaves the field unnamed, with no piece of the identifier", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  // Only the identifier's first 64 characters fit under the limit.
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: longIdentifier,
+    loginPath: `/sign-in?pad=${pageControlTextLimit - 64}`,
+    failNext: true,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null, visible: true }),
+  );
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  expect(Schema.decodeUnknownSync(LastScreen)(failed).lastScreen.controls).toContainEqual(
+    expect.objectContaining({ type: "password", name: null }),
+  );
+  for (const text of [saved ?? "", JSON.stringify(failed), JSON.stringify(mintRequests)])
+    expect(piecesIn(text, longIdentifier)).toEqual([]);
 });
 
 test("a next screen whose first hundred controls are hidden still saves its visible sign-in field", async () => {
