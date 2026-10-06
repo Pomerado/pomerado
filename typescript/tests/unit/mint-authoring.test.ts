@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
@@ -16,6 +17,8 @@ import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.j
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { executeKernelOperation, offlineKernel } from "../../src/runtime/kernel-operation.js";
+import { runLocalOperation } from "../../src/execution/local-operation.js";
+import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
 it("loads modular skill references and keeps auth discovery outside managed login", async () => {
   expect("websiteAuth" in authEntry).toBe(false);
@@ -367,3 +370,86 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   expect(clicks).toBe(1);
   expect(reads).toBe(2);
 });
+
+/*
+ * Every skill reference, as the agent copies it into its workspace, and every import the workspace
+ * guide or a skill shows, must load against the SDK the local executor stages beside authored
+ * source. It fails when an example or the guidance names an import the executor cannot resolve.
+ *
+ * Skipped: the workspace README and the reference mapping tell the agent to import the SDK from
+ * ../../runtime/ and ../../browser/ in src/, but the local executor stages authored source at its
+ * root, beside runtime/ and browser/, where only ../ resolves. Every documented import fails.
+ */
+it.skip("loads every reference and every documented import against the runtime the local executor ships", async () => {
+  const authoring = "typescript/authoring";
+  const skills = await Effect.runPromise(loadAuthoringSkills(authoring));
+  const guide = await Effect.runPromise(loadWorkspaceGuide(authoring));
+  const modules = new Map<string, string>();
+  // A reference names the repository's SDK paths; the workspace README maps them to the
+  // workspace's own, two levels above src/.
+  for (const name of new Set(skills.flatMap((skill) => Object.keys(skill.references ?? {}))))
+    modules.set(
+      `src/${name.replace(/\.ts$/u, ".mjs")}`,
+      stripTypeScriptTypes(await readFile(join(authoring, "examples", name), "utf8"), {
+        mode: "transform",
+      }).replaceAll('"../../src/', '"../../'),
+    );
+  const documents = [
+    ...guide.files.values(),
+    ...skills.map((skill) => {
+      if (typeof skill.content === "string") return skill.content;
+      if (skill.content instanceof Uint8Array) return new TextDecoder().decode(skill.content);
+      throw new Error(`Expected rendered text for skill ${skill.name}`);
+    }),
+  ];
+  for (const content of documents)
+    for (const [index, [, block]] of [
+      ...content.matchAll(/```(?:js|javascript|ts|typescript)?\n([\s\S]*?)```/gu),
+    ].entries()) {
+      // An import statement, over several lines when it lists its names that way.
+      const imports = [...(block ?? "").matchAll(/^import\s[^;]*?["'][^"']+["'];?/gmu)].map(
+        ([statement]) => statement,
+      );
+      if (imports.length > 0)
+        modules.set(`src/documented-${modules.size}-${index}.mjs`, imports.join("\n"));
+    }
+  expect([...modules.keys()].filter((path) => path.includes("documented-")).length).toBeGreaterThan(
+    0,
+  );
+  // The real local executor loads every module from one authored entrypoint, which finds the
+  // SDK at whichever path this layout resolves, so only the modules under test can fail.
+  const entrypoint = "src/load-every-import.mjs";
+  const entry = `import { Schema } from "effect";
+const sdk = await import("../../runtime/index.js").catch(() => import("../runtime/index.js"));
+const paths = ${JSON.stringify([...modules.keys()].map((path) => `./${path.slice("src/".length)}`))};
+export default sdk.defineOperation(
+  { input: Schema.Struct({}), output: Schema.Struct({ failed: Schema.Array(Schema.String) }) },
+  async () => {
+    const failed = [];
+    for (const path of paths) {
+      try {
+        await import(path);
+      } catch (error) {
+        failed.push(path + ": " + String(error?.message ?? error).split("\\n")[0]);
+      }
+    }
+    return { failed };
+  },
+);
+`;
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspace = yield* createLocalWorkspace();
+        return yield* runLocalOperation({
+          workspace,
+          entrypoint,
+          sources: [...modules, [entrypoint, entry]],
+          input: {},
+          target: "pureFiles",
+        });
+      }),
+    ),
+  );
+  expect(result.output).toEqual({ failed: [] });
+}, 30_000);
