@@ -1,0 +1,134 @@
+# How it works
+
+Pomerado has three parts. The minter builds an integration, Guardian reviews what the minter and the integration do, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
+
+## The minter
+
+- The minter is a model agent with a local workspace and a real Chromium browser, driven through native Playwright.
+- It reads the site, writes operation modules under `src/`, and runs them against the live site to check them.
+- It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
+- It asks you questions through the job when it needs a login, a code or a choice.
+- It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
+- Its prompts and examples come from `typescript/authoring/`.
+
+## Guardian
+
+- Guardian is a second model that reviews the minter's work before it takes effect.
+- It reviews each browser call before it runs, each question before it reaches you, and the finished source before Pomerado saves it.
+- A denied call never reaches the website.
+- A generated integration keeps Guardian. Each run is reviewed, so a running integration needs a model key too.
+- Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
+
+### Review requests
+
+Guardian reviews five kinds of request: execution, question, browser recovery, publication and shareability. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+
+- **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
+- **Shareability.** `reviewShareability(pending, { policy, evidence }, readSource?)` judges whether a finished tool's package may be listed in a public catalog and returns `{ visibility, reason, rationale }`. Its evidence reaches the model but no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder.
+- **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
+  - If the host's read fails, the source is left out and Guardian reads it itself.
+  - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.
+  - An allow counts only while the entrypoint is in view, so after a compaction during the review, Guardian must read it again. `./x` and `x` name the same file.
+  - If an allow still lacks the read after two follow-up rounds in the same review, the review fails with `EntrypointNotRead`. That failure is a verdict, so it is never retried.
+- **Incremental review.** Before an execution review, the host compares each executed source Guardian already read in this conversation since its last compaction with the current bytes. It lists the identical ones in `trusted_review.unchangedSources`, and Guardian needn't read them again. The entrypoint is still always included.
+- **Diagnostics.** Each review emits `guardian.usage` with its model calls and its input, cached, cache-write, output and reasoning token counts. Model diagnostics are reported with or without a session. The wait for a session is emitted as the `guardian.session_wait` interval, and waits between outage retries happen outside the session.
+
+## The runtime
+
+- A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
+- The server validates each call's input against the integration's input schema before it runs anything.
+- The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
+- This package has no general privacy screening service. Error messages mask values that look like credentials.
+- Operations run in child processes. Page code runs in native Playwright workers.
+- Authored code, offline commands and page-code workers run with your user account's file and network access. Guardian review and file checks are not an operating system sandbox. Clearing a worker's `process.env` hides environment variables from that API but doesn't isolate host credentials.
+
+Generated code keeps the browser call shape of the hosted application.
+
+```js
+const response = await kernel.browsers.playwright.execute(sessionId, {
+  code: "return await page.title();",
+  timeout_sec: 30,
+});
+```
+
+- Here `kernel` is a compatibility object that forwards calls to native Playwright over local process IPC. It doesn't load the Kernel SDK or call Kernel.
+- Narrow credential-keyboard and browser-ownership checks still use Chromium's low-level CDP primitives where required.
+- The local host doesn't mint HTTP variants, record network traffic or produce `captures/routes.json`. It has no hosted `SiteHttp` transport or capture replay helpers. Requests made inside the browser still work.
+
+## Jobs
+
+- A tool call that starts work creates a job in the server's memory and returns its ID.
+- `get_job` waits for a change, 20 seconds by default and at most 30. It never starts work again.
+- A call to a generated integration waits 20 seconds. It returns the output if the run finished, and a job ID if not.
+- A pending question expires after 10 minutes.
+- The server runs one job at a time and keeps at most 32 job records. Finished records expire after 15 minutes.
+- Each job owns a fresh browser context and closes it when the job ends. A minted integration doesn't inherit the mint's signed-in session.
+- An integration that needs a login declares its own sign-in inputs. Pomerado doesn't replay a login automatically.
+- Restarting the server loses running jobs and keeps saved integrations.
+- A failed job is never replayed. A website action it already sent may have taken effect.
+- The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
+
+## Library and terminal
+
+The package also works as a library. A library session can mint and run while it keeps the same signed-in browser context.
+
+```js
+import { Effect } from "effect";
+import { createPomerado, makeTerminalAsker } from "pomerado";
+
+await Effect.runPromise(
+  Effect.scoped(
+    Effect.gen(function* () {
+      const session = yield* createPomerado({ ask: makeTerminalAsker() });
+      const request = {
+        url: "https://example.com",
+        intent: "Read the main heading",
+        input: {},
+        effect: "read",
+      };
+      const result = yield* session.mint(request);
+      if (result.artifact === undefined) throw new Error(result.summary);
+      console.log(yield* session.run(result.artifact, request));
+    }),
+  ),
+);
+```
+
+- `makeInputAsker` adapts your own chat callback. The callback receives an `InputRequest` and returns raw answers keyed by question ID.
+- `makePomeradoMcp` and `makeIntegrationMcp` expose the two local MCP modes as library functions. Their Effect scopes own cleanup.
+- `minterProvider` and `guardianProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
+- Importing a core module starts no browser, MCP listener or workspace.
+
+The package has these entry points.
+
+- `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
+- Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, serve hosted library composition. The export map lists the supported modules.
+- `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
+- `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then loads it in `"hosted"` mode.
+
+`npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
+
+## Pomerado Cloud
+
+- This repository is the only source for the shared core, the portable tests, the authoring assets and the local MCP adapters.
+- Cloud installs the same core as a pinned library package and calls it directly. Its hosted MCP frontend, with accounts, permissions and durable jobs, lives in a private repository.
+- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop, credential storage and its own hosted authoring text.
+- Cloud adopts a tested release through an exact dependency pin with locked integrity, and updates its controller and sandbox images together.
+- Cloud rolls back by restoring its previous package pin and matching image versions. Public commits don't update Cloud.
+- Contributors can test Cloud against a locally built package before a version is published.
+
+## Source layout
+
+| Path | Responsibility |
+| --- | --- |
+| `typescript/src/mint/` | Shared minter loop, source tools and completion |
+| `typescript/src/guardian/` | Shared review loop, source inspection and policy |
+| `typescript/src/runtime/` | Shared operation SDK, schemas and browser call contract |
+| `typescript/src/browser/` | Shared browser helpers used by authored operations |
+| `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
+| `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
+| `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
+| `typescript/src/standalone/` | Local library, terminal and MCP composition |
+| `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
+| `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
