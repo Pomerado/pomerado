@@ -29,6 +29,18 @@ export interface GuardianDiagnostics {
   ) => Effect.Effect<void, Error>;
   readonly retainModelTranscript: GuardianDiagnostics["emit"];
   readonly retainRuntimeRecord?: (record: RuntimeRecordInput) => Effect.Effect<void, Error>;
+  /**
+   * Finite model and tool timing of a session-mode review, whose model transcript is not
+   * retained. Must not fail.
+   */
+  readonly observeModelTrace?: (
+    name: "guardian.model",
+    timing: ModelDiagnosticTiming,
+    correlation?: {
+      readonly reviewId?: string;
+      readonly reviewKind?: "execution" | "publication" | "question";
+    },
+  ) => Effect.Effect<void>;
   readonly retainScreenedSource: (args: {
     readonly reviewId: string;
     readonly observation: string;
@@ -158,7 +170,10 @@ export interface PendingExecution {
    * Execution reviews only: the screened results of this attempt's last six steps, oldest first,
    * as the agent received them, each capped at 4 KiB. Untrusted website evidence, never authority.
    */
-  readonly stepResults?: readonly { readonly executionId: string; readonly result: string }[];
+  readonly stepResults?: readonly {
+    readonly executionId: string;
+    readonly result: string;
+  }[];
   /** Publication-only privacy scope selected by the host, never by the reviewer. */
   readonly publication?: PublicationScope;
   /** Host-selected mechanics and recorded chronology, not website claims or added authority. */
@@ -265,6 +280,8 @@ export interface ReviewTurn {
   ) => Effect.Effect<void, ReviewFailure>;
   /** Required traced original model/tool record; a failure ends the review unavailable. */
   readonly retainRuntimeRecord?: (record: RuntimeRecordInput) => Effect.Effect<void, ReviewFailure>;
+  /** Finite timing only, for a session-mode review whose transcript is not retained. */
+  readonly observeTiming?: (timing: ModelDiagnosticTiming) => Effect.Effect<void>;
 }
 
 /** The retention failure's own detail (operation, underlying error) beneath the review's. */
@@ -329,6 +346,23 @@ export interface Reviewer {
   readonly retry?: ReviewRetry;
 }
 
+/**
+ * One run of a review inside the outage retry loop. Offsets are `performance.now()` readings.
+ */
+interface ReviewAttempt {
+  /** 1-based; each attempt is a fresh review with its own ID. */
+  readonly ordinal: number;
+  /** The first attempt's wait for the session permit, when it ran under one. */
+  readonly permitWait?: {
+    readonly startOffsetMs: number;
+    readonly endOffsetMs: number;
+  };
+  readonly started: (correlation: {
+    readonly reviewId: string;
+    readonly reviewKind: "execution" | "publication" | "question";
+  }) => void;
+}
+
 const completeSession = (session?: GuardianSession) =>
   session
     ? session.complete().pipe(
@@ -364,15 +398,28 @@ export const makeGuardian = (
    */
   const retryReview = <A>(
     kind: "execution" | "publication" | "question" | "recovery",
-    attempt: Effect.Effect<A, ReviewFailure>,
+    attempt: (run: ReviewAttempt) => Effect.Effect<A, ReviewFailure>,
+    permitWait?: ReviewAttempt["permitWait"],
   ): Effect.Effect<A, ReviewFailure> => {
     const retry = reviewer.retry;
-    if (retry === undefined) return attempt;
+    const first = {
+      ordinal: 1,
+      ...(permitWait === undefined ? {} : { permitWait }),
+    };
+    if (retry === undefined) return attempt({ ...first, started: () => undefined });
     const budgetMs = Duration.toMillis(retry.budget);
     return Effect.gen(function* () {
       const startedMs = yield* Clock.currentTimeMillis;
       for (let retries = 0; ; retries++) {
-        const outcome = yield* Effect.either(attempt);
+        let correlation: Parameters<ReviewAttempt["started"]>[0] | undefined;
+        const outcome = yield* Effect.either(
+          attempt({
+            ...(retries === 0 ? first : { ordinal: retries + 1 }),
+            started: (started) => {
+              correlation = started;
+            },
+          }),
+        );
         if (outcome._tag === "Right") return outcome.right;
         const failure = outcome.left;
         const waitMs = Duration.toMillis(
@@ -380,16 +427,24 @@ export const makeGuardian = (
         );
         const outageMs = (yield* Clock.currentTimeMillis) - startedMs;
         if (!retriableOutage(failure) || outageMs + waitMs > budgetMs) return yield* failure;
+        const startOffsetMs = performance.now();
         yield* bestEffort(
-          diagnostics?.emit("guardian.review_retried", {
-            kind,
-            retry: retries + 1,
-            code: failure.code,
-            ...(failure.reviewPhase === undefined ? {} : { reviewPhase: failure.reviewPhase }),
-            ...failureDetailMetadata(failure),
-            waitMs,
-            outageMs,
-          }) ?? Effect.void,
+          diagnostics?.emit(
+            "guardian.review_retried",
+            {
+              kind,
+              retry: retries + 1,
+              attempt: retries + 1,
+              code: failure.code,
+              ...(failure.reviewPhase === undefined ? {} : { reviewPhase: failure.reviewPhase }),
+              ...failureDetailMetadata(failure),
+              waitMs,
+              outageMs,
+              startOffsetMs,
+              endOffsetMs: startOffsetMs + waitMs,
+            },
+            correlation,
+          ) ?? Effect.void,
           "guardian.review_retried",
         );
         yield* Effect.sleep(Duration.millis(waitMs));
@@ -398,12 +453,23 @@ export const makeGuardian = (
   };
   const withOutageRetry = <A>(
     kind: "execution" | "publication" | "question" | "recovery",
-    attempt: Effect.Effect<A, ReviewFailure>,
-  ) => {
-    const work = retryReview(kind, attempt);
-    return session ? session.exclusive(work) : work;
-  };
+    attempt: (run: ReviewAttempt) => Effect.Effect<A, ReviewFailure>,
+  ) =>
+    session
+      ? Effect.suspend(() => {
+          const startOffsetMs = performance.now();
+          return session.exclusive(
+            Effect.suspend(() =>
+              retryReview(kind, attempt, {
+                startOffsetMs,
+                endOffsetMs: performance.now(),
+              }),
+            ),
+          );
+        })
+      : retryReview(kind, attempt);
   const review = <Decision extends GuardianDecision | QuestionDecision>(
+    run: ReviewAttempt,
     pending: PendingExecution,
     readSource: ReviewTurn["readSource"],
     decode: (raw: unknown) => Effect.Effect<Decision, ReviewFailure>,
@@ -421,7 +487,9 @@ export const makeGuardian = (
           : pending.questionCandidate !== undefined
             ? ("question" as const)
             : ("execution" as const);
+      run.started({ reviewId, reviewKind });
       const retainRuntimeRecord = guardianRuntimeRecords(diagnostics, options);
+      const observeModelTrace = diagnostics?.observeModelTrace;
       const emit = (name: string, details: unknown, timing?: ModelDiagnosticTiming) =>
         (
           diagnostics?.[
@@ -450,10 +518,30 @@ export const makeGuardian = (
               }),
           ),
         );
+      const startOffsetMs = performance.now();
+      const timing = {
+        attempt: run.ordinal,
+        startOffsetMs,
+        ...(run.permitWait === undefined
+          ? {}
+          : {
+              permitWaitStartOffsetMs: run.permitWait.startOffsetMs,
+              permitWaitEndOffsetMs: run.permitWait.endOffsetMs,
+            }),
+      };
+      const endTiming = () => {
+        const endOffsetMs = performance.now();
+        return {
+          attempt: run.ordinal,
+          startOffsetMs,
+          endOffsetMs,
+          elapsedMs: endOffsetMs - startOffsetMs,
+        };
+      };
       yield* emit(
         "guardian.started",
         pending.publication === undefined
-          ? pending
+          ? { ...pending, timing }
           : {
               mode: "publication",
               ...pending,
@@ -462,6 +550,7 @@ export const makeGuardian = (
                 (total, file) => total + file.byteLength,
                 0,
               ),
+              timing,
             },
       );
       return yield* Effect.gen(function* () {
@@ -473,9 +562,28 @@ export const makeGuardian = (
           ...(session ? { session } : {}),
           pending,
           ...(retainRuntimeRecord === undefined ? {} : { retainRuntimeRecord }),
-          reportDiagnostic: (value, timing) => emit("guardian.model", value, timing),
-          readSource: (path, offset) =>
-            readSource(path, offset).pipe(
+          ...(observeModelTrace === undefined
+            ? {}
+            : {
+                observeTiming: (modelTiming: ModelDiagnosticTiming) =>
+                  observeModelTrace("guardian.model", modelTiming, {
+                    reviewId,
+                    reviewKind,
+                  }),
+              }),
+          reportDiagnostic: (value, modelTiming) => emit("guardian.model", value, modelTiming),
+          readSource: (path, offset) => {
+            let readStartOffsetMs = 0;
+            let readEndOffsetMs = 0;
+            return Effect.suspend(() => {
+              readStartOffsetMs = performance.now();
+              return readSource(path, offset);
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  readEndOffsetMs = performance.now();
+                }),
+              ),
               // A publication review's reads are its source_read diagnostics below instead.
               Effect.tap((observation) =>
                 publication !== undefined
@@ -522,6 +630,9 @@ export const makeGuardian = (
                     : { diagnosticScreeningReason: error.diagnosticScreeningReason }),
                   // Why the read failed, with its whole detail.
                   ...failureDetailOf(error),
+                  elapsedMs: readEndOffsetMs - readStartOffsetMs,
+                  startOffsetMs: readStartOffsetMs,
+                  endOffsetMs: readEndOffsetMs,
                 }),
               ),
               Effect.tap((observation) =>
@@ -553,7 +664,8 @@ export const makeGuardian = (
                   if (path === pending.entrypoint && offset === 0) inspectedEntrypoint = true;
                 }),
               ),
-            ),
+            );
+          },
         });
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
@@ -562,7 +674,9 @@ export const makeGuardian = (
           return yield* new ReviewFailure({ code: "SourceUnavailable" });
         yield* emit(
           "guardian.completed",
-          publication === undefined ? decision : { mode: "publication", ...decision },
+          publication === undefined
+            ? { ...decision, timing: endTiming() }
+            : { mode: "publication", ...decision, timing: endTiming() },
         );
         yield* completeSession(session);
         return { reviewId, decision };
@@ -574,6 +688,7 @@ export const makeGuardian = (
                 ...(pending.publication === undefined ? {} : { mode: "publication" }),
                 cause: Cause.map(exit.cause, withoutDetail),
                 ...failureDetailMetadata(Option.getOrUndefined(Cause.failureOption(exit.cause))),
+                timing: endTiming(),
               }).pipe((emitted) => bestEffort(emitted, "guardian.review_diagnostic"))
             : Effect.void,
         ),
@@ -587,29 +702,31 @@ export const makeGuardian = (
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry(
           pending.publication === undefined ? "execution" : "publication",
-          review(
-            pending,
-            readSource,
-            (raw) => {
-              const scope = pending.publication;
-              return scope === undefined
-                ? Schema.decodeUnknown(GuardianDecision)(boundedRationale(raw)).pipe(
-                    Effect.mapError(
-                      (error) =>
-                        new ReviewFailure({
-                          failureDetail: failureDetail("guardian_dependency_failed", {
-                            error,
-                            phase: "decision_validation",
+          (run) =>
+            review(
+              run,
+              pending,
+              readSource,
+              (raw) => {
+                const scope = pending.publication;
+                return scope === undefined
+                  ? Schema.decodeUnknown(GuardianDecision)(boundedRationale(raw)).pipe(
+                      Effect.mapError(
+                        (error) =>
+                          new ReviewFailure({
+                            failureDetail: failureDetail("guardian_dependency_failed", {
+                              error,
+                              phase: "decision_validation",
+                            }),
+                            code: "InvalidDecision",
                           }),
-                          code: "InvalidDecision",
-                        }),
-                    ),
-                  )
-                : (options.decodePublication?.(scope, boundedRationale(raw)) ??
-                    Effect.fail(new ReviewFailure({ code: "InvalidDecision" })));
-            },
-            pending.publication === undefined,
-          ),
+                      ),
+                    )
+                  : (options.decodePublication?.(scope, boundedRationale(raw)) ??
+                      Effect.fail(new ReviewFailure({ code: "InvalidDecision" })));
+              },
+              pending.publication === undefined,
+            ),
         );
       }),
     /**
@@ -629,9 +746,9 @@ export const makeGuardian = (
           pending.recoveryCandidate !== undefined
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
-        return withOutageRetry(
-          "recovery",
+        return withOutageRetry("recovery", (run) =>
           review(
+            run,
             { ...pending, recoveryCandidate: { rationale } },
             readSource,
             (raw) =>
@@ -663,9 +780,9 @@ export const makeGuardian = (
       Effect.suspend(() => {
         if (pending.publication !== undefined || pending.questionCandidate !== undefined)
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
-        return withOutageRetry(
-          "question",
+        return withOutageRetry("question", (run) =>
           review(
+            run,
             { ...pending, questionCandidate: question },
             readSource,
             (raw) =>

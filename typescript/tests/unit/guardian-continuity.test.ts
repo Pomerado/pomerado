@@ -4,10 +4,12 @@ import { GuardianSessionSnapshot } from "../../src/guardian/session.js";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Either, Fiber, Schema } from "effect";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
-import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
-import type { PendingExecution } from "../../src/guardian/review.js";
+import { GuardianDecision, ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
+import type { GuardianDiagnostics, PendingExecution } from "../../src/guardian/review.js";
+import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
+import type { ModelObserverFactory } from "../../src/models/model-observer.js";
 
 const pending: PendingExecution = {
   invocationId: "mint_continuity",
@@ -20,7 +22,10 @@ const pending: PendingExecution = {
   allowedOrigins: ["https://travel.example.test"],
   allowedEffects: ["read"],
 };
-afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+afterEach(() => {
+  setDefaultModelProvider(new OpenAIProvider());
+  vi.restoreAllMocks();
+});
 const reason: ModelResponse["output"][number] = {
   type: "reasoning",
   id: "rs_first",
@@ -138,6 +143,170 @@ const readCurrent = () =>
       hasMore: false,
     }),
   );
+
+it("observes a session review's model timing and permit wait without retaining its transcript", async () => {
+  vi.spyOn(performance, "now").mockReturnValue(100);
+  provide([[call("timed")], [message()]], []);
+  const modelTiming: ModelDiagnosticTiming = {
+    phase: "model_returned",
+    sequence: 0,
+    occurredAtUtc: "2000-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 5,
+    startedMonotonicMs: 2,
+    queueMs: 0,
+    elapsedMs: 3,
+  };
+  /** A host observer that reports one finite timing and passes model and tool calls through. */
+  const observerFactory: ModelObserverFactory = (persist) => {
+    let persisted: Promise<void> = Promise.resolve();
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => {
+        persisted = persist({ phase: "started" }, modelTiming);
+      },
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => undefined,
+      failed: () => undefined,
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing: modelTiming, value: {} }),
+      flush: () => persisted,
+    };
+  };
+  const observed: unknown[] = [];
+  const transcripts: unknown[] = [];
+  const started: unknown[] = [];
+  const diagnostics: GuardianDiagnostics = {
+    emit: (name, details) =>
+      Effect.sync(() => {
+        if (name === "guardian.started") started.push(details);
+      }),
+    retainModelTranscript: (_name, details) =>
+      Effect.sync(() => {
+        transcripts.push(details);
+      }),
+    retainScreenedSource: () => Effect.void,
+    observeModelTrace: (name, timing, correlation) =>
+      Effect.sync(() => {
+        observed.push({ name, timing, correlation });
+      }),
+  };
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+      observerFactory,
+    }),
+    diagnostics,
+    {},
+  );
+  const reviewed = await Effect.runPromise(guardian.review(pending, readCurrent));
+  expect(observed).toEqual([
+    {
+      name: "guardian.model",
+      timing: modelTiming,
+      correlation: { reviewId: reviewed.reviewId, reviewKind: "execution" },
+    },
+  ]);
+  expect(transcripts).toEqual([]);
+  const timing = (started[0] as { details: { timing: Record<string, number> } }).details.timing;
+  expect(timing).toMatchObject({
+    attempt: 1,
+    startOffsetMs: 100,
+    permitWaitStartOffsetMs: 100,
+    permitWaitEndOffsetMs: 100,
+  });
+});
+
+it("keeps a publication's permit wait separate from the mint review holding the session", async () => {
+  let now = 100;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const records: {
+    name: string;
+    details: unknown;
+    reviewId?: string;
+    reviewKind?: string;
+  }[] = [];
+  const record: GuardianDiagnostics["emit"] = (name, details, correlation) =>
+    Effect.sync(() => {
+      records.push({ name, details, ...correlation });
+    });
+  const results = await Effect.runPromise(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const guardian = makeGuardian(
+        {
+          run: (turn) =>
+            Effect.gen(function* () {
+              if (turn.pending.publication === undefined) {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+                yield* turn.readSource(pending.entrypoint, 0);
+              } else {
+                now += 4;
+              }
+              return {
+                outcome: "allow" as const,
+                rationale: "Approved synthetic source.",
+              };
+            }),
+        },
+        {
+          emit: record,
+          retainModelTranscript: record,
+          retainScreenedSource: () => Effect.void,
+        },
+        {},
+        {
+          decodePublication: (_scope, raw) =>
+            Schema.decodeUnknown(GuardianDecision)(raw).pipe(
+              Effect.mapError(() => new ReviewFailure({ code: "InvalidDecision" })),
+            ),
+        },
+      );
+      const mint = yield* Effect.fork(guardian.review(pending, readCurrent));
+      yield* Deferred.await(entered);
+      const publication = yield* Effect.fork(
+        guardian.review({ ...pending, publication: { files: [] } }, readCurrent),
+      );
+      yield* Effect.yieldNow();
+      now += 30;
+      yield* Deferred.succeed(release, undefined);
+      return {
+        mint: yield* Fiber.join(mint),
+        publication: yield* Fiber.join(publication),
+      };
+    }),
+  );
+  const details = (name: string, reviewId: string) =>
+    (
+      records.find((record) => record.name === name && record.reviewId === reviewId)?.details as {
+        details: { timing: Record<string, number> };
+      }
+    ).details.timing;
+  expect(results.mint.reviewId).not.toBe(results.publication.reviewId);
+  expect(details("guardian.started", results.publication.reviewId)).toMatchObject({
+    attempt: 1,
+    permitWaitStartOffsetMs: 100,
+    permitWaitEndOffsetMs: 130,
+    startOffsetMs: 130,
+  });
+  expect(details("guardian.completed", results.mint.reviewId)).toMatchObject({
+    startOffsetMs: 100,
+    endOffsetMs: 130,
+    elapsedMs: 30,
+  });
+  expect(details("guardian.completed", results.publication.reviewId)).toMatchObject({
+    startOffsetMs: 130,
+    endOffsetMs: 134,
+    elapsedMs: 4,
+  });
+  expect(
+    records.find((record) => record.reviewId === results.publication.reviewId)?.reviewKind,
+  ).toBe("publication");
+});
 
 it("restores a completed review checkpoint but requires a fresh source read", async () => {
   const requests: ModelRequest[] = [];
