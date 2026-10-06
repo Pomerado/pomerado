@@ -2,6 +2,7 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
+import type { MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
@@ -60,29 +61,27 @@ const resultOf = (request: ModelRequest | undefined, callId: string) => {
 /** Execution receipts numbered in order, and how often the host was asked to claim. */
 const countingHost = () => {
   const counts = { executions: 0, claims: 0 };
-  return {
-    counts,
-    overrides: {
-      claimExample: Effect.sync(() => {
-        counts.claims++;
-      }),
-      reviewAndExecute: (_input: unknown, beforeDispatch: Effect.Effect<void> = Effect.void) =>
-        beforeDispatch.pipe(
-          Effect.zipRight(
-            Effect.sync(() => {
-              counts.executions++;
-              return {
-                executionId: counts.executions === 1 ? "execution_one" : "execution_two",
-                status: "completed" as const,
-                effect: "verified" as const,
-                resultRef: `protected_${counts.executions}`,
-                observations: { value: "public" },
-              };
-            }),
-          ),
+  const overrides: Partial<MintDependencies> = {
+    claimExample: Effect.sync(() => {
+      counts.claims++;
+    }),
+    reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
+      beforeDispatch.pipe(
+        Effect.zipRight(
+          Effect.sync(() => {
+            counts.executions++;
+            return {
+              executionId: counts.executions === 1 ? "execution_one" : "execution_two",
+              status: "completed" as const,
+              effect: "verified" as const,
+              resultRef: `protected_${counts.executions}`,
+              observations: { value: "public" },
+            };
+          }),
         ),
-    },
+      ),
   };
+  return { counts, overrides };
 };
 
 it.each([false, true])(
@@ -105,7 +104,8 @@ it.each([false, true])(
     expect(host.counts).toEqual(
       repeatableRead ? { executions: 2, claims: 0 } : { executions: 1, claims: 1 },
     );
-    if (!repeatableRead) expect(resultOf(f.requests[2], "second_read")).toContain("AlreadyExecuted");
+    if (!repeatableRead)
+      expect(resultOf(f.requests[2], "second_read")).toContain("AlreadyExecuted");
   },
 );
 

@@ -68,7 +68,11 @@ describe("preflightTestInput", () => {
   it.each([
     ["an example", request({ testInput: "{}" }), "read"],
     ["an offline test", request({ purpose: "test", testInput: "{}" }), "read"],
-    ["a live explore", request({ purpose: "explore", target: "liveBrowser", testInput: "{}" }), "read"],
+    [
+      "a live explore",
+      request({ purpose: "explore", target: "liveBrowser", testInput: "{}" }),
+      "read",
+    ],
     ["malformed JSON", agentTest("{x"), "read"],
     ["a write build's live test", agentTest({ amountMinor: 12 }), "write"],
   ] as const)("refuses an agent-chosen input on %s", (_, submitted, buildEffect) => {
@@ -85,7 +89,9 @@ describe("exampleInputRefusal", () => {
     expect(
       exampleInputRefusal(request({ exampleInput }), { buildEffect: "read", callerInput: {} }),
     ).toBeUndefined();
-    expect(exampleInputRefusal(request(), { buildEffect: "write", callerInput: {} })).toBeUndefined();
+    expect(
+      exampleInputRefusal(request(), { buildEffect: "write", callerInput: {} }),
+    ).toBeUndefined();
   });
 
   it.each([
@@ -124,8 +130,10 @@ describe("stepInput", () => {
       _tag: "Right",
       right: { input: { amountMinor: 12 }, mark: "agent_chosen" },
     });
-    const plain = await run(request({ purpose: "test", target: "liveBrowser" }), { a: 1 });
-    expect(plain).toEqual({ _tag: "Right", right: { input: { a: 1 } } });
+    const plain = await Effect.runPromise(
+      stepInput(request({ purpose: "test", target: "liveBrowser" }), { a: 1 }),
+    );
+    expect(plain).toEqual({ input: { a: 1 } });
   });
 
   it("refuses a test input that is not JSON as an invalid request", async () => {
@@ -144,7 +152,8 @@ describe("replayedWriteStep", () => {
     ["src/place-step.mjs", place],
     ["src/read-back-step.mjs", "export default { code: 'return document.title;' };"],
   ]);
-  const act = (entrypoint: string) => request({ purpose: "act", target: "liveBrowser", entrypoint });
+  const act = (entrypoint: string) =>
+    request({ purpose: "act", target: "liveBrowser", entrypoint });
   const step = (entrypoint: string, stateChanging: boolean, from = files): WriteStep => ({
     entrypoint,
     sourceDigest: writeStepDigest(from, entrypoint),

@@ -502,17 +502,25 @@ describe("secretHandleRefusal", () => {
 
   it("refuses a handle outside a site-input sink with its file, line and rule", () => {
     const files = new Map([
-      ["explore/leak.mjs", `const handle = "{{secret.s1}}";\nconsole.log(handle);\nexport default {};`],
+      [
+        "explore/leak.mjs",
+        `const handle = "{{secret.s1}}";\nconsole.log(handle);\nexport default {};`,
+      ],
     ]);
-    const refusal = secretHandleRefusal(handles(), files, step("explore", "explore/leak.mjs"), site);
+    const refusal = secretHandleRefusal(
+      handles(),
+      files,
+      step("explore", "explore/leak.mjs"),
+      site,
+    );
     expect(refusal).toMatch(/^explore\/leak\.mjs line 1: /u);
     expect(refusal).toContain(misplacedHandleRule);
     expect(refusal).toContain('page.getByLabel("Code").fill("{{secret.s1}}")');
     expect(refusal?.endsWith("Nothing was executed.")).toBe(true);
     // The example names no host's browser API.
-    expect(refusal?.slice(refusal.indexOf(misplacedHandleRule) + misplacedHandleRule.length)).not.toMatch(
-      /kernel/iu,
-    );
+    expect(
+      refusal?.slice(refusal.indexOf(misplacedHandleRule) + misplacedHandleRule.length),
+    ).not.toMatch(/kernel/iu);
   });
 
   it("refuses an example whose published source holds a handle, and lets an explore run it", () => {

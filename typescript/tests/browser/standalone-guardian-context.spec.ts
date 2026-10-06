@@ -72,12 +72,12 @@ const sourcesOf = (review: RecordedReview, key: string) =>
 const effectsOf = (review: RecordedReview | undefined) =>
   (review === undefined ? [] : authorityOf(review)["allowedEffects"]) as readonly string[];
 const historyOf = (review: RecordedReview | undefined) =>
-  ((review === undefined ? [] : contextOf(review)?.["executions"]) ??
-    []) as readonly Readonly<Record<string, unknown>>[];
+  ((review === undefined ? [] : contextOf(review)?.["executions"]) ?? []) as readonly Readonly<
+    Record<string, unknown>
+  >[];
 const stepResultsOf = (review: RecordedReview | undefined) =>
   review?.input["untrusted_step_results"] as
-    | readonly { readonly executionId: string; readonly result: string }[]
-    | undefined;
+    readonly { readonly executionId: string; readonly result: string }[] | undefined;
 const offline =
   "Offline local files, source checks and computation only. No live website, credentials or network.";
 const dated = {
@@ -293,12 +293,44 @@ test("Guardian reads the page the build last observed, with private values redac
       path: "/",
       capture: "captures/current-page.aria.yml",
     });
-    const capture = second!.reads.find(
-      (read) => read["path"] === "captures/current-page.aria.yml",
-    );
+    const capture = second!.reads.find((read) => read["path"] === "captures/current-page.aria.yml");
     expect(String(capture?.["source"])).toContain("Account");
     expect(String(capture?.["source"])).toContain("[private]");
     expect(JSON.stringify(guardian.reviews)).not.toContain("fixture-private-value");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a question a running step asks shows Guardian that step running", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            "explore/ask.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/ask.mjs"), "ask")],
+      ],
+    });
+    expect(toolResult(last, "ask")).toMatchObject({ status: "completed" });
+    const question = guardian.reviews.find((review) => review.kind === "question");
+    expect(effectsOf(question)).toEqual([]);
+    expect(historyOf(question)).toEqual([
+      expect.objectContaining({ purpose: "explore", status: "running", effect: "possible" }),
+    ]);
   } finally {
     await site.close();
   }
@@ -310,7 +342,8 @@ test("a read build runs two live tests on inputs it chose and its example on the
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
   );
   const guardian = recordingGuardian();
-  const chosen = (value: number) => execution("test", "src/tool.mjs", { testInput: `{"page":${value}}` });
+  const chosen = (value: number) =>
+    execution("test", "src/tool.mjs", { testInput: `{"page":${value}}` });
   try {
     const { last } = await mint({
       effect: "read",
@@ -327,7 +360,11 @@ test("a read build runs two live tests on inputs it chose and its example on the
         () => [call("execute", chosen(3), "test_3")],
         () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{x" }), "not_json")],
         () => [
-          call("execute", execution("example", "src/tool.mjs", { testInput: "{}" }), "example_test"),
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { testInput: "{}" }),
+            "example_test",
+          ),
         ],
         () => [
           call(
@@ -456,7 +493,6 @@ test("secret handle problems are refused before Guardian reviews the source", as
         () =>
           patch({
             "explore/leak.mjs": `const handle = "{{secret.s1}}";\nconsole.log(handle);\nexport default {};`,
-            "explore/unknown.mjs": probe(`await page.locator('#code').fill("{{secret.s9}}"); return 1;`),
           }),
         () => [
           call("request_input", {
@@ -467,6 +503,13 @@ test("secret handle problems are refused before Guardian reviews the source", as
           }),
         ],
         () => [call("execute", execution("explore", "explore/leak.mjs"), "misplaced")],
+        // The check reads every authored file, so the unissued handle comes after.
+        () =>
+          patch({
+            "explore/unknown.mjs": probe(
+              `await page.locator('#code').fill("{{secret.s9}}"); return 1;`,
+            ),
+          }),
         () => [call("execute", execution("explore", "explore/unknown.mjs"), "unissued")],
       ],
     });
@@ -475,6 +518,30 @@ test("secret handle problems are refused before Guardian reviews the source", as
     expect(JSON.stringify(toolResult(last, "misplaced"))).toContain("explore/leak.mjs line 1: ");
     expect(toolResult(last, "unissued")).toMatchObject({ status: "unsupported" });
     expect(JSON.stringify(toolResult(last, "unissued"))).toContain("{{secret.s9}}");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a step Guardian denies never runs", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian({ decide: () => "deny" });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "explore")],
+      ],
+    });
+    expect(executions(guardian.reviews)).toHaveLength(1);
+    expect(JSON.stringify(toolResult(last, "explore"))).toContain("ReviewDenied");
+    expect(site.requests).toEqual([]);
   } finally {
     await site.close();
   }
