@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -31,11 +31,12 @@ jobs:
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
       # A pull request scans its commits. A push to main scans the pushed commits, unless a force
-      # push left no earlier commit to start from. Other events scan no commits.
+      # push left no earlier commit to start from. A release tag push scans no commits.
       - name: Find the commits to scan
         id: range
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
@@ -44,9 +45,10 @@ jobs:
           commits=""
           if [ "$EVENT" = pull_request ]; then
             commits="$PR_BASE..$PR_HEAD"
-          elif [ "$EVENT" = push ] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+          elif [[ $EVENT == push && $REF == refs/heads/* ]] &&
+            git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             commits="$PUSH_BEFORE..$PUSH_AFTER"
-          elif [ "$EVENT" = push ]; then
+          elif [[ $EVENT == push && $REF == refs/heads/* ]]; then
             echo "::warning::No earlier commit to start from. Only the tree is scanned."
           fi
           echo "commits=$commits" >> "$GITHUB_OUTPUT"
@@ -70,19 +72,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.21.0
+          package-manager-cache: false
       # A pull request scans its commits. A push to main scans the pushed commits, unless a force
-      # push left no earlier commit to start from. Other events scan no commits.
+      # push left no earlier commit to start from. A release tag push scans no commits.
       - name: Find the commits to scan
         id: range
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
@@ -91,9 +95,10 @@ jobs:
           commits=""
           if [ "$EVENT" = pull_request ]; then
             commits="$PR_BASE..$PR_HEAD"
-          elif [ "$EVENT" = push ] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+          elif [[ $EVENT == push && $REF == refs/heads/* ]] &&
+            git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             commits="$PUSH_BEFORE..$PUSH_AFTER"
-          elif [ "$EVENT" = push ]; then
+          elif [[ $EVENT == push && $REF == refs/heads/* ]]; then
             echo "::warning::No earlier commit to start from. Only the tree is scanned."
           fi
           echo "commits=$commits" >> "$GITHUB_OUTPUT"
