@@ -64,6 +64,18 @@ const readLocalFile = (root: string, path: string, maximumBytes = localSourceFil
     }).pipe(Effect.ensuring(localPromise(() => file.close()).pipe(Effect.orDie)));
   });
 
+/**
+ * An edit refused before it changed anything, named by the stage it stopped at and an errno code:
+ * `diff` for a patch that does not apply, `open` for a file that exists, is missing or would pass
+ * a size or file-count limit. The mint workspace tells the agent the edit was not applied, and why.
+ */
+const refusedEdit = (stage: "open" | "diff", code: string, message?: string) =>
+  Object.assign(new Error(message ?? `Workspace edit refused (${code})`), { stage, code });
+
+const localFileCountLimit = 4096;
+const fileCountRefusal = () =>
+  refusedEdit("open", "EMFILE", `A workspace may hold at most ${localFileCountLimit} files`);
+
 const listLocalFiles = (root: string, relative = ""): Effect.Effect<readonly string[], Error> =>
   Effect.gen(function* () {
     const files: string[] = [];
@@ -75,18 +87,10 @@ const listLocalFiles = (root: string, relative = ""): Effect.Effect<readonly str
       if (entry.isDirectory()) files.push(...(yield* listLocalFiles(root, path)));
       else if (entry.isFile()) files.push(path);
       else return yield* Effect.fail(new Error("Workspace contains a non-regular file"));
-      if (files.length > 4096) return yield* Effect.fail(new Error("Workspace exceeds 4096 files"));
+      if (files.length > localFileCountLimit) return yield* Effect.fail(fileCountRefusal());
     }
     return files.sort();
   });
-
-/**
- * An edit refused before it changed anything, named by the stage it stopped at and an errno code:
- * `diff` for a patch that does not apply, `open` for a file that exists, is missing or would pass
- * a size limit. The mint workspace tells the agent the edit was not applied, and why.
- */
-const refusedEdit = (stage: "open" | "diff", code: string, message?: string) =>
-  Object.assign(new Error(message ?? `Workspace edit refused (${code})`), { stage, code });
 
 const writeLocalFile = (
   root: string,
@@ -95,6 +99,7 @@ const writeLocalFile = (
   installed: ReadonlySet<string> = new Set(),
 ) =>
   Effect.gen(function* () {
+    const relative = yield* Effect.try({ try: () => localRelativePath(path), catch: localError });
     const bytes = Buffer.byteLength(text);
     if (bytes > localSourceFileLimit)
       return yield* Effect.fail(
@@ -104,10 +109,13 @@ const writeLocalFile = (
           `A workspace file may hold at most ${localSourceFileLimit} bytes`,
         ),
       );
-    const target = yield* localFilePath(root, path, true);
+    // Every limit is checked before anything changes, a new parent folder included.
+    const files = yield* listLocalFiles(root);
+    if (files.length >= localFileCountLimit && !files.includes(relative))
+      return yield* Effect.fail(fileCountRefusal());
     let total = bytes;
-    for (const file of yield* listLocalFiles(root)) {
-      if (file === localRelativePath(path) || installed.has(file)) continue;
+    for (const file of files) {
+      if (file === relative || installed.has(file)) continue;
       total += (yield* localPromise(() => lstat(join(root, file)))).size;
       if (total > localSourceBundleLimit)
         return yield* Effect.fail(
@@ -118,6 +126,7 @@ const writeLocalFile = (
           ),
         );
     }
+    const target = yield* localFilePath(root, path, true);
     const temporary = join(dirname(target), `.pomerado-${randomUUID()}`);
     const handle = yield* localPromise(() =>
       open(
@@ -170,8 +179,11 @@ const makeLocalEditor = (options: {
     createFile: (operation) =>
       edit(
         Effect.gen(function* () {
-          const target = yield* localFilePath(options.root, operation.path, true);
-          const existing = yield* localPromise(() => lstat(target)).pipe(Effect.either);
+          // Looked up without creating parent folders, so a refused create leaves none behind.
+          const existing = yield* localFilePath(options.root, operation.path).pipe(
+            Effect.flatMap((target) => localPromise(() => lstat(target))),
+            Effect.either,
+          );
           if (existing._tag === "Right") return yield* Effect.fail(refusedEdit("open", "EEXIST"));
           if (!localMissing(existing.left)) return yield* Effect.fail(existing.left);
           yield* options.write(operation.path, yield* patched("", operation.diff, "create"));

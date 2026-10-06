@@ -32,6 +32,16 @@ const installedDependencies = Effect.try({
   catch: localError,
 });
 
+/** Top-level names the host stages beside authored source, as a file or a folder. */
+const reserved = new Set([
+  "runtime",
+  "browser",
+  "filesystem",
+  "privacy",
+  "testing",
+  "node_modules",
+]);
+
 export const stageSources = (options: LocalOperationOptions) =>
   Effect.gen(function* () {
     const directory = yield* localPromise(() => mkdtemp(join(tmpdir(), "pomerado-operation-")));
@@ -46,11 +56,7 @@ export const stageSources = (options: LocalOperationOptions) =>
       if (seen.has(path))
         return yield* Effect.fail(new Error(`Duplicate reviewed source: ${path}`));
       seen.add(path);
-      if (
-        ["runtime/", "browser/", "filesystem/", "privacy/", "testing/", "node_modules/"].some(
-          (prefix) => path.startsWith(prefix),
-        )
-      )
+      if (reserved.has(path.split("/")[0] ?? path))
         return yield* Effect.fail(new Error(`Reviewed source cannot replace trusted SDK: ${path}`));
       total += Buffer.byteLength(text);
       if (Buffer.byteLength(text) > localSourceFileLimit || total > localSourceBundleLimit)
@@ -82,10 +88,6 @@ export const stageSources = (options: LocalOperationOptions) =>
         yield* localPromise(() => symlink(trusted, destination, "file"));
       }
     }
-    // Source saved when authored files sat beside the SDK reaches it one level up from src/. The
-    // same directories appear there, so those imports load the same modules.
-    for (const shared of new Set(assets.map(([path]) => path.split("/")[0] ?? path)))
-      yield* localPromise(() => symlink(join("..", shared), join(operation, shared), "dir"));
     yield* localPromise(() =>
       writeFile(join(directory, "package.json"), '{"type":"module"}', {
         flag: "wx",
@@ -95,6 +97,16 @@ export const stageSources = (options: LocalOperationOptions) =>
     // Dependencies stay in the installed package; authored source bytes are copied unchanged.
     const dependencies = yield* installedDependencies;
     yield* localPromise(() => symlink(dependencies, join(directory, "node_modules"), "dir"));
+    // Source saved when authored files sat beside the SDK reaches it and node_modules one level up
+    // from src/, and finds package.json in its working folder. The same entries appear in
+    // operation/, so those paths load the same modules and read the same file.
+    const sdk = assets.map(([path]) => path.split("/")[0] ?? path);
+    for (const shared of new Set([...sdk, "node_modules"]))
+      yield* localPromise(() => symlink(join("..", shared), join(operation, shared), "dir"));
+    if (!seen.has("package.json"))
+      yield* localPromise(() =>
+        symlink(join("..", "package.json"), join(operation, "package.json"), "file"),
+      );
     // The child runs from the authored root, so relative file paths resolve as they did before.
     return { directory: operation, entrypoint: join(operation, entrypoint) };
   });
