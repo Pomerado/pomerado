@@ -122,20 +122,22 @@ const guardianUsage = (usage: Usage): GuardianUsage => ({
 const withheldFromObserver = (
   base: ModelProvider,
   observe: (provider: ModelProvider) => ModelProvider,
+  leadingPrivate: () => boolean,
 ): ModelProvider => {
   const nonce = randomUUID();
   const withheld = new Map<string, readonly AgentInputItem[]>();
-  const placeholder = (index: number): AgentInputItem => ({
+  let placeholders = 0;
+  const placeholder = (): AgentInputItem => ({
     role: "user",
     type: "message",
-    content: `[A private shareability review is withheld from this record: ${nonce}:${index}]`,
+    content: `[A private shareability review is withheld from this record: ${nonce}:${placeholders++}]`,
   });
   const map =
     (change: (input: AgentInputItem[]) => AgentInputItem[]) =>
     (request: ModelRequest): ModelRequest =>
       typeof request.input === "string" ? request : { ...request, input: change(request.input) };
   const hide = map((input) => {
-    const shown = withholdPrivateReviews(input, placeholder);
+    const shown = withholdPrivateReviews(input, placeholder, leadingPrivate());
     for (const [key, items] of shown.withheld) withheld.set(key, items);
     return shown.items;
   });
@@ -266,8 +268,11 @@ const reviewerWithPolicy = (
           if (diagnostics)
             runner.config.modelProvider = shareability
               ? diagnostics.provider(runner.config.modelProvider)
-              : withheldFromObserver(runner.config.modelProvider, (provider) =>
-                  diagnostics.provider(provider),
+              : withheldFromObserver(
+                  runner.config.modelProvider,
+                  (provider) => diagnostics.provider(provider),
+                  // Each request starts where the session's history does.
+                  () => turn.session?.leadingPrivate() ?? false,
                 );
           diagnostics?.attach(runner);
           const input = reviewInput(turn, options);
@@ -279,6 +284,8 @@ const reviewerWithPolicy = (
               signal,
             },
           );
+          // Whether the run's history starts with a shareability review a compaction cut.
+          let leadingPrivate = turn.session?.leadingPrivate() ?? false;
           if (turn.session)
             runner.config.modelProvider = turn.session.provider(
               runner.config.modelProvider,
@@ -322,6 +329,7 @@ const reviewerWithPolicy = (
                       guardianFollowUpState(turn, outcome.history, followUp, agent, maxTurns),
                       { signal: computationSignal },
                     );
+                    if (turn.session) leadingPrivate = turn.session.leadingPrivate();
                     outcome = await run();
                   }
                   return { outcome, usage };
@@ -381,11 +389,15 @@ const reviewerWithPolicy = (
             diagnostics?.completed(
               shareability
                 ? result.history
-                : withholdPrivateReviews(result.history, (index) => ({
-                    role: "user" as const,
-                    type: "message" as const,
-                    content: `[A private shareability review is withheld from this record: ${index}]`,
-                  })).items,
+                : withholdPrivateReviews(
+                    result.history,
+                    (index) => ({
+                      role: "user" as const,
+                      type: "message" as const,
+                      content: `[A private shareability review is withheld from this record: ${index}]`,
+                    }),
+                    leadingPrivate,
+                  ).items,
               usage,
             );
             if (turn.session)

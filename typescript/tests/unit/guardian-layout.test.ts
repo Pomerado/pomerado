@@ -504,80 +504,88 @@ it("ends EntrypointNotRead, without retrying, when the entrypoint can't be inclu
   expect(events.map((event) => event.name)).not.toContain("guardian.review_retried");
 });
 
-it("keeps a shareability exchange out of later reviews' readable model records but in the model's history", async () => {
-  const requests = scripted([
-    [
-      decision({
-        outcome: "private",
-        rationale: "Names synthetic-private-rationale-marker.",
-        reason: "tenant_specific",
-      }),
-    ],
-    [allow],
-  ]);
-  const timing: ModelDiagnosticTiming = {
-    phase: "completed",
-    sequence: 0,
-    occurredAtUtc: "2026-01-01T00:00:00.000Z",
-    occurredMonotonicMs: 0,
-    queueMs: 0,
-  };
-  // A readable projection of everything the observer sees: each request and the final history.
-  const observerFactory: ModelObserverFactory = (persist) => {
-    const persisted: Promise<void>[] = [];
-    const seen: unknown[] = [];
-    return {
-      attach: () => undefined,
-      tool: (_call, invoke) => invoke(),
-      provider: (provider) => ({
-        getModel: async (name) => {
-          const model = await provider.getModel(name);
-          return {
-            getResponse: (request: ModelRequest) => {
-              seen.push(request.input);
-              return model.getResponse(request);
-            },
-            getStreamedResponse: (request: ModelRequest) => model.getStreamedResponse(request),
-          };
-        },
-      }),
-      started: () => undefined,
-      skillsInstalled: () => undefined,
-      segment: () => undefined,
-      completed: (history) => {
-        persisted.push(persist({ requests: seen, history }, timing));
-      },
-      failed: () => undefined,
-      takeNativeCall: () => undefined,
-      durabilityFailure: () => undefined,
-      terminal: () => ({ phase: "terminal", timing, value: {} }),
-      flush: async () => {
-        await Promise.all(persisted);
-      },
+it.each([false, true])(
+  "keeps a shareability exchange out of later reviews' readable model records but in the model's history (compacted: %s)",
+  async (compacted) => {
+    const requests = scripted([
+      [
+        ...(compacted ? [compact] : []),
+        decision({
+          outcome: "private",
+          rationale: "Names synthetic-private-rationale-marker.",
+          reason: "tenant_specific",
+        }),
+      ],
+      [allow],
+    ]);
+    const timing: ModelDiagnosticTiming = {
+      phase: "completed",
+      sequence: 0,
+      occurredAtUtc: "2026-01-01T00:00:00.000Z",
+      occurredMonotonicMs: 0,
+      queueMs: 0,
     };
-  };
-  const { diagnostics, transcripts } = recording();
-  const guardian = makeGuardian(
-    makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
-    diagnostics,
-    {},
-  );
-  const shared = await Effect.runPromise(
-    guardian.reviewShareability(pending, {
-      policy: "Synthetic shareability policy.",
-      evidence: { primaryOrigin: "https://synthetic-private-evidence-marker.example.test" },
-    }),
-  );
-  expect(shared.decision.visibility).toBe("private");
-  expect(transcripts).toHaveLength(0);
-  await Effect.runPromise(guardian.review(pending, sourcesOf(files())));
-  expect(transcripts).toHaveLength(1);
-  const readable = JSON.stringify(transcripts);
-  expect(readable).not.toContain("synthetic-private-evidence-marker");
-  expect(readable).not.toContain("synthetic-private-rationale-marker");
-  // The model still continues the whole conversation, so its cached prefix holds.
-  const sent = JSON.stringify(requests[1]?.input);
-  expect(sent).toContain("synthetic-private-evidence-marker");
-  expect(sent).toContain("synthetic-private-rationale-marker");
-  expect(requests[1]?.input.slice(0, requests[0]?.input.length)).toEqual(requests[0]?.input);
-});
+    // A readable projection of everything the observer sees: each request and the final history.
+    const observerFactory: ModelObserverFactory = (persist) => {
+      const persisted: Promise<void>[] = [];
+      const seen: unknown[] = [];
+      return {
+        attach: () => undefined,
+        tool: (_call, invoke) => invoke(),
+        provider: (provider) => ({
+          getModel: async (name) => {
+            const model = await provider.getModel(name);
+            return {
+              getResponse: (request: ModelRequest) => {
+                seen.push(request.input);
+                return model.getResponse(request);
+              },
+              getStreamedResponse: (request: ModelRequest) => model.getStreamedResponse(request),
+            };
+          },
+        }),
+        started: () => undefined,
+        skillsInstalled: () => undefined,
+        segment: () => undefined,
+        completed: (history) => {
+          persisted.push(persist({ requests: seen, history }, timing));
+        },
+        failed: () => undefined,
+        takeNativeCall: () => undefined,
+        durabilityFailure: () => undefined,
+        terminal: () => ({ phase: "terminal", timing, value: {} }),
+        flush: async () => {
+          await Promise.all(persisted);
+        },
+      };
+    };
+    const { diagnostics, transcripts } = recording();
+    const guardian = makeGuardian(
+      makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+      diagnostics,
+      {},
+    );
+    const shared = await Effect.runPromise(
+      guardian.reviewShareability(pending, {
+        policy: "Synthetic shareability policy.",
+        evidence: { primaryOrigin: "https://synthetic-private-evidence-marker.example.test" },
+      }),
+    );
+    expect(shared.decision.visibility).toBe("private");
+    expect(transcripts).toHaveLength(0);
+    await Effect.runPromise(guardian.review(pending, sourcesOf(files())));
+    expect(transcripts).toHaveLength(1);
+    const readable = JSON.stringify(transcripts);
+    expect(readable).not.toContain("synthetic-private-evidence-marker");
+    expect(readable).not.toContain("synthetic-private-rationale-marker");
+    // The model still continues the whole conversation, so its cached prefix holds. A compaction
+    // in the shareability review leaves only its final output after the compacted context.
+    const sent = JSON.stringify(requests[1]?.input);
+    expect(sent).toContain("synthetic-private-rationale-marker");
+    if (compacted) expect(requests[1]?.input[0]).toMatchObject({ type: "compaction" });
+    else {
+      expect(sent).toContain("synthetic-private-evidence-marker");
+      expect(requests[1]?.input.slice(0, requests[0]?.input.length)).toEqual(requests[0]?.input);
+    }
+  },
+);

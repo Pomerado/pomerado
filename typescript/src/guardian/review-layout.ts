@@ -293,10 +293,18 @@ const privateReviewRequest = (item: unknown): boolean => {
 export const withholdPrivateReviews = <Item>(
   items: readonly Item[],
   placeholder: (index: number) => Item,
+  /** The items before the first request continue a shareability review a compaction cut. */
+  leadingPrivate = false,
 ): { readonly items: Item[]; readonly withheld: ReadonlyMap<string, readonly Item[]> } => {
   const shown: Item[] = [];
   const withheld = new Map<string, Item[]>();
   let segment: Item[] | undefined;
+  if (leadingPrivate) {
+    const stand = placeholder(0);
+    segment = [];
+    withheld.set(JSON.stringify(stand), segment);
+    shown.push(stand);
+  }
   for (const item of items) {
     const request =
       typeof item === "object" && item !== null && Reflect.get(item, "role") === "user";
@@ -311,4 +319,15 @@ export const withholdPrivateReviews = <Item>(
     else segment.push(item);
   }
   return { items: shown, withheld };
+};
+
+/**
+ * Whether the items a compaction keeps, up to the next request, belong to a shareability
+ * review: the last request among the items it drops says, or else the earlier answer stands.
+ */
+export const leadingPrivateAfter = (dropped: readonly unknown[], before: boolean): boolean => {
+  for (const item of [...dropped].reverse())
+    if (typeof item === "object" && item !== null && Reflect.get(item, "role") === "user")
+      return privateReviewRequest(item);
+  return before;
 };

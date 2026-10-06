@@ -2,6 +2,7 @@ import type { AgentInputItem, ModelProvider, ModelRequest } from "@openai/agents
 import { protocol } from "@openai/agents";
 import { compaction, StaticCompactionPolicy } from "@openai/agents/sandbox";
 import { Effect, Schema } from "effect";
+import { leadingPrivateAfter } from "./review-layout.js";
 
 /** Private continuation state; complete original exchanges remain in protected model records. */
 export const GuardianSessionSnapshot = Schema.Struct({
@@ -12,6 +13,11 @@ export const GuardianSessionSnapshot = Schema.Struct({
   effectiveReasoningContext: Schema.optional(
     Schema.Literal("all_turns", "current_turn", "not_reported"),
   ),
+  /**
+   * The items before the history's first request belong to a shareability review whose request
+   * a compaction removed, so readable records still withhold them.
+   */
+  leadingPrivate: Schema.optional(Schema.Literal(true)),
 });
 export type GuardianSessionSnapshot = typeof GuardianSessionSnapshot.Type;
 interface GuardianReasoningReport {
@@ -159,7 +165,15 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
       let start = 0;
       for (let index = 0; index < items.length; index++)
         if (items[index]?.type === "compaction") start = index;
-      current = { ...current, history: items.slice(start), incomplete };
+      const { leadingPrivate: _previous, ...rest } = current;
+      current = {
+        ...rest,
+        history: items.slice(start),
+        incomplete,
+        ...(leadingPrivateAfter(items.slice(0, start), current.leadingPrivate === true)
+          ? { leadingPrivate: true as const }
+          : {}),
+      };
       return (options.save?.(current) ?? Effect.void).pipe(
         Effect.onError(() =>
           Effect.sync(() => {
@@ -184,6 +198,8 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
         },
       }),
     snapshot: () => current,
+    /** Whether readable records must withhold the history's leading items; see the snapshot. */
+    leadingPrivate: () => current.leadingPrivate === true,
     /** The conversation since its last compaction, as the next request continues it. */
     history,
     /** Changes whenever a compaction replaces the context, including in the middle of a review. */
