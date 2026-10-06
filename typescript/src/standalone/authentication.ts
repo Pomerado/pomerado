@@ -19,11 +19,18 @@ import type { CredentialKeyboard } from "../destinations/credential-keyboard.js"
 import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { InputAsker, Question } from "../runtime/input-request.js";
 
-const credentialQuestion = (slot: AutofillSlot, siteOrigin: string): Question => ({
+const credentialQuestion = (
+  slot: AutofillSlot,
+  siteOrigin: string,
+  currentFieldLabel?: string,
+): Question => ({
   id: slot,
   type: "secret",
   secretKind: slot === "code" ? "one_time_code" : "private_text",
-  prompt: `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
+  prompt:
+    slot === "private_answer" && currentFieldLabel !== undefined
+      ? `${currentFieldLabel} (${siteOrigin})`
+      : `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
   maxLength: ["username", "email", "phone", "account_number"].includes(slot) ? 1024 : 16_384,
 });
 
@@ -70,14 +77,27 @@ export const makeLiveAuthentication = (options: {
       yield* options.review(selected, inspected);
       yield* beforeFill;
       const missing = [...new Set(selected.fields.map((item) => item.slot))].filter(
-        (slot) => values[slot] === undefined || slot === "code" || slot === "recovery_code",
+        (slot) =>
+          values[slot] === undefined ||
+          slot === "code" ||
+          slot === "recovery_code" ||
+          slot === "private_answer",
       );
       if (missing.length > 0) {
         const answered = yield* options
           .ask({
             id: randomUUID(),
             source: "system",
-            questions: missing.map((slot) => credentialQuestion(slot, options.siteOrigin)),
+            questions: missing.map((slot) =>
+              credentialQuestion(
+                slot,
+                options.siteOrigin,
+                slot === "private_answer"
+                  ? (inspected.screen.fields.find((field) => field.slot === slot)?.label ??
+                      undefined)
+                  : undefined,
+              ),
+            ),
           })
           .pipe(
             Effect.mapError((cause) => new Error("Sign-in input was not completed", { cause })),
@@ -107,7 +127,13 @@ export const makeLiveAuthentication = (options: {
       delete values.code;
       delete values.recovery_code;
       return result;
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          delete values.private_answer;
+        }),
+      ),
+    );
   return {
     step,
     rejected: (slot: AutofillSlot) => {

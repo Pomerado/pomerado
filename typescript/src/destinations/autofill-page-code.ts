@@ -48,7 +48,11 @@ return {
  *   waits for the page to settle.
  */
 export type AutofillFillCall =
-  | { readonly kind: "focus"; readonly index: number; readonly bindingKey: string }
+  | {
+      readonly kind: "focus";
+      readonly index: number;
+      readonly bindingKey: string;
+    }
   | {
       readonly kind: "date";
       readonly index: number;
@@ -276,7 +280,53 @@ export const SignedInPage = Schema.Struct({
   url: Schema.String,
   indicator: Schema.NullOr(Schema.Boolean),
   passwordVisible: Schema.Boolean,
+  challengeFormVisible: Schema.Boolean,
 });
+
+const signedInChallengeFormCode = `
+const unfinishedForm = async (selector, scopes) => {
+  if (selector === null) return false;
+  for (const scope of scopes) {
+    const located = scope.locator(selector);
+    const count = Math.min(await located.count(), 100);
+    for (let index = 0; index < count; index++) {
+      const marker = located.nth(index);
+      if (!(await marker.isVisible())) continue;
+      if (await marker.evaluate((element) => {
+        const form = element instanceof HTMLFormElement ? element : element.closest('form');
+        return form !== null && Array.from(form.querySelectorAll('input, textarea, select, [contenteditable="true"]')).some((field) => {
+          if (field instanceof HTMLInputElement && ['hidden', 'submit', 'button', 'image', 'reset'].includes(field.type)) return false;
+          const box = field.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 && field.checkVisibility({ visibilityProperty: true });
+        });
+      })) return true;
+    }
+  }
+  return false;
+};
+// A site-wide header can look like a signed-in marker while an unanswered challenge form remains
+// below it. Classify the visible field, not every form: account search and profile forms are not
+// evidence of an unfinished sign-in.
+const visibleChallengeForm = async (scopes) => {
+  for (const scope of scopes) {
+    const forms = scope.locator('form');
+    const count = Math.min(await forms.count(), 100);
+    for (let index = 0; index < count; index++) {
+      const form = forms.nth(index);
+      if (!(await form.isVisible())) continue;
+      if (await form.evaluate((element) => {
+        return Array.from(element.querySelectorAll('input, textarea, select, [contenteditable="true"]')).some((field) => {
+          if (field instanceof HTMLInputElement && ['hidden', 'submit', 'button', 'image', 'reset'].includes(field.type)) return false;
+          const box = field.getBoundingClientRect();
+          if (box.width <= 0 || box.height <= 0 || !field.checkVisibility({ visibilityProperty: true })) return false;
+          const description = [field.getAttribute('name'), field.id, field.getAttribute('autocomplete'), field.getAttribute('aria-label'), field.getAttribute('placeholder'), ...Array.from(field.labels ?? []).map((label) => label.textContent)].filter(Boolean).join(' ').toLowerCase();
+          return /answer|question|challenge|one.time.code|otp|verification.?code|verify.?code/.test(description);
+        });
+      })) return true;
+    }
+  }
+  return false;
+};`;
 
 /**
  * One host call: the page URL, whether the indicator is visible in a frame on the site (its host
@@ -300,7 +350,7 @@ for (const candidate of context.pages()) {
   if (candidate === primary || candidate.isClosed() || await candidate.opener() !== primary) continue;
   let origin;
   try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false };
+  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false };
 }
 const siteHost = ${JSON.stringify(siteHost)};
 const onSite = (frame) => {
@@ -321,6 +371,7 @@ const visibleIn = async (selector, scopes) => {
   }
   return false;
 };
+${signedInChallengeFormCode}
 const password = 'input[type="password"]';
 // The field itself, or a control of its form as locate reads the form (its form attribute too),
 // that is a password field and shows: a box with an area, and not hidden.
@@ -355,9 +406,11 @@ const signInPasswordVisible = async (selectors) => {
 };
 const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
+const siteFrames = primary.frames().filter(onSite);
 return {
   url: primary.url(),
-  indicator: selector === null ? null : await visibleIn(selector, primary.frames().filter(onSite)),
+  indicator: selector === null ? null : await visibleIn(selector, siteFrames),
+  challengeFormVisible: await unfinishedForm(selector, siteFrames) || await visibleChallengeForm(siteFrames),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:
     signInFields.length === 0

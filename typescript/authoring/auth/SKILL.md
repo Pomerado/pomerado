@@ -117,6 +117,11 @@ page it redirected to; runs open that route to replay your screens.
   - `slot: "zip"` for a ZIP or postal code the site checks to prove the account.
   - `slot: "recovery_code"` for a backup or recovery code field. The host fills a saved one only
     while recovery codes are the method in force, else asks the caller. Never ask for one yourself.
+  - `slot: "private_answer"` for a security question or other private answer requested during
+    sign-in. Name the observed answer field, never the answer in a selector. The host asks the
+    caller from the current field label and fills it once through the protected sign-in path.
+    A later run asks again; the answer is never saved in the login or recipe. Never submit it
+    through generated browser code.
 - `submit`: the observed enabled control that submits those fields or advances this sign-in screen
   ("Next", "Continue", "Sign in"). It may be a native button, a submit/button/image input, an HTML
   anchor or a custom ARIA action: use its evidenced role, label or stable selector and purpose.
@@ -141,6 +146,8 @@ rejection selector. The slots are `username`, `email`, `phone`, `account_number`
 `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
+`private_answer` has no recorded rejection marker or automatic correction: inspect a refused
+question screen and stop rather than resending the same answer.
 
 <!-- pomerado:hosted:start
 On a combined password-and-code screen that returns empty, an explicit code rejection permits a
@@ -212,7 +219,8 @@ with `signInStep: { signedIn: { selector } }` (or `urlPath`, the observed signed
 When the landing page shows no such evidence, add `openPath`, the observed path of an account page
 that does, and the host opens it and checks there; never guess a protected route. The host checks
 that the submitted sign-in's recorded controls/form no longer show a password entry awaiting
-sign-in; unrelated password controls on the account page do not fail this check. It also checks
+sign-in, and that a marker in an unfinished form or a visible security-answer or verification-code
+field is not mistaken for completion; unrelated account forms do not fail this check. It also checks
 that this sign-in submitted the login's identifier with its password, code or protected approval,
 then marks it verified; a Personal login locks to this site then. The indicator is part of the
 published tool: runs check it after they sign in. Business work waits for a verified sign-in.
@@ -306,7 +314,7 @@ pomerado:hosted:end --><!-- pomerado:standalone:start
 
 Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and enabled submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
 
-Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
+Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. A private answer is prompted from the current field label and discarded after this fill. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
 
 Inspect each subsequent screen and send its observed step. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
 

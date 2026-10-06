@@ -48,6 +48,30 @@ const checkPage = async (
 
 for (const [name, body, frame, failed] of [
   [
+    "the identity marker inside an unfinished security-answer form",
+    `<form><p id="identity">Signed in</p><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
+    null,
+    "challenge_form_visible",
+  ],
+  [
+    "a header marker outside an unfinished security-answer form",
+    `${marker}<form><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
+    null,
+    "challenge_form_visible",
+  ],
+  [
+    "a header marker outside an unfinished verification-code form",
+    `${marker}<form><label>Verification code<input name="verificationCode" required></label><button>Verify</button></form>`,
+    null,
+    "challenge_form_visible",
+  ],
+  [
+    "an account search form that shares the page path",
+    `${marker}<form method="get"><label>Search<input name="search"></label><button>Search</button></form>`,
+    null,
+    undefined,
+  ],
+  [
     "another form's password field, such as a change-password form",
     `${marker}<form action="/account/password" method="post"><label>Current password<input type="password" name="current"></label><label>New password<input type="password" name="new"></label><button>Change password</button></form>`,
     null,

@@ -42,7 +42,7 @@ export const identifierPreference: readonly IdentifierKind[] = [
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
  * or one of its recovery codes. It proves the account and never picks it.
  */
-export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code";
+export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code" | "private_answer";
 /** A secret field's slot: the password, a one-time code or an extra secret. */
 export type SecretSlot = "password" | "code" | ExtraSecretSlot;
 /** The kind of value a sign-in field takes; the host fills it from the login of that kind. */
@@ -62,6 +62,8 @@ export interface AutofillField {
   readonly format?: DateOfBirthFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
+  /** Host-only text from the current visible field label, never persisted in the recipe. */
+  readonly privateAnswerPrompt?: string | undefined;
   /**
    * The accepted kinds the login held when the host filled the field, as kinds only: its saved
    * record's (`vault`) and the owner's answers this attempt (`given`).
@@ -291,6 +293,7 @@ export type AutofillSignedInCheck =
         | "indicator_not_visible"
         | "path_mismatch"
         | "password_field_visible"
+        | "challenge_form_visible"
         | "selector_unsupported"
         | "off_site"
         | "page_unavailable";
@@ -514,7 +517,7 @@ export const checkAutofillSignedIn = (input: {
           error: read.left,
         }),
       };
-    const { url, indicator: visible, passwordVisible } = read.right;
+    const { url, indicator: visible, passwordVisible, challengeFormVisible } = read.right;
     const parsed = URL.parse(url);
     if (parsed === null || !sameSite(input.siteOrigin, parsed))
       return { signedIn: false as const, failed: "off_site" as const, url };
@@ -524,6 +527,8 @@ export const checkAutofillSignedIn = (input: {
       return { signedIn: false as const, failed: "path_mismatch" as const, url };
     if (passwordVisible)
       return { signedIn: false as const, failed: "password_field_visible" as const, url };
+    if (challengeFormVisible)
+      return { signedIn: false as const, failed: "challenge_form_visible" as const, url };
     return { signedIn: true as const, url };
   });
 
