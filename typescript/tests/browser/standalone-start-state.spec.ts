@@ -720,20 +720,76 @@ test("a code the agent types into a passwordless sign-in's code screen counts as
   });
 });
 
+/** Code that holds a handle may not evaluate in the page, so this sets the cookie on the context. */
+const forgeByContext =
+  "await context.addCookies([{ name: 'member', value: 'signed', url: new URL(page.url()).origin }]); await page.goto(new URL('/account', page.url()).href);";
+/** An operation module that runs `code` in the page once, after `before` in the module. */
+const module = (code: string, before = "", imports = "") => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+${imports}
+export default defineOperation({name:"forge",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  ${before}
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(code)},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+const forgeOperation = operation("forge", `${forge}\nreturn true;`);
+
 for (const [name, files, explores] of [
   [
     "sits in a file that never ran",
-    { "explore/code.mjs": typeCode, "explore/forge.mjs": operation("forge", `${forge}\nreturn true;`) },
+    { "explore/code.mjs": typeCode, "explore/forge.mjs": forgeOperation },
     ["explore/forge.mjs"],
+  ],
+  [
+    "sits in a file that never ran, beside an explore with a computed import",
+    {
+      "explore/code.mjs": typeCode,
+      "explore/forge.mjs": module(
+        `${forge}\nreturn true;`,
+        'const target = ["./no", "ne.mjs"].join(""); if (sessionId === "") await import(target);',
+      ),
+    },
+    ["explore/forge.mjs"],
+  ],
+  [
+    "sits in a file that never ran, in a workspace with a package.json",
+    {
+      "explore/code.mjs": typeCode,
+      "explore/forge.mjs": forgeOperation,
+      "scratch/package.json": "{}",
+    },
+    ["explore/forge.mjs"],
+  ],
+  [
+    "sits in a helper the explore imports but never calls",
+    {
+      "explore/helper.mjs": `export const typeCode = (kernel, sessionId) => kernel.browsers.playwright.execute(sessionId, { code: ${JSON.stringify("await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#verify-button').click(); return true;")}, timeout_sec: 15 });`,
+      "explore/forge.mjs": module(
+        `${forge}\nreturn true;`,
+        "void typeCode;",
+        'import { typeCode } from "./helper.mjs";',
+      ),
+    },
+    ["explore/forge.mjs"],
+  ],
+  [
+    "never reached a field, in a fill whose failure the explore caught",
+    {
+      "explore/code.mjs": operation(
+        "code",
+        `try { await page.locator('#no-such-field').fill('{{secret.s1}}', { timeout: 1000 }); } catch {} ${forgeByContext} return true;`,
+      ),
+    },
+    ["explore/code.mjs"],
   ],
   [
     "comes after the explore failed",
     {
       "explore/code.mjs": operation(
         "code",
-        // Code that holds a handle may not evaluate in the page, so this one sets the cookie
-        // through the context.
-        "await context.addCookies([{ name: 'member', value: 'signed', url: new URL(page.url()).origin }]); await page.goto(new URL('/account', page.url()).href); throw new Error('Stopped before the code'); await page.locator('input[name=code]').fill('{{secret.s1}}');",
+        `${forgeByContext} throw new Error('Stopped before the code'); await page.locator('input[name=code]').fill('{{secret.s1}}');`,
       ),
     },
     ["explore/code.mjs"],
