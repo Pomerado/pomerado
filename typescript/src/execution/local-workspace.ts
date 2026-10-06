@@ -244,7 +244,12 @@ const workspaceSession = (ports: {
     state,
     supportsPty: () => false,
     createEditor: () => makeLocalEditor({ root, read, write, lock, writable }),
-    readFile: ({ path, maxBytes }) => Effect.runPromise(read(path, maxBytes)),
+    // A caller may ask for one byte past its own limit to detect an oversized file; a file past
+    // this workspace's limit fails to read either way.
+    readFile: ({ path, maxBytes }) =>
+      Effect.runPromise(
+        read(path, maxBytes === undefined ? undefined : Math.min(maxBytes, localSourceFileLimit)),
+      ),
     pathExists: (path) =>
       Effect.runPromise(
         localFilePath(root, path).pipe(

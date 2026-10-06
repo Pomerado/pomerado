@@ -69,7 +69,7 @@ const passwordScreen = (refusals: readonly (keyof typeof focusAnswers)[]) => {
       targetId: "primary",
       execute: () => Effect.sync(() => answers.shift() ?? { error: "not_found", target: 0 }),
     },
-    keyboard: { insertText: () => Effect.succeed(false) },
+    keyboard: { insertText: () => Effect.succeed("insertion_rejected" as const) },
     siteOrigin: site,
     authenticationOrigins: [],
     ask: (request) =>

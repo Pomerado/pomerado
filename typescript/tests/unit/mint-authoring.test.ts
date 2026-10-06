@@ -123,13 +123,13 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["964e12308c358741b63ecd329facc0d837ef17bfbb693ed4b34efd07e9769037", "core"],
-    ["cb5d827f6216a73624c72b5ed79fd31ff790e30e49f2e2e14a488273f370b204", "auth"],
+    ["268e442bc5c427b4ccabf26b9c073c59bbef758cffaa801cfa7aa9ce3b70c327", "core"],
+    ["d22b06f5fbd185d359f2bcc7c9a37f0b63208d7caea1efee38d06181df6b18c4", "auth"],
     ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
     ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
     ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
     ["b78f4a206f796f2638779ab31b13685f358018724685fb0a603b5b0e40ae1c77", "caller-input"],
-    ["e9d7e8356560382dac0cbb93fd7c381faa03f446d1d92c080ffdcd58c13d8105", "workspace/AGENTS.md"],
+    ["cb7e69fbddbb756e1c40006483b5ff8b8fce2af2aa9f7e062e9c75a9db2bcd21", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });
