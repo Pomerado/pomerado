@@ -112,6 +112,40 @@ test("the host shows Guardian the page's origin and that the submit it clicks is
   expect(inspection.screen.submit).toMatchObject({ tag: "button", enabled: true });
 });
 
+for (const [name, step] of [
+  ["its submit", passwordStep],
+  ["its fields when it names no submit", { fields: passwordStep.fields }],
+] as const)
+  test(`the origin Guardian sees for a sign-in form in a configured origin's frame is the frame's, from ${name}`, async ({
+    page,
+  }) => {
+    const provider = "https://auth.provider.test";
+    await page.route(`${site}/**`, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<iframe src="${provider}/login"></iframe>`,
+      }),
+    );
+    await page.route(`${provider}/**`, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: '<form action="/session" method="post"><label>Password<input id="password" name="password" type="password"></label><button id="continue">Sign in</button></form>',
+      }),
+    );
+    await page.goto(`${site}/login`);
+    await page.frameLocator("iframe").locator("#password").waitFor();
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({
+        step,
+        page: await hostPage(page),
+        siteOrigin: site,
+        authenticationOrigins: [provider],
+      }),
+    );
+    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+    expect(inspection.screen.origin).toBe(provider);
+  });
+
 for (const [name, control] of [
   ["a button", '<button id="continue">Sign in</button>'],
   ["a submit input", '<input id="continue" type="submit" value="Sign in">'],

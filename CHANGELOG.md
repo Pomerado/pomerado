@@ -9,7 +9,7 @@
 
 ### Breaking changes
 
-- Guardian's review of a host sign-in step now shows the origin of the page the step's controls are on and that the submit the host clicks is enabled. `AutofillInspection.screen` from `pomerado/core/destinations/autofill-step` adds a required `origin`, and its `submit` adds a required `enabled`. `inspectAutofillStep` sets both.
+- Guardian's review of a host sign-in step now shows the origin of the document the step's controls are in and that the submit the host clicks is enabled. `AutofillInspection.screen` from `pomerado/core/destinations/autofill-step` adds a required `origin`, and its `submit` adds a required `enabled`, which is always `true`. `inspectAutofillStep` sets both.
   - Migrate by setting both on any inspection you build yourself.
 
 ## 0.2.0

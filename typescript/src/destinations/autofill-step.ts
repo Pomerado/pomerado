@@ -175,7 +175,7 @@ const Located = Schema.Union(
   Schema.Struct({
     fields: Schema.Array(Schema.Struct({ target: Target, described: Described })),
     submit: Schema.NullOr(
-      Schema.Struct({ target: Target, described: Described, enabled: Schema.Boolean }),
+      Schema.Struct({ target: Target, described: Described, enabled: Schema.Literal(true) }),
     ),
     located: Schema.optional(FoundAt),
     buttons: Schema.Array(Schema.String),
@@ -233,7 +233,10 @@ export interface AutofillInspection {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly screen: {
-    /** The origin of the page the step's controls are on, as the host found it. */
+    /**
+     * The origin of the document the host found the step's controls in: its submit's, or its
+     * fields' when it names no submit.
+     */
     readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: AutofillSlot;
@@ -241,7 +244,7 @@ export interface AutofillInspection {
       readonly format?: DateOfBirthFormat | undefined;
     })[];
     /** The control the host clicks. The host refuses a disabled one, so `enabled` is true. */
-    readonly submit: (typeof Described.Type & { readonly enabled: boolean }) | null;
+    readonly submit: (typeof Described.Type & { readonly enabled: true }) | null;
     /** Visible native and ARIA actions, links included, for a step that names no submit. */
     readonly buttons: readonly string[];
   };
@@ -429,7 +432,8 @@ export const inspectAutofillStep = (input: {
       siteOrigin,
       authenticationOrigins,
       screen: {
-        origin: at === null ? "" : at.origin,
+        origin:
+          found.submit?.target.documentOrigin ?? found.fields[0]?.target.documentOrigin ?? "",
         fields: found.fields.map(({ described }, index) => {
           const field = step.fields[index];
           return {
