@@ -46,7 +46,7 @@ export {
   CommitAlreadySent,
 } from "../runtime/errors.js";
 export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/errors.js";
-export { formControlsCode } from "./form-controls.js";
+export { CalendarDate, formControlsCode } from "./form-controls.js";
 export type { FormControlShape } from "./form-controls.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";
