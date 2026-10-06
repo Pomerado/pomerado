@@ -23,6 +23,7 @@
 - A failed run that has no more specific message now reads "Operation failed. Check the local browser and integration configuration." Minting keeps its message.
 - `pomerado/core/runtime/start-state` holds the start-state decision (`startStateFor`, `shouldSaveSession`, `isFirstWriteStep`), the per-build `makeStartTracker`, and the page reset: `startPage` with its required `StartPageHooks`, `localStartHooks`, and the `resetPageCode`, `stopLoadingCode` and `saveSessionCode` browser code.
 - A signed-in build's saved session must fit the page-code worker's 1 MiB result cap. A larger one fails the save and every later live step other than a sign-in step, and a new sign-in hits the same cap.
+- Every merge to `main` publishes a canary, `X.Y.Z-canary.N`, under the `canary` dist-tag: `npm install pomerado@canary`. `latest` moves to the canary that Pomerado's hosted service promotes to production, so `npm install pomerado` gets the build production runs. The range it saves, such as `^0.2.1-canary.57`, also matches later canaries, so install with `--save-exact` or keep a lockfile. See [Releasing](docs/RELEASING.md).
 
 ## 0.2.0
 
