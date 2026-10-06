@@ -274,8 +274,9 @@ export type AutofillStepReport =
       /** Host-only: a value reached the page, even one a field no longer holds. */
       readonly typed?: true;
       /**
-       * Host-only: the page's controls once a clicked submit settled, never a value. The host saves
-       * them to a workspace file for the minter (`afterSubmitPath`) rather than showing them inline.
+       * Host-only: the page's controls once a clicked submit settled, never a value, with names as
+       * the page has them. The host screens them, shortens them (`presentControls`) and saves them
+       * to a workspace file for the minter (`afterSubmitPath`) rather than showing them inline.
        */
       readonly controls?: PageControls;
     }

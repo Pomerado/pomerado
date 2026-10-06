@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -19,6 +20,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import { InputRequest as InputRequestSchema } from "../../src/runtime/input-request.js";
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
+import { pageControlsLimit } from "../../src/destinations/page-controls.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 
@@ -1340,15 +1342,44 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
   }
 });
 
-test("a two-screen sign-in saves the next screen's controls and inlines them when the next step fails", async () => {
-  test.info().annotations.push({
-    type: "slow",
-    description:
-      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
-  });
-  test.setTimeout(45_000);
+const SavedControls = Schema.parseJson(
+  Schema.Struct({
+    controls: Schema.Array(
+      Schema.Struct({
+        role: Schema.String,
+        name: Schema.NullOr(Schema.String),
+        type: Schema.NullOr(Schema.String),
+        required: Schema.Boolean,
+        visible: Schema.Boolean,
+        enabled: Schema.Boolean,
+      }),
+    ),
+    total: Schema.Number,
+  }),
+);
+const LastScreen = Schema.Struct({
+  lastScreen: Schema.Struct({
+    path: Schema.Literal("captures/after-submit/1.json"),
+    controls: Schema.Array(Schema.Unknown),
+    truncated: Schema.optional(Schema.String),
+  }),
+});
+
+/**
+ * A mint that signs in on the shop's two-screen sign-in: the identifier step, a read of the saved
+ * controls, then (with `failNext`) a step whose field the next screen lacks. It answers every
+ * sign-in question with `identifier` and returns the file as saved on disk after the first submit,
+ * and each tool result by call id.
+ */
+const twoScreenSignIn = async (options: {
+  readonly identifier: string;
+  readonly loginPath: string;
+  readonly failNext: boolean;
+}) => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-after-submit-"));
   const shop = await startShop(directory);
+  // Marks this sign-in's help links, so the test finds its own saved file among parallel tests'.
+  const tag = `tag${randomUUID().slice(0, 8)}`;
   const remote = await chromium.launchServer({
     args: [
       `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
@@ -1356,7 +1387,6 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
       "--ignore-certificate-errors",
     ],
   });
-  const email = shopAccount.username;
   // The minter reads the saved file on its next turn; the test reads it from disk then.
   const savedFile = () =>
     readdirSync(tmpdir())
@@ -1364,7 +1394,7 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
       .map((entry) => join(tmpdir(), entry, "captures/after-submit/1.json"))
       .filter((path) => existsSync(path))
       .map((path) => readFileSync(path, "utf8"))
-      .find((text) => text.includes("Help topic"));
+      .find((text) => text.includes(tag));
   let saved: string | undefined;
   const mintRequests: ModelRequest[] = [];
   const signInStep = (step: unknown, callId: string) =>
@@ -1387,7 +1417,7 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
         ),
       ];
     }
-    if (index === 2)
+    if (index === 2 && options.failNext)
       return [
         signInStep(
           { fields: [{ selector: "#pin", slot: "password" }], submit: "#sign-in" },
@@ -1396,13 +1426,6 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
       ];
     return [message("Stopping here.")];
   }, mintRequests);
-  const toolResult = (callId: string) => {
-    const result = objects(mintRequests.at(-1)?.input).find(
-      (item) => item["type"] === "function_call_result" && item["callId"] === callId,
-    );
-    if (result === undefined) throw new Error(`No ${callId} result`);
-    return result;
-  };
   try {
     await Effect.runPromise(
       Effect.scoped(
@@ -1413,13 +1436,15 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
             guardianProvider: guardian([]),
             ask: makeInputAsker((request) =>
               Effect.succeed(
-                Object.fromEntries(request.questions.map((question) => [question.id, email])),
+                Object.fromEntries(
+                  request.questions.map((question) => [question.id, options.identifier]),
+                ),
               ),
             ),
             timeoutMs: 30_000,
           });
           yield* service.mint({
-            url: `${shop.origin}/sign-in`,
+            url: `${shop.origin}${options.loginPath}${options.loginPath.includes("?") ? "&" : "?"}tag=${tag}`,
             intent: "Read the account heading",
             effect: "read",
             input: {},
@@ -1427,60 +1452,106 @@ test("a two-screen sign-in saves the next screen's controls and inlines them whe
         }),
       ),
     );
-    // The file is saved after the first submit, with the next screen's controls and no value.
-    expect(saved).toBeDefined();
-    const file = Schema.decodeUnknownSync(
-      Schema.parseJson(
-        Schema.Struct({
-          controls: Schema.Array(
-            Schema.Struct({
-              role: Schema.String,
-              name: Schema.NullOr(Schema.String),
-              type: Schema.NullOr(Schema.String),
-              required: Schema.Boolean,
-              visible: Schema.Boolean,
-              enabled: Schema.Boolean,
-            }),
-          ),
-          total: Schema.Number,
-        }),
-      ),
-    )(saved);
-    expect(saved).not.toContain(email);
-    expect(file.controls).toContainEqual(
-      expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
-    );
-    expect(file.controls).toContainEqual(
-      expect.objectContaining({ role: "button", name: "Trouble signing in", enabled: false }),
-    );
-    expect(file.controls).toContainEqual(
-      expect.objectContaining({ name: "Code", visible: false }),
-    );
-    expect(file.total).toBe(shopHelpLinks + 4);
-    // The step result names the file and adds no control list.
-    const identifier = JSON.stringify(toolResult("identifier"));
-    expect(identifier).toContain("captures/after-submit/1.json");
-    expect(identifier).not.toContain("Help topic");
-    // The minter reads it like any other workspace file.
-    const read = JSON.stringify(toolResult("read_controls"));
-    expect(read).toContain("Help topic 0");
-    expect(read).not.toContain(email);
-    // A step that cannot find its screen carries the saved controls inline, capped.
-    const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
-    const lastScreen = Schema.decodeUnknownSync(
-      Schema.Struct({
-        lastScreen: Schema.Struct({
-          path: Schema.Literal("captures/after-submit/1.json"),
-          controls: Schema.Array(Schema.Unknown),
-          truncated: Schema.String,
-        }),
-      }),
-    )(failed).lastScreen;
-    expect(lastScreen.controls).toHaveLength(30);
-    expect(JSON.stringify(mintRequests)).not.toContain(email);
   } finally {
     await remote.close();
     await shop.close();
     await rm(directory, { recursive: true, force: true });
   }
+  const toolResult = (callId: string) => {
+    const result = objects(mintRequests.at(-1)?.input).find(
+      (item) => item["type"] === "function_call_result" && item["callId"] === callId,
+    );
+    if (result === undefined) throw new Error(`No ${callId} result`);
+    return result;
+  };
+  return { saved, toolResult, mintRequests };
+};
+
+test("a two-screen sign-in saves the next screen's controls and inlines them when the next step fails", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const email = shopAccount.username;
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier: email,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  // The file is saved after the first submit, with the next screen's controls and no value.
+  expect(saved).toBeDefined();
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(saved).not.toContain(email);
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
+  expect(file.controls).toContainEqual(
+    expect.objectContaining({ role: "button", name: "Trouble signing in", enabled: false }),
+  );
+  expect(file.controls).toContainEqual(expect.objectContaining({ name: "Code", visible: false }));
+  expect(file.total).toBe(shopHelpLinks + 4);
+  // The step result names the file and adds no control list.
+  const identifier = JSON.stringify(toolResult("identifier"));
+  expect(identifier).toContain("captures/after-submit/1.json");
+  expect(identifier).not.toContain("Help topic");
+  // The minter reads it like any other workspace file.
+  const read = JSON.stringify(toolResult("read_controls"));
+  expect(read).toContain("Help topic 0");
+  expect(read).not.toContain(email);
+  // A step that cannot find its screen carries the saved controls inline, capped.
+  const failed = objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item);
+  const lastScreen = Schema.decodeUnknownSync(LastScreen)(failed).lastScreen;
+  expect(lastScreen.controls).toHaveLength(30);
+  expect(lastScreen.truncated).toBeDefined();
+  expect(JSON.stringify(mintRequests)).not.toContain(email);
+});
+
+test("a long typed identifier the next screen echoes in a label never appears in its saved or inline controls, even in part", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two host autofill steps through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  // A synthetic identifier longer than a control's shown name, so cutting the name before
+  // screening would leave a long piece of it.
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const identifier = `${Array.from({ length: 156 }, (_, index) => alphabet[(index * 7) % 36]).join("")}@example.test`;
+  expect(identifier).toHaveLength(169);
+  const { saved, toolResult, mintRequests } = await twoScreenSignIn({
+    identifier,
+    loginPath: "/sign-in",
+    failNext: true,
+  });
+  expect(saved).toBeDefined();
+  const failed = JSON.stringify(
+    objects(toolResult("wrong_screen")).find((item) => "lastScreen" in item),
+  );
+  expect(failed).toContain("Password for");
+  const pieces = Array.from({ length: identifier.length - 11 }, (_, at) =>
+    identifier.slice(at, at + 12),
+  );
+  for (const text of [saved ?? "", failed, JSON.stringify(mintRequests)])
+    expect(pieces.filter((piece) => text.includes(piece))).toEqual([]);
+});
+
+test("a next screen whose first hundred controls are hidden still saves its visible sign-in field", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and a host autofill step through a real form navigation",
+  });
+  test.setTimeout(45_000);
+  const { saved } = await twoScreenSignIn({
+    identifier: shopAccount.username,
+    loginPath: `/sign-in?hidden=${pageControlsLimit}`,
+    failNext: false,
+  });
+  const file = Schema.decodeUnknownSync(SavedControls)(saved);
+  expect(file.total).toBe(pageControlsLimit + shopHelpLinks + 4);
+  expect(file.controls).toHaveLength(pageControlsLimit);
+  expect(file.controls[0]).toEqual(
+    expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
+  );
 });

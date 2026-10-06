@@ -4,6 +4,7 @@ import {
   afterSubmitPath,
   inlineControls,
   PageControls,
+  presentControls,
   type PageControls as Saved,
 } from "../destinations/page-controls.js";
 import type { LocalWorkspace } from "../execution/local-workspace.js";
@@ -30,9 +31,10 @@ export const makeAfterSubmit = (options: {
       if (report.outcome === "filled" && report.controls !== undefined) {
         const { controls, ...shown } = report;
         const path = afterSubmitPath(step);
-        const saved = yield* options
-          .screen(controls)
-          .pipe(Effect.flatMap(Schema.decodeUnknown(PageControls)));
+        // Screened whole first: shortening a name before would leave part of a typed value.
+        const saved = presentControls(
+          yield* options.screen(controls).pipe(Effect.flatMap(Schema.decodeUnknown(PageControls))),
+        );
         yield* options.workspace.install(path, `${JSON.stringify(saved, null, 2)}\n`);
         last = { path, saved };
         return { ...shown, nextScreen: `The next screen's controls are in ${path}.` };
