@@ -5,6 +5,7 @@ import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
+import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { DestinationReason } from "./destination-reason.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
@@ -124,6 +125,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly modelOutage?: "unavailable" | "quota_exhausted";
   /** The session's `decideDialog` step names a `confirm_action_unmatched` refusal names. */
   readonly confirmActionIds?: readonly string[];
+  /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
+  readonly inputIssues?: readonly InputIssue[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
   readonly destinationEvidenceGap?:
     | "no_route_evidence"
@@ -451,8 +454,10 @@ export const ExecutionRequest = Schema.Struct({
   /** Only on authenticate, and only where the host offers autofill sign-in. */
   signInStep: Schema.optional(SignInStep),
   /**
-   * Only on a read build's example when the caller's input is empty (`{}`): the tool's input as
-   * JSON text, which the agent writes from the request and the owner's answers. The example runs it.
+   * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
+   * act step: the tool's input as JSON text, which the agent writes from the request and the
+   * owner's answers. The example, or each act step that passes it, runs it. A host that keeps a
+   * write session's input also runs it on the session's later act steps.
    */
   exampleInput: Schema.optional(Schema.String),
 });

@@ -294,12 +294,23 @@ const withHostNotices = (
   };
 };
 
+/** The paths an input schema rejected, as a sentence, or nothing when the host has none. */
+const inputIssueText = (issues: MintFailure["inputIssues"]) =>
+  issues === undefined || issues.length === 0
+    ? ""
+    : ` It rejected ${issues
+        .map(
+          ({ path, issue }) =>
+            `${path === "" ? "the input itself" : JSON.stringify(path)} (${issue})`,
+        )
+        .join(", ")}.`;
+
 /** What the agent does about a question its script asked that reached nobody. */
 const scriptQuestionInstruction: Readonly<
   Record<NonNullable<ExecutionEvidence["scriptQuestion"]>["outcome"], string>
 > = {
   reword:
-    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows.",
+    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows: read a value the caller's input or the request gives from the tool's input (when the caller's input is empty, pass it in exampleInput on the example, or on the write session's first act step), and use the {{secret.<id>}} handle of a protected answer you already hold.",
   authentication:
     "The script's question asks for a website login, which only the host requests, so nobody was asked. Remove it from the script's questions and sign in with execute purpose authenticate instead.",
   invalid:
@@ -2680,7 +2691,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   return notPublished(
                     error.code,
                     error.reason,
-                    {},
+                    error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
+                      ? { inputIssues: error.inputIssues }
+                      : {},
                     (error.reason === "confirmation_undeclared"
                       ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
                       : error.reason === "commit_marks_undeclared"
@@ -2690,7 +2703,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           : error.reason === "confirmation_unrecorded"
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"
-                              ? "Not published: the script's input schema rejects the caller's own values, which the example or session used (in maintenance, the original invocation's). Correct the schema so these values decode, then call finish_build again with the same executionId."
+                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
                               : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
                       " The host extracts the contract offline; never run the write or the example again for this.",
                   );
