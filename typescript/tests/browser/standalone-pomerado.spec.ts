@@ -1718,12 +1718,14 @@ test("a local mint sends Guardian the native policy and the minter the rendered 
       ),
     );
     expect(built.build).toBe("published");
-    const executionReviews = reviewRequests.filter(
-      (request) =>
-        !objects(request.input).some(
-          (item) => "submitted_call" in item && "question_review" in item,
-        ),
-    );
+    // Reviews share one conversation, so a request also carries the earlier question review.
+    // Its own kind is that of its last submitted call.
+    const executionReviews = reviewRequests.filter((request) => {
+      const current = objects(request.input)
+        .filter((item) => "submitted_call" in item)
+        .at(-1);
+      return current !== undefined && !("question_review" in current);
+    });
     expect(executionReviews.length).toBeGreaterThan(0);
     for (const request of executionReviews) {
       expect(reviewedNative(request)).toBe(true);
