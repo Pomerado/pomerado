@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { applyDiff, type Editor } from "@openai/agents";
 import { Manifest, type Entry, type SandboxSession } from "@openai/agents/sandbox";
-import { Effect, type Scope } from "effect";
+import { Effect, Either, type Scope } from "effect";
 import { createLocalProcess, type LocalProcess } from "./local-process.js";
 import {
   localError,
@@ -80,6 +80,14 @@ const listLocalFiles = (root: string, relative = ""): Effect.Effect<readonly str
     return files.sort();
   });
 
+/**
+ * An edit refused before it changed anything, named by the stage it stopped at and an errno code:
+ * `diff` for a patch that does not apply, `open` for a file that exists, is missing or would pass
+ * a size limit. The mint workspace tells the agent the edit was not applied, and why.
+ */
+const refusedEdit = (stage: "open" | "diff", code: string, message?: string) =>
+  Object.assign(new Error(message ?? `Workspace edit refused (${code})`), { stage, code });
+
 const writeLocalFile = (
   root: string,
   path: string,
@@ -89,14 +97,26 @@ const writeLocalFile = (
   Effect.gen(function* () {
     const bytes = Buffer.byteLength(text);
     if (bytes > localSourceFileLimit)
-      return yield* Effect.fail(new Error("Workspace file exceeds 8 MiB"));
+      return yield* Effect.fail(
+        refusedEdit(
+          "open",
+          "EFBIG",
+          `A workspace file may hold at most ${localSourceFileLimit} bytes`,
+        ),
+      );
     const target = yield* localFilePath(root, path, true);
     let total = bytes;
     for (const file of yield* listLocalFiles(root)) {
       if (file === localRelativePath(path) || installed.has(file)) continue;
       total += (yield* localPromise(() => lstat(join(root, file)))).size;
       if (total > localSourceBundleLimit)
-        return yield* Effect.fail(new Error("Workspace exceeds 16 MiB"));
+        return yield* Effect.fail(
+          refusedEdit(
+            "open",
+            "EFBIG",
+            `All workspace files together may hold at most ${localSourceBundleLimit} bytes`,
+          ),
+        );
     }
     const temporary = join(dirname(target), `.pomerado-${randomUUID()}`);
     const handle = yield* localPromise(() =>
@@ -122,24 +142,37 @@ const makeLocalEditor = (options: {
   readonly writable: (path: string) => Effect.Effect<void, Error>;
 }): Editor => {
   const patched = (current: string, diff: string, mode: "create" | "default") =>
-    Effect.try({ try: () => applyDiff(current, diff, mode), catch: localError });
+    Effect.try({
+      try: () => applyDiff(current, diff, mode),
+      catch: (error) =>
+        refusedEdit("diff", "EINVAL", error instanceof Error ? error.message : undefined),
+    });
+  /** A file that is not there was not changed. */
+  const present = <A>(run: Effect.Effect<A, Error>) =>
+    run.pipe(
+      Effect.mapError((error) => (localMissing(error) ? refusedEdit("open", "ENOENT") : error)),
+    );
   const remove = (path: string) =>
     options
       .writable(path)
       .pipe(Effect.zipRight(localFilePath(options.root, path)))
       .pipe(Effect.flatMap((target) => localPromise(() => unlink(target))));
+  // Rejects with the edit's own error, so a refusal reaches the caller with its stage and code.
   const edit = (run: Effect.Effect<void, Error>) =>
     Effect.runPromise(
-      run.pipe(options.lock.withPermits(1), Effect.as({ status: "completed" as const })),
-    );
+      run.pipe(
+        options.lock.withPermits(1),
+        Effect.as({ status: "completed" as const }),
+        Effect.either,
+      ),
+    ).then((result) => Either.getOrThrowWith(result, (error) => error));
   return {
     createFile: (operation) =>
       edit(
         Effect.gen(function* () {
           const target = yield* localFilePath(options.root, operation.path, true);
           const existing = yield* localPromise(() => lstat(target)).pipe(Effect.either);
-          if (existing._tag === "Right")
-            return yield* Effect.fail(new Error("Workspace file already exists"));
+          if (existing._tag === "Right") return yield* Effect.fail(refusedEdit("open", "EEXIST"));
           if (!localMissing(existing.left)) return yield* Effect.fail(existing.left);
           yield* options.write(operation.path, yield* patched("", operation.diff, "create"));
         }),
@@ -149,7 +182,7 @@ const makeLocalEditor = (options: {
         Effect.gen(function* () {
           yield* options.writable(operation.path);
           const text = yield* patched(
-            yield* options.read(operation.path),
+            yield* present(options.read(operation.path)),
             operation.diff,
             "default",
           );
@@ -159,7 +192,7 @@ const makeLocalEditor = (options: {
             yield* remove(operation.path);
         }),
       ),
-    deleteFile: (operation) => edit(remove(operation.path)),
+    deleteFile: (operation) => edit(present(remove(operation.path))),
   };
 };
 
