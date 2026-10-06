@@ -638,7 +638,8 @@ export const makeOpenAIMinter = (
                 : tool({
                     ...hostTool(
                       "captcha_state",
-                      "Read the trusted host's current Kernel CAPTCHA solver state for this attempt's live browser: detected, captchaType and status (not_detected, pending, solved, challenge_pending, solver_succeeded, failed, abandoned or unknown) with finite counts and ages; a solver task's success is not a solved challenge. Read-only: it never clicks, reloads, navigates, triggers a solve or extends a deadline, and it is not page evidence. Read .agents/captcha/SKILL.md before relying on it. intent states which observation prompted the check.",
+                      turn.hostToolDescriptions?.captchaState ??
+                        "Read the trusted host's current CAPTCHA state for this attempt's live browser, with finite counts and ages. Read-only: it never clicks, reloads, navigates, triggers a solve or extends a deadline, and it is not page evidence. intent states which observation prompted the check.",
                       "CAPTCHA state could not be read. This is not evidence that a challenge was solved or absent; use current page evidence and do not retry the website action.",
                       (request) => readCaptchaState(request),
                     ),
@@ -651,7 +652,8 @@ export const makeOpenAIMinter = (
                 : tool({
                     ...hostTool(
                       "request_browser_recovery",
-                      "Troubleshooting only, never part of the published tool: ask the host to replace this attempt's live browser with a new one (the host's recovery policy picks a stronger browser mode or another proxy; the new browser starts on an empty profile, signed out). Guardian reviews your reason first. The host runs no code and repeats nothing; you continue in this conversation and inspect the current page. Read .agents/browser-recovery/SKILL.md before using it. intent states what you observed and why a new browser, not a code fix, should help.",
+                      turn.hostToolDescriptions?.requestBrowserRecovery ??
+                        "Troubleshooting only, never part of the published tool: ask the host to replace this attempt's live browser with a new one, which starts on an empty profile, signed out. Guardian reviews your reason first. The host runs no code and repeats nothing; you continue in this conversation and inspect the current page. intent states what you observed and why a new browser, not a code fix, should help.",
                       "The browser recovery request did not complete. Nothing was replaced unless a later result says so; read the page before continuing.",
                       (_request, intent) => requestRecovery({ rationale: intent }),
                     ),

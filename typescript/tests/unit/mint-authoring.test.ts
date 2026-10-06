@@ -1,4 +1,9 @@
+import { createHash } from "node:crypto";
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Script } from "node:vm";
+import type { SkillDescriptor } from "@openai/agents/sandbox";
 import { Effect, Either, Schema } from "effect";
 import { expect, it } from "vitest";
 import parser from "../../authoring/examples/parser.js";
@@ -42,6 +47,124 @@ it("names only skills that load and workspace sections that install", async () =
       expect(skills).toContain(name);
     for (const [path] of text.matchAll(/reference\/[a-z-]+\.md/gu))
       expect(guide.files.has(path)).toBe(true);
+  }
+});
+
+const sectionMarker =
+  /<!-- pomerado:section ([a-z0-9.-]+)(?: -->|:start\n[\s\S]*?\npomerado:section \1:end -->)/g;
+
+const authoringCopy = async (edit: (path: string, text: string) => string) => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-authoring-"));
+  await cp("typescript/authoring", root, { recursive: true });
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true }))
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      const path = join(entry.parentPath, entry.name);
+      await writeFile(path, edit(path, await readFile(path, "utf8")));
+    }
+  return root;
+};
+
+/** What a host does before loading in hosted mode: every section gets the host's text. */
+const composeHostText = (text: string) =>
+  text.replace(sectionMarker, (_match, id: string) => `host text for ${id}`);
+
+const contents = (skills: readonly SkillDescriptor[]) =>
+  skills.map((skill) => {
+    if (!(skill.content instanceof Uint8Array)) throw new Error(`${skill.name} is not bytes`);
+    return new TextDecoder().decode(skill.content);
+  });
+
+it("loads standalone text by default and refuses uncomposed sections in hosted mode", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  expect(skills).toEqual(
+    await Effect.runPromise(loadAuthoringSkills("typescript/authoring", "standalone")),
+  );
+  for (const text of [...contents(skills), ...guide.files.values()])
+    expect(text).not.toContain("<!-- pomerado:");
+  const refused = { _tag: "Left", left: { code: "Unavailable" } };
+  expect(
+    await Effect.runPromise(Effect.either(loadAuthoringSkills("typescript/authoring", "hosted"))),
+  ).toMatchObject(refused);
+  expect(
+    await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", "hosted"))),
+  ).toMatchObject(refused);
+});
+
+it("loads a host-composed directory in hosted mode exactly as composed", async () => {
+  const root = await authoringCopy((_path, text) => composeHostText(text));
+  try {
+    const skills = await Effect.runPromise(loadAuthoringSkills(root, "hosted"));
+    const guide = await Effect.runPromise(loadWorkspaceGuide(root, "hosted"));
+    for (const [index, skill] of skills.entries())
+      expect(contents(skills)[index]).toBe(
+        await readFile(join(root, skill.name, "SKILL.md"), "utf8"),
+      );
+    expect(guide.instructions).toBe(await readFile(join(root, "workspace/AGENTS.md"), "utf8"));
+    expect(guide.instructions).toContain("host text for ");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/*
+ * Pins everything the package gives a standalone minting model: each skill's name, description,
+ * text and references in catalog order, the instructions and the workspace README. Change a digest
+ * only for an intended authoring change, after reading the rendered text. Each digest comes before
+ * its name so a secret scanner does not read a name such as `auth` as a key for it.
+ */
+it("renders the pinned standalone authoring", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  expect(guide.instructions).toBe(guide.files.get("AGENTS.md"));
+  expect([
+    ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
+    ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
+  ]).toStrictEqual([
+    ["268e442bc5c427b4ccabf26b9c073c59bbef758cffaa801cfa7aa9ce3b70c327", "core"],
+    ["0239c6f0c560e3288d09eed06c5071aed6c087552a89c5632107aec9dcc1bbe3", "auth"],
+    ["d07cbe4642fff0df7477110ae8d28104d73638a42aea0904270859851892f255", "pagination"],
+    ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
+    ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
+    ["b78f4a206f796f2638779ab31b13685f358018724685fb0a603b5b0e40ae1c77", "caller-input"],
+    ["e9d7e8356560382dac0cbb93fd7c381faa03f446d1d92c080ffdcd58c13d8105", "workspace/AGENTS.md"],
+    ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
+  ]);
+});
+
+it.each([
+  ["an unterminated section", "<!-- pomerado:section core.left-open:start\nleft open\n"],
+  ["a stray end marker", "pomerado:section core.stray:end -->\n"],
+  ["a marker without its space", "<!--pomerado:section core.unspaced -->\n"],
+  ["a section named for another file", "<!-- pomerado:section auth.elsewhere -->\n"],
+  [
+    "a duplicated section",
+    "<!-- pomerado:section core.twice -->\n<!-- pomerado:section core.twice -->\n",
+  ],
+  [
+    "a section inside a code fence",
+    "```md\n<!-- pomerado:section core.fenced:start\nshown\npomerado:section core.fenced:end -->\n```\n",
+  ],
+  ["a 0.1.1 end marker", "pomerado:hosted:end -->\n"],
+  ["an uppercase marker", "<!-- Pomerado:section core.upper -->\n"],
+  ["an uppercase end marker", "POMERADO:SECTION core.upper:end -->\n"],
+])("refuses %s in either mode", async (_case, appended) => {
+  const append = (path: string, text: string) =>
+    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text;
+  // The hosted copy is composed as in the test above, which loads, so only the marker fails it.
+  const roots = {
+    standalone: await authoringCopy(append),
+    hosted: await authoringCopy((path, text) => append(path, composeHostText(text))),
+  };
+  try {
+    for (const [mode, root] of Object.entries(roots) as [keyof typeof roots, string][])
+      expect(await Effect.runPromise(Effect.either(loadAuthoringSkills(root, mode)))).toMatchObject(
+        { _tag: "Left", left: { code: "Unavailable" } },
+      );
+  } finally {
+    for (const root of Object.values(roots)) await rm(root, { recursive: true, force: true });
   }
 });
 

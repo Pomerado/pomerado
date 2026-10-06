@@ -3101,6 +3101,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           session,
           instructions: dependencies.instructions,
           skills: dependencies.skills,
+          ...(dependencies.hostToolDescriptions === undefined
+            ? {}
+            : { hostToolDescriptions: dependencies.hostToolDescriptions }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
               ? (({ retainCapture: _capture, ...available }) => available)(actions)
