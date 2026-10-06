@@ -2,8 +2,9 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
-import type { MintDependencies } from "../../src/mint/contracts.js";
+import { MintFailure, type MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
+import { autofillRefusalFailure } from "../../src/mint/sign-in-failure.js";
 import { makeLiveAuthentication } from "../../src/standalone/authentication.js";
 import { mintError } from "../../src/standalone/errors.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
@@ -225,4 +226,57 @@ it("starts the count again when a different refusal breaks the run", async () =>
   expect(third).not.toHaveProperty("buildOutcome");
   expect(third["notice"]).toContain("did not take the focus");
   expect(outcome.recoveryReason).not.toBe("sign_in_unavailable");
+});
+
+// A refusal whose sign-in cleanup the host could not confirm may have left the site signed in:
+// the cleanup's own advice wins, and the agent is never told to sign in again.
+it("keeps an unconfirmed cleanup's advice when the host also refused a field", async () => {
+  let executions = 0;
+  const run = await fixture(
+    // The model follows the answer's next step: another authenticate only when it says so.
+    (request, index) =>
+      index === 0 || (index === 1 && answerTo(request, "sign_in_1")["nextStep"] === "authenticate")
+        ? authenticate(`sign_in_${index + 1}`)
+        : finalAnswer,
+    {
+      autofillSignIn: true,
+      executionAvailability: () => "open",
+      reviewAndExecute: (_execution, beforeDispatch = Effect.void) =>
+        beforeDispatch.pipe(
+          Effect.zipRight(
+            Effect.suspend(() => {
+              executions++;
+              const failure = autofillRefusalFailure(
+                {
+                  check: "typing_refused",
+                  field: 0,
+                  slot: "password",
+                  screen: { fields: ["#password"], submit: "#sign-in" },
+                },
+                { nothingSubmitted: true },
+              );
+              return Effect.fail(
+                new MintFailure({
+                  ...failure,
+                  authentication: {
+                    ...(failure.authentication ?? {
+                      phase: "credential_submit",
+                      code: "AutofillRefused",
+                    }),
+                    cleanupCode: "StopUnconfirmed",
+                  },
+                }),
+              );
+            }),
+          ),
+        ),
+    },
+    { effect: "read", siteOrigin: site },
+  );
+  await run.run();
+  expect(answerTo(run.requests[1], "sign_in_1")).toMatchObject({
+    signInOutcome: "unknown",
+    nextStep: "report_sign_in_unavailable",
+  });
+  expect(executions).toBe(1);
 });

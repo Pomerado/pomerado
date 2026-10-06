@@ -157,7 +157,9 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
           ? `This login conflicts with the Personal login locked to this site (${cause(failure)}). Report that the build needs the site's locked login.`
           : `No further sign-in can run in this attempt (${cause(failure)}). Report that the site could not be signed in.`,
     };
-  if (failure.hostRefusal !== undefined) return refusalFeedback(failure, failure.hostRefusal);
+  // An unconfirmed cleanup may have left the site signed in, so its own advice below wins.
+  if (failure.hostRefusal !== undefined && failure.cleanupCode === undefined)
+    return refusalFeedback(failure, failure.hostRefusal);
   const unknown = signInOutcomeUnknown(failure);
   return {
     signInOutcome: unknown ? ("unknown" as const) : ("signed_out" as const),
