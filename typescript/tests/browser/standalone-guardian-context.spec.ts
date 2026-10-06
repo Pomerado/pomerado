@@ -154,11 +154,11 @@ test("a read build's reviews carry each step's own context", async () => {
     expect(sourcesOf(explore!, "operationSources")).toContain("operation/src/unused.mjs");
     expect(contextOf(explore!)?.["browser"]).toBe("not_opened");
     expect(contextOf(explore!)).not.toHaveProperty("currentPage");
-    // Once a step ran, Guardian sees the page it left open and the last results.
-    expect(contextOf(liveTest!)).toMatchObject({
-      browser: "active",
-      currentPage: { origin: site.origin, path: "/", capture: "captures/current-page.aria.yml" },
-    });
+    // Once a step ran, the browser is active. A live test and an example start on a reset page,
+    // so Guardian is not shown the page the last step left; it still gets the last results.
+    expect(contextOf(liveTest!)?.["browser"]).toBe("active");
+    for (const review of [liveTest, example1, example2])
+      expect(contextOf(review!)).not.toHaveProperty("currentPage");
     expect(sourcesOf(liveTest!, "executedSources")).toEqual([
       "operation/src/heading.mjs",
       "operation/src/tool.mjs",
@@ -195,6 +195,62 @@ test("a read build's reviews carry each step's own context", async () => {
       status: "question_refused",
       reason: "write_upgrade_unavailable",
     });
+  } finally {
+    await site.close();
+  }
+});
+
+test("a step that starts on a reset page is shown no page, and the next step the page it left", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((request, response) =>
+    html(response, `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: `${site.origin}/entry`,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": headingOperation,
+            "src/heading.mjs": "export const heading = (value) => String(value).trim();",
+            "explore/deeper.mjs": probe(
+              "await page.goto(new URL('/deep', page.url()).href); return page.url();",
+            ),
+            "explore/look.mjs": probe(),
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        () => [call("execute", execution("explore", "explore/deeper.mjs"), "deeper")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+        () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{}" }), "test")],
+      ],
+    });
+    for (const id of ["example", "deeper", "look", "test"])
+      expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
+    const [example, deeper, look, liveTest] = executions(guardian.reviews);
+    expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "example",
+      "explore",
+      "explore",
+      "test",
+    ]);
+    // The example is the first live step, so no page is open when Guardian reviews it.
+    expect(contextOf(example!)?.["browser"]).toBe("not_opened");
+    expect(contextOf(example!)).not.toHaveProperty("currentPage");
+    // It reset the page and loaded the site root, which the next explore continues from.
+    expect(contextOf(deeper!)).toMatchObject({
+      browser: "active",
+      currentPage: { origin: site.origin, path: "/" },
+    });
+    expect(contextOf(look!)).toMatchObject({
+      browser: "active",
+      currentPage: { origin: site.origin, path: "/deep" },
+    });
+    // A live test starts on a reset page again, so it is shown none.
+    expect(contextOf(liveTest!)?.["browser"]).toBe("active");
+    expect(contextOf(liveTest!)).not.toHaveProperty("currentPage");
   } finally {
     await site.close();
   }
