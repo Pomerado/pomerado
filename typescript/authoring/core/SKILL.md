@@ -171,6 +171,12 @@ request and the flow, never from one caller's account or example.
   caller's account and flags it.
 pomerado:hosted:end -->
 
+Typed output, where the site makes it easy:
+- Prefer numbers for prices, amounts and counts, with the currency or unit in its own field.
+- Prefer ISO 8601 for dates and times, and minutes for durations.
+- Keep one field per fact. Split a combined line into separate fields.
+- If a value does not parse cleanly, returning the site's own text is fine.
+
 **Search results.** When the site says how its results matched, such as exact matches
 against suggested or fallback items, a search tool returns that. Otherwise its description
 and output say plainly that results may include the site's own suggestions.

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -644,6 +644,25 @@ test("MCP stdio discovers tools before browser or model activity", async () => {
   }
 });
 
+test("pomerado-mcp starts through a linked bin, as npm and npx install it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-bin-"));
+  const bin = join(directory, "pomerado-mcp");
+  await symlink(resolve("dist/typescript/src/standalone/mcp-cli.js"), bin);
+  const connection = await stdioMcp([bin, "mint", "--root", join(directory, "integrations")]);
+  try {
+    const listed = await connection.client.listTools();
+    expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
+      "cancel_job",
+      "get_job",
+      "mint",
+      "provide_input",
+    ]);
+  } finally {
+    await connection.client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("MCP mint input continues once into saved launcher and fresh business MCP", async () => {
   test.info().annotations.push({
     type: "slow",
@@ -730,9 +749,17 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
       name: "read_fixture",
       request: { url, effect: "read" },
     });
-    expect(await readFile(join(saved, "codex-mcp.toml"), "utf8")).toContain(
-      "[mcp_servers.read_fixture]",
-    );
+    expect(JSON.parse(await readFile(join(saved, "mcp.json"), "utf8"))).toEqual({
+      mcpServers: {
+        read_fixture: {
+          command: process.execPath,
+          args: [
+            join(saved, "mcp.mjs"),
+            pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href,
+          ],
+        },
+      },
+    });
     const metadata: unknown = JSON.parse(await readFile(join(saved, "pomerado.json"), "utf8"));
     expect(metadata).toMatchObject({
       files: expect.arrayContaining(["src/tool.mjs", "src/heading.mjs"]),
