@@ -160,3 +160,31 @@ export const makeSecretHandles = (initial: SecretHandlesSnapshot = []): SecretHa
       ),
   };
 };
+
+/**
+ * Why a live step is refused before review for its handles, if it is. A handle this attempt never
+ * issued could only fill in wrong. An example runs the source that publishes, and published
+ * source never holds a handle, so an example is not spent on source that could never publish. A
+ * filled value must go nowhere but the site, so a handle outside a site-input sink is refused
+ * with its file and line. Offline steps never receive a value and run the handle text as
+ * written, and a sign-in step fills its fields itself.
+ */
+export const secretHandleRefusal = (
+  handles: Pick<SecretHandles, "unissued" | "misplaced">,
+  files: ReadonlyMap<string, string>,
+  step: { readonly purpose: string; readonly target: string; readonly entrypoint: string },
+  siteOrigin: string | undefined,
+): string | undefined => {
+  if (step.target !== "liveBrowser" || step.purpose === "authenticate") return undefined;
+  const unissued = handles.unissued(files);
+  if (unissued.length > 0)
+    return `The source names ${unissued.slice(0, 4).join(", ")}, which no request_input secret answer in this attempt returned. Use only a handle an answer gave you, exactly as given. Nothing was executed.`;
+  const published =
+    step.purpose === "example" ? publishedHandlePath(files, [step.entrypoint]) : undefined;
+  if (published !== undefined)
+    return `${published} holds a secret handle. An example runs the source you publish, and published source never holds one; move exploration that uses a handle out of src/. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then run the example again. Nothing was executed.`;
+  const misplaced = handles.misplaced(files, siteOrigin);
+  return misplaced === undefined
+    ? undefined
+    : `${misplaced.path} line ${misplaced.line}: ${misplacedHandleRule}. Write the handle as the whole string passed to fill, type or pressSequentially in the step's page code, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.`;
+};

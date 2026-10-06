@@ -5,6 +5,7 @@ import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
+import type { WriteStep } from "../mint/step-checks.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
 import type { InputAsker } from "../runtime/input-request.js";
@@ -54,31 +55,24 @@ export const mintState = (
       review: (step, inspection) =>
         context
           .review(
-            "operation/sign-in-step.json",
-            new Map([
-              ["operation/sign-in-step.json", JSON.stringify({ step, screen: inspection.screen })],
-            ]),
-            {},
-            "authenticate",
-            "liveBrowser",
+            {
+              entrypoint: "operation/sign-in-step.json",
+              sources: new Map([
+                [
+                  "operation/sign-in-step.json",
+                  JSON.stringify({ step, screen: inspection.screen }),
+                ],
+              ]),
+              input: {},
+              currentExecution: { purpose: "authenticate", target: "liveBrowser" },
+            },
+            "not_sent",
           )
           .pipe(Effect.asVoid),
     });
-    let claimed = false;
-    let buildEffect: "read" | "write" | undefined =
-      request.effect === "read" || request.effect === "write" ? request.effect : undefined;
-    let navigationStarted = false;
-    const navigate = Effect.suspend(() =>
-      navigationStarted
-        ? Effect.void
-        : context.navigate.pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                navigationStarted = true;
-              }),
-            ),
-          ),
-    );
+    /** The write session's act steps in order, for the blind-repeat guard. */
+    const writeSteps: WriteStep[] = [];
+    let writeSessionStarted = false;
     return {
       session,
       context,
@@ -90,18 +84,12 @@ export const mintState = (
       mintAsk,
       runs,
       auth,
-      navigate,
-      get claimed() {
-        return claimed;
+      writeSteps,
+      get writeSessionStarted() {
+        return writeSessionStarted;
       },
-      claim() {
-        claimed = true;
-      },
-      get buildEffect() {
-        return buildEffect;
-      },
-      setBuildEffect(effect: "read" | "write") {
-        buildEffect = effect;
+      startWriteSession() {
+        writeSessionStarted = true;
       },
     };
   });

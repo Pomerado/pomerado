@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
+import { contractExtractionNote } from "../mint/review-context.js";
 import { publishedHandlePath } from "../mint/secret-handles.js";
 import type { MintState } from "./mint-state.js";
 import { validateStandaloneWrite } from "./write-completion.js";
@@ -30,7 +31,7 @@ export const mintPublication =
   (state: MintState): MintDependencies["publish"] =>
   (publication, evidence) =>
     Effect.gen(function* () {
-      const { runs, workspace, request, context } = state;
+      const { runs, workspace, context } = state;
       const { secrets, browser } = state.session;
       const sample = yield* retainedPublicationSample(state, evidence, publication.entrypoint);
       const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -44,13 +45,13 @@ export const mintPublication =
             reason: "secret_handle",
           }),
         );
-      yield* context.review(
-        `operation/${publication.entrypoint}`,
-        new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
-        request.input ?? {},
-        "contract",
-        "pureFiles",
-      );
+      yield* context.review({
+        entrypoint: `operation/${publication.entrypoint}`,
+        sources: new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
+        input: sample.input,
+        currentExecution: { purpose: "contract", target: "pureFiles" },
+        note: contractExtractionNote,
+      });
       const result = yield* runLocalOperation({
         workspace,
         entrypoint: publication.entrypoint,
@@ -62,6 +63,7 @@ export const mintPublication =
         mode: "contract",
         target: "pureFiles",
       });
+      context.setInputSchema(result.schemas.input);
       if (sample.purpose === "act")
         yield* validateStandaloneWrite(result, {
           named: sample.journal,

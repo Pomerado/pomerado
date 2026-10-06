@@ -7,6 +7,23 @@
 - `pomerado run` no longer requires `--intent`, and it ignores `--intent` and `--effect`.
 - A failed run that has no more specific message now reads "Operation failed. Check the local browser and integration configuration." Minting keeps its message.
 
+### Breaking changes
+
+- The harness no longer calls `claimExample` for an example while `repeatableRead` is true. Such an example may run again, and the build still counts as having run its example.
+  - Migrate by dropping any repeatable-read check from your `claimExample`.
+- A local build follows the read and write rules a hosted build follows:
+  - A read build may run its live example again. Its owner may approve turning it into a write build before it runs one.
+  - `testInput` runs only on a read build's live test, as JSON text, at most twice per attempt. `exampleInput` runs only on a read build's example when the caller's input is empty. Any other use is refused before review.
+  - A write build refuses a live example or live test, and a live explore once its first act step ran. An unchanged act step right after one that may have changed the site is refused until another act step reads the result.
+  - A misplaced or unknown secret handle is refused before Guardian reviews the step, with its file and line, instead of failing after review. An offline step runs handle text as written.
+  - A Guardian outage is retried for up to five minutes before the step reports the review as unavailable. A spent model quota ends the build with `model_quota_exhausted`.
+
+### Other changes
+
+- Each Guardian review of a local build carries that step's own context: the effects its kind of step may have, the files its entrypoint imports, the last six step results, the input schema of the latest example or contract run, the page the browser last showed with a redacted readable capture, a command's sandbox limits, steps still running and whether the browser has opened yet. A question review gets no allowed effects.
+- The minter and Guardian read today's date and time in UTC from the build's observations. Guardian's review of a contract run says what that run does.
+- `pomerado/core/mint/review-context` and `pomerado/core/mint/step-checks` export these rules for other hosts, and `secretHandleRefusal` joins `pomerado/core/mint/secret-handles`.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.

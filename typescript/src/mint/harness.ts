@@ -1820,7 +1820,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             submitted.purpose === "example" ||
               (submitted.purpose === "act" && writeSession === "none")
               ? Effect.uninterruptible(
-                  dependencies.claimExample.pipe(
+                  // A repeatable read's example claims nothing at the host; it may run again.
+                  (repeatableRead && submitted.purpose === "example"
+                    ? Effect.void
+                    : dependencies.claimExample
+                  ).pipe(
                     Effect.tap(() =>
                       Effect.sync(() => {
                         exampleClaimed = true;
