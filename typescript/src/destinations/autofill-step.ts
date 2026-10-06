@@ -167,16 +167,14 @@ export const LocatedError = Schema.Struct({
   /** The primary page then, which a fill call reports once it typed. */
   url: Schema.optional(Schema.String),
   searched: Schema.optional(Searched),
-  /** A disabled submit: where it was found. */
+  /** An inert submit: where it was found. */
   located: Schema.optional(FoundIn),
 });
 const Located = Schema.Union(
   LocatedError,
   Schema.Struct({
     fields: Schema.Array(Schema.Struct({ target: Target, described: Described })),
-    submit: Schema.NullOr(
-      Schema.Struct({ target: Target, described: Described, enabled: Schema.Literal(true) }),
-    ),
+    submit: Schema.NullOr(Schema.Struct({ target: Target, described: Described })),
     located: Schema.optional(FoundAt),
     buttons: Schema.Array(Schema.String),
     popupTargetId: Schema.optional(Schema.String),
@@ -243,8 +241,7 @@ export interface AutofillInspection {
       readonly accepts?: readonly IdentifierKind[] | undefined;
       readonly format?: DateOfBirthFormat | undefined;
     })[];
-    /** The control the host clicks. The host refuses a disabled one, so `enabled` is true. */
-    readonly submit: (typeof Described.Type & { readonly enabled: true }) | null;
+    readonly submit: typeof Described.Type | null;
     /** Visible native and ARIA actions, links included, for a step that names no submit. */
     readonly buttons: readonly string[];
   };
@@ -267,8 +264,18 @@ export type AutofillStepReport =
         readonly slot: AutofillSlot;
         readonly status: AutofillFieldStatus;
       }[];
-      /** `refused`: after the fill the host refused a control where it then sat or submitted. */
-      readonly submit: "clicked" | "failed" | "not_attempted" | "refused" | "none";
+      /**
+       * `refused`: after the fill the host refused a control where it then sat or submitted.
+       * `stayed_disabled`: the submit stayed disabled after the fields were filled, through the
+       * host's wait for the page to enable it, so the host never clicked it.
+       */
+      readonly submit:
+        | "clicked"
+        | "failed"
+        | "not_attempted"
+        | "refused"
+        | "stayed_disabled"
+        | "none";
       /**
        * The host clicked a submit that is `refused`: its guard stopped the submission as it fired,
        * after the page's own handlers ran on the click, so what the step filled may have gone out.
@@ -443,10 +450,7 @@ export const inspectAutofillStep = (input: {
             ...(field?.format === undefined ? {} : { format: field.format }),
           };
         }),
-        submit:
-          found.submit === null
-            ? null
-            : { ...found.submit.described, enabled: found.submit.enabled },
+        submit: found.submit === null ? null : found.submit.described,
         buttons: found.buttons,
       },
     };

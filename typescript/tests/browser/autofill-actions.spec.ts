@@ -102,14 +102,16 @@ test("the host shows native and ARIA actions to Guardian on a fieldless verifica
   });
 });
 
-test("the host shows Guardian the page's origin and that the submit it clicks is enabled", async ({
+test("the host shows Guardian the page's origin and a disabled submit as the page labels it", async ({
   page,
 }) => {
-  await serve(page, '<button id="continue">Sign in</button>');
+  await serve(page, '<button id="continue" disabled>Sign in</button>');
   const inspection = await inspect(page);
   if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
   expect(inspection.screen.origin).toBe(site);
-  expect(inspection.screen.submit).toMatchObject({ tag: "button", enabled: true });
+  // Guardian judges what the submit is, not whether the page has enabled it yet.
+  expect(inspection.screen.submit).toMatchObject({ tag: "button", text: "Sign in" });
+  expect(inspection.screen.submit).not.toHaveProperty("enabled");
 });
 
 for (const [name, step] of [
@@ -220,22 +222,131 @@ for (const [name, control, reason] of [
     '<a id="continue" href="javascript:void(0)">Sign in</a>',
     "credential_target_refused",
   ],
-  ["disabled button", '<button id="continue" disabled>Sign in</button>', "not_editable"],
-  [
-    "disabled ARIA button",
-    '<div id="continue" role="button" aria-disabled="true">Sign in</div>',
-    "not_editable",
-  ],
-  [
-    "disabled fieldset",
-    '<fieldset disabled><button id="continue">Sign in</button></fieldset>',
-    "not_editable",
-  ],
+  // An inert control takes no interaction at all: it marks a form in the background, not one the
+  // page enables on input.
+  ["submit inside an inert region", '<div inert><button id="continue">Sign in</button></div>', "not_editable"],
 ] as const)
   test(`the host refuses a ${name} before any password is filled`, async ({ page }) => {
     const received = await serve(page, control);
     expect(await inspect(page)).toMatchObject({ outcome: "refused", reason, target: "submit" });
     expect(await page.locator("#password").inputValue()).toBe("");
+    expect(received).toEqual([]);
+  });
+
+const usernameAndPassword: AutofillStep = {
+  fields: [
+    { selector: "#username", slot: "username", accepts: ["username"] },
+    { selector: "#password", slot: "password" },
+  ],
+  submit: "#continue",
+};
+/** A username field, and page code that runs `enable(both)` on each input with whether both hold some. */
+const enabledOnInput = (submit: string, enable: string) =>
+  `<label>Username<input id="username" name="username"></label>${submit}
+<script>const form = document.forms[0];
+const enable = (both) => { ${enable} };
+form.addEventListener('input', () => enable(form.username.value !== '' && form.password.value !== ''));</script>`;
+
+// Many sign-in forms keep their submit disabled until the fields hold input. The host fills them
+// and clicks the submit once the page enables it, never while it is disabled.
+for (const [name, controls] of [
+  [
+    "a disabled button until both fields hold input",
+    enabledOnInput(
+      '<button id="continue" disabled>Sign in</button>',
+      "document.getElementById('continue').disabled = !both;",
+    ),
+  ],
+  [
+    "a disabled submit input until both fields hold input",
+    enabledOnInput(
+      '<input id="continue" type="submit" value="Sign in" disabled>',
+      "document.getElementById('continue').disabled = !both;",
+    ),
+  ],
+  [
+    "a disabled button until a second after both fields hold input",
+    enabledOnInput(
+      '<button id="continue" disabled>Sign in</button>',
+      "clearTimeout(window.validating); window.validating = setTimeout(() => { document.getElementById('continue').disabled = !both; }, 1000);",
+    ),
+  ],
+  [
+    "an ARIA button marked aria-disabled until both fields hold input",
+    enabledOnInput(
+      `<div id="continue" role="button" tabindex="0" aria-disabled="true" onclick="if (this.getAttribute('aria-disabled') !== 'true') this.closest('form').requestSubmit()">Sign in</div>`,
+      "document.getElementById('continue').setAttribute('aria-disabled', String(!both));",
+    ),
+  ],
+  [
+    "a button in a disabled fieldset until both fields hold input",
+    enabledOnInput(
+      '<fieldset id="actions" disabled><button id="continue">Sign in</button></fieldset>',
+      "document.getElementById('actions').disabled = !both;",
+    ),
+  ],
+] as const)
+  test(`a sign-in whose submit is ${name} is filled and sent once`, async ({
+    page,
+  }) => {
+    const received = await serve(page, controls);
+    const inspection = await inspect(page, usernameAndPassword);
+    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+    expect(
+      await fill(page, inspection, usernameAndPassword, ["synthetic-user", password]),
+    ).toMatchObject({
+      outcome: "filled",
+      fields: [
+        { slot: "username", status: "filled" },
+        { slot: "password", status: "filled" },
+      ],
+      submit: "clicked",
+    });
+    expect(received.map((form) => Object.fromEntries(form))).toEqual([
+      { password, username: "synthetic-user" },
+    ]);
+  });
+
+// A submit still disabled once the host stops waiting is never clicked, even one whose own click
+// handler would submit, and the report says why: it stayed disabled after the fields were filled.
+for (const [name, controls] of [
+  ["a disabled button that never enables", '<button id="continue" disabled>Sign in</button>'],
+  [
+    "an aria-disabled ARIA button that never enables",
+    `<div id="continue" role="button" tabindex="0" aria-disabled="true" onclick="this.closest('form').requestSubmit()">Sign in</div>`,
+  ],
+  [
+    "a button the page disables once the password is typed",
+    `<button id="continue">Sign in</button>
+<script>document.getElementById('password').addEventListener('input', () => { document.getElementById('continue').disabled = true; });</script>`,
+  ],
+  [
+    "an ARIA button the page marks aria-disabled once the password is typed",
+    `<div id="continue" role="button" tabindex="0" onclick="this.closest('form').requestSubmit()">Sign in</div>
+<script>document.getElementById('password').addEventListener('input', () => { document.getElementById('continue').setAttribute('aria-disabled', 'true'); });</script>`,
+  ],
+] as const)
+  test(`a sign-in whose submit is ${name} is filled and never clicked`, async ({ page }) => {
+    const requested: string[] = [];
+    page.on("request", (request) => requested.push(request.url()));
+    const received = await serve(page, controls);
+    const inspection = await inspect(page);
+    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+    const started = Date.now();
+    const report = await fill(page, inspection);
+    // The host waited for the page to enable it before it gave up.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4_500);
+    expect(report).toMatchObject({
+      outcome: "filled",
+      fields: [{ slot: "password", status: "filled" }],
+      submit: "stayed_disabled",
+      failureDetail: { phase: "submit_disabled", context: { check: "submit_disabled" } },
+    });
+    expect(report).not.toHaveProperty("clicked");
+    expectOriginsOnly(report);
+    expect(JSON.stringify([report, { ...report.failureDetail }])).not.toContain(password);
+    expect(await page.locator("#password").inputValue()).toBe(password);
+    expect(requested.filter((url) => new URL(url).pathname === "/session")).toEqual([]);
     expect(received).toEqual([]);
   });
 

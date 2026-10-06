@@ -28,6 +28,8 @@ interface ShopState {
   api: "ok" | "error" | "changed";
   /** `refuse` makes the modeled Kernel curl fail before sending anything. */
   curl: "ok" | "refuse";
+  /** `after_input` keeps the sign-in button disabled until both fields hold input. */
+  loginSubmit: "enabled" | "after_input";
 }
 
 export interface Shop {
@@ -136,8 +138,13 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
   const loginPage: Route = (_request, response) =>
     html(
       response,
-      `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button>Sign in</button></form>
-<script>const csrf=document.cookie.match(/csrf_token=([^;]*)/)?.[1]??'';</script>
+      `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button${state.loginSubmit === "after_input" ? " disabled" : ""}>Sign in</button></form>
+<script>const csrf=document.cookie.match(/csrf_token=([^;]*)/)?.[1]??'';</script>${
+        state.loginSubmit === "after_input"
+          ? `
+<script>const form=document.querySelector('#login');form.addEventListener('input',()=>{form.querySelector('button').disabled=!(form.username.value&&form.password.value)})</script>`
+          : ""
+      }
 <script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(response.ok)location.href='/account'})</script>`,
       { "set-cookie": sessionCookies },
     );
@@ -206,6 +213,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     loginPosts: 0,
     api: "ok",
     curl: "ok",
+    loginSubmit: "enabled",
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;

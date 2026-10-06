@@ -26,7 +26,7 @@ for (const frame of primary.frames()) {
 }
 return {
   fields: fields.map(({ target, described }) => ({ target, described })),
-  submit: submit === null ? null : { target: submit.target, described: submit.described, enabled: !submit.disabled },
+  submit: submit === null ? null : { target: submit.target, described: submit.described },
   located,
   buttons,
   ...(popupTargetId === undefined ? {} : { popupTargetId }),
@@ -45,7 +45,8 @@ return {
  *   `guardKey` and armed for `guardCall`, with every form action and link destination as the
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
  *   as judged, and how each field's secret is found by value, if it is one), clicks the submit and
- *   waits for the page to settle.
+ *   waits for the page to settle. A disabled submit it never clicks: it says so and does nothing,
+ *   and the host calls again while the page may still enable it.
  */
 export type AutofillFillCall =
   | { readonly kind: "focus"; readonly index: number; readonly bindingKey: string }
@@ -150,6 +151,7 @@ try {
   return { dated: false, url: primary.url() };
 }`;
   return `if (submit === null) return { submit: "none", url: primary.url() };
+if (submit.disabled) return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
@@ -266,7 +268,9 @@ for (let index = 0; index < selectors.length; index++) {
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submit = submitSelector === null ? null : await locate(submitSelector);
 if (submit !== null && "error" in submit) return { ...submit, target: "submit", url: primary.url() };
-if (submit !== null && submit.disabled)
+// An inert submit takes no interaction at all, so nothing is typed for it. A disabled one may be
+// enabled once the fields hold input; the submit call never clicks it while it is disabled.
+if (submit !== null && submit.inert)
   return { error: "not_editable", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check)}`;

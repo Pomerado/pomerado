@@ -53,7 +53,8 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({ dated: Schema.Boolean, url: Schema.String }),
   Schema.Struct({
-    submit: Schema.Literal("clicked", "failed", "none"),
+    /** `disabled`: the submit was disabled, so the call clicked nothing. */
+    submit: Schema.Literal("clicked", "failed", "disabled", "none"),
     url: Schema.String,
   }),
   GuardRefusal,
@@ -136,7 +137,7 @@ interface FillProgress {
 const filledReport = (
   step: AutofillStep,
   progress: FillProgress,
-  submit: "clicked" | "failed" | "not_attempted" | "refused" | "none",
+  submit: "clicked" | "failed" | "not_attempted" | "refused" | "stayed_disabled" | "none",
   url: string,
   refusal?: AutofillRefusal,
   clicked?: true,
@@ -317,6 +318,34 @@ const fillCall =
     });
 
 /**
+ * How long the host waits for the page to enable a disabled submit once the fields are filled: the
+ * 5 s each of its control actions (focus, fill, click) may take. Many sign-in forms enable their
+ * submit only on input, some after a short check of what was typed.
+ */
+const submitEnableMs = 5_000;
+/** How often the host calls the submit again while the page keeps it disabled. */
+const submitEnablePollMs = 250;
+
+/** A submit call that clicked nothing because the submit was disabled. */
+const disabledSubmit = (answered: Either.Either<CallAnswer, Error>) =>
+  Either.isRight(answered) && "submit" in answered.right && answered.right.submit === "disabled";
+
+/**
+ * The step's submit call, made again while the page keeps the submit disabled, for up to
+ * `submitEnableMs`. Each call judges every control again before it clicks, and none clicks a
+ * disabled submit.
+ */
+const submitWhenEnabled = (input: FillInput, progress: FillProgress, call: AutofillFillCall) =>
+  Effect.gen(function* () {
+    const until = Date.now() + submitEnableMs;
+    for (;;) {
+      const answered = yield* fillCall(input, progress)(call);
+      if (!disabledSubmit(answered) || Date.now() >= until) return answered;
+      yield* Effect.sleep(submitEnablePollMs);
+    }
+  });
+
+/**
  * One field: a date's call fills it; any other field's call focuses it and binds its original node/document/frame; the host inserts its
  * value atomically. Undefined when the fill goes on to the next field, else the step's report.
  */
@@ -429,7 +458,9 @@ const afterFieldCall = (
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
  * the submit. That click ran, though, so the report says so (`clicked`): the page's own handlers
- * ran on it, and what the step filled may have gone out.
+ * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
+ * clicked: the host waits for the page to enable it once the fields are filled, and when it stays
+ * disabled the report says so (`stayed_disabled`).
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
@@ -451,10 +482,9 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       if (ended !== undefined) return ended;
     }
     // A re-judge never changes a method, so the submission's method is the one judged now.
-    const clicked = yield* fillCall(
+    const clicked = yield* submitWhenEnabled(
       input,
       progress,
-    )(
       guardedSubmit(step, progress.judged, {
         settleMs: input.settleMs ?? 5_000,
         inspection: input.inspection.judgment,
@@ -484,5 +514,16 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         true,
       );
     if (!("submit" in answer)) return refused("page_unavailable");
+    if (answer.submit === "disabled")
+      return filledReport(
+        step,
+        progress,
+        "stayed_disabled",
+        answer.url,
+        withCheck(refused("not_editable", "submit"), "submit_disabled", {
+          waitedMs: submitEnableMs,
+          ...foundEvidence(answer.url, undefined, evidenceOrigins(input, progress)),
+        }),
+      );
     return filledReport(step, progress, answer.submit, answer.url);
   });
