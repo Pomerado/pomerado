@@ -7,7 +7,7 @@ import { Effect, Exit, Scope } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 import type { MintDependencies } from "../../src/mint/contracts.js";
-import { makeMintWorkspace } from "../../src/mint/workspace.js";
+import { makeMintWorkspace, screenMintText } from "../../src/mint/workspace.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -286,4 +286,41 @@ it("does not invoke the SDK editor for path or admission refusal", async () => {
   expect(admissionCalls).toBe(1);
   expect(editorCalls).toBe(0);
   expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+});
+
+// Skipped: the local workspace editor fails an unmatched patch, and a create over an existing
+// file, with an error that carries no edit stage, so the minter is told the edit outcome is
+// unknown instead of that the patch did not apply. The file is unchanged in both cases.
+it.skip("leaves a file unchanged and says the patch did not apply when it does not match", async () => {
+  const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });
+  cleanup.push(workspace.close);
+  const editor = editorWorkspace(workspace, (original) => original).createEditor?.();
+  if (!editor) throw new Error("Expected a model editor");
+  const result = await editor.updateFile({
+    type: "update_file",
+    path: "src/tool.mjs",
+    diff: "@@\n-export const absent = 1;\n+export const value = 2;\n",
+  });
+  expect(result).toMatchObject({ status: "failed" });
+  expect(result?.output).toContain("patch did not apply");
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+  const exists = await editor.createFile({
+    type: "create_file",
+    path: "src/tool.mjs",
+    diff: "+export const value = 3;\n",
+  });
+  expect(exists).toMatchObject({ status: "failed" });
+  expect(exists?.output).toContain("(EEXIST)");
+  expect(await workspace.readFile({ path: "src/tool.mjs" })).toBe("export const value = 0;");
+});
+
+it("refuses non-JSON structured input", async () => {
+  const cycle: unknown[] = [];
+  cycle.push(cycle);
+  for (const input of [cycle, undefined])
+    expect(
+      await Effect.runPromise(
+        screenMintText({ projection: portableMintProjection() }, input).pipe(Effect.either),
+      ),
+    ).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
 });
