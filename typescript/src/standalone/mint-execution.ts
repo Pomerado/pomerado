@@ -51,12 +51,12 @@ const executeCommand = (
       observations: yield* projection.json(result),
     };
   });
-/** A page check before any sign-in step sent the login proves nothing about this build. */
+/** A page check before this sign-in's steps sent the login proves nothing about this build. */
 const credentialsNotSubmitted = {
   signedIn: false,
   failed: "credentials_not_submitted",
   nextStep:
-    "No sign-in step since the last sign-in started sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. Send the sign-in screens' signInSteps first, then check again.",
+    "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
 } as const;
 const executeAuthentication = (
   state: MintState,
@@ -75,9 +75,11 @@ const executeAuthentication = (
     if ("fields" in signIn) {
       start.signIn();
       const report = yield* auth.step(signIn, beforeDispatch);
-      start.sent(report);
+      start.sent(report, signIn.fields);
       result = report;
     } else if ("signedIn" in signIn) {
+      // A check is a sign-in step too: after a verified sign-in it starts a new one.
+      start.signIn();
       if (start.submitted) {
         const checked = yield* auth.signedIn(signIn.signedIn);
         authenticated = checked.signedIn && start.verified();

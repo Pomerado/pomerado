@@ -67,11 +67,11 @@ export const shouldSaveSession = (
 /**
  * One build's start state: whether its write session started, whether it is signed in, what its
  * current sign-in sent, and the session saved after that sign-in. A host calls `signIn()` on each
- * sign-in step, `sent(...)` for what a sign-in step submitted, `verified()` when the site shows
- * the build signed in, `plan(step)` before each step and `dispatched(step)` once the step's page
- * is ready. When the plan says `save`, the host saves the session with `save(session)` before it
- * starts the page. A failed save or page start stops the step and changes nothing, so the next
- * step's plan asks again.
+ * sign-in step, a signed-in check included, `sent(...)` for what a sign-in step may have sent,
+ * `verified()` when the site shows the build signed in, `plan(step)` before each step and
+ * `dispatched(step)` once the step's page is ready. When the plan says `save`, the host saves the
+ * session with `save(session)` before it starts the page. A failed save or page start stops the
+ * step and changes nothing, so the next step's plan asks again.
  */
 export const makeStartTracker = <Session = unknown>() => {
   let writeSessionStarted = false;
@@ -81,28 +81,23 @@ export const makeStartTracker = <Session = unknown>() => {
   let sentIdentifier = false;
   let sentProof = false;
   let saved: { readonly session: Session } | undefined;
-  const invalidate = () => {
-    saved = undefined;
-    signInSettled = false;
-    signInOpen = false;
-    sentIdentifier = false;
-    sentProof = false;
-  };
   return {
-    /** A new browser: nothing saved or sent describes it until a new verified sign-in. */
-    invalidate,
     /**
-     * A sign-in step. The first one after a verified sign-in, or the build's first, starts a new
-     * sign-in, which drops the saved session and what the last sign-in sent. Later steps of the
-     * same sign-in, each screen of it, add to what it sent.
+     * A sign-in step, a signed-in check included. The first one after a verified sign-in, or the
+     * build's first, starts a new sign-in: nothing saved describes the browser until that sign-in
+     * is verified, and nothing sent counts for it yet. Later steps of the same sign-in, each
+     * screen of it, add to what it sent. A host that replaces the browser calls it too.
      */
     signIn: () => {
       if (signInOpen) return;
-      invalidate();
+      saved = undefined;
+      signInSettled = false;
+      sentIdentifier = false;
+      sentProof = false;
       signInOpen = true;
     },
     /**
-     * What a sign-in step submitted: the login's identifier, or what proves it (a password, a
+     * What a sign-in step may have sent: the login's identifier, or what proves it (a password, a
      * code or an approval the user completed).
      */
     sent: (kind: "identifier" | "proof") => {
@@ -114,14 +109,17 @@ export const makeStartTracker = <Session = unknown>() => {
       return sentIdentifier && sentProof;
     },
     /**
-     * The site shows the build signed in. It counts only once the sign-in submitted the login, so
-     * a page that already showed an account proves nothing. Returns whether it counted.
+     * The site shows the build signed in. It counts only once the sign-in sent the login, so a
+     * page that already showed an account proves nothing. A verified sign-in is over: what it
+     * sent counts for no later check. Returns whether it counted.
      */
     verified: () => {
       if (!(sentIdentifier && sentProof)) return false;
       signedIn = true;
       signInSettled = true;
       signInOpen = false;
+      sentIdentifier = false;
+      sentProof = false;
       return true;
     },
     /** What to do before `step` runs. Planning changes nothing. */
@@ -147,7 +145,7 @@ export const makeStartTracker = <Session = unknown>() => {
     save: (session: Session) => {
       saved = { session };
     },
-    /** The session saved after sign-in, until a new sign-in or browser. */
+    /** The session saved after sign-in, until the next sign-in step. */
     get saved(): Session | undefined {
       return saved?.session;
     },

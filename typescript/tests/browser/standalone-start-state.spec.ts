@@ -243,6 +243,13 @@ const startSite = async () => {
             `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button>Sign in</button></form>
 <script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const sent=await fetch('/api/login',{method:'POST',body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
           );
+        // A sign-in that submits itself once the password is typed, and removes its own form.
+        if (path === "/login-self")
+          return page(
+            response,
+            `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button>Sign in</button></form>
+<script>const form=document.querySelector('#login');form.password.addEventListener('input',()=>form.requestSubmit());form.addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(form);form.replaceWith(Object.assign(document.createElement('p'),{textContent:'Signing in'}));const sent=await fetch('/api/login',{method:'POST',body:JSON.stringify({username:data.get('username'),password:data.get('password')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
+          );
         if (path === "/account")
           return page(
             response,
@@ -506,4 +513,92 @@ return true;`,
     expect.objectContaining({ signedIn: false, failed: "credentials_not_submitted" }),
   );
   expect(site.probe("example")).toMatchObject({ path: "/", cookies: [], tabs: 1 });
+});
+
+test("a sign-in whose page submits its own form still counts, and the example keeps it", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const seen: Record<string, unknown>[] = [];
+  const steps = readSteps(true).map(
+    (respond) => (request: ModelRequest) => {
+      seen.push(...objects(request.input).filter((item) => "submit" in item || "signedIn" in item));
+      return respond(request);
+    },
+  );
+  await build(site, { url: `${site.origin}/login-self`, effect: "read" }, steps);
+  // The page sent the login itself, so the host found no submit to click after typing.
+  expect(seen).toContainEqual(expect.objectContaining({ outcome: "filled", submit: "refused" }));
+  expect(seen).toContainEqual(expect.objectContaining({ signedIn: true }));
+  expect(site.visits.slice(0, 2)).toEqual(["/login-self", "/account"]);
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
+    token: "member",
+    tabs: 1,
+  });
+});
+
+test("a build whose first live step is its example starts at the root", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  await build(site, { url: `${site.origin}/entry`, effect: "read" }, [
+    () => patch({ "src/tool.mjs": operation("probe", probe("example")) }),
+    () => [execution("example", "src/tool.mjs")],
+    finish,
+  ]);
+  // The request's URL is never loaded: the reset's root is the first page the site serves.
+  expect(site.visits).toEqual(["/"]);
+  expect(site.probe("example")).toMatchObject({ path: "/", cookies: [], tabs: 1 });
+});
+
+test("a write build whose first live step is its act starts at the root", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  await build(site, { url: `${site.origin}/entry`, effect: "write" }, [
+    () => patch({ "src/act.mjs": operation("first_step", probe("first")) }),
+    () => [execution("act", "src/act.mjs")],
+  ]);
+  expect(site.visits).toEqual(["/"]);
+  expect(site.probe("first")).toMatchObject({ path: "/", cookies: [], tabs: 1 });
+});
+
+test("a check again after a confirmed sign-in is refused and drops the saved session", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const checked: Record<string, unknown>[] = [];
+  const [patched, signIn, check, explored, example, finished] = readSteps(true);
+  if (!patched || !signIn || !check || !explored || !example || !finished)
+    throw new Error("Unexpected read steps");
+  await build(site, { url: `${site.origin}/login`, effect: "read" }, [
+    patched,
+    signIn,
+    check,
+    explored,
+    () => [
+      execution(
+        "authenticate",
+        "src/tool.mjs",
+        { signInStep: { signedIn: { selector: "#account" } } },
+        "signed_in_again",
+      ),
+    ],
+    (request) => {
+      checked.push(...objects(request.input).filter((item) => "failed" in item));
+      return example(request);
+    },
+    finished,
+  ]);
+  // The check starts a new sign-in that sent nothing, so it is refused, like any first check.
+  expect(checked).toContainEqual(
+    expect.objectContaining({ signedIn: false, failed: "credentials_not_submitted" }),
+  );
+  // Nothing saved describes the browser any more: the example keeps its cookies and storage.
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["explored", "member"],
+    explored: "yes",
+    token: "member",
+    tabs: 1,
+  });
 });

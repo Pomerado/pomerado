@@ -4,6 +4,8 @@ import type {
   AutofillFieldStatus,
   AutofillSlot,
   AutofillStepReport,
+  AutofillStepRequest,
+  IdentifierKind,
 } from "../../src/destinations/autofill-step.js";
 import type { HostExecute } from "../../src/runtime/host-execute.js";
 import {
@@ -153,9 +155,6 @@ describe("makeStartTracker", () => {
     const tracker = makeStartTracker<string>();
     signIn(tracker);
     tracker.save("first");
-    // A check again on the same sign-in keeps its session.
-    expect(tracker.verified()).toBe(true);
-    expect(tracker.saved).toBe("first");
     tracker.signIn();
     expect(tracker.saved).toBeUndefined();
     expect(tracker.submitted).toBe(false);
@@ -169,14 +168,30 @@ describe("makeStartTracker", () => {
     tracker.save("second");
     expect(tracker.saved).toBe("second");
   });
-  it("drops the saved session and what was sent on a new browser", () => {
+  it("refuses a check again after a confirmed sign-in and drops its session", () => {
     const tracker = makeStartTracker<string>();
     signIn(tracker);
     tracker.save("first");
-    tracker.invalidate();
+    // A confirmed sign-in is over: what it sent counts for no later check.
+    expect(tracker.submitted).toBe(false);
+    expect(tracker.verified()).toBe(false);
+    expect(tracker.saved).toBe("first");
+    // A check is a sign-in step too, so it drops the session saved after the last sign-in.
+    tracker.signIn();
     expect(tracker.saved).toBeUndefined();
     expect(tracker.verified()).toBe(false);
     expect(tracker.plan(live("example"))).toEqual({ save: false, start: "keep" });
+  });
+  it("adds each screen of an open sign-in to what it sent", () => {
+    const tracker = makeStartTracker();
+    tracker.signIn();
+    tracker.sent("identifier");
+    tracker.signIn();
+    tracker.sent("proof");
+    expect(tracker.verified()).toBe(true);
+  });
+  it("keeps no new-browser method a local build never calls", () => {
+    expect(Object.keys(makeStartTracker())).not.toContain("invalidate");
   });
   it("starts the write session once its first act is dispatched, not when it is planned", () => {
     const tracker = makeStartTracker();
@@ -257,12 +272,20 @@ const modeledBuild = (
         ["username", "filled"],
         ["password", "filled"],
       ]),
+      asked("username", "password"),
     );
     expect(start.verified()).toBe(true);
     return outcome;
   };
   return { start, step, signIn, calls, resets };
 };
+/** A sign-in step's requested fields, one per slot. */
+const asked = (...slots: readonly AutofillSlot[]): AutofillStepRequest["fields"] =>
+  slots.map((slot) =>
+    slot === "password" || slot === "code" || slot === "date_of_birth"
+      ? { selector: `#${slot}`, slot }
+      : { selector: `#${slot}`, accepts: [slot as IdentifierKind] },
+  );
 /** What a host fill reports: each field's slot and status, and its submit. */
 const filled = (
   fields: readonly (readonly [AutofillSlot, AutofillFieldStatus])[],
@@ -370,7 +393,13 @@ describe("makeBuildStart", () => {
     await build.step("example");
     await build.step("authenticate");
     await build.step("example");
-    build.start.sent(filled([["email", "filled"], ["code", "filled"]]));
+    build.start.sent(
+      filled([
+        ["email", "filled"],
+        ["code", "filled"],
+      ]),
+      asked("email", "code"),
+    );
     expect(build.start.verified()).toBe(true);
     await build.step("example");
     expect(build.calls).toEqual([
@@ -400,33 +429,94 @@ describe("makeBuildStart", () => {
     expect(build.calls).toEqual(["entry", "run", "reset:clear", "root", "run"]);
   });
 
-  it("counts only the fields a fill step filled and sent", async () => {
-    const unsent = [
-      filled([["username", "filled"], ["password", "filled"]], "failed"),
-      filled([["username", "filled"], ["password", "filled"]], "not_attempted"),
-      filled([["username", "filled"], ["password", "filled"]], "refused"),
-      filled([["username", "filled"], ["password", "failed"]]),
-      filled([["username", "filled"], ["date_of_birth", "filled"]]),
-      { outcome: "uncertain", reason: "fill_call_failed" } as unknown as AutofillStepReport,
+  it("counts what a fill typed, whatever became of its submit, and an uncertain step's fields", async () => {
+    const login = asked("username", "password");
+    const uncertain = {
+      outcome: "uncertain",
+      reason: "fill_call_failed",
+    } as unknown as AutofillStepReport;
+    const counted: readonly (readonly [AutofillStepReport, AutofillStepRequest["fields"]])[] = [
+      // The page may send what was typed itself, as a form that submits on its own does.
+      ...(["clicked", "refused", "failed", "not_attempted", "none"] as const).map(
+        (submit) =>
+          [
+            filled(
+              [
+                ["username", "filled"],
+                ["password", "filled"],
+              ],
+              submit,
+            ),
+            login,
+          ] as const,
+      ),
+      // A lost answer may have typed every field the step asked for.
+      [uncertain, login],
     ];
-    for (const report of unsent) {
+    for (const [report, fields] of counted) {
       const build = modeledBuild();
       await build.step("authenticate");
-      build.start.sent(report);
+      build.start.sent(report, fields);
+      expect(build.start.submitted).toBe(true);
+    }
+    const uncounted: readonly (readonly [AutofillStepReport, AutofillStepRequest["fields"]])[] = [
+      [
+        filled([
+          ["username", "filled"],
+          ["password", "failed"],
+        ]),
+        login,
+      ],
+      [
+        filled([
+          ["username", "filled"],
+          ["date_of_birth", "filled"],
+        ]),
+        asked("username", "date_of_birth"),
+      ],
+      [uncertain, asked("username")],
+      [{ outcome: "refused", reason: "not_found" } as unknown as AutofillStepReport, login],
+    ];
+    for (const [report, fields] of uncounted) {
+      const build = modeledBuild();
+      await build.step("authenticate");
+      build.start.sent(report, fields);
       expect(build.start.submitted).toBe(false);
     }
-    // Screen by screen, a step that names no submit included; or an approval after the login.
+    // Screen by screen; or an approval after the login.
     const build = modeledBuild();
     await build.step("authenticate");
-    build.start.sent(filled([["phone", "filled"]], "none"));
+    build.start.sent(filled([["phone", "filled"]], "none"), asked("phone"));
     await build.step("authenticate");
-    build.start.sent(filled([["code", "filled"]]));
+    build.start.sent(filled([["code", "filled"]]), asked("code"));
     expect(build.start.submitted).toBe(true);
     const approval = modeledBuild();
     await approval.step("authenticate");
-    approval.start.sent(filled([["account_number", "filled"]]));
+    approval.start.sent(filled([["account_number", "filled"]]), asked("account_number"));
     approval.start.approved();
     expect(approval.start.submitted).toBe(true);
+  });
+
+  it("drops the session on a check again after a confirmed sign-in, and keeps the browser's", async () => {
+    const build = modeledBuild();
+    await build.signIn();
+    await build.step("example");
+    // The check is a sign-in step: it starts a new sign-in, which nothing has sent yet.
+    build.start.signIn();
+    expect(build.start.submitted).toBe(false);
+    expect(build.start.verified()).toBe(false);
+    await build.step("example");
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "run",
+      "reset:keep",
+      "root",
+      "run",
+    ]);
   });
 
   it("resets a write session's first step only", async () => {

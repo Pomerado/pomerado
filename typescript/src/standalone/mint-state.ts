@@ -8,6 +8,7 @@ import {
   identifierPreference,
   type AutofillSlot,
   type AutofillStepReport,
+  type AutofillStepRequest,
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
@@ -63,16 +64,21 @@ export const makeBuildStart = (
     /** A sign-in step; see `makeStartTracker`. */
     signIn: tracker.signIn,
     /**
-     * What a host fill step sent. Without a request recorder, a field counts as sent when the
-     * fill filled it and then clicked the step's submit, or the step named no submit.
+     * What a host fill step may have sent. Without a request recorder, every field the fill typed
+     * counts, whatever became of its submit: the page may send what was typed itself. A fill
+     * whose answer was lost counts every field the step asked for. The signed-in check stays the
+     * gate.
      */
-    sent: (report: AutofillStepReport) => {
-      if (report.outcome !== "filled") return;
-      if (report.submit !== "clicked" && report.submit !== "none") return;
-      for (const field of report.fields) {
-        if (field.status !== "filled") continue;
-        if (identifiers.has(field.slot)) tracker.sent("identifier");
-        if (field.slot === "password" || field.slot === "code") tracker.sent("proof");
+    sent: (report: AutofillStepReport, requested: AutofillStepRequest["fields"]) => {
+      const slots =
+        report.outcome === "filled"
+          ? report.fields.filter((field) => field.status === "filled").map((field) => field.slot)
+          : report.outcome === "uncertain"
+            ? requested.map((field) => ("slot" in field ? field.slot : "username"))
+            : [];
+      for (const slot of slots) {
+        if (identifiers.has(slot)) tracker.sent("identifier");
+        if (slot === "password" || slot === "code") tracker.sent("proof");
       }
     },
     /** The user completed the sign-in's approval. */
