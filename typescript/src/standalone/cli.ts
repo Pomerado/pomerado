@@ -10,25 +10,21 @@ import { makeTerminalAsker } from "../inputs/terminal.js";
 const usage = `Pomerado
 
   pomerado mint --url URL --intent TEXT --out DIRECTORY [--input JSON]
-  pomerado run --artifact DIRECTORY --url URL --intent TEXT [--input JSON]
+  pomerado run --artifact DIRECTORY --url URL [--input JSON]
 
 Options
   --endpoint URL          Attach to a native Playwright websocket endpoint
   --headed                Show locally launched Chromium
-  --effect read|write|ask  Mint authority (default ask), run authority (default read)
+  --effect read|write|ask  Mint authority (default ask)
   --timeout-seconds N      Session budget (default 1200)
 
-Set OPENAI_API_KEY before running. Questions are asked in this terminal.
+Set OPENAI_API_KEY before minting. A run makes no model request and needs no key.
+A run ignores --intent and --effect. Questions are asked in this terminal.
 `;
 
-const selectedEffect = (command: "mint" | "run", supplied: string | undefined) =>
-  Schema.decodeUnknown(Schema.Literal("read", "write", "ask"))(
-    supplied ?? (command === "mint" ? "ask" : "read"),
-  ).pipe(
-    Effect.filterOrFail(
-      (effect) => command !== "run" || effect !== "ask",
-      () => new Error("Choose a supported --effect. See --help."),
-    ),
+const selectedEffect = (supplied: string | undefined) =>
+  Schema.decodeUnknown(Schema.Literal("read", "write", "ask"))(supplied ?? "ask").pipe(
+    Effect.mapError(() => new Error("Choose a supported --effect. See --help.")),
   );
 const selectedTimeout = (supplied: string | undefined) =>
   Effect.try(() => {
@@ -63,9 +59,11 @@ const readOptions = Effect.gen(function* () {
   }
   if ((command !== "mint" && command !== "run") || positionals.length !== 1)
     return yield* Effect.fail(new Error("Use mint or run. See --help."));
-  if (values.url === undefined || values.intent === undefined)
-    return yield* Effect.fail(new Error("--url and --intent are required."));
-  const effect = yield* selectedEffect(command, values.effect);
+  if (values.url === undefined) return yield* Effect.fail(new Error("--url is required."));
+  if (command === "mint" && values.intent === undefined)
+    return yield* Effect.fail(new Error("--intent is required to mint."));
+  // Guardian checked the intent and authority when the artifact was minted, so a run ignores both.
+  const effect = command === "mint" ? yield* selectedEffect(values.effect) : undefined;
   const timeoutMs = yield* selectedTimeout(values["timeout-seconds"]);
   const input = yield* Effect.try({
     try: () => JSON.parse(values.input ?? "{}") as unknown,
@@ -75,7 +73,12 @@ const readOptions = Effect.gen(function* () {
     values,
     command,
     timeoutMs,
-    request: { url: values.url, intent: values.intent, input, effect },
+    request: {
+      url: values.url,
+      intent: values.intent ?? "",
+      input,
+      ...(effect === undefined ? {} : { effect }),
+    },
   };
 });
 
@@ -100,8 +103,9 @@ const main = Effect.scoped(
         return yield* Effect.fail(new Error("--artifact is required."));
       const artifact = yield* readArtifact(resolve(values.artifact));
       const output = yield* pomerado.run(artifact, {
-        ...request,
-        effect: request.effect === "write" ? "write" : "read",
+        url: request.url,
+        intent: request.intent,
+        input: request.input,
       });
       process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
       return;

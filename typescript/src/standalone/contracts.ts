@@ -23,6 +23,11 @@ export interface PomeradoRequest {
 
 export interface Pomerado {
   readonly mint: (request: PomeradoRequest) => Effect.Effect<MintOutcome, Error>;
+  /**
+   * Runs a minted artifact on `url` with no Guardian review and no model request. Guardian
+   * reviewed the artifact when it was minted. `intent`, `effect` and `authenticationOrigins` are
+   * not checked here, so run only artifacts you minted or trust.
+   */
   readonly run: (
     artifact: MintArtifact,
     request: Omit<PomeradoRequest, "effect"> & { readonly effect?: "read" | "write" },
