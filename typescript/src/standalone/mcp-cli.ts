@@ -20,7 +20,8 @@ Options
   --endpoint URL     Attach to native Playwright
   --headed           Show local Chromium
 
-The mint root defaults to ./integrations. Supply model credentials in the environment.
+The mint root defaults to ./integrations. Supply model credentials in the environment to
+mint. Serving makes no model request and needs no model credentials.
 Stdout is reserved for MCP. Human questions use provide_input through your MCP client.
 `;
 
