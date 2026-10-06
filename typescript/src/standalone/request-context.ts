@@ -86,12 +86,24 @@ const executionReviewer = (
       );
   return review;
 };
-export const requestContext = (session: StandaloneSession, request: PomeradoRequest) =>
+/** The request's checked site and the navigation to it. Builds no Guardian. */
+export const requestSite = (session: StandaloneSession, request: Pick<PomeradoRequest, "url">) =>
   Effect.gen(function* () {
-    const { options, policy, secrets, browser, projection } = session;
     const url = yield* Effect.try({ try: () => new URL(request.url), catch: error });
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password)
       return yield* Effect.fail(new Error("Provide an HTTP or HTTPS site URL without credentials"));
+    return {
+      url,
+      siteOrigin: url.origin,
+      navigate: session.browser
+        .execute(`await page.goto(${JSON.stringify(url.href)}); return null;`, 60)
+        .pipe(Effect.asVoid),
+    };
+  });
+export const requestContext = (session: StandaloneSession, request: PomeradoRequest) =>
+  Effect.gen(function* () {
+    const { options, policy, secrets, projection } = session;
+    const { url, siteOrigin, navigate } = yield* requestSite(session, request);
     const invocationId = randomUUID();
     let allowedEffect = request.effect === "write" ? "write" : "read";
     const executions: NonNullable<PendingExecution["mintContext"]>["executions"][number][] = [];
@@ -127,7 +139,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const readSources = (sources: ReadonlyMap<string, string>) => sourceInspector(session, sources);
     const review = executionReviewer(guardian, pending, readSources, executions, signInCodes);
     return {
-      siteOrigin: url.origin,
+      siteOrigin,
       guardian,
       pending,
       readSources,
@@ -177,9 +189,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       setEffect: (value: "read" | "write") => {
         allowedEffect = value;
       },
-      navigate: browser
-        .execute(`await page.goto(${JSON.stringify(url.href)}); return null;`, 60)
-        .pipe(Effect.asVoid),
+      navigate,
     };
   });
 export type RequestContext = Effect.Effect.Success<ReturnType<typeof requestContext>>;
