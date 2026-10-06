@@ -233,8 +233,9 @@ export interface AutofillInspection {
   readonly authenticationOrigins: readonly string[];
   readonly screen: {
     /**
-     * The origin of the document the host found the step's controls in: its submit's, or its
-     * fields' when it names no submit.
+     * The origin of the frame the host found the step's controls in, its submit's or, when it
+     * names no submit, its first field's, as the browser reports it: page code may redefine what
+     * the document itself says its origin is.
      */
     readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
@@ -436,6 +437,7 @@ export const inspectAutofillStep = (input: {
         foundEvidence(found.url, foundFor(found.located, untrusted.target), named),
       );
     const at = URL.parse(found.url);
+    const frame = (found.submit ?? found.fields[0])?.target.ownerUrl;
     return {
       url: found.url,
       page: at === null ? "" : `${at.origin}${at.pathname}`,
@@ -446,8 +448,7 @@ export const inspectAutofillStep = (input: {
       siteOrigin,
       authenticationOrigins,
       screen: {
-        origin:
-          found.submit?.target.documentOrigin ?? found.fields[0]?.target.documentOrigin ?? "",
+        origin: frame ? urlOrigin(frame) : "",
         fields: found.fields.map(({ described }, index) => {
           const field = step.fields[index];
           return {

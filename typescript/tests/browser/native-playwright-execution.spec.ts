@@ -366,6 +366,92 @@ test("native autofill preserves an approved cross-site frame binding", async () 
   }
 });
 
+// Under native Playwright the host's element reads run in the page's own world, where page code
+// can redefine what they return. What Guardian and the submit wait act on comes from the browser.
+const signInPage = (
+  site: string,
+  script: string,
+  button = '<button id="continue">Sign in</button>',
+) =>
+  `await context.route('${site}/**', route => route.fulfill({contentType:'text/html', body: new URL(route.request().url()).pathname === '/session' ? '<p>Signed in</p>' : '<script>${script}</script><form action="/session" method="post"><label>Password<input id="password" name="password" type="password"></label>${button}</form>'}));
+  await page.goto('${site}/login');`;
+const passwordAndSubmit = {
+  fields: [{ selector: "#password", slot: "password" as const }],
+  submit: "#continue",
+};
+/** Fakes `:disabled` for the submit: true when `disabled`, else false. */
+const fakeDisabled = (disabled: boolean) =>
+  `const matches = Element.prototype.matches; Element.prototype.matches = function (selector) { return this.id === "continue" && selector === ":disabled" ? ${String(disabled)} : matches.call(this, selector); };`;
+
+test("native inspection reports the frame's own origin, not one page code claims", async () => {
+  await native(async (executor) => {
+    const site = "https://www.signin.test";
+    await Effect.runPromise(
+      executor.execute(
+        signInPage(
+          site,
+          'Object.defineProperty(window,"origin",{get:()=>"https://accounts.signin.test",configurable:true})',
+        ),
+      ),
+    );
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({
+        step: passwordAndSubmit,
+        page: { targetId: executor.targetId, execute: executor.execute },
+        siteOrigin: site,
+        authenticationOrigins: [],
+      }),
+    );
+    if ("outcome" in inspection) throw new Error(`Fixture refused: ${inspection.reason}`);
+    expect(inspection.screen.origin).toBe(site);
+  });
+});
+
+for (const [claim, button, script, expected] of [
+  [
+    "disabled is clicked at once",
+    '<button id="continue">Sign in</button>',
+    fakeDisabled(true),
+    { submit: "clicked", path: "/session" },
+  ],
+  [
+    "enabled is never clicked and reported as staying disabled",
+    '<button id="continue" disabled>Sign in</button>',
+    fakeDisabled(false),
+    { submit: "stayed_disabled", path: "/login" },
+  ],
+] as const)
+  test(`a native submit page code claims is ${claim}`, async () => {
+    await native(async (executor) => {
+      const site = "https://www.signin.test";
+      await Effect.runPromise(executor.execute(signInPage(site, script, button)));
+      const host = { targetId: executor.targetId, execute: executor.execute };
+      const inspection = await Effect.runPromise(
+        inspectAutofillStep({
+          step: passwordAndSubmit,
+          page: host,
+          siteOrigin: site,
+          authenticationOrigins: [],
+        }),
+      );
+      if ("outcome" in inspection) throw new Error(`Fixture refused: ${inspection.reason}`);
+      const report = await Effect.runPromise(
+        fillAutofillStep({
+          step: passwordAndSubmit,
+          values: ["synthetic-native-secret"],
+          inspection,
+          page: host,
+          keyboard: executor.keyboard,
+          settleMs: 500,
+        }),
+      );
+      expect(report).toMatchObject({ outcome: "filled", submit: expected.submit });
+      expect(
+        await Effect.runPromise(executor.execute("return new URL(page.url()).pathname;")),
+      ).toBe(expected.path);
+    });
+  });
+
 test("unchanged authored operations run through schema validation and native execution", async () => {
   await native(async (executor) => {
     const site = "https://example.test";

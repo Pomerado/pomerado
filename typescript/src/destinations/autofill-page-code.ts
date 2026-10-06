@@ -153,7 +153,8 @@ try {
   return { dated: false, url: primary.url() };
 }`;
   return `if (submit === null) return { submit: "none", url: primary.url() };
-if (submit.disabled) return { submit: "disabled", url: primary.url() };
+// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer.
+if (await submit.locator.isDisabled({ timeout: 5000 })) return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
