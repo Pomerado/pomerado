@@ -188,6 +188,24 @@ const readText = (path: string): string | undefined => {
   return bytes.includes(0) ? undefined : bytes.toString("utf8");
 };
 
+/** The committer of commits GitHub makes itself, such as a merge from a pull request's page. */
+const githubCommitter = "noreply@github.com";
+
+/**
+ * The first line GitHub writes when it merges a pull request of this repository: a merge commit
+ * title, or a squashed title with the number appended in brackets. Group 1 or 2 is the number.
+ */
+const githubMergeTitle = /^Merge pull request (#\d+) from \S+$|^.*\S \((#\d+)\)$/du;
+
+/** A commit message with the pull request number GitHub wrote in its first line blanked out. */
+export const maskGitHubMergeNumber = (message: string): string => {
+  const end = message.indexOf("\n");
+  const match = githubMergeTitle.exec(end === -1 ? message : message.slice(0, end));
+  const span = match?.indices?.[1] ?? match?.indices?.[2];
+  if (span === undefined) return message;
+  return message.slice(0, span[0]) + " ".repeat(span[1] - span[0]) + message.slice(span[1]);
+};
+
 /** Findings for every tracked file and, given a range such as `A..B`, its commit messages. */
 export const scanRepository = (cwd: string, commits?: string): Finding[] => {
   const findings: Finding[] = [];
@@ -197,12 +215,16 @@ export const scanRepository = (cwd: string, commits?: string): Finding[] => {
     if (text !== undefined) findings.push(...scanText(path, text));
   }
   if (commits !== undefined) {
-    const log = git(cwd, ["log", "-z", "--format=%H%n%B", commits, "--"]);
+    const log = git(cwd, ["log", "-z", "--format=%H%n%ce%n%B", commits, "--"]);
     for (const entry of log.split("\0").filter(Boolean)) {
-      const newline = entry.indexOf("\n");
-      const sha = entry.slice(0, newline === -1 ? undefined : newline);
-      const message = newline === -1 ? "" : entry.slice(newline + 1);
-      findings.push(...scanText(`commit ${sha.slice(0, 12)}`, message));
+      const [sha = "", committer = "", ...lines] = entry.split("\n");
+      const message = lines.join("\n");
+      findings.push(
+        ...scanText(
+          `commit ${sha.slice(0, 12)}`,
+          committer === githubCommitter ? maskGitHubMergeNumber(message) : message,
+        ),
+      );
     }
   }
   return findings;

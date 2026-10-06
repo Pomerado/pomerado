@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { scanPath, scanText } from "../../../tools/check-public-content.js";
+import { maskGitHubMergeNumber, scanPath, scanText } from "../../../tools/check-public-content.js";
 
 const script = fileURLToPath(new URL("../../../tools/check-public-content.ts", import.meta.url));
 
@@ -136,6 +136,28 @@ describe("public content scan file names", () => {
   });
 });
 
+describe("GitHub merge titles", () => {
+  const hash = "#";
+
+  it.each([
+    ["a merge commit title", j("Merge pull request ", hash, "12 from acme/topic\n\nAdd a scan")],
+    ["a squashed title", j("Add a scan (", hash, "12)\n\n* Add a scan")],
+  ])("blanks only the number in %s", (_label, message) => {
+    const masked = maskGitHubMergeNumber(message);
+    expect(masked).toHaveLength(message.length);
+    expect(masked).not.toContain(hash);
+    expect(scanText("commit", masked)).toEqual([]);
+  });
+
+  it.each([
+    ["a number elsewhere in the title", j("Fix the race (Name, ", hash, "617) in checkout")],
+    ["a number in the body", j("Add a scan\n\nFollows ", hash, "617 (", hash, "12)")],
+    ["a merge title with more after the branch", j("Merge pull request ", hash, "12 from acme/topic and ", hash, "13")],
+  ])("leaves %s alone", (_label, message) => {
+    expect(maskGitHubMergeNumber(message)).toBe(message);
+  });
+});
+
 describe("public content scan command", () => {
   const directories: string[] = [];
   afterEach(() => {
@@ -154,9 +176,13 @@ describe("public content scan command", () => {
       ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
       { cwd },
     );
-  const commit = (cwd: string, message: string) => {
+  const commit = (cwd: string, message: string, committer = "test@example.com") => {
     git(cwd, "add", "--all");
-    git(cwd, "commit", "--quiet", "--allow-empty", "--message", message);
+    execFileSync(
+      "git",
+      ["-c", "user.name=Test", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "--message", message],
+      { cwd, env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: committer } },
+    );
   };
   const run = (cwd: string, ...args: string[]) =>
     spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
@@ -201,6 +227,20 @@ describe("public content scan command", () => {
     const result = run(cwd, "--commits", `${base}..HEAD`);
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/^commit [0-9a-f]{12}:1:\d+ review-reference:/mu);
+  });
+
+  it("allows the pull request number in a merge GitHub made, and nowhere else", () => {
+    const cwd = repository();
+    commit(cwd, "Base");
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    const mergeTitle = j("Merge pull request ", "#", "4 from acme/topic");
+    commit(cwd, `${mergeTitle}\n\nAdd a scan`, "noreply@github.com");
+    commit(cwd, j("Add a scan (", "#", "4)"), "noreply@github.com");
+    expect(run(cwd, "--commits", `${base}..HEAD`).status).toBe(0);
+    commit(cwd, mergeTitle);
+    const result = run(cwd, "--commits", `${base}..HEAD`);
+    expect(result.status).toBe(1);
+    expect(result.stdout.match(/ticket-reference/gu)).toHaveLength(1);
   });
 
   it("exits with a usage error for unknown arguments and a bad range", () => {
