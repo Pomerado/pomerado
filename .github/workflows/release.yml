@@ -31,6 +31,7 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
+      # The ancestry check proves the tagged commit is on main. It does not prove review.
       - name: Verify the tag matches package.json and is on main
         env:
           TAG: ${{ github.ref_name }}
