@@ -20,6 +20,8 @@ import { InputRequest as InputRequestSchema } from "../../src/runtime/input-requ
 import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
+import { loadStandaloneAuthoring } from "../../src/mint/skills.js";
+import { getAuthoringDirectory } from "../../src/assets.js";
 
 const message = (text: string): ModelResponse["output"][number] => ({
   type: "message",
@@ -1336,5 +1338,86 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// What the local host sends its two models: Guardian the native execution policy and none of a
+// hosted service's, and the minter the workspace guide with every section rendered.
+test("a local mint sends Guardian the native policy and the minter the rendered workspace guide", async () => {
+  test.setTimeout(45_000);
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Public fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const mintRequests: ModelRequest[] = [];
+  const reviewRequests: ModelRequest[] = [];
+  try {
+    const built = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            minterProvider: minter(mintRequests),
+            guardianProvider: guardian(reviewRequests),
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(request.questions.map((question) => [question.id, "read"])),
+              ),
+            ),
+            timeoutMs: 20_000,
+          });
+          return yield* service.mint({
+            url: `http://127.0.0.1:${address.port}/`,
+            intent: "Read the fixture heading",
+            input: {},
+          });
+        }),
+      ),
+    );
+    expect(built.build).toBe("published");
+    const executionReviews = reviewRequests.filter(
+      (request) =>
+        !objects(request.input).some(
+          (item) => "submitted_call" in item && "question_review" in item,
+        ),
+    );
+    expect(executionReviews.length).toBeGreaterThan(0);
+    for (const request of executionReviews) {
+      expect(reviewedNative(request)).toBe(true);
+      const policy = String(request.systemInstructions);
+      for (const native of [
+        "Operations use Kernel-shaped browser execute calls supplied by native Playwright",
+        "attempts to bypass the reviewed execution path",
+        "Offline targets (pureFiles, savedDOM, savedHTTP) authorize local fixture computation only",
+        "runs through the user's local shell with the user's operating-system permissions",
+        "Sign-in is handled by the host through its protected autofill of the observed sign-in screens",
+        "waitPastChallenge is only a passive readiness wait. The native host supplies no automatic CAPTCHA solver.",
+        "confirms only executor cleanup",
+      ])
+        expect(policy).toContain(native);
+      for (const hosted of [
+        "Operations are Kernel scripts.",
+        "attempts to bypass isolation",
+        "Offline work (pureFiles, savedDOM, savedHTTP) enters nothing on the site",
+        "runs a shell command in an isolated sandbox",
+        "Kernel Managed Auth",
+        "automatic CAPTCHA solver is part of the host's stealth browser",
+        "confirms only sandbox cleanup",
+      ])
+        expect(policy).not.toContain(hosted);
+    }
+    const guide = await Effect.runPromise(loadStandaloneAuthoring(getAuthoringDirectory()));
+    expect(mintRequests.length).toBeGreaterThan(0);
+    for (const request of mintRequests) {
+      expect(String(request.systemInstructions)).toContain(guide.instructions);
+      expect(String(request.systemInstructions)).not.toContain("pomerado:");
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 });
