@@ -13,6 +13,18 @@ or an agent's remembered Page is not a cursor authenticity check.
 
 <!-- pomerado:section pagination.no-recreated-writes -->
 
+## Append pagination ("load more")
+
+Some pages page by appending: a "Load more" or "Show more" control, or scrolling to the
+bottom, adds rows to the same list instead of navigating. Detect it when activating the
+control leaves the URL and page number unchanged while the row count grows, or when a
+scroll adds rows. Then page by repeating that one action and reading only the rows it
+added, identified by stable ID, until the control disappears or disables, a step adds no
+new rows, or the requested count is met. Bound the loop: a fixed step cap and a time
+budget, with a short wait for rows after each step. On hitting a bound, return the rows
+read with an explicit reason and no pretend next cursor. Never treat a repeated click as
+safe if it could submit or change anything.
+
 Use and test both warm and fresh paths, including expired state, changed live data,
 wrong query/account and unsupported reconstruction. `references/pagination.ts`
 provides a compiling authoring pattern; its hooks are site logic, not platform

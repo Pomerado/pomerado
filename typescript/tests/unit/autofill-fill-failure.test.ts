@@ -25,7 +25,7 @@ const lostReply = (step: AutofillStep, values: readonly string[], siteMutation: 
             return Effect.fail(new Error("The page executed, but its reply was lost"));
           }),
       },
-      keyboard: { insertText: () => Effect.succeed(true) },
+      keyboard: { insertText: () => Effect.succeed("inserted" as const) },
     }),
   );
 
