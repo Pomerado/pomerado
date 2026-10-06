@@ -611,7 +611,7 @@
     "prepack": "corepack pnpm build"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.1.0",
+    "@modelcontextprotocol/server": "2.2.0",
     "openai": "7.23.0",
     "oxc-parser": "0.151.0",
     "playwright": "1.63.0",
