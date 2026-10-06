@@ -34,10 +34,10 @@ the option's value or its observed label pattern, and read back that the field t
 Never click a label or option copied from the example, and never reject an input value
 the schema accepts. A closed list of options stays an enum of the site's options, as you
 observed them on the site; a caller's answer picks an option but does not show which
-exist. For an autocomplete, typeahead or searchable combobox, whose options come from a query, type the
-caller's value and pick the suggestion that matches it: an exact code or name match wins,
-and nothing matching or several matching equally is `InvalidInput` (core skill, the input
-schema).
+exist. For an autocomplete, typeahead or searchable combobox, whose options come from a
+query, type the caller's value and pick the suggestion that matches it: an exact code or
+name match wins, and nothing matching or several matching equally is `InvalidInput` (core
+skill, the input schema).
 
 Fill every dropdown and date control with the SDK's form controls: import
 `formControlsCode` from the runtime, put it at the top of the call's code, and call its
