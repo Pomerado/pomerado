@@ -129,12 +129,13 @@ it("packages a client-neutral MCP server entry that holds no key", async () => {
     for (const command of [
       "claude mcp add example_reader -- ",
       "codex mcp add example_reader -- ",
-      "gemini mcp add -e 'OPENAI_API_KEY=$OPENAI_API_KEY' example_reader ",
+      "gemini mcp add example_reader ",
     ])
       expect(readme).toContain(command);
-    expect(readme).toContain('env_vars = ["OPENAI_API_KEY"]');
-    expect(readme).toContain("~/.codex/config.toml");
-    expect(readme).toContain("$CODEX_HOME/config.toml");
+    // Running a minted integration makes no Guardian or model request, so it needs no key.
+    expect(readme).toContain("The server needs no model key");
+    expect(readme).not.toContain("OPENAI_API_KEY");
+    expect(readme).not.toContain("env_vars");
     expect(readme).not.toContain("codex-mcp.toml");
     expect(await readFile(launcher, "utf8")).not.toContain("Codex");
   } finally {

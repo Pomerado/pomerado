@@ -15,10 +15,11 @@ const usage = `Pomerado
 Options
   --endpoint URL          Attach to a native Playwright websocket endpoint
   --headed                Show locally launched Chromium
-  --effect read|write|ask  Mint authority (default ask), run authority (default read)
+  --effect read|write|ask  Mint authority (default ask). A run doesn't check it
   --timeout-seconds N      Session budget (default 1200)
 
-Set OPENAI_API_KEY before running. Questions are asked in this terminal.
+Set OPENAI_API_KEY before minting. A run makes no model request and needs no key.
+Questions are asked in this terminal.
 `;
 
 const selectedEffect = (command: "mint" | "run", supplied: string | undefined) =>

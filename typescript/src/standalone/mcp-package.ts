@@ -106,36 +106,32 @@ launcher and your installed Pomerado runtime.
 
 ## Add it to your MCP client
 
-- Claude Code passes its own environment to the server.
+- Claude Code
 
   \`\`\`sh
   claude mcp add ${deployment.name} -- ${command}
   \`\`\`
 
-- Codex passes servers only a short list of environment variables. After adding the server, put
-  \`env_vars = ["OPENAI_API_KEY"]\` under \`[mcp_servers.${deployment.name}]\` in
-  ~/.codex/config.toml, or $CODEX_HOME/config.toml when CODEX_HOME is set.
+- Codex
 
   \`\`\`sh
   codex mcp add ${deployment.name} -- ${command}
   \`\`\`
 
-- Gemini CLI hides variables named like keys from servers. The -e flag below passes
-  OPENAI_API_KEY by reference, so the settings file holds no key.
+- Gemini CLI
 
   \`\`\`sh
-  gemini mcp add -e 'OPENAI_API_KEY=$OPENAI_API_KEY' ${deployment.name} ${command}
+  gemini mcp add ${deployment.name} ${command}
   \`\`\`
 
 - Cursor, VS Code, Claude Desktop and other clients that read an mcpServers JSON file take the
-  entry from mcp.json. In Cursor, add \`"env": { "OPENAI_API_KEY": "\${env:OPENAI_API_KEY}" }\`
-  to it.
+  entry from mcp.json.
 
 ## Model key
 
-The server needs OPENAI_API_KEY in its environment, because Guardian reviews every run. Model
-requests go to the configured provider. This directory and mcp.json hold no key. Give the key to
-the server through your client's environment settings, never through chat.
+The server needs no model key. Guardian reviewed this integration when it was minted, so a call
+runs it without another review and makes no model request. This directory and mcp.json hold no
+key.
 
 ## Call it
 
@@ -149,9 +145,9 @@ Restarting the server loses live jobs.
 
 ## Paths
 
-The launcher uses your installed Pomerado runtime, its minter and Guardian dependencies, and
-local Chromium. The launcher source is portable. mcp.json names your current Node and Pomerado
-installation. Update those paths if you move either installation or this directory.
+The launcher uses your installed Pomerado runtime and local Chromium. The launcher source is
+portable. mcp.json names your current Node and Pomerado installation. Update those paths if you
+move either installation or this directory.
 `,
         );
         completed = true;

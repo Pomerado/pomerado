@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Runs of a built integration, through `run` or a served integration MCP, no longer call Guardian and need no model key. Guardian still reviews minting. A run no longer checks its `intent`, `effect` or `authenticationOrigins`.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
