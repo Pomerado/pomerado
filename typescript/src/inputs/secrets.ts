@@ -28,11 +28,20 @@ const yamlValueEscaped = (form: string) =>
   });
 
 /**
- * The characters a browser percent-encodes in each part of a URL it shows, beyond control
- * characters, space and anything outside ASCII, which every part encodes.
+ * The characters Chromium percent-encodes in each part of a URL it shows (`page.url()`), beyond
+ * control characters, space and anything outside ASCII, which every part encodes.
  */
-const urlPartEncoded = { query: `"#<>'`, path: '"#<>?`{}', fragment: '"<>`' };
-/** `form` as a browser writes it into one part of a URL: UTF-8, uppercase hex. */
+const urlPartEncoded = { query: `"#<>'`, path: '"#<>?^`{|}', fragment: '"<>`' };
+/**
+ * `form` as a browser writes it into one part of a URL: without tabs and line breaks, which a
+ * URL drops, with `\` turned into `/` in a path, then percent-encoded in UTF-8, uppercase hex.
+ */
+const urlPartForm = (form: string, part: keyof typeof urlPartEncoded) =>
+  percentEncoded(
+    (part === "path" ? form.replaceAll("\\", "/") : form).replace(/[\t\n\r]/gu, ""),
+    urlPartEncoded[part],
+  );
+/** `form` with each control character, space, non-ASCII byte and `encoded` character escaped. */
 const percentEncoded = (form: string, encoded: string) =>
   [...new TextEncoder().encode(form)]
     .map((byte) =>
@@ -51,8 +60,8 @@ export const makeRunSecrets = () => {
    * Each form a page or URL can show the value in. The value as given, trimmed, and with its
    * whitespace collapsed as an accessibility snapshot shows it; each of them as written,
    * JSON-escaped, escaped as a snapshot's quoted value, and with each `'` doubled as a snapshot's
-   * quoted key holds a name; and percent-encoded as `encodeURIComponent`, a form and each part of
-   * a URL write it, in uppercase and lowercase hex. A value that cannot be encoded, such as one
+   * quoted key holds a name; and percent-encoded as `encodeURIComponent` and a form write it, and
+   * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A value that cannot be encoded, such as one
    * holding a lone surrogate, keeps every other form.
    */
   const register = (value: string) => {
@@ -78,7 +87,9 @@ export const makeRunSecrets = () => {
         const percent = [
           encodeURIComponent(form),
           new URLSearchParams([["", form]]).toString().slice(1),
-          ...Object.values(urlPartEncoded).map((encoded) => percentEncoded(form, encoded)),
+          urlPartForm(form, "query"),
+          urlPartForm(form, "path"),
+          urlPartForm(form, "fragment"),
         ];
         forms.push(...percent, ...percent.map(lowercaseHex));
       }
