@@ -79,8 +79,9 @@ export type AutofillFillCall =
     };
 
 /**
- * Page code: when any control differs from the one the host last judged, which the page kept under
- * `judged`, or the page lost it, does nothing, keeps every control as found under `observed` and
+ * Page code: when any control differs from the one the host last judged (the submit's `editable`
+ * aside, which only follows whether it is disabled, as a submit input's does), which the page kept
+ * under `judged`, or the page lost it, does nothing, keeps every control as found under `observed` and
  * hands them back, for the host to judge again by inspection's rule (page code may move a form off
  * the site once values are typed, so each call finds and judges every control again). Otherwise
  * checks the field the host just typed, then runs the call.
@@ -90,12 +91,12 @@ const fillCallCode = (
   judgedId: string | undefined,
   check: number | null,
 ) => `const judged = (await kept(${JSON.stringify(judgedId ?? null)}))?.targets ?? null;
-const same = (found, expected) =>
+const same = (found, expected, editable = true) =>
   found === null || expected === null
     ? found === expected
     : found.ownerUrl === expected.ownerUrl &&
       found.documentOrigin === expected.documentOrigin &&
-      found.editable === expected.editable &&
+      (!editable || found.editable === expected.editable) &&
       found.control === expected.control &&
       JSON.stringify(found.actions) === JSON.stringify(expected.actions) &&
       JSON.stringify(found.methods) === JSON.stringify(expected.methods) &&
@@ -104,7 +105,8 @@ const found = { fields: fields.map(({ target }) => target), submit: submit === n
 if (
   judged === null ||
   found.fields.some((target, index) => !same(target, judged.fields[index] ?? null)) ||
-  !same(found.submit, judged.submit)
+  // A submit the page enables is no change: the submit call reads whether it is disabled itself.
+  !same(found.submit, judged.submit, false)
 ) {
   await keep(observed, { targets: found });
   return { changed: found, located, url: primary.url() };
@@ -153,7 +155,8 @@ try {
   return { dated: false, url: primary.url() };
 }`;
   return `if (submit === null) return { submit: "none", url: primary.url() };
-if (submit.disabled) return { submit: "disabled", url: primary.url() };
+// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer.
+if (await submit.locator.isDisabled({ timeout: 5000 })) return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
