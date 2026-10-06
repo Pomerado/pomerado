@@ -175,6 +175,8 @@ interface Probe {
   readonly tabs: number;
 }
 const account = { username: "member@example.test", password: "fixture-password-41" };
+/** The code the site sends during a passwordless sign-in. */
+const signInCode = "482913";
 const hostname = "www.start.test";
 const page = (response: ServerResponse, text: string) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -226,6 +228,23 @@ const startSite = async () => {
           response.end();
           return;
         }
+        // A passwordless sign-in: the identifier, then the code the site sent.
+        if (request.method === "POST" && path === "/api/identify") {
+          const sent = JSON.parse(await body(request)) as { readonly username?: unknown };
+          response.writeHead(sent.username === account.username ? 200 : 401);
+          response.end("{}");
+          return;
+        }
+        if (request.method === "POST" && path === "/api/verify") {
+          const sent = JSON.parse(await body(request)) as { readonly code?: unknown };
+          const matches = sent.code === signInCode;
+          response.writeHead(matches ? 200 : 401, {
+            "content-type": "application/json",
+            ...(matches ? { "set-cookie": "member=signed; Path=/; Secure; HttpOnly" } : {}),
+          });
+          response.end("{}");
+          return;
+        }
         if (request.method === "POST" && path === "/api/login") {
           const sent: unknown = JSON.parse(await body(request));
           const matches = JSON.stringify(sent) === JSON.stringify(account);
@@ -249,6 +268,12 @@ const startSite = async () => {
             response,
             `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button>Sign in</button></form>
 <script>const form=document.querySelector('#login');form.password.addEventListener('input',()=>form.requestSubmit());form.addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(form);form.replaceWith(Object.assign(document.createElement('p'),{textContent:'Signing in'}));const sent=await fetch('/api/login',{method:'POST',body:JSON.stringify({username:data.get('username'),password:data.get('password')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
+          );
+        if (path === "/login-code")
+          return page(
+            response,
+            `<title>Sign in</title><form id="identify"><input name="username"><button>Continue</button></form><form id="verify" hidden><input name="code" autocomplete="one-time-code"><button id="verify-button">Verify</button></form>
+<script>document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/identify',{method:'POST',body:JSON.stringify({username:new FormData(event.target).get('username')})});if(sent.ok){event.target.hidden=true;document.querySelector('#verify').hidden=false}});document.querySelector('#verify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/verify',{method:'POST',body:JSON.stringify({code:new FormData(event.target).get('code')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
           );
         if (path === "/account")
           return page(
@@ -309,7 +334,11 @@ const build = (
               Object.fromEntries(
                 asked.questions.map((question) => [
                   question.id,
-                  question.id === "username" ? account.username : account.password,
+                  question.id === "username"
+                    ? account.username
+                    : question.id === "code"
+                      ? signInCode
+                      : account.password,
                 ]),
               ),
             ),
@@ -598,6 +627,77 @@ test("a check again after a confirmed sign-in is refused and drops the saved ses
     path: "/",
     cookies: ["explored", "member"],
     explored: "yes",
+    token: "member",
+    tabs: 1,
+  });
+});
+
+test("a code the agent types into a passwordless sign-in's code screen counts as its proof", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const built = await build(site, { url: `${site.origin}/login-code`, effect: "read" }, [
+    () =>
+      patch({
+        "explore/look.mjs": explore,
+        "src/tool.mjs": operation("probe", probe("example")),
+      }),
+    () =>
+      [
+        execution(
+          "authenticate",
+          "src/tool.mjs",
+          {
+            signInStep: {
+              fields: [{ selector: "#identify input[name=username]", accepts: ["username"] }],
+              submit: "#identify button",
+            },
+          },
+          "sign_in",
+        ),
+      ] as Output,
+    // The code the site sent for this sign-in, asked by the agent and typed by its own probe.
+    () =>
+      [
+        call("request_input", {
+          intent: "Ask for the code the site sent to finish signing in",
+          questions: [
+            {
+              id: "code",
+              type: "secret",
+              secretKind: "one_time_code",
+              prompt: "Enter the code the site sent you to finish signing in.",
+            },
+          ],
+        }),
+      ] as Output,
+    // Written once its handle is issued: a handle the attempt never issued refuses every execution.
+    () =>
+      patch({
+        "explore/code.mjs": operation(
+          "code",
+          "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#verify-button').click(); await page.locator('#account').waitFor({ timeout: 5000 }); return true;",
+        ),
+      }).map((item) => ({ ...item, callId: "patch_code" })),
+    () => [execution("explore", "explore/code.mjs")] as Output,
+    () =>
+      [
+        execution(
+          "authenticate",
+          "src/tool.mjs",
+          { signInStep: { signedIn: { selector: "#account" } } },
+          "signed_in",
+        ),
+      ] as Output,
+    () => [execution("explore", "explore/look.mjs")] as Output,
+    () => [execution("example", "src/tool.mjs")] as Output,
+    finish,
+  ]);
+  expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
+  // The check counted the sign-in, so the example gets back the session saved after it.
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
     token: "member",
     tabs: 1,
   });

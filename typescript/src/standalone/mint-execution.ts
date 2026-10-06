@@ -303,6 +303,13 @@ const authoredExecution = (
       handles.misplaced(new Map(sources), context.siteOrigin) !== undefined
     )
       return yield* Effect.fail(new MintFailure({ code: "ScopeDenied" }));
+    // An explore that types a code the site sent for the sign-in under way finishes that
+    // sign-in, so the code counts as its proof, as a code the host fills does.
+    const codes = context.signInCodes();
+    const typesSignInCode =
+      execution.purpose === "explore" &&
+      execution.target === "liveBrowser" &&
+      sources.some(([, text]) => codes.some((code) => text.includes(code)));
     yield* beforeDispatch ?? Effect.void;
     yield* start.before(execution);
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
@@ -325,6 +332,7 @@ const authoredExecution = (
         decideDialog: makeDialogDecider(mintAsk, secrets.redact),
       }),
     );
+    if (typesSignInCode) start.typedCode();
     const receipt = { state, execution, id, sources, input, reviewed, journal };
     return yield* executed._tag === "Left"
       ? failedReceipt(receipt, executed.left, questions)

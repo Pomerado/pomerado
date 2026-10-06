@@ -495,6 +495,13 @@ describe("makeBuildStart", () => {
     approval.start.sent(filled([["account_number", "filled"]]), asked("account_number"));
     approval.start.approved();
     expect(approval.start.submitted).toBe(true);
+    // Or a code the site sent, which the agent's explore typed into the code screen.
+    const typed = modeledBuild();
+    await typed.step("authenticate");
+    typed.start.sent(filled([["username", "filled"]]), asked("username"));
+    expect(typed.start.submitted).toBe(false);
+    typed.start.typedCode();
+    expect(typed.start.submitted).toBe(true);
   });
 
   it("drops the session on a check again after a confirmed sign-in, and keeps the browser's", async () => {
