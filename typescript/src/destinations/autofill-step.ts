@@ -62,7 +62,10 @@ export interface AutofillField {
   readonly format?: DateOfBirthFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
-  /** Host-only text from the current visible field label, never persisted in the recipe. */
+  /**
+   * Host-read current question from the field's label, ARIA label or placeholder, never an answer
+   * or recipe field. Normalize whitespace only; unavailable or ambiguous text cannot permit reuse.
+   */
   readonly privateAnswerPrompt?: string | undefined;
   /**
    * The accepted kinds the login held when the host filled the field, as kinds only: its saved

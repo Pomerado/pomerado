@@ -89,6 +89,11 @@ Call `execute` with purpose `authenticate`, target `liveBrowser` and a `signInSt
 front of you. Pass the stable route you clicked as `loginUrl` on the first one (above), never the
 page it redirected to; runs open that route to replay your screens.
 
+Security questions can change between screens and visits. Inspect the current question and its
+answer control each time, then record the observed field through the same `signInStep` mechanism.
+Never assume a fixed challenge stage or put a question or answer into a recipe. A question absent
+from this screen says nothing about whether the host has a saved answer for another screen.
+
 <!-- pomerado:hosted:start
 - `fields`: each field the screen asks for, as a Playwright selector with exactly one visible match.
   A selector never reaches into another frame (no `>>` chains or `internal:` engines): the host finds
@@ -118,10 +123,14 @@ page it redirected to; runs open that route to replay your screens.
   - `slot: "recovery_code"` for a backup or recovery code field. The host fills a saved one only
     while recovery codes are the method in force, else asks the caller. Never ask for one yourself.
   - `slot: "private_answer"` for a security question or other private answer requested during
-    sign-in. Name each observed answer field, never an answer in a selector. The host asks the
-    caller separately for every field using its current label, then fills each once through the
-    protected sign-in path. A later run asks again; answers are never saved in the login or
-    recipe. Never submit them through generated browser code.
+    sign-in. Name each observed answer field, never an answer in a selector. The host reads the
+    current question from the field's label, ARIA label or placeholder. It may fill a saved answer
+    only for a unique exact question match within this verified site/login, after trimming and
+    collapsing whitespace without changing case or punctuation. Missing, ambiguous, truncated or
+    generic labels such as "Answer" do not establish that match. Otherwise the host asks privately
+    for that field. After verified sign-in the host may offer an explicit choice to save the pair;
+    saving is optional. No answer reaches you, Guardian, generated code or the recipe. Never ask
+    for or submit it yourself. One-time codes and recovery codes keep their own slots.
 - `submit`: the observed enabled control that submits those fields or advances this sign-in screen
   ("Next", "Continue", "Sign in"). It may be a native button, a submit/button/image input, an HTML
   anchor or a custom ARIA action: use its evidenced role, label or stable selector and purpose.
