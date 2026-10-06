@@ -246,7 +246,7 @@ corepack pnpm test:browser
 
 This repository owns the portable tests for its shared core and local runtime, with synthetic fixtures and the existing Vitest and Playwright runners. Browser tests exercise native Playwright, minting through MCP, generated integration MCPs, authentication and autofill using local fixture sites and scripted model responses. They need no Cloud account or model API key. Tests for hosted services stay in the application repository.
 
-Outside pull requests are not accepted yet. They open once the review and approval gate described in [CONTRIBUTING.md](CONTRIBUTING.md) is live. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
+Outside pull requests are not accepted yet. They open once the review and approval gate described in [CONTRIBUTING.md](CONTRIBUTING.md) is live. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and how to report a vulnerability privately.
 
 Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions. CI enforces this with a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push. Link a public issue by its full URL.
 

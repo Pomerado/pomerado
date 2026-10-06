@@ -2,7 +2,7 @@
 
 Pomerado does not accept outside pull requests yet. We will open them once the review and approval gate described under [Changes](#changes) is live. Until then we close pull requests from anyone other than the maintainers without review.
 
-Issues are welcome. Open one for a bug, a question or an idea. Report security problems privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
+Issues are welcome. Open one for a bug, a question or an idea. Report security problems privately with **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security), never in a public issue.
 
 ## Build and test
 
