@@ -227,8 +227,12 @@ const minter = (requests: ModelRequest[], authentication = false) =>
     return [message("Built the fixture integration.")];
   }, requests);
 
-for (const authentication of [false, true]) {
-  test(`original SDKs mint a multi-file ${authentication ? "authenticated" : "public"} integration and run it`, async () => {
+for (const [authentication, submitAfterInput] of [
+  [false, false],
+  [true, false],
+  [true, true],
+] as const) {
+  test(`original SDKs mint a multi-file ${authentication ? "authenticated" : "public"} integration${submitAfterInput ? " whose sign-in button enables only after input" : ""} and run it`, async () => {
     test.info().annotations.push({
       type: "slow",
       description:
@@ -252,6 +256,7 @@ for (const authentication of [false, true]) {
     const fixtureURL = `http://127.0.0.1:${address.port}/`;
     const directory = await mkdtemp(join(tmpdir(), "pomerado-standalone-"));
     const shop = authentication ? await startShop(directory) : undefined;
+    if (shop !== undefined && submitAfterInput) shop.state.loginSubmit = "after_input";
     const url = shop === undefined ? fixtureURL : `${shop.origin}/login`;
     const remote =
       shop === undefined
@@ -331,7 +336,19 @@ for (const authentication of [false, true]) {
       expect(asked).toHaveLength(1);
       expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
       expect(JSON.stringify(reviewRequests)).not.toContain(shopAccount.password);
-      if (shop !== undefined) expect(shop.state.loginPosts).toBe(1);
+      if (shop !== undefined) {
+        expect(shop.state.loginPosts).toBe(1);
+        // Guardian judged the sign-in step against the screen the host observed: the page's
+        // origin and what the submit is, never whether the page has enabled it yet.
+        const reviewed = objects(reviewRequests.map((request) => request.input)).find(
+          (item) => "step" in item && "screen" in item,
+        );
+        expect(reviewed?.["screen"]).toMatchObject({
+          origin: shop.origin,
+          submit: { tag: "button", text: "Sign in" },
+        });
+        expect(JSON.stringify(reviewed)).not.toContain("enabled");
+      }
     } finally {
       await remote?.close();
       await shop?.close();

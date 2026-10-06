@@ -13,7 +13,7 @@ const inspection: AutofillInspection = {
   targets: { fields: [], submit: null },
   siteOrigin: site,
   authenticationOrigins: [],
-  screen: { fields: [], submit: null, buttons: [] },
+  screen: { origin: site, fields: [], submit: null, buttons: [] },
 };
 
 /** A document whose `marked` inputs carry the binding's marker. */
