@@ -110,7 +110,8 @@ export const authorityOf = (review: RecordedReview) =>
 
 /**
  * A scripted Guardian that records each review's input. An execution review reads its entrypoint
- * (and the current page's capture when `readPage` is set) before deciding; a question is allowed.
+ * (and the whole current page's capture when `readPage` is set) before deciding; a question is
+ * allowed.
  * `fail` makes a call throw, as a provider outage would.
  */
 export const recordingGuardian = (
@@ -152,13 +153,21 @@ export const recordingGuardian = (
     const page = (contextOf(review)?.["currentPage"] as Readonly<Record<string, unknown>>)?.[
       "capture"
     ];
-    const wanted = [
-      String(submitted["entrypoint"]),
-      ...(options.readPage === true && typeof page === "string" ? [page] : []),
-    ];
-    const next = wanted[results.length];
-    if (next !== undefined)
-      return [call("read_source", { path: next, offset: 0 }, `read_${calls}_${results.length}`)];
+    // The entrypoint first, then with `readPage` the whole capture, one chunk after another.
+    const last = review.reads.at(-1);
+    const next =
+      results.length === 0
+        ? { path: String(submitted["entrypoint"]), offset: 0 }
+        : options.readPage !== true || typeof page !== "string" || last === undefined
+          ? undefined
+          : last["path"] !== page
+            ? results.length === 1
+              ? { path: page, offset: 0 }
+              : undefined
+            : last["hasMore"] === true
+              ? { path: page, offset: Number(last["nextOffset"]) }
+              : undefined;
+    if (next !== undefined) return [call("read_source", next, `read_${calls}_${results.length}`)];
     return [
       message(
         JSON.stringify({

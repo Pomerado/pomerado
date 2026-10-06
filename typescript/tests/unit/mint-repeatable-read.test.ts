@@ -122,3 +122,16 @@ it("claims nothing for a repeatable read's example, and still refuses a later wr
   expect(upgrades).toBe(0);
   expect(host.counts.claims).toBe(0);
 });
+
+it("claims a read's example when the host does not let it run again", async () => {
+  const host = countingHost();
+  const f = await fixture(
+    (_request, index) => [call("execute", example, "read")][index] ?? prose(),
+    { repeatableRead: false, ...host.overrides },
+    { effect: "read", siteOrigin: "https://site.invalid" },
+  );
+  await f.run();
+  expect(resultOf(f.requests[1], "read")).toContain("completed");
+  expect(host.counts.executions).toBe(1);
+  expect(host.counts.claims).toBe(1);
+});

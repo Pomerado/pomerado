@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   isSecretHandle,
   makeSecretHandles,
-  misplacedHandleRule,
   SecretHandlesSnapshot,
   publishedHandlePath,
   secretHandleRefusal,
@@ -513,14 +512,11 @@ describe("secretHandleRefusal", () => {
       step("explore", "explore/leak.mjs"),
       site,
     );
-    expect(refusal).toMatch(/^explore\/leak\.mjs line 1: /u);
-    expect(refusal).toContain(misplacedHandleRule);
-    expect(refusal).toContain('page.getByLabel("Code").fill("{{secret.s1}}")');
-    expect(refusal?.endsWith("Nothing was executed.")).toBe(true);
-    // The example names no host's browser API.
-    expect(
-      refusal?.slice(refusal.indexOf(misplacedHandleRule) + misplacedHandleRule.length),
-    ).not.toMatch(/kernel/iu);
+    // The rule, then an example of exactly what the check accepts: a literal in the code string
+    // passed to the runtime's page-execute call.
+    expect(refusal).toBe(
+      'explore/leak.mjs line 1: a secret handle may only be the whole string passed as the value to fill, type or pressSequentially, or a field of a request to this site, in code that never reads a typed field back (inputValue, evaluate), reads its own source, or redefines JSON, a global, a prototype or a page, keyboard or Kernel method; anything else is refused. Write the handle as a string literal inside the code string passed to the runtime\'s page-execute call, kernel.browsers.playwright.execute: the whole value passed to fill, type or pressSequentially, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.',
+    );
   });
 
   it("refuses an example whose published source holds a handle, and lets an explore run it", () => {

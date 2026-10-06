@@ -71,13 +71,26 @@ describe("allowedEffectsFor", () => {
     // A session on the agent's reading of the request may hold only values the request states.
     const derived = allowedEffectsFor({ ...live("act"), input: "intent_derived" })[0];
     expect(derived).toMatch(/^The caller's requested task, done once across this session's steps/u);
-    expect(derived).toContain("must be stated by the trusted intent or an answered question");
+    expect(derived).toContain(
+      "Every value in that input must be stated by the trusted intent or an answered question",
+    );
+    // What the page supplies stays under the general policy, and add-ons need the owner's word.
+    expect(derived).toContain(
+      "Values the page supplies, such as a site option the request selects, a default, a form token or a suggestion, follow the general policy as before.",
+    );
+    expect(derived).toContain(
+      "An add-on, optional purchase, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as the trusted intent or an answered question says, never as that input alone says",
+    );
+    expect(derived).not.toContain("every value a step types, chooses or submits");
     for (const purpose of ["explore", "test", "example"] as const)
       expect(allowedEffectsFor(live(purpose))[0]).toMatch(/^Authorized repeatable reads/u);
   });
 
-  it("gives a live sign-in step the host's sign-in text and every offline step the offline text", () => {
-    expect(allowedEffectsFor(live("authenticate"))[0]).toContain("sign-in page");
+  it("gives a live sign-in step the sign-in text and every offline step the offline text", () => {
+    // The host fills a signInStep itself; an authored sign-in writes secret handles in its source.
+    expect(allowedEffectsFor(live("authenticate"))).toEqual([
+      "Signing in on the site's own sign-in page: the step fills the sign-in fields with the login and codes the caller supplied privately, filled by the host or written as secret handles in the step's source, submits them, and checks whether the account is signed in. Nothing else on the site may change.",
+    ]);
     for (const purpose of ["command", "contract", "test", "example"] as const)
       expect(allowedEffectsFor({ purpose, target: "pureFiles" })).toEqual([
         "Offline local files, source checks and computation only. No live website, credentials or network.",
@@ -138,7 +151,29 @@ describe("mintReviewContext", () => {
 
   it.each([
     ["a query", `import op from "./step.mjs?v=1";\nexport default op;`, {}],
+    ["a fragment", `import op from "./step.mjs#x";\nexport default op;`, {}],
+    ["a percent escape", `import op from "./st%65p.mjs";\nexport default op;`, {}],
+    [
+      "createRequire",
+      `import { createRequire } from "node:module";\nconst op = createRequire(import.meta.url)("./step.mjs");\nexport default op;`,
+      {},
+    ],
     ["eval", `const op = await eval('import("./step.mjs")');\nexport default op.default;`, {}],
+    [
+      "the Function constructor",
+      `const load = (() => {}).constructor('return import("./step.mjs")');\nexport default (await load()).default;`,
+      {},
+    ],
+    [
+      "an absolute path",
+      `import op from "/workspace/operation/src/step.mjs";\nexport default op;`,
+      {},
+    ],
+    [
+      "a child process",
+      `import { execFileSync } from "node:child_process";\nexecFileSync("node", ["./step.mjs"]);\nexport default {name:'read'};`,
+      {},
+    ],
     [
       "a package import",
       `import op from "#step";\nexport default op;`,

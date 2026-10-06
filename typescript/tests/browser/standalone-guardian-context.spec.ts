@@ -1,9 +1,4 @@
 import { test, expect } from "@playwright/test";
-import type { ModelRequest, ModelResponse } from "@openai/agents";
-import { Effect } from "effect";
-import { createPomerado } from "../../src/standalone/pomerado.js";
-import { makeInputAsker } from "../../src/inputs/callback.js";
-import type { InputRequest } from "../../src/runtime/input-request.js";
 import {
   authorityOf,
   call,
@@ -13,69 +8,29 @@ import {
   executionIdOf,
   headingOperation,
   html,
-  message,
   objects,
   patch,
   probe,
   recordingGuardian,
-  scripted,
   startSite,
   toolResult,
   type RecordedReview,
 } from "./guardian-context-fixture.js";
+import {
+  act,
+  effectsOf,
+  executions,
+  historyOf,
+  mint,
+  noteSite,
+  readNote,
+  saveNote,
+  saveSite,
+  saveStep,
+} from "./standalone-mint-fixture.js";
 
-type Turn = (request: ModelRequest) => ModelResponse["output"];
-
-/** Mints against `site` with a minter that plays `turns`, one per model request. */
-const mint = async (options: {
-  readonly effect: "read" | "write";
-  readonly url: string;
-  readonly turns: readonly Turn[];
-  readonly guardian: ReturnType<typeof recordingGuardian>;
-  readonly answer?: (request: InputRequest) => Record<string, unknown>;
-  readonly input?: Readonly<Record<string, unknown>>;
-}) => {
-  const requests: ModelRequest[] = [];
-  const asked: InputRequest[] = [];
-  const minter = scripted(
-    (request, index) => options.turns[index]?.(request) ?? [message("Done.")],
-    requests,
-  );
-  const built = await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const service = yield* createPomerado({
-          minterProvider: minter,
-          guardianProvider: options.guardian.provider,
-          ask: makeInputAsker((request) =>
-            Effect.sync(() => {
-              asked.push(request);
-              return options.answer?.(request) ?? {};
-            }),
-          ),
-          timeoutMs: 60_000,
-        });
-        return yield* service.mint({
-          url: options.url,
-          intent: "Read the fixture heading",
-          effect: options.effect,
-          input: options.input ?? {},
-        });
-      }),
-    ),
-  );
-  return { built, requests, asked, last: requests.at(-1) };
-};
-const executions = (reviews: readonly RecordedReview[]) =>
-  reviews.filter((review) => review.kind === "execution");
 const sourcesOf = (review: RecordedReview, key: string) =>
   [...((contextOf(review)?.[key] as readonly string[] | undefined) ?? [])].sort();
-const effectsOf = (review: RecordedReview | undefined) =>
-  (review === undefined ? [] : authorityOf(review)["allowedEffects"]) as readonly string[];
-const historyOf = (review: RecordedReview | undefined) =>
-  ((review === undefined ? [] : contextOf(review)?.["executions"]) ?? []) as readonly Readonly<
-    Record<string, unknown>
-  >[];
 const stepResultsOf = (review: RecordedReview | undefined) =>
   review?.input["untrusted_step_results"] as
     readonly { readonly executionId: string; readonly result: string }[] | undefined;
@@ -102,28 +57,6 @@ const upgradeQuestion = {
     },
   ],
 };
-const saveSite = () => {
-  let writes = 0;
-  return {
-    writes: () => writes,
-    start: () =>
-      startSite((request, response) => {
-        if (request.method === "POST") {
-          writes++;
-          response.end("saved");
-          return;
-        }
-        html(
-          response,
-          `<title>Save</title><button id="save" onclick="fetch('/save',{method:'POST'}).then(()=>document.title='Saved')">Save</button>`,
-        );
-      }),
-  };
-};
-const saveStep = probe(
-  "await page.locator('#save').click(); await page.waitForFunction(() => document.title === 'Saved'); return true;",
-);
-
 test("a read build's reviews carry each step's own context", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
@@ -206,7 +139,8 @@ test("a read build's reviews carry each step's own context", async () => {
     expect(currentOf(command!)).toEqual({
       purpose: "command",
       target: "pureFiles",
-      commandSandbox: { cwd: expect.any(String), timeoutSeconds: 30, maxOutputBytes: 1_048_576 },
+      // The working directory is the workspace itself, never the host's path to it.
+      commandSandbox: { cwd: ".", timeoutSeconds: 30, maxOutputBytes: 1_048_576 },
     });
     expect(contextOf(command!)).not.toHaveProperty("executedSources");
     expect(contextOf(command!)?.["browser"]).toBe("not_opened");
@@ -439,6 +373,53 @@ test("an approved write upgrade turns a read build into a write build", async ()
   }
 });
 
+test("an approved write upgrade's question never makes its off-site link the owner's", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  const ownerInstance = "https://acme.tenant.invalid";
+  const pageLink = "https://signup.vendor.invalid";
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      intent: `Save the note here, as on my own instance at ${ownerInstance}/notes`,
+      guardian,
+      answer: () => ({ effect: "write" }),
+      turns: [
+        () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
+        () => [
+          call(
+            "request_input",
+            {
+              ...upgradeQuestion,
+              questions: [
+                {
+                  ...upgradeQuestion.questions[0],
+                  prompt: `May this build save the note at ${pageLink}/new for you?`,
+                },
+              ],
+            },
+            "upgrade",
+          ),
+        ],
+        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+      ],
+    });
+    expect(toolResult(last, "upgrade")).toMatchObject({ status: "answered", buildEffect: "write" });
+    const [explore, write] = executions(guardian.reviews);
+    // The owner's own words name their instance, before and after the upgrade.
+    expect(authorityOf(explore!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
+    // The approved question joins the intent, but its link is the agent's, never the owner's.
+    expect(String(authorityOf(write!)["intent"])).toContain(`${pageLink}/new`);
+    expect(authorityOf(write!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
+  } finally {
+    await site.close();
+  }
+});
+
 test("a write build refuses a blind repeat of a write, and live tests and explores in its session", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
@@ -477,52 +458,6 @@ test("a write build refuses a blind repeat of a write, and live tests and explor
     await site.close();
   }
 });
-
-/** A site whose Save button posts the note the page holds, and what it received. */
-const noteSite = () => {
-  const saved: string[] = [];
-  return {
-    saved,
-    start: () =>
-      startSite((request, response, body) => {
-        if (request.method === "POST") {
-          saved.push(body);
-          response.end("saved");
-          return;
-        }
-        html(
-          response,
-          `<title>Note</title><button id="save" onclick="fetch('/save',{method:'POST',body:document.body.dataset.note}).then(()=>document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
-        );
-      }),
-  };
-};
-/** A write step that saves its input's note once and confirms it. */
-const saveNote = `import { Schema } from "effect";
-import { defineOperation } from "../runtime/index.js";
-export default defineOperation({name:"save_note",input:Schema.Struct({note:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"message",commits:["save"]}},
-async ({kernel,sessionId,input,enteringCommit,verified}) => {
-  enteringCommit("save");
-  const result = await kernel.browsers.playwright.execute(sessionId,{code:"await page.evaluate((note) => { document.body.dataset.note = note; }, " + JSON.stringify(input.note) + "); await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:10});
-  if(!result.success || result.result !== true) throw new Error("Save not confirmed");
-  verified({confirmation:"message"});
-  return {saved:true};
-});`;
-const readNote = `import { Schema } from "effect";
-import { defineOperation } from "../runtime/index.js";
-export default defineOperation({name:"read_note",input:Schema.Struct({note:Schema.String}),output:Schema.Unknown},
-async ({input}) => ({note:input.note}));`;
-const act = (entrypoint: string, exampleInput?: unknown) =>
-  execution(
-    "act",
-    entrypoint,
-    exampleInput === undefined
-      ? {}
-      : {
-          exampleInput:
-            typeof exampleInput === "string" ? exampleInput : JSON.stringify(exampleInput),
-        },
-  );
 
 test("a write session runs the input its first act step read from the request, and publishes against it", async () => {
   test.setTimeout(90_000);
@@ -708,6 +643,36 @@ test("a step Guardian denies never runs", async () => {
     expect(executions(guardian.reviews)).toHaveLength(1);
     expect(JSON.stringify(toolResult(last, "explore"))).toContain("ReviewDenied");
     expect(site.requests).toEqual([]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a command Guardian denies never runs", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  let commands = 0;
+  const guardian = recordingGuardian({
+    decide: (review) =>
+      currentOf(review)?.["purpose"] === "command" && commands++ === 0 ? "deny" : "allow",
+  });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => [call("exec_command", { cmd: "touch denied-marker" }, "denied")],
+        () => [call("exec_command", { cmd: "ls -a" }, "listed")],
+      ],
+    });
+    expect(executions(guardian.reviews)).toHaveLength(2);
+    expect(JSON.stringify(toolResult(last, "denied"))).toContain("ReviewDenied");
+    expect(toolResult(last, "listed")).toMatchObject({ status: "completed" });
+    expect(JSON.stringify(toolResult(last, "listed"))).toContain("AGENTS.md");
+    expect(JSON.stringify(toolResult(last, "listed"))).not.toContain("denied-marker");
   } finally {
     await site.close();
   }
