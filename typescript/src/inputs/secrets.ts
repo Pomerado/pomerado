@@ -61,8 +61,8 @@ export const makeRunSecrets = () => {
    * whitespace collapsed as an accessibility snapshot shows it; each of them as written,
    * JSON-escaped, escaped as a snapshot's quoted value, and with each `'` doubled as a snapshot's
    * quoted key holds a name; and percent-encoded as `encodeURIComponent` and a form write it, and
-   * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A value that cannot be encoded, such as one
-   * holding a lone surrogate, keeps every other form.
+   * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A
+   * value that cannot be encoded, such as one holding a lone surrogate, keeps every other form.
    */
   const register = (value: string) => {
     const shown = [
