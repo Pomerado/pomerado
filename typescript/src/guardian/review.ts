@@ -251,6 +251,11 @@ export interface ReviewTurn {
   readonly reviewId: string;
   readonly session?: GuardianSession;
   readonly pending: PendingExecution;
+  /**
+   * Execution reviews only: `readSource`'s result for the entrypoint at offset 0, read for this
+   * review. Absent when that read failed; an allow then needs Guardian's own read, as before.
+   */
+  readonly entrypointSource?: string;
   readonly readSource: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>;
   readonly reportDiagnostic?: (
     value: unknown,
@@ -457,78 +462,88 @@ export const makeGuardian = (
               ),
             },
       );
+      const publication = pending.publication;
+      const inspect = (path: string, offset: number, read = readSource) =>
+        read(path, offset).pipe(
+          // A publication review's reads are its source_read diagnostics below instead.
+          Effect.tap((observation) =>
+            publication !== undefined
+              ? Effect.void
+              : (diagnostics?.retainScreenedSource({ reviewId, observation }) ?? Effect.void).pipe(
+                  Effect.mapError(
+                    (error) =>
+                      options.diagnosticFailure?.(error, "diagnostics.retainScreenedSource") ??
+                      new ReviewFailure({
+                        code: "Unavailable",
+                        reviewPhase: "diagnostic_retention",
+                        failureDetail: retentionDetail(error, "diagnostics.retainScreenedSource"),
+                      }),
+                  ),
+                ),
+          ),
+          Effect.tapError((error) =>
+            emit("guardian.source_failed", {
+              ...(publication === undefined
+                ? { path, offset }
+                : {
+                    path,
+                    manifestIndex: pending.publication?.files.findIndex(
+                      (file) => file.path === path,
+                    ),
+                    offset,
+                  }),
+              code: error.code,
+              ...(error.publicationBlock === undefined
+                ? {}
+                : { publicationBlock: error.publicationBlock }),
+              ...(error.diagnosticRetentionReason === undefined
+                ? {}
+                : {
+                    diagnosticRetentionReason: error.diagnosticRetentionReason,
+                  }),
+              ...(error.diagnosticScreeningReason === undefined
+                ? {}
+                : { diagnosticScreeningReason: error.diagnosticScreeningReason }),
+              // Why the read failed, with its whole detail.
+              ...failureDetailOf(error),
+            }),
+          ),
+          Effect.tap((observation) =>
+            publication === undefined
+              ? Effect.void
+              : emit("guardian.source_read", {
+                  path,
+                  manifestIndex: pending.publication?.files.findIndex((file) => file.path === path),
+                  offset,
+                  observation,
+                }),
+          ),
+        );
       return yield* Effect.gen(function* () {
-        let inspectedEntrypoint = false;
-        const publication = pending.publication;
         const unavailableSources = new Map<string, ReviewFailure>();
+        // The request carries the current entrypoint's first page, read as read_source reads it,
+        // so earlier reads in a continuing conversation never stand in for it. A failed read
+        // leaves it out and the review unchanged: an allow then needs Guardian's own read. A
+        // failure after a successful read, such as retention, keeps the source in the request
+        // and the review going; inspect has recorded it as guardian.source_failed.
+        let observation: string | undefined;
+        const entrypointSource = requireEntrypoint
+          ? yield* inspect(pending.entrypoint, 0, (path, offset) =>
+              readSource(path, offset).pipe(
+                Effect.tap((read) => Effect.sync(() => void (observation = read))),
+              ),
+            ).pipe(Effect.orElseSucceed(() => observation))
+          : undefined;
+        let inspectedEntrypoint = entrypointSource !== undefined;
         const raw = yield* reviewer.run({
           reviewId,
           ...(session ? { session } : {}),
           pending,
+          ...(entrypointSource === undefined ? {} : { entrypointSource }),
           ...(retainRuntimeRecord === undefined ? {} : { retainRuntimeRecord }),
           reportDiagnostic: (value, timing) => emit("guardian.model", value, timing),
           readSource: (path, offset) =>
-            readSource(path, offset).pipe(
-              // A publication review's reads are its source_read diagnostics below instead.
-              Effect.tap((observation) =>
-                publication !== undefined
-                  ? Effect.void
-                  : (
-                      diagnostics?.retainScreenedSource({ reviewId, observation }) ?? Effect.void
-                    ).pipe(
-                      Effect.mapError(
-                        (error) =>
-                          options.diagnosticFailure?.(error, "diagnostics.retainScreenedSource") ??
-                          new ReviewFailure({
-                            code: "Unavailable",
-                            reviewPhase: "diagnostic_retention",
-                            failureDetail: retentionDetail(
-                              error,
-                              "diagnostics.retainScreenedSource",
-                            ),
-                          }),
-                      ),
-                    ),
-              ),
-              Effect.tapError((error) =>
-                emit("guardian.source_failed", {
-                  ...(publication === undefined
-                    ? { path, offset }
-                    : {
-                        path,
-                        manifestIndex: pending.publication?.files.findIndex(
-                          (file) => file.path === path,
-                        ),
-                        offset,
-                      }),
-                  code: error.code,
-                  ...(error.publicationBlock === undefined
-                    ? {}
-                    : { publicationBlock: error.publicationBlock }),
-                  ...(error.diagnosticRetentionReason === undefined
-                    ? {}
-                    : {
-                        diagnosticRetentionReason: error.diagnosticRetentionReason,
-                      }),
-                  ...(error.diagnosticScreeningReason === undefined
-                    ? {}
-                    : { diagnosticScreeningReason: error.diagnosticScreeningReason }),
-                  // Why the read failed, with its whole detail.
-                  ...failureDetailOf(error),
-                }),
-              ),
-              Effect.tap((observation) =>
-                publication === undefined
-                  ? Effect.void
-                  : emit("guardian.source_read", {
-                      path,
-                      manifestIndex: pending.publication?.files.findIndex(
-                        (file) => file.path === path,
-                      ),
-                      offset,
-                      observation,
-                    }),
-              ),
+            inspect(path, offset).pipe(
               Effect.tapError((error) =>
                 Effect.sync(() => {
                   // Tool adapters can return source failures as model-visible text.

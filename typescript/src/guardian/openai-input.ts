@@ -56,6 +56,10 @@ export const guardianReviewInput = (
       entrypoint: turn.pending.entrypoint,
       input: turn.pending.screenedInput,
     },
+    // read_source's own JSON result, so the model reads it as it reads that tool's.
+    ...(turn.entrypointSource === undefined
+      ? {}
+      : { untrusted_entrypoint_source: JSON.parse(turn.entrypointSource) as unknown }),
     ...(turn.pending.mintContext === undefined
       ? {}
       : { trusted_execution_context: turn.pending.mintContext }),
