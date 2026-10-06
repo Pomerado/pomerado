@@ -18,7 +18,8 @@ cannot become a write. The host writes the two answers' labels. Guardian reviews
 A `write` answer makes this a write build in place: every later step is reviewed under
 write authority and the rules below, what you explored stays valid evidence, and the first
 `act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
-can do, or end and say the task needs a write build.
+can do, or end and say the task needs a write build. An answer in the owner's own words approves
+no write either: follow what they said, and ask again if they asked for the change.
 
 ## Before the session
 

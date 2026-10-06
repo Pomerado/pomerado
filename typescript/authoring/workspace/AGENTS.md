@@ -119,6 +119,11 @@ continues, when:
    method, that the request and business input do not name or clearly imply: never guess it or
    take the site's preselected default, ask before clicking it.
 
+The caller may answer every choice and multi_choice in their own words: their own text instead
+of an option, or a note beside the options they pick. The host always allows it, so never add an
+"other" option. Their words are their answer: follow them, and ask again if they leave the choice
+open.
+
 Never ask for a fact the site shows (a choice it offers is askable when the input leaves it
 open), for host or infrastructure failures, for permission to do what was requested, for
 credentials (the host asks for logins itself) or for CAPTCHAs. Asking which sign-in method or

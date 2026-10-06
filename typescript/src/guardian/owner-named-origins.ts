@@ -8,8 +8,9 @@ import type { PendingExecution } from "./review.js";
  * the site (`trusted_authority.ownerNamedOrigins`).
  *
  * Only text the owner wrote counts: `requestedIntent` (the intent without an approved write
- * upgrade's question) and the answers `answersForReview` marks `typed` (a text answer, a choice's
- * own text that repeats no offered option, a confirm's text other than the offered default). An
+ * upgrade's question), the answers `answersForReview` marks `typed` (a text answer, a choice's own
+ * text or a multiple choice's own option that repeats no offered option, a confirm's text other
+ * than the offered default) and every note the owner added beside a pick. An
  * option label or question prompt the minting model wrote never names one, even when the owner
  * picks, types back or approves it, and neither does website content. Each entry is a
  * `URL.origin` (`https://host` or `https://host:port`, punycode for an IDN), once, in the order
@@ -20,15 +21,16 @@ export const ownerNamedOrigins = (
   pending: Pick<PendingExecution, "requestedIntent" | "answeredQuestions" | "allowedOrigins">,
 ): readonly string[] => {
   const { requestedIntent = "", answeredQuestions = [], allowedOrigins } = pending;
-  const typed = answeredQuestions.flatMap(({ answer, typed }): readonly string[] =>
-    typed !== true
+  const typed = answeredQuestions.flatMap(({ answer, other, note, typed }): readonly string[] => [
+    ...(typed !== true
       ? []
       : typeof answer === "string"
         ? [answer]
         : "confirmed" in answer
           ? [answer.text ?? ""]
-          : [],
-  );
+          : [other ?? ""]),
+    ...(note === undefined ? [] : [note]),
+  ]);
   const named = new Set<string>();
   for (const text of [requestedIntent, ...typed])
     for (const [match] of text.matchAll(/https:\/\/[^\s"'`<>()[\]{}]+/giu)) {

@@ -35,6 +35,7 @@ import {
   MintRequest,
   MintServices,
   PublicationRequest,
+  withOwnWords,
 } from "./contracts.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
@@ -47,7 +48,7 @@ import type {
   MintHarnessSnapshot,
   SpentSignIn,
 } from "./contracts.js";
-import type { ValidAnswers } from "../runtime/input-request.js";
+import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
 import type { RecoveryToolCall } from "./recovery-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
@@ -194,10 +195,13 @@ const definitionFix = (section: string | undefined) =>
           ? "Edit the operation's schemas and questions in its source without it, then call finish_build again with the same executionId."
           : "Remove it from the metadata, the operation's schemas and questions, and the login URL, then call finish_build again with the same executionId.";
 
-/** The owner's answer to a write upgrade's one question, and that question's prompt. */
-const writeUpgradeChoice = (submitted: AgentInputRequest, answers: ValidAnswers) => {
-  const [only] = submitted.questions;
-  return { choice: answers[only?.id ?? ""]?.value, change: only?.prompt ?? "" };
+/**
+ * The option the owner picked on a read-or-write choice (the effect question or a write upgrade),
+ * undefined when they answered in their own words instead.
+ */
+const readOrWritePick = (submitted: AgentInputRequest, answers: ValidAnswers) => {
+  const given = answers[submitted.questions[0]?.id ?? ""];
+  return given?.type === "choice" ? pickedOption(given.value) : undefined;
 };
 
 /**
@@ -933,12 +937,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "Build published for future calls. The current invocation outcome is returned separately; do not execute the example again.",
           });
         });
+      /**
+       * Records the answer to the host's own question of a question-only turn. Returns the agent's
+       * instruction instead when the owner answered the effect question in their own words, which
+       * decides nothing.
+       */
       const recordInputAnswer = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
           const value = answers[submitted.questions[0]?.id ?? ""]?.value;
           let summary: string;
           if (effectQuestion) {
-            const effect = value;
+            const effect = readOrWritePick(submitted, answers);
+            if (effect === undefined && value !== undefined)
+              return "The owner answered in their own words instead of choosing read or write, so the build's effect is not decided. Ask the read-or-write question again with request_input, its prompt reflecting what they said.";
             if (effect !== "read" && effect !== "write")
               return yield* new MintFailure({ code: "InvalidRequest" });
             if (!dependencies.recordBuildEffect)
@@ -951,14 +962,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               return yield* new MintFailure({ code: "Unavailable" });
             yield* dependencies.capabilityAnswered(answer);
             summary = "The owner answered the capability question.";
-          } else return;
+          } else return undefined;
           terminal ??= { build: "incomplete", summary };
+          return undefined;
         });
       const inputResult = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
-          yield* recordInputAnswer(submitted, answers);
+          const askAgain = yield* recordInputAnswer(submitted, answers);
           const visibleAnswers = yield* answersForModel(answers);
           const handles = Object.values(answers).some((answer) => answer.type === "secret");
+          if (askAgain !== undefined)
+            return JSON.stringify({
+              status: "answered",
+              answers: visibleAnswers,
+              instruction: askAgain,
+            });
           return JSON.stringify({
             status: "answered",
             answers: visibleAnswers,
@@ -1255,9 +1273,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const answerWriteUpgrade = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
-          const { choice, change } = writeUpgradeChoice(submitted, answers);
-          const asked = { answers: yield* answersForModel(answers), change };
+          const choice = readOrWritePick(submitted, answers);
+          const asked = {
+            answers: yield* answersForModel(answers),
+            change: submitted.questions[0]?.prompt ?? "",
+          };
           const upgradeToWrite = dependencies.upgradeToWrite;
+          // Own words approve no write, but unlike a `read` pick they do not settle the upgrade.
+          if (choice === undefined)
+            return JSON.stringify({
+              status: "answered",
+              answers: asked.answers,
+              buildEffect: "read",
+              instruction:
+                "The owner answered in their own words and approved no write, so this build is still read-only. Do not fill, choose, advance, save or submit anything on the site. Follow what they said: finish what a read can do, ask for the write upgrade again if they asked for the change, or end the attempt and say in the summary that the task needs a write build.",
+            });
           if (choice !== "write" || upgradeToWrite === undefined) {
             writeUpgradeDeclined = true;
             return JSON.stringify({
@@ -2740,10 +2770,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 redactCallerText,
               );
               const upgrade = writeUpgrade === true;
-              const submitted =
-                upgrade || effectQuestion
-                  ? { ...proposed, questions: withEffectAnswerLabels(proposed.questions) }
-                  : proposed;
+              const submitted = {
+                ...proposed,
+                questions: (upgrade || effectQuestion
+                  ? withEffectAnswerLabels(proposed.questions)
+                  : proposed.questions
+                ).map(withOwnWords),
+              };
               const refusal = requestShapeRefusal(submitted, upgrade);
               if (refusal !== undefined)
                 return JSON.stringify({
