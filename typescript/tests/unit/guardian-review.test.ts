@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
-import type { PendingExecution, Reviewer } from "../../src/guardian/review.js";
+import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
 import { readScopedFile } from "../../src/filesystem/read.js";
+import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import {
   diagnosticRetentionReason,
   diagnosticScreeningReason,
@@ -110,19 +111,47 @@ describe("Guardian modeled reviewer contract", () => {
     expect(new Set(seenReviewIds).size).toBe(2);
   });
 
-  it("does not permit an allow decision when the entrypoint could not be put in view", async () => {
-    const guardian = makeGuardian({
-      run: () => Effect.succeed({ outcome: "allow", rationale: "No source was read." }),
-    });
-    const result = await Effect.runPromise(
-      Effect.either(
-        guardian.review(pending, () =>
-          Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })),
-        ),
-      ),
-    );
-    expect(result).toMatchObject({ _tag: "Left", left: { code: "SourceUnavailable" } });
-  });
+  it.each([
+    ["a read error", () => () => Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))],
+    ["a missing file", (empty: string) => makeSourceReader(empty)],
+    [
+      "a screening refusal",
+      () => {
+        const secrets = makeRunSecrets();
+        secrets.register("synthetic-source-evidence");
+        return makeSourceInspector(
+          () => Effect.succeed(new TextEncoder().encode(source)),
+          (_path, bytes) =>
+            secrets.assertAbsent(new TextDecoder().decode(bytes)).pipe(
+              Effect.as(new TextDecoder().decode(bytes)),
+              Effect.mapError(() => new ReviewFailure({ code: "SourceUnavailable" })),
+            ),
+        );
+      },
+    ],
+  ] satisfies [string, (empty: string) => ReviewTurn["readSource"]][])(
+    "without the entrypoint in the request after %s, a deny stands and an allow ends EntrypointNotRead",
+    async (_failure, reader) => {
+      const empty = await mkdtemp(join(tmpdir(), "guardian-missing-entrypoint-"));
+      try {
+        const decide = (outcome: "allow" | "deny") =>
+          makeGuardian({
+            run: (turn) =>
+              Effect.sync(() => {
+                expect(turn.sources?.entrypoint).toBeUndefined();
+                return { outcome, rationale: "No source was read." };
+              }),
+          }).review(pending, reader(empty));
+        expect(await Effect.runPromise(Effect.either(decide("allow")))).toMatchObject({
+          _tag: "Left",
+          left: { code: "EntrypointNotRead" },
+        });
+        expect((await Effect.runPromise(decide("deny"))).decision.outcome).toBe("deny");
+      } finally {
+        await rm(empty, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves a required source outage when the reviewer tool swallows it before deny", async () => {
     const guardian = makeGuardian({
@@ -239,6 +268,64 @@ describe("Guardian modeled reviewer contract", () => {
               },
             },
       );
+    },
+  );
+
+  it.each([
+    [
+      "a mapped",
+      {
+        diagnosticFailure: (error: unknown) =>
+          new ReviewFailure({
+            code: "Unavailable",
+            diagnosticRetentionReason: diagnosticRetentionReason(error),
+            diagnosticStorageFailure: diagnosticStorageFailure(error),
+          }),
+      },
+      { diagnosticRetentionReason: "storage" },
+    ],
+    ["the default", {}, { failureDetail: { operation: "diagnostics.retainScreenedSource" } }],
+    ["a bare", { diagnosticFailure: () => new ReviewFailure({ code: "Unavailable" }) }, {}],
+  ] as const)(
+    "goes forward with the entrypoint inline after %s retention failure of the host's read",
+    async (_mapping, options, gap) => {
+      let entrypointSource: unknown;
+      const events: [string, unknown][] = [];
+      const guardian = makeGuardian(
+        {
+          run: (turn) =>
+            Effect.sync(() => {
+              entrypointSource = turn.sources?.entrypoint;
+              return { outcome: "allow", rationale: "Modeled reviewer inspected the source." };
+            }),
+        },
+        {
+          emit: (name, value) => Effect.sync(() => void events.push([name, value])),
+          retainModelTranscript: () => Effect.void,
+          retainScreenedSource: () =>
+            Effect.fail(
+              new EventUnavailable({
+                event: "diagnostic_storage_failed",
+                diagnosticStorageFailure: "unavailable",
+              }),
+            ),
+        },
+        undefined,
+        options,
+      );
+      const result = await Effect.runPromise(
+        Effect.either(guardian.review(pending, () => Effect.succeed(sourceEnvelope))),
+      );
+      expect(result).toMatchObject({ _tag: "Right", right: { decision: { outcome: "allow" } } });
+      expect(entrypointSource).toEqual(JSON.parse(sourceEnvelope));
+      expect(events).toMatchObject([
+        ["guardian.started", {}],
+        [
+          "guardian.source_failed",
+          { details: { path: pending.entrypoint, offset: 0, code: "Unavailable", ...gap } },
+        ],
+        ["guardian.completed", {}],
+      ]);
     },
   );
 

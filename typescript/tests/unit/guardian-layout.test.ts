@@ -416,8 +416,8 @@ it("reports model diagnostics and token counts for session reviews", async () =>
     details: {
       modelCalls: 1,
       inputTokens: 1000,
-      cachedInputTokens: 900,
-      cacheWriteInputTokens: 40,
+      cachedTokens: 900,
+      cacheWriteTokens: 40,
       outputTokens: 50,
       reasoningTokens: 30,
     },
@@ -449,4 +449,135 @@ it("reports each wait for the session as an interval", async () => {
     expect(wait.kind).toBe("execution");
     expect(Date.parse(wait.endedAtUtc) - Date.parse(wait.startedAtUtc)).toBe(wait.waitMs);
   }
+});
+
+it.each(["default", "mapped", "bare"] as const)(
+  "keeps an included entrypoint in view when retaining its screened copy fails (%s mapping)",
+  async (mapping) => {
+    const requests = scripted([[allow]]);
+    const { diagnostics, events } = recording();
+    const reviewed = await Effect.runPromise(
+      Effect.either(
+        makeGuardian(
+          makeOpenAIReviewer("{{ tenant_policy_config }}"),
+          {
+            ...diagnostics,
+            retainScreenedSource: () => Effect.fail(new Error("Synthetic retention outage")),
+          },
+          {},
+          mapping === "default"
+            ? {}
+            : {
+                diagnosticFailure: () =>
+                  new ReviewFailure({
+                    code: "Unavailable",
+                    ...(mapping === "mapped" ? { diagnosticRetentionReason: "storage" } : {}),
+                  }),
+              },
+        ).review(pending, sourcesOf(files())),
+      ),
+    );
+    expect(reviewed).toMatchObject({ _tag: "Right", right: { decision: { outcome: "allow" } } });
+    expect(requests).toHaveLength(1);
+    const call = reviewRequest(requests[0]).submitted_call as {
+      entrypointSource?: { source?: string };
+    };
+    expect(call.entrypointSource?.source).toBe(files().get("operation/operation.mjs"));
+    expect(events.map((event) => event.name)).toContain("guardian.source_failed");
+  },
+);
+
+it("ends EntrypointNotRead, without retrying, when the entrypoint can't be included and is never read", async () => {
+  const requests = scripted([[allow], [allow], [allow]]);
+  const { diagnostics, events } = recording();
+  const result = await Effect.runPromise(
+    Effect.either(
+      makeGuardian(
+        { ...makeOpenAIReviewer("{{ tenant_policy_config }}"), retry: guardianOutageRetry },
+        diagnostics,
+        {},
+      ).review(pending, () => Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))),
+    ),
+  );
+  expect(result).toMatchObject({ _tag: "Left", left: { code: "EntrypointNotRead" } });
+  expect(requests).toHaveLength(3);
+  expect(events.map((event) => event.name)).not.toContain("guardian.review_retried");
+});
+
+it("keeps a shareability exchange out of later reviews' readable model records but in the model's history", async () => {
+  const requests = scripted([
+    [
+      decision({
+        outcome: "private",
+        rationale: "Names synthetic-private-rationale-marker.",
+        reason: "tenant_specific",
+      }),
+    ],
+    [allow],
+  ]);
+  const timing: ModelDiagnosticTiming = {
+    phase: "completed",
+    sequence: 0,
+    occurredAtUtc: "2026-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 0,
+    queueMs: 0,
+  };
+  // A readable projection of everything the observer sees: each request and the final history.
+  const observerFactory: ModelObserverFactory = (persist) => {
+    const persisted: Promise<void>[] = [];
+    const seen: unknown[] = [];
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => ({
+        getModel: async (name) => {
+          const model = await provider.getModel(name);
+          return {
+            getResponse: (request: ModelRequest) => {
+              seen.push(request.input);
+              return model.getResponse(request);
+            },
+            getStreamedResponse: (request: ModelRequest) => model.getStreamedResponse(request),
+          };
+        },
+      }),
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: (history) => {
+        persisted.push(persist({ requests: seen, history }, timing));
+      },
+      failed: () => undefined,
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing, value: {} }),
+      flush: async () => {
+        await Promise.all(persisted);
+      },
+    };
+  };
+  const { diagnostics, transcripts } = recording();
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+    diagnostics,
+    {},
+  );
+  const shared = await Effect.runPromise(
+    guardian.reviewShareability(pending, {
+      policy: "Synthetic shareability policy.",
+      evidence: { primaryOrigin: "https://synthetic-private-evidence-marker.example.test" },
+    }),
+  );
+  expect(shared.decision.visibility).toBe("private");
+  expect(transcripts).toHaveLength(0);
+  await Effect.runPromise(guardian.review(pending, sourcesOf(files())));
+  expect(transcripts).toHaveLength(1);
+  const readable = JSON.stringify(transcripts);
+  expect(readable).not.toContain("synthetic-private-evidence-marker");
+  expect(readable).not.toContain("synthetic-private-rationale-marker");
+  // The model still continues the whole conversation, so its cached prefix holds.
+  const sent = JSON.stringify(requests[1]?.input);
+  expect(sent).toContain("synthetic-private-evidence-marker");
+  expect(sent).toContain("synthetic-private-rationale-marker");
+  expect(requests[1]?.input.slice(0, requests[0]?.input.length)).toEqual(requests[0]?.input);
 });

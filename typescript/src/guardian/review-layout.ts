@@ -262,3 +262,53 @@ export const unchangedSources = (
       ),
     { concurrency: 4 },
   ).pipe(Effect.map((found) => found.flat()));
+
+const privateReviewRequest = (item: unknown): boolean => {
+  if (typeof item !== "object" || item === null || Reflect.get(item, "role") !== "user")
+    return false;
+  const content: unknown = Reflect.get(item, "content");
+  if (typeof content !== "string" || !content.startsWith("{")) return false;
+  try {
+    const request: unknown = JSON.parse(content);
+    const review: unknown =
+      typeof request === "object" && request !== null
+        ? Reflect.get(request, "trusted_review")
+        : undefined;
+    return (
+      typeof review === "object" &&
+      review !== null &&
+      Reflect.get(review, "kind") === "shareability"
+    );
+    // error-reporting-allow: parse-predicate a message that is not JSON is no review request
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A conversation as readable records may show it: each shareability review's exchange, its
+ * request and everything up to the next request, replaced by one placeholder message. The
+ * model still receives the whole conversation; `restore` maps placeholders back to it.
+ */
+export const withholdPrivateReviews = <Item>(
+  items: readonly Item[],
+  placeholder: (index: number) => Item,
+): { readonly items: Item[]; readonly withheld: ReadonlyMap<string, readonly Item[]> } => {
+  const shown: Item[] = [];
+  const withheld = new Map<string, Item[]>();
+  let segment: Item[] | undefined;
+  for (const item of items) {
+    const request =
+      typeof item === "object" && item !== null && Reflect.get(item, "role") === "user";
+    if (request) segment = undefined;
+    if (request && privateReviewRequest(item)) {
+      const stand = placeholder(withheld.size);
+      segment = [];
+      withheld.set(JSON.stringify(stand), segment);
+      shown.push(stand);
+    }
+    if (segment === undefined) shown.push(item);
+    else segment.push(item);
+  }
+  return { items: shown, withheld };
+};
