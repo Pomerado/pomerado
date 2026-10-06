@@ -91,6 +91,7 @@ The package has these entry points.
 - Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, serve hosted library composition. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then loads it in `"hosted"` mode.
 
 `npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
 
@@ -98,7 +99,7 @@ The package has these entry points.
 
 - This repository is the only source for the shared core, the portable tests, the authoring assets and the local MCP adapters.
 - Cloud installs the same core as a pinned library package and calls it directly. Its hosted MCP frontend, with accounts, permissions and durable jobs, lives in a private repository.
-- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop and credential storage.
+- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop, credential storage and its own hosted authoring text.
 - Cloud adopts a tested release through an exact dependency pin with locked integrity, and updates its controller and sandbox images together.
 - Cloud rolls back by restoring its previous package pin and matching image versions. Public commits don't update Cloud.
 - Contributors can test Cloud against a locally built package before a version is published.
@@ -116,4 +117,4 @@ The package has these entry points.
 | `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
 | `typescript/src/standalone/` | Local library, terminal and MCP composition |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
-| `typescript/authoring/` | Shared prompts and examples for local and hosted minting |
+| `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
