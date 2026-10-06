@@ -211,6 +211,7 @@ it("observes a private session review's model timing and permit wait without ret
   };
   const guardian = makeGuardian(
     makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+      ...native,
       observerFactory,
     }),
     diagnostics,
@@ -434,7 +435,7 @@ it("masks a registered secret in the entrypoint source the request carries", asy
   secrets.register(secret);
   const requests: ModelRequest[] = [];
   provide([[message()]], requests);
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
   const reviewed = await Effect.runPromise(
     guardian.review(
       pending,
@@ -465,7 +466,7 @@ it("carries only the first page of a large entrypoint, and later pages come thro
     ],
     requests,
   );
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}"), undefined, {});
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
   const reviewed = await Effect.runPromise(
     guardian.review(
       pending,

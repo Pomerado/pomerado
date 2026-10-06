@@ -5,7 +5,7 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { guardianExecutionPolicy } from "../../src/guardian/execution-policy.js";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
@@ -512,7 +512,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   };
   const readEntrypoint = () => Effect.succeed(sourceEnvelope);
   const reviewer = (upstreamPolicy: string) =>
-    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: "native" });
+    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: nativeExecutionEnvironment });
   const modelInput = (requests: readonly ModelRequest[]): unknown => {
     const input = requests[0]?.input;
     const [message] = Array.isArray(input) ? input : [];
@@ -551,13 +551,9 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     );
     const sentence =
       "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
-    for (const policy of [
-      requests[0]?.systemInstructions ?? "",
-      guardianExecutionPolicy("hosted"),
-    ]) {
-      expect(policy).toContain(sentence);
-      expect(policy).not.toContain("enabled control");
-    }
+    const policy = requests[0]?.systemInstructions ?? "";
+    expect(policy).toContain(sentence);
+    expect(policy).not.toContain("enabled control");
   });
 
   // Guardian reviews an execution's source, never each request it sends.

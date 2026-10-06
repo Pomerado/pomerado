@@ -447,7 +447,7 @@ it("gives a review the owner's own option and note beside their picks, as the ow
   // A later review carries both to Guardian, and their links name where the owner's work lives.
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       { ...pending, answeredQuestions: reviewed },
       question,
       unreadable,
@@ -510,7 +510,7 @@ it("never takes an option label the owner typed back as a note or an own option 
   ]);
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       { ...pending, answeredQuestions: reviewed },
       question,
       unreadable,
