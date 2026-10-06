@@ -1,17 +1,98 @@
+# Every npm release of pomerado comes from this workflow, with npm provenance. docs/RELEASING.md
+# describes the process. Two events start it:
+# - A push to main publishes a canary, X.Y.Z-canary.N under the `canary` dist-tag, from the exact
+#   tarball the Check workflow tested. N is this workflow's run number, so canaries only grow.
+# - A dispatch on main with a version and its integrity promotes that published version to the
+#   `latest` dist-tag, then tags its commit and creates the GitHub Release. Pomerado's production
+#   deploy dispatches it for the version production runs, and again on a rollback, so `latest`
+#   follows production. Promoting the version `latest` already names changes nothing on npm.
+# Publish and promote run on GitHub-hosted runners in the npm-release environment, which npm
+# trusted publishing names: npm swaps the job's short lived OIDC token for rights to this package
+# alone, and --provenance needs a GitHub-hosted runner. GitHub stores no npm token. No tag starts
+# this workflow, and both jobs run only on main.
 name: Release
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to promote to latest, such as 0.2.1-canary.57
+        required: true
+        type: string
+      integrity:
+        description: The version's sha512 integrity, as a lockfile records it
+        required: true
+        type: string
 permissions:
   contents: read
+# One canary at a time, in push order. A newer push replaces a canary still waiting to start, and
+# the newest canary includes its commits. So a replaced push gets no Check run of its own on main.
+# Its pull request ran Check on the same tree, since the branch had to be up to date with main.
+# Promotions queue apart from canaries the same way.
+concurrency:
+  group: release-${{ github.event_name }}
+  cancel-in-progress: false
 jobs:
+  version:
+    if: github.event_name == 'push' && github.repository == 'Pomerado/pomerado'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      # A canary precedes the next release in semver order. package.json names that release until
+      # it is published, and after that the canary takes the next patch version. A re-run of this
+      # run after its canary published finds the version on npm and skips Check and publish.
+      - name: Choose the canary version
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          base="$(node -p 'require("./package.json").version')"
+          # Semver forbids leading zeros, so 01.2.3 is refused, not read as 1.2.3.
+          if ! [[ "$base" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::package.json version $base is not a plain X.Y.Z release version."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+          # A failed read stops the job. Treating it as unpublished would make a canary that
+          # sorts below the release npm already has. npm prints a lone version as a string.
+          published="$(npm view pomerado versions --json)"
+          published="$(jq -c 'if type == "array" then . else [.] end' <<<"$published")"
+          if jq -e --arg v "$base" 'index($v) != null' <<<"$published" >/dev/null; then
+            base="$major.$minor.$((patch + 1))"
+          fi
+          version="$base-canary.$RUN_NUMBER"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Run numbers never repeat, so only a re-run of this run finds its version on npm.
+          if jq -e --arg v "$version" 'index($v) != null' <<<"$published" >/dev/null; then
+            echo "pomerado@$version is already published. Nothing to publish." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Canary version: $version"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
   check:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
     uses: ./.github/workflows/check.yml
-  publish:
-    needs: check
-    if: github.repository == 'Pomerado/pomerado'
-    # GitHub-hosted, not Blacksmith: npm trusted publishing and --provenance need a GitHub-hosted runner.
+    with:
+      version: ${{ needs.version.outputs.version }}
+  canary:
+    needs: [version, check]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: npm-release
@@ -22,30 +103,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
       # No registry URL input, so setup-node writes no .npmrc token placeholder.
-      # npm authenticates to the default registry through OIDC trusted publishing.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.21.0
           package-manager-cache: false
-      # The ancestry check proves the tagged commit is on main. It does not prove review.
-      - name: Verify the tag matches package.json and is on main
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::Tag $TAG does not match package.json version $version. Expected v$version."
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::Tag $TAG points at $(git rev-parse HEAD), which is not on main."
-            exit 1
-          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pomerado-package
@@ -53,7 +115,7 @@ jobs:
       - name: Verify the tested tarball
         id: tarball
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           shopt -s nullglob
           tarballs=(package-artifact/*.tgz)
@@ -66,12 +128,220 @@ jobs:
           manifest="$(tar -xzOf "$tarball" package/package.json)"
           name="$(jq -r .name <<<"$manifest")"
           version="$(jq -r .version <<<"$manifest")"
-          if [ "$name" != "pomerado" ] || [ "$TAG" != "v$version" ]; then
-            echo "::error::Tarball holds $name@$version. Tag $TAG expects pomerado@${TAG#v}."
+          if [ "$name" != "pomerado" ] || [ "$version" != "$VERSION" ]; then
+            echo "::error::Tarball holds $name@$version. Expected pomerado@$VERSION."
             exit 1
           fi
           echo "path=$tarball" >> "$GITHUB_OUTPUT"
-      - name: Publish with npm trusted publishing and provenance
+      # Checked here, just before publishing, so that re-running this job alone is safe too. A
+      # re-run after the publish finds these bytes on npm and stops. Otherwise the canary must sort
+      # above every version npm has, so `canary` never moves backwards, whether package.json's
+      # version went down or an older run's job is re-run after a newer canary.
+      - name: Publish the canary with npm trusted publishing and provenance
         env:
           TARBALL: ${{ steps.tarball.outputs.path }}
-        run: npm publish "$TARBALL" --provenance --access public
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          published="$(npm view pomerado versions --json)"
+          published="$(jq -c 'if type == "array" then . else [.] end' <<<"$published")"
+          if jq -e --arg v "$VERSION" 'index($v) != null' <<<"$published" >/dev/null; then
+            integrity="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w0)"
+            if [ "$(npm view "pomerado@$VERSION" dist.integrity)" != "$integrity" ]; then
+              echo "::error::npm already has a different pomerado@$VERSION."
+              exit 1
+            fi
+            echo "pomerado@$VERSION is already published." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Compare with the semver package npm itself ships, so the order is npm's.
+          npm_dir="$(dirname "$(readlink -f "$(command -v npm)")")/.."
+          SEMVER="$npm_dir/node_modules/semver" PUBLISHED="$published" node <<'JS'
+          const semver = require(process.env.SEMVER);
+          const [highest] = semver.rsort(JSON.parse(process.env.PUBLISHED));
+          if (highest && !semver.gt(process.env.VERSION, highest)) {
+            console.log(`::error::pomerado@${process.env.VERSION} doesn't sort above ${highest}, the highest version npm has.`);
+            process.exit(1);
+          }
+          JS
+          npm publish "$TARBALL" --provenance --access public --tag canary
+          echo "Published pomerado@$VERSION under canary." >> "$GITHUB_STEP_SUMMARY"
+  promote:
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.repository == 'Pomerado/pomerado'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.version }}
+      INTEGRITY: ${{ inputs.integrity }}
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      # The integrity is the one the deploy pinned and tested, so latest moves to exactly those
+      # bytes. npm records no gitHead for a package published from a tarball, so the commit comes
+      # from the version's SLSA provenance. It must cover these bytes under this name, come from
+      # release.yml in this repository on a GitHub-hosted runner, and name a commit on main.
+      # Canaries are built from refs/heads/main. Releases from the retired tag workflow, 0.2.0 and
+      # earlier, were built from their own v<version> tag, so a rollback can still return to one.
+      - name: Verify the published version
+        id: published
+        run: |
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-canary\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "::error::The version is not a release or canary version."
+            exit 1
+          fi
+          if ! [[ "$INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]+=*$ ]]; then
+            echo "::error::The integrity must be one sha512 SRI value."
+            exit 1
+          fi
+          metadata="$(npm view "pomerado@$VERSION" --json)"
+          published_version="$(jq -r .version <<<"$metadata")"
+          published_integrity="$(jq -r .dist.integrity <<<"$metadata")"
+          attestations="$(jq -r '.dist.attestations.url // empty' <<<"$metadata")"
+          latest="$(jq -r '."dist-tags".latest' <<<"$metadata")"
+          if [ "$published_version" != "$VERSION" ]; then
+            echo "::error::npm has no pomerado@$VERSION."
+            exit 1
+          fi
+          if [ "$published_integrity" != "$INTEGRITY" ]; then
+            echo "::error::pomerado@$VERSION has integrity $published_integrity, not the deployed $INTEGRITY."
+            exit 1
+          fi
+          if [ -z "$attestations" ]; then
+            echo "::error::pomerado@$VERSION has no provenance."
+            exit 1
+          fi
+          statement="$(curl -fsS --retry 3 "$attestations" |
+            jq -er '[.attestations[] | select(.predicateType == "https://slsa.dev/provenance/v1")] | first | .bundle.dsseEnvelope.payload' |
+            base64 -d)"
+          digest="$(base64 -d <<<"${INTEGRITY#sha512-}" | od -An -v -tx1 | tr -d ' \n')"
+          release=false
+          if [[ "$VERSION" != *-* ]]; then
+            release=true
+          fi
+          commit="$(jq -r --arg digest "$digest" --arg name "pkg:npm/pomerado@$VERSION" \
+            --arg tag "refs/tags/v$VERSION" --argjson release "$release" '
+            .predicate.buildDefinition.externalParameters.workflow as $workflow
+            | select(.subject[0].name == $name
+              and .subject[0].digest.sha512 == $digest
+              and $workflow.repository == "https://github.com/Pomerado/pomerado"
+              and $workflow.path == ".github/workflows/release.yml"
+              and ($workflow.ref == "refs/heads/main" or ($release and $workflow.ref == $tag))
+              and .predicate.runDetails.builder.id == "https://github.com/actions/runner/github-hosted")
+            | .predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // empty' <<<"$statement")"
+          if [ -z "$commit" ]; then
+            echo "::error::pomerado@$VERSION's provenance doesn't show these bytes built by release.yml on main of this repository, on a GitHub-hosted runner."
+            jq -c '{subject: .subject[0].name, workflow: .predicate.buildDefinition.externalParameters.workflow, builder: .predicate.runDetails.builder.id}' <<<"$statement"
+            exit 1
+          fi
+          # Only a full lowercase commit hash reaches git and the GitHub API.
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::pomerado@$VERSION's provenance doesn't name a full commit hash."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::pomerado@$VERSION was built from $commit, which is not on main."
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+      # npm dist-tag authenticates through trusted publishing (OIDC) from npm 11.21.0. Node 24.21.0
+      # ships npm 11.19.0, whose dist-tag never asks for an OIDC token and so has no credentials.
+      # This step alone runs npm 11.21.0. Keep that version pinned exactly, since this job can push
+      # tags and mint OIDC tokens. Drop the pin once the pinned Node ships npm 11.21.0 or later.
+      - name: Move latest
+        env:
+          LATEST: ${{ steps.published.outputs.latest }}
+        run: |
+          if [ "$LATEST" = "$VERSION" ]; then
+            echo "latest already names $VERSION." >> "$GITHUB_STEP_SUMMARY"
+          else
+            npx --yes npm@11.21.0 dist-tag add "pomerado@$VERSION" latest
+            echo "latest moved from $LATEST to $VERSION." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # The registry can serve the old tag for a short while after a move.
+          for attempt in 1 2 3 4 5; do
+            current="$(npm view pomerado dist-tags.latest)"
+            if [ "$current" = "$VERSION" ]; then
+              exit 0
+            fi
+            echo "latest still reads $current after attempt $attempt."
+            sleep $((attempt * 5))
+          done
+          echo "::error::latest names $current, not $VERSION."
+          exit 1
+      # The release tags ruleset lets a tag be created once and never moved or deleted, so a
+      # promotion after a rollback finds its tag and release already there. A tag that is already
+      # there must point to the commit the provenance names.
+      - name: Tag the commit and create the GitHub Release
+        env:
+          COMMIT: ${{ steps.published.outputs.commit }}
+        run: |
+          tag="v$VERSION"
+          if ref="$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" 2>/dev/null)"; then
+            type="$(jq -r .object.type <<<"$ref")"
+            sha="$(jq -r .object.sha <<<"$ref")"
+            # An annotated tag points to a tag object. Follow it to the commit.
+            while [ "$type" = tag ]; do
+              object="$(gh api "repos/$REPOSITORY/git/tags/$sha")"
+              type="$(jq -r .object.type <<<"$object")"
+              sha="$(jq -r .object.sha <<<"$object")"
+            done
+            if [ "$type" != commit ] || [ "$sha" != "$COMMIT" ]; then
+              echo "::error::Tag $tag points to $type $sha, not to $COMMIT, the commit pomerado@$VERSION was built from."
+              exit 1
+            fi
+          else
+            gh api "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$COMMIT" --silent
+          fi
+          if ! gh release view "$tag" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$REPOSITORY" --verify-tag --title "pomerado $VERSION" --generate-notes
+          fi
+          gh release edit "$tag" --repo "$REPOSITORY" --latest
+  # Posts to the maintainers' alerts channel when a canary or a promotion fails. The slack-alerts
+  # environment deploys only from main and holds the incoming webhook and the on-call mention.
+  alert:
+    needs: [version, check, canary, promote]
+    if: failure() && github.repository == 'Pomerado/pomerado'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    environment: slack-alerts
+    steps:
+      - name: Post the failure
+        env:
+          WEBHOOK: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
+          MENTION: ${{ vars.SLACK_ONCALL_MENTION }}
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ inputs.version || needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          # A dispatch input reaches Slack only as a valid version, so it can add no markup.
+          if [ -n "$VERSION" ] && ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-canary\.(0|[1-9][0-9]*))?$ ]]; then
+            VERSION="(an invalid version)"
+          fi
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")' <<<"$NEEDS")
+          if [ "$EVENT" = push ]; then
+            what="pomerado canary ${VERSION:-(no version)} from ${SHA:0:12} failed"
+          else
+            what="promoting pomerado $VERSION to latest failed"
+          fi
+          text="${MENTION:+$MENTION }:rotating_light: $what at $failed. $RUN_URL"
+          jq -n --arg text "$text" '{text: $text}' |
+            curl -fsS --retry 3 -H 'Content-Type: application/json' --data @- "$WEBHOOK"
