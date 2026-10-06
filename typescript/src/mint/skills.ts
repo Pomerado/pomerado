@@ -23,19 +23,9 @@ const catalog = [
     references: ["auth-entry.ts"],
   },
   {
-    name: "testing",
-    description: "Meaningful offline/live checks and honest missing evidence",
-    references: ["captured-parser.ts"],
-  },
-  {
     name: "pagination",
     description: "Warm state and fresh reconstruction for scoped read cursors",
     references: ["pagination.ts"],
-  },
-  {
-    name: "recovery",
-    description: "Deterministic variants and residual recovery without repeated writes",
-    references: ["variants.ts"],
   },
   {
     name: "forms",
@@ -50,20 +40,8 @@ const catalog = [
   {
     name: "writes",
     description:
-      "Perform a write once as a live act session, confirm it, then compose and publish its script without running it again",
+      "Perform an authorized write once, confirm it, then return its integration without running it again",
     references: ["write-session.ts", "write-readback.ts"],
-  },
-  {
-    name: "captcha",
-    description:
-      "Check Kernel CAPTCHA state on demand; explorations wait and report, operation code reports ChallengeFailure",
-    references: [],
-  },
-  {
-    name: "browser-recovery",
-    description:
-      "When the browser, not your code, is at fault: ask for a new browser with request_browser_recovery, and what a new browser cannot fix",
-    references: [],
   },
   {
     name: "caller-input",
@@ -71,33 +49,16 @@ const catalog = [
       "Ask the run's caller mid-run for what only they know: a choice only the page offers, or a code the site sends",
     references: ["caller-choice.ts", "caller-code.ts"],
   },
-  {
-    name: "http-mcp",
-    description: "Browser-bound HTTP extraction and coherent public operation design",
-    references: ["http-version.ts", "kernel-page-fetch.ts"],
-  },
-  {
-    name: "publication",
-    description:
-      "Read before the first finish_build: what publication checks, private values never to publish, and how to act on each rejection",
-    references: [],
-  },
 ] as const;
 
 /**
  * The host-owned workspace guide, relative to the authoring directory. `AGENTS.md` is the
  * always-on context: the host installs it at the workspace root and gives the same text to the
- * minting model as its instructions, so it holds regardless of the agent runtime. The README and
- * its reference sections are read on demand. Each path is installed at the same path under the
- * workspace root, without the `workspace/` prefix.
+ * minting model as its instructions, so it holds regardless of the agent runtime. The README is
+ * read on demand. Each path is installed at the same path under the workspace root, without the
+ * `workspace/` prefix.
  */
-const workspaceGuideFiles = [
-  "README.md",
-  "reference/offline-commands.md",
-  "reference/captures.md",
-  "reference/fixtures.md",
-  "reference/maintenance.md",
-] as const;
+const workspaceGuideFiles = ["README.md"] as const;
 
 export interface WorkspaceGuide {
   /** The workspace `AGENTS.md`, which is also the minting model's instructions. */
@@ -106,18 +67,31 @@ export interface WorkspaceGuide {
   readonly files: ReadonlyMap<string, string>;
 }
 
+/**
+ * `standalone` renders each named section's own text. `hosted` is for a host that composed the
+ * directory with its own text for every section first, so any section left is an error.
+ */
 export type AuthoringMode = "hosted" | "standalone";
 
-const standaloneSkills = new Set(["core", "auth", "pagination", "forms", "writes", "caller-input"]);
+/**
+ * A named section is `<!-- pomerado:section ID -->`, or `<!-- pomerado:section ID:start`, its
+ * standalone text and `pomerado:section ID:end -->`. A section that ends the file also takes the
+ * file's final newline.
+ */
+const section =
+  /<!-- pomerado:section ([a-z0-9.-]+)(?: -->|:start\n([\s\S]*?)\npomerado:section \1:end -->)(?:\n(?=$))?/g;
 
-/** These two composition sections keep shared browser instructions and examples identical. */
 const authoringText = (text: string, mode: AuthoringMode): string => {
+  if (mode === "hosted") {
+    if (text.includes("<!-- pomerado:"))
+      throw new Error("Hosted authoring has a section the host did not compose");
+    return text;
+  }
   const rendered = text.replace(
-    /<!-- pomerado:(hosted|standalone):start\n([\s\S]*?)\npomerado:\1:end -->(?:\n(?=$))?/g,
-    (_match: string, selected: string, content: string) => (selected === mode ? content : ""),
+    section,
+    (_match: string, _id: string, content?: string) => content ?? "",
   );
-  if (rendered.includes("<!-- pomerado:"))
-    throw new Error("Malformed authoring composition section");
+  if (rendered.includes("<!-- pomerado:")) throw new Error("Malformed authoring section");
   return rendered;
 };
 
@@ -145,12 +119,12 @@ const readGuideFile = (directory: string, path: string, mode: AuthoringMode) =>
 /** Pass the trusted installed authoring directory explicitly; it is not a model-selected path. */
 export const loadWorkspaceGuide = (
   directory: string,
-  mode: AuthoringMode = "hosted",
+  mode: AuthoringMode = "standalone",
 ): Effect.Effect<WorkspaceGuide, MintFailure> =>
   Effect.gen(function* () {
     const instructions = yield* readGuideFile(directory, "AGENTS.md", mode);
     const files = new Map([["AGENTS.md", instructions]]);
-    for (const path of mode === "hosted" ? workspaceGuideFiles : ["README.md"])
+    for (const path of workspaceGuideFiles)
       files.set(path, yield* readGuideFile(directory, path, mode));
     return { instructions, files };
   });
@@ -158,36 +132,31 @@ export const loadWorkspaceGuide = (
 /** Pass the trusted installed authoring directory explicitly; it is not a model-selected path. */
 export const loadAuthoringSkills = (
   directory: string,
-  mode: AuthoringMode = "hosted",
+  mode: AuthoringMode = "standalone",
 ): Effect.Effect<readonly SkillDescriptor[], MintFailure> =>
   Effect.tryPromise({
     try: async () =>
       Promise.all(
-        catalog
-          .filter((entry) => mode === "hosted" || standaloneSkills.has(entry.name))
-          .map(async (entry): Promise<SkillDescriptor> => {
-            const references: Record<string, ReturnType<typeof file>> = {};
-            for (const name of entry.references)
-              references[name] = file({
-                content: await readScopedFile(directory, `examples/${name}`),
-              });
-            return {
-              name: entry.name,
-              description:
-                mode === "standalone" && entry.name === "writes"
-                  ? "Perform an authorized write once, confirm it, then return its integration without running it again"
-                  : entry.description,
-              content: new TextEncoder().encode(
-                authoringText(
-                  new TextDecoder("utf-8", { fatal: true }).decode(
-                    await readScopedFile(directory, `${entry.name}/SKILL.md`),
-                  ),
-                  mode,
+        catalog.map(async (entry): Promise<SkillDescriptor> => {
+          const references: Record<string, ReturnType<typeof file>> = {};
+          for (const name of entry.references)
+            references[name] = file({
+              content: await readScopedFile(directory, `examples/${name}`),
+            });
+          return {
+            name: entry.name,
+            description: entry.description,
+            content: new TextEncoder().encode(
+              authoringText(
+                new TextDecoder("utf-8", { fatal: true }).decode(
+                  await readScopedFile(directory, `${entry.name}/SKILL.md`),
                 ),
+                mode,
               ),
-              references,
-            };
-          }),
+            ),
+            references,
+          };
+        }),
       ),
     catch: (error) =>
       new MintFailure({

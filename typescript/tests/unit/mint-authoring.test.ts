@@ -1,4 +1,8 @@
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Script } from "node:vm";
+import type { SkillDescriptor } from "@openai/agents/sandbox";
 import { Effect, Either, Schema } from "effect";
 import { expect, it } from "vitest";
 import parser from "../../authoring/examples/parser.js";
@@ -42,6 +46,77 @@ it("names only skills that load and workspace sections that install", async () =
       expect(skills).toContain(name);
     for (const [path] of text.matchAll(/reference\/[a-z-]+\.md/gu))
       expect(guide.files.has(path)).toBe(true);
+  }
+});
+
+const sectionMarker =
+  /<!-- pomerado:section ([a-z0-9.-]+)(?: -->|:start\n[\s\S]*?\npomerado:section \1:end -->)/g;
+
+const authoringCopy = async (edit: (path: string, text: string) => string) => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-authoring-"));
+  await cp("typescript/authoring", root, { recursive: true });
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true }))
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      const path = join(entry.parentPath, entry.name);
+      await writeFile(path, edit(path, await readFile(path, "utf8")));
+    }
+  return root;
+};
+
+const contents = (skills: readonly SkillDescriptor[]) =>
+  skills.map((skill) => {
+    if (!(skill.content instanceof Uint8Array)) throw new Error(`${skill.name} is not bytes`);
+    return new TextDecoder().decode(skill.content);
+  });
+
+it("loads standalone text by default and refuses uncomposed sections in hosted mode", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  expect(skills).toEqual(
+    await Effect.runPromise(loadAuthoringSkills("typescript/authoring", "standalone")),
+  );
+  for (const text of [...contents(skills), ...guide.files.values()])
+    expect(text).not.toContain("<!-- pomerado:");
+  const refused = { _tag: "Left", left: { code: "Unavailable" } };
+  expect(
+    await Effect.runPromise(Effect.either(loadAuthoringSkills("typescript/authoring", "hosted"))),
+  ).toMatchObject(refused);
+  expect(
+    await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", "hosted"))),
+  ).toMatchObject(refused);
+});
+
+it("loads a host-composed directory in hosted mode exactly as composed", async () => {
+  const root = await authoringCopy((_path, text) =>
+    text.replace(sectionMarker, (_match, id: string) => `host text for ${id}`),
+  );
+  try {
+    const skills = await Effect.runPromise(loadAuthoringSkills(root, "hosted"));
+    const guide = await Effect.runPromise(loadWorkspaceGuide(root, "hosted"));
+    for (const [index, skill] of skills.entries())
+      expect(contents(skills)[index]).toBe(
+        await readFile(join(root, skill.name, "SKILL.md"), "utf8"),
+      );
+    expect(guide.instructions).toBe(await readFile(join(root, "workspace/AGENTS.md"), "utf8"));
+    expect(guide.instructions).toContain("host text for ");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects an unterminated section in either mode", async () => {
+  const root = await authoringCopy((path, text) =>
+    path.endsWith(join("core", "SKILL.md"))
+      ? `${text}<!-- pomerado:section core.unterminated:start\nleft open\n`
+      : text,
+  );
+  try {
+    for (const mode of ["standalone", "hosted"] as const)
+      expect(await Effect.runPromise(Effect.either(loadAuthoringSkills(root, mode)))).toMatchObject(
+        { _tag: "Left", left: { code: "Unavailable" } },
+      );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -5,7 +5,7 @@ import type {
   RetainedProviderCode,
   RetainedProviderStage,
   RetainedProviderSchemaField,
-  RetainedProxyError,
+  RetainedNetworkError,
 } from "../runtime/provider-metadata.js";
 import type { NoResponseError } from "../destinations/navigation-failure.js";
 import type {
@@ -77,22 +77,21 @@ export interface SignInDiagnostic {
   /** The site answered the failed login's latest page load 429, a rate limit. */
   readonly siteRateLimited?: true;
   /**
-   * The failed login's latest page load failed at the proxy layer: typed proxy or provider
-   * evidence from the login browser's capture (`managedLoginProxyFailure`), read once before the
-   * login's cleanup.
+   * The failed login's latest page load failed in the provider's network layer: typed network or
+   * provider evidence from the login browser's capture, read once before the login's cleanup.
    */
-  readonly loginProxyFailure?: RetainedProxyError | NoResponseError;
+  readonly loginProxyFailure?: RetainedNetworkError | NoResponseError;
   /**
-   * An iframe document of the login that Kernel's proxy failed with provider evidence. Once a
-   * sign-in started it moves nothing: context for the agent, never a verdict.
+   * An iframe document of the login that the provider's network layer failed with provider
+   * evidence. Once a sign-in started it moves nothing: context for the agent, never a verdict.
    */
   readonly loginFrameRefusal?: {
     readonly origin: string;
-    readonly cause: RetainedProxyError | NoResponseError;
+    readonly cause: RetainedNetworkError | NoResponseError;
   };
   /**
-   * Set by the mint host once its proxy switch replaced the browser after this failure, so the
-   * agent's answer says the browser moved only when it did.
+   * Set by the mint host once it replaced the browser after this failure, so the agent's answer
+   * says the browser moved only when it did.
    */
   readonly hostMovedBrowser?: true;
   /** Kernel's account of a failed or expired login flow; see `RetainedLoginFailureEvidence`. */

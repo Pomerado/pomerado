@@ -1,7 +1,7 @@
 import type { MintDiagnostics, MintReporting } from "./diagnostics.js";
 import type { MintProjection } from "./projection.js";
 import { CredentialRejectedField } from "../runtime/authentication.js";
-import type { ProxySwitchSummary } from "../runtime/provider-metadata.js";
+import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
@@ -896,12 +896,12 @@ export type MintEntryNavigation =
    * The browser was replaced: by managed authentication (`sign_in`), where `page` is the page the
    * agent was on, when it was on the site and loaded, else the login page; or by a recovery
    * (`recovery`), where `page` is the page a read's replacement reopened: the last page the site
-   * served the browser it replaced.
-   * `antibot`: after the entry load, a move-up for the site's bot products, blank.
+   * served the browser it replaced. A host may give its own reason and explain it in
+   * `instruction`.
    */
   | {
       readonly state: "replaced";
-      readonly reason: "sign_in" | "recovery" | "antibot";
+      readonly reason: "sign_in" | "recovery" | (string & {});
       readonly requestedUrl?: string;
       readonly page?: string;
       /** Host-authored explanation of the browser replacement. */
@@ -1294,7 +1294,7 @@ export type MintBrowserRecoveryResult =
       readonly outcome: "replaced" | "kept" | "lost";
       readonly notice: string;
       readonly reviewId: string;
-      readonly browserRecovery?: ProxySwitchSummary;
+      readonly browserRecovery?: BrowserRecoverySummary;
     };
 
 export const PublicationDiagnosticGap = Schema.Union(
