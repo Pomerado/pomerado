@@ -59,7 +59,7 @@ export const credentials: readonly (readonly [string, string, readonly Surface[]
     "MIIfakeKeyMaterial",
     both,
   ],
-  // Review round 1: cookie shapes, Azure account keys, Digest params and bracketed values.
+  // Cookie shapes, Azure account keys, Digest params and bracketed values.
   ['Cookie: sid="FAKEq0t3dCookie123"; theme=dark', "FAKEq0t3dCookie123", both],
   [
     "upstream set-cookie: theme=dark; Path=/, session=FAKEsess0123abc; HttpOnly",
@@ -72,7 +72,7 @@ export const credentials: readonly (readonly [string, string, readonly Surface[]
     both,
   ],
   ["Cookie: FAKEopaquecookie0123456789", "FAKEopaquecookie0123456789", both],
-  // Review round 2: a comma inside a cookie value continues it (consent-manager cookies).
+  // A comma inside a cookie value continues it (consent-manager cookies).
   ["Cookie: consent=analytics,ads; sid=SEKRETcomma02; theme=dark", "SEKRETcomma02", both],
   [
     "Cookie: cookieyes-consent=consentid:abc,consent:yes,action:yes; __Host-sid=SEKRETcy01",

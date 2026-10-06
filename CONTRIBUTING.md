@@ -24,7 +24,7 @@ Tests use synthetic sites and scripted model responses. They need no model API k
 ## Changes
 
 - The maintainers, Alan ([@alanmrsa](https://github.com/alanmrsa)) and Akshay ([@AkshayM21](https://github.com/AkshayM21)), push to `main` directly or open a pull request.
-- CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check and browser tests.
+- CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check, browser tests, a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push.
 - A maintainer may merge their own pull request.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
 

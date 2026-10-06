@@ -248,7 +248,7 @@ This repository owns the portable tests for its shared core and local runtime, w
 
 Outside pull requests are not accepted until a Contributor License Agreement is in place. Issues are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes land and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
 
-Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions.
+Public tests use synthetic sites and data. Keep customer-specific incidents, private credentials and internal issue references out of public contributions. CI enforces this with a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push. Link a public issue by its full URL.
 
 - Build and test the package before publishing an explicit versioned release. The release workflow validates the packed artifact before npm publication.
 - Adopt a tested release in Cloud through an exact dependency pin and locked integrity. Update the controller and sandbox images together.

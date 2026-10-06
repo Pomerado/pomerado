@@ -451,7 +451,7 @@ describe("failure detail", () => {
       ...Array.from(
         { length: failureDetailBounds.stackFrames + 10 },
         (_, index) =>
-          `    at step${index} (/home/runner/work/pomerado/typescript/src/worker/run.ts:${index}:1)`,
+          `    at step${index} (/home/runner/work/pomerado/typescript/src/example.ts:${index}:1)`,
       ),
     ].join("\n");
     const detail = failureDetail("unclassified", {
@@ -472,7 +472,7 @@ describe("failure detail", () => {
     });
     expect(detail.underlying?.message?.length).toBeLessThan(failureDetailBounds.message + 40);
     expect(detail.stack).toHaveLength(failureDetailBounds.stackFrames);
-    expect(detail.stack?.[0]).toBe("step0 (typescript/src/worker/run.ts:0:1)");
+    expect(detail.stack?.[0]).toBe("step0 (typescript/src/example.ts:0:1)");
     expect(JSON.stringify(detail)).not.toContain("/home/runner");
     expect(Object.keys(detail.context ?? {})).toHaveLength(failureDetailBounds.contextKeys);
     expect(detail.cdpCommands?.length).toBeLessThanOrEqual(failureDetailBounds.commands);
