@@ -44,7 +44,18 @@ it("preserves an artifact roundtrip and refuses metadata collisions before writi
   }
 });
 
-it.each(["MCP.mjs", "Mcp.Json", "readme.md/main.mjs"])(
+it.each([
+  "MCP.mjs",
+  "Mcp.Json",
+  "readme.md/main.mjs",
+  "Codex-MCP.toml",
+  ".MCP.json",
+  ".vscode/mcp.json",
+  ".Cursor/mcp.json",
+  ".codex/config.toml",
+  ".GEMINI/settings.json",
+  ".claude/settings.json",
+])(
   "refuses packaging collision %s and removes the incomplete integration",
   async (path) => {
     const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
@@ -122,6 +133,8 @@ it("packages a client-neutral MCP server entry that holds no key", async () => {
     ])
       expect(readme).toContain(command);
     expect(readme).toContain('env_vars = ["OPENAI_API_KEY"]');
+    expect(readme).toContain("~/.codex/config.toml");
+    expect(readme).toContain("$CODEX_HOME/config.toml");
     expect(readme).not.toContain("codex-mcp.toml");
     expect(await readFile(launcher, "utf8")).not.toContain("Codex");
   } finally {

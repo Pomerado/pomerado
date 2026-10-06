@@ -18,7 +18,24 @@ const { startMcpCli } = await import(runtime);
 startMcpCli(['serve', '--artifact', fileURLToPath(new URL('.', import.meta.url))]);
 `;
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-const reserved = new Set(["deployment.json", "mcp.mjs", "mcp.json", "readme.md"]);
+/**
+ * Top-level names authored source may not use, compared in lower case. They cover the packaging
+ * files, the TOML that 0.1.2 wrote and its docs told users to copy into Codex, and the project
+ * config an MCP client might load from this folder.
+ */
+const reserved = new Set([
+  "deployment.json",
+  "mcp.mjs",
+  "mcp.json",
+  "readme.md",
+  "codex-mcp.toml",
+  ".mcp.json",
+  ".vscode",
+  ".cursor",
+  ".codex",
+  ".gemini",
+  ".claude",
+]);
 
 /** Only the local operator's configuration chooses the root; tool arguments choose one slug. */
 export const prepareIntegration = (options: {
@@ -96,7 +113,8 @@ launcher and your installed Pomerado runtime.
   \`\`\`
 
 - Codex passes servers only a short list of environment variables. After adding the server, put
-  \`env_vars = ["OPENAI_API_KEY"]\` under \`[mcp_servers.${deployment.name}]\` in its config.toml.
+  \`env_vars = ["OPENAI_API_KEY"]\` under \`[mcp_servers.${deployment.name}]\` in
+  ~/.codex/config.toml, or $CODEX_HOME/config.toml when CODEX_HOME is set.
 
   \`\`\`sh
   codex mcp add ${deployment.name} -- ${command}
