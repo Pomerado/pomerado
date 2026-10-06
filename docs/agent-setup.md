@@ -108,4 +108,4 @@ Suggest this prompt, and wait for the user to agree before you run it. Minting c
 - Choose `read` authority unless the user asks for a change on the website.
 - Follow the job with `get_job` until it finishes. Never call `mint` again for the same job.
 - Before you collect a password or code, tell the user that answers sent through `provide_input` are visible to the MCP client and its model provider.
-- When the mint finishes, open the integration's `README.md` and add the integration the same way you added Pomerado, after asking the user.
+- When the mint finishes, open the integration's `README.md` and add the integration with the command for your client, after asking the user. The integration needs no model key, so leave out `env_vars`, the Gemini `-e` flag and step 5.
