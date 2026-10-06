@@ -124,12 +124,12 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["964e12308c358741b63ecd329facc0d837ef17bfbb693ed4b34efd07e9769037", "core"],
-    ["cb5d827f6216a73624c72b5ed79fd31ff790e30e49f2e2e14a488273f370b204", "auth"],
+    ["f0709a0e7d532ebf52171db5ec2b42846c8910df1d679c8d1c8a912805105914", "auth"],
     ["d07cbe4642fff0df7477110ae8d28104d73638a42aea0904270859851892f255", "pagination"],
     ["8d04da6a985dbc49dabc5ae0a63094458f2893da8ac79618cafd9e538ad2f41f", "forms"],
     ["49c51f5185e5565891295a5e4922f30a67bec0be49b26ed4a964b7931160c302", "writes"],
     ["1403bba009fd19871a30250576cbba6cb93368905d877a7269b6b3ec5cd7b680", "caller-input"],
-    ["ba325fa85de88cfcfd1421cccf76be5a71487e5266bc6c61d9bf24611812ab44", "workspace/AGENTS.md"],
+    ["cf7823a47820c844e98bed6370fb2e55eba6ae1bfe134ea249cd366a12361d15", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });
