@@ -10,7 +10,9 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
 - a choice whose options exist only once the run reaches them: the open seats of the
   flight the caller just chose, the delivery slots for the cart the run just filled, or
   which of the account's saved travelers or addresses to use;
-- a code the site sends during the action, such as a confirmation code by text or email;
+- a code the site sends to confirm a protected action after sign-in, such as a confirmation code
+  by text or email. A code that is part of signing in is the host's: a `code` field of the
+  `authenticate` step, never a question;
 - a fact only the caller has that the site now asks for.
 
 <!-- pomerado:section caller-input.published-input -->

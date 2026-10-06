@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,16 @@ const installedDependencies = Effect.try({
   catch: localError,
 });
 
+/** Top-level names the host stages beside authored source, as a file or a folder. */
+const reserved = new Set([
+  "runtime",
+  "browser",
+  "filesystem",
+  "privacy",
+  "testing",
+  "node_modules",
+]);
+
 export const stageSources = (options: LocalOperationOptions) =>
   Effect.gen(function* () {
     const directory = yield* localPromise(() => mkdtemp(join(tmpdir(), "pomerado-operation-")));
@@ -46,11 +56,7 @@ export const stageSources = (options: LocalOperationOptions) =>
       if (seen.has(path))
         return yield* Effect.fail(new Error(`Duplicate reviewed source: ${path}`));
       seen.add(path);
-      if (
-        ["runtime/", "browser/", "filesystem/", "privacy/", "testing/", "node_modules/"].some(
-          (prefix) => path.startsWith(prefix),
-        )
-      )
+      if (reserved.has(path.split("/")[0] ?? path))
         return yield* Effect.fail(new Error(`Reviewed source cannot replace trusted SDK: ${path}`));
       total += Buffer.byteLength(text);
       if (Buffer.byteLength(text) > localSourceFileLimit || total > localSourceBundleLimit)
@@ -63,11 +69,15 @@ export const stageSources = (options: LocalOperationOptions) =>
     });
     if (!seen.has(entrypoint))
       return yield* Effect.fail(new Error("Entrypoint is absent from reviewed source snapshot"));
+    // Authored source sits a level below the SDK, so src/ reaches it at ../../runtime/index.js.
+    const operation = join(directory, "operation");
+    yield* localPromise(() => mkdir(operation));
     for (const [path, text] of authored) {
-      const destination = yield* localFilePath(directory, path, true);
+      const destination = yield* localFilePath(operation, path, true);
       yield* localPromise(() => writeFile(destination, text, { flag: "wx", mode: 0o400 }));
     }
-    for (const [path, text] of yield* localRuntimeAssets) {
+    const assets = yield* localRuntimeAssets;
+    for (const [path, text] of assets) {
       const destination = yield* localFilePath(directory, path, true);
       if (path === "runtime/index.js")
         yield* localPromise(() => writeFile(destination, text, { flag: "wx", mode: 0o400 }));
@@ -78,15 +88,25 @@ export const stageSources = (options: LocalOperationOptions) =>
         yield* localPromise(() => symlink(trusted, destination, "file"));
       }
     }
-    if (!seen.has("package.json"))
-      yield* localPromise(() =>
-        writeFile(join(directory, "package.json"), '{"type":"module"}', {
-          flag: "wx",
-          mode: 0o400,
-        }),
-      );
+    yield* localPromise(() =>
+      writeFile(join(directory, "package.json"), '{"type":"module"}', {
+        flag: "wx",
+        mode: 0o400,
+      }),
+    );
     // Dependencies stay in the installed package; authored source bytes are copied unchanged.
     const dependencies = yield* installedDependencies;
     yield* localPromise(() => symlink(dependencies, join(directory, "node_modules"), "dir"));
-    return { directory, entrypoint: join(directory, entrypoint) };
+    // Source saved when authored files sat beside the SDK reaches it and node_modules one level up
+    // from src/, and finds package.json in its working folder. The same entries appear in
+    // operation/, so those paths load the same modules and read the same file.
+    const sdk = assets.map(([path]) => path.split("/")[0] ?? path);
+    for (const shared of new Set([...sdk, "node_modules"]))
+      yield* localPromise(() => symlink(join("..", shared), join(operation, shared), "dir"));
+    if (!seen.has("package.json"))
+      yield* localPromise(() =>
+        symlink(join("..", "package.json"), join(operation, "package.json"), "file"),
+      );
+    // The child runs from the authored root, so relative file paths resolve as they did before.
+    return { directory: operation, entrypoint: join(operation, entrypoint) };
   });
