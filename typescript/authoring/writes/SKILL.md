@@ -78,6 +78,12 @@ account-specific value, such as a passenger, loyalty number, saved card, address
 account ID, is a free-form input, never an enum member, example or default in the
 public schema (core's input schema rules).
 
+The composed script publishes without ever running end to end, so it ends with a check that
+tells whether its action succeeded: the site's confirmation for this submission, or a read-back
+of the saved state matched to the input, unless the site offers neither; then declare it
+`unverifiable`. Compose it from the steps that worked, also when a commit step returned an
+uncertain result and a later read-back showed the write landed.
+
 <!-- pomerado:section writes.alternate-version -->
 
 <!-- pomerado:section writes.finish -->
