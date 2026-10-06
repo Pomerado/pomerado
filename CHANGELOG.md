@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.
 
 ### Breaking changes
 
@@ -68,6 +70,9 @@
 - A host sign-in step fills a form whose submit is disabled, `aria-disabled` or in a disabled fieldset until the fields hold input. The host waits up to 5 seconds for the page to enable the submit, then clicks it, and never clicks it while it is disabled. It reads whether the submit is disabled the way Playwright's click does, which page scripts can't change. An `aria-disabled` wrapper keeps a submit waiting only when the submit itself has an ARIA role, as Playwright judges it. A page that changes the form's controls three times during the wait is refused. A submit in an `inert` region is still refused before anything is typed.
 - Guardian's review of a host sign-in step shows the origin of the frame the step's controls are in, as the browser reports it, and no longer requires the submit to be enabled. The auth skill likewise lets the minter record a submit the page has not enabled yet.
 - A write session step can carry `withheldConfirmation` when it read the site's confirmation but the host did not accept its result. It leaves the session open, so a later step that only reads the confirmation back confirms it. Publishing against the withheld step returns `read_back_required` unless `finish_build` passes `readBackUnavailable`, the reason no step can read the confirmation back. The host's `publish` receives that reason, screened. The step's receipt shows `withheldConfirmation` with an instruction never to repeat the write, and it keeps the attempt open for publication when live execution ends. A host that sets it must settle the step's entered commit marks for later act steps.
+- Guardian's execution review treats the site's own page traffic as the website's behavior. Scripts, trackers and beacons the page loads, with whatever caller input the site gives them, are never a reason to deny or escalate, and the off-site rule judges only what the source itself sends. An anonymous recent-search or search-state save the page fires on a read's search is part of that read. A recording gap in a step result no longer stops live probes, and it still leaves that execution possibly dispatched.
+- Guardian's question review no longer reads host sign-in rules, including an earlier review's text, as the owner forbidding sign-in. Only trusted intent or an owner's answer can. It no longer rewords a sign-in method or account question because sign-in is not yet proven required.
+- The minter skills have it read back each value before a write's commit, on every branch of the composed script, and fail before the commit on a mismatch. They also accept a page's recent-search save as normal, and look everywhere the site keeps a value before calling it unavailable.
 
 ### Fixes
 

@@ -556,6 +556,26 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     expect(policy).not.toContain("enabled control");
   });
 
+  // A site's own trackers carry caller input off-site and its page saves recent searches, and a
+  // host recording gap was read as an order to stop probing. None of these is the source's doing.
+  it("tells Guardian page traffic and a recording gap are not the source's effects", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentences = [
+      "The site's own page traffic is the website's behavior: the scripts, fonts, images, frames, analytics, telemetry and beacons its page loads, with whatever identifiers, keys, usernames, account details or caller input the site gives them, are never a reason to deny or escalate a step, and never ask the source to block, suppress or route around them. The off-site rule judges only what the submitted source itself sends.",
+      "An anonymous recent-search, prefill or search-state save that the site's own page fires when a read submits its search is part of that read, not a write.",
+      "A host incident in a step result, such as an observation_gap, is a note about the host's recording, never by itself a reason to stop live probes or to tell the agent to report it. It leaves that execution possibly dispatched, and the rules here on possible writes still apply.",
+    ];
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy("hosted"),
+      guardianExecutionPolicy("native"),
+    ])
+      for (const sentence of sentences) expect(policy).toContain(sentence);
+  });
+
   // Guardian reviews an execution's source, never each request it sends.
   it("an execution review carries no destination review", async () => {
     const requests = readThenDecide({ outcome: "allow", rationale: "Relevant listing page." });

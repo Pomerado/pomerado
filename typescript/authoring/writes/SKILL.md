@@ -49,6 +49,10 @@ During the session:
   discover whether one exists.
 - Make the commit step check that no option the input does not settle is selected,
   and fail before clicking commit if one is.
+- Before committing, read back from the page what you are about to submit and check
+  each value against the caller's input, in the session and on every branch of the
+  composed script. Fail before the commit if one does not match. Never read back a
+  field filled with a secret handle.
 - If a step meets an option the input does not settle, stop that step before choosing
   it and ask. A `request_input` question during the session waits in place; a choice
   that exists only on the page mid-flow, such as a seat on the flight just chosen, is
