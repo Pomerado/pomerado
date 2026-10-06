@@ -136,12 +136,17 @@ it("times each review attempt and ties the retry to the attempt that failed", as
     retainModelTranscript: record,
     retainScreenedSource: () => Effect.void,
   };
+  // Attempt 1: the host's own entrypoint read fails after 5 ms, then Guardian's read of it fails
+  // after 7 ms. Attempt 2: the host's read takes no time and Guardian's read succeeds after 3 ms.
+  const readMs = [5, 7, 0, 3];
   let reads = 0;
   const failingOnce = () =>
     Effect.suspend(() => {
-      const failed = reads++ === 0;
-      now += failed ? 7 : 3;
-      return failed ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })) : readSource();
+      const read = reads++;
+      now += readMs[read] ?? 0;
+      return read < 2
+        ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+        : readSource();
     });
   const f = flaky(() => undefined, 0, {
     delays: ["20 millis"],
@@ -174,11 +179,24 @@ it("times each review attempt and ties the retry to the attempt that failed", as
   expect(first?.reviewId).not.toBe(second?.reviewId);
   expect(second?.reviewId).toBe(reviewed.reviewId);
 
-  const sourceFailed = named("guardian.source_failed")[0]?.details as Record<string, number>;
+  const sourceFailures = named("guardian.source_failed");
+  expect(sourceFailures.map((event) => event.reviewId)).toEqual([
+    first?.reviewId,
+    first?.reviewId,
+  ]);
+  const hostRead = sourceFailures[0]?.details as Record<string, unknown>;
+  expect(hostRead).toMatchObject({
+    automatic: true,
+    elapsedMs: 5,
+    startOffsetMs: 100,
+    endOffsetMs: 105,
+  });
+  const sourceFailed = sourceFailures[1]?.details as Record<string, number>;
+  expect(sourceFailed).not.toHaveProperty("automatic");
   expect(sourceFailed).toMatchObject({
     elapsedMs: 7,
-    startOffsetMs: 100,
-    endOffsetMs: 107,
+    startOffsetMs: 105,
+    endOffsetMs: 112,
   });
   expect(sourceFailed["endOffsetMs"]! - sourceFailed["startOffsetMs"]!).toBe(
     sourceFailed["elapsedMs"],
@@ -214,10 +232,81 @@ it("times each review attempt and ties the retry to the attempt that failed", as
     startOffsetMs: timing(second)?.startOffsetMs,
   });
   expect(completedTiming).toMatchObject({
-    startOffsetMs: 127,
-    endOffsetMs: 130,
+    startOffsetMs: 132,
+    endOffsetMs: 135,
     elapsedMs: 3,
   });
+});
+
+it("keeps the follow-up rounds for a skipped entrypoint read inside one attempt", async () => {
+  const run = async (readsWhenAsked: boolean) => {
+    const events: { name: string; details: unknown; reviewId?: string }[] = [];
+    const record: GuardianDiagnostics["emit"] = (name, details, correlation) =>
+      Effect.sync(() => {
+        events.push({
+          name,
+          details: (details as { details: unknown }).details,
+          ...(correlation?.reviewId === undefined ? {} : { reviewId: correlation.reviewId }),
+        });
+      });
+    let runs = 0;
+    let hostRead = true;
+    const reviewer: Reviewer = {
+      retry: quickRetry,
+      // Allows without reading, and reads the entrypoint only once asked, when `readsWhenAsked`.
+      run: (turn) =>
+        Effect.gen(function* () {
+          runs++;
+          const output = { outcome: "allow", rationale: "Reads the page title only." };
+          for (let round = 0; round < 2; round++) {
+            if (turn.missingRead?.(output) === undefined) break;
+            if (readsWhenAsked) yield* turn.readSource(turn.pending.entrypoint, 0);
+          }
+          return output;
+        }),
+    };
+    // The host's own read fails, so the entrypoint is not in the request.
+    const reader = () =>
+      Effect.suspend(() => {
+        const host = hostRead;
+        hostRead = false;
+        return host ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" })) : readSource();
+      });
+    const result = await Effect.runPromise(
+      Effect.either(
+        makeGuardian(reviewer, {
+          emit: record,
+          retainModelTranscript: record,
+          retainScreenedSource: () => Effect.void,
+        }).review(pending, reader),
+      ),
+    );
+    const named = (name: string) => events.filter((event) => event.name === name);
+    return { result, runs, named };
+  };
+
+  const answered = await run(true);
+  expect(answered.result).toMatchObject({
+    _tag: "Right",
+    right: { decision: { outcome: "allow" } },
+  });
+  expect(answered.runs).toBe(1);
+  const started = answered.named("guardian.started");
+  expect(started).toHaveLength(1);
+  expect(started[0]?.details).toMatchObject({ timing: { attempt: 1 } });
+  const completed = answered.named("guardian.completed");
+  expect(completed).toHaveLength(1);
+  expect(completed[0]?.reviewId).toBe(started[0]?.reviewId);
+  expect(completed[0]?.details).toMatchObject({ timing: { attempt: 1, followUpRounds: 1 } });
+
+  const unanswered = await run(false);
+  expect(unanswered.result).toMatchObject({ _tag: "Left", left: { code: "EntrypointNotRead" } });
+  expect(unanswered.runs).toBe(1);
+  expect(unanswered.named("guardian.review_retried")).toEqual([]);
+  expect(unanswered.named("guardian.started")).toHaveLength(1);
+  const failed = unanswered.named("guardian.failed");
+  expect(failed).toHaveLength(1);
+  expect(failed[0]?.details).toMatchObject({ timing: { attempt: 1, followUpRounds: 2 } });
 });
 
 it("returns the outage once it outlasts the retry budget", async () => {

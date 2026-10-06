@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Guardian diagnostics record each review attempt's interval, failed source-read duration, session permit wait, and scheduled retry backoff. Session reviews can forward finite model and tool timing without retaining their transcript.
+- Guardian diagnostics record each review attempt's interval, failed source-read duration, session permit wait, and scheduled retry backoff. Follow-up rounds for a skipped entrypoint read stay inside one attempt, and its closing record counts them. A private host kind, whose transcript is not kept, can forward its finite model and tool timing through `observeModelTrace`.
 - `pomerado/runtime` exports `CalendarDate`, a date-only `YYYY-MM-DD` schema that refuses a date that does not exist, such as `2026-02-30`, with the calendar check `fillDate` already made. Its JSON Schema is `format: "date"`. It sets no date range. The forms skill and the date examples use it, and say that a range's order, a past date or a booking limit is the tool's own `InvalidInput` check.
 - A generated integration's MCP tool names the failing input path and rule when arguments do not match its schema, and a failed job reports the tool's own `InvalidInput` message.
 - Runs of a built integration, through `run` or a served integration MCP, no longer call Guardian and need no model key. Guardian still reviews minting. A run no longer checks its `intent`, `effect` or `authenticationOrigins`.
