@@ -6,7 +6,7 @@ Issues are welcome. Open one for a bug, a question or an idea. Report security p
 
 ## Build and test
 
-Use macOS or Linux, Node 24.21 or a later Node 24 release, and pnpm 10.34.5.
+Use macOS or Linux, Node 24.21 or a later Node 24 release, pnpm 10.34.5, git 2.36 or later, and jq.
 
 ```sh
 corepack enable

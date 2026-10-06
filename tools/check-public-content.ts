@@ -13,6 +13,9 @@
  *   node tools/check-public-content.ts                  scan every tracked file
  *   node tools/check-public-content.ts --commits A..B   also scan the messages of commits in A..B
  *
+ * A range that holds what looks like a merge or squash GitHub made needs GITHUB_REPOSITORY and a
+ * signed-in `gh`, to ask GitHub which pull request the commit merged. Without them it exits 2.
+ *
  * Findings print a location and a rule, not the matched text, because CI logs are public too.
  */
 import { execFileSync } from "node:child_process";
@@ -188,26 +191,84 @@ const readText = (path: string): string | undefined => {
   return bytes.includes(0) ? undefined : bytes.toString("utf8");
 };
 
-/** The committer of commits GitHub makes itself, such as a merge from a pull request's page. */
-const githubCommitter = "noreply@github.com";
+/** One commit in a scanned range. */
+export interface Commit {
+  readonly sha: string;
+  readonly parents: number;
+  readonly committerEmail: string;
+  readonly message: string;
+}
 
 /**
- * The first line GitHub writes when it merges a pull request of this repository: a merge commit
- * title, or a squashed title with the number appended in brackets. Group 1 or 2 is the number.
+ * Whether a commit is the merge or squash commit GitHub made when it merged this repository's pull
+ * request `number`.
  */
-const githubMergeTitle = /^Merge pull request (#\d+) from \S+$|^.*\S \((#\d+)\)$/du;
+export type PullRequestCheck = (sha: string, number: number) => boolean;
 
-/** A commit message with the pull request number GitHub wrote in its first line blanked out. */
-export const maskGitHubMergeNumber = (message: string): string => {
+/** The first line of a merge commit made from a pull request's page. Group 1 is the number. */
+const githubMergeTitle = /^Merge pull request #(\d+) from [A-Za-z0-9][A-Za-z0-9-]*\/\S+$/du;
+
+/** The end of a squashed title, where GitHub appends the number in brackets. Group 1 is the number. */
+const githubSquashSuffix = / \(#(\d+)\)$/du;
+
+/** The committer email GitHub uses. Anyone can set it, so it only decides whether to ask GitHub. */
+const githubCommitterEmail = "noreply@github.com";
+
+/**
+ * A commit message with the pull request number GitHub wrote in its first line blanked out, so
+ * the rest of the message is still scanned. That covers a merge commit, with two parents and
+ * GitHub's exact title, and a squash, with one parent and a title ending in the bracketed number.
+ * Either needs GitHub's committer email, and GitHub must confirm that the commit merged that pull
+ * request. Every other message comes back unchanged.
+ */
+export const maskGitHubMergeNumber = (commit: Commit, isPullRequestMerge: PullRequestCheck): string => {
+  const { message } = commit;
+  if (commit.committerEmail !== githubCommitterEmail) return message;
   const end = message.indexOf("\n");
-  const match = githubMergeTitle.exec(end === -1 ? message : message.slice(0, end));
-  const span = match?.indices?.[1] ?? match?.indices?.[2];
-  if (span === undefined) return message;
-  return message.slice(0, span[0]) + " ".repeat(span[1] - span[0]) + message.slice(span[1]);
+  const title = end === -1 ? message : message.slice(0, end);
+  const pattern =
+    commit.parents === 2 ? githubMergeTitle : commit.parents === 1 ? githubSquashSuffix : undefined;
+  const match = pattern?.exec(title);
+  const digits = match?.indices?.[1];
+  if (match === undefined || match === null || digits === undefined) return message;
+  if (!isPullRequestMerge(commit.sha, Number(match[1]))) return message;
+  // Blank the hash too, which sits just before the digits.
+  const start = digits[0] - 1;
+  return message.slice(0, start) + " ".repeat(digits[1] - start) + message.slice(digits[1]);
+};
+
+/**
+ * Asks GitHub's API, through `gh`, whether the commit is the merge commit of this repository's
+ * merged pull request `number`. Only GitHub sets a pull request's merge commit. The query prints
+ * true or false, and anything else, such as no output at all, stops the scan instead of passing.
+ */
+const githubPullRequestCheck: PullRequestCheck = (sha, number) => {
+  const repository = process.env["GITHUB_REPOSITORY"];
+  if (repository === undefined || repository === "") {
+    throw new Error(
+      `Set GITHUB_REPOSITORY and sign in to gh to confirm which pull request commit ${sha.slice(0, 12)} merged.`,
+    );
+  }
+  const matches =
+    `.number == ${number} and .merged_at != null and .merge_commit_sha == ${JSON.stringify(sha)} ` +
+    `and .base.repo.full_name == ${JSON.stringify(repository)}`;
+  const filter = `if type == "array" then any(.[]; ${matches}) else "not a list" end`;
+  const answer = execFileSync("gh", ["api", `repos/${repository}/commits/${sha}/pulls`, "--jq", filter], {
+    encoding: "utf8",
+  }).trim();
+  if (answer === "true") return true;
+  if (answer === "false") return false;
+  throw new Error(
+    `GitHub's answer about commit ${sha.slice(0, 12)} was neither true nor false: ${JSON.stringify(answer.slice(0, 80))}.`,
+  );
 };
 
 /** Findings for every tracked file and, given a range such as `A..B`, its commit messages. */
-export const scanRepository = (cwd: string, commits?: string): Finding[] => {
+export const scanRepository = (
+  cwd: string,
+  commits?: string,
+  isPullRequestMerge: PullRequestCheck = githubPullRequestCheck,
+): Finding[] => {
   const findings: Finding[] = [];
   for (const path of git(cwd, ["ls-files", "-z"]).split("\0").filter(Boolean)) {
     findings.push(...scanPath(path));
@@ -215,16 +276,16 @@ export const scanRepository = (cwd: string, commits?: string): Finding[] => {
     if (text !== undefined) findings.push(...scanText(path, text));
   }
   if (commits !== undefined) {
-    const log = git(cwd, ["log", "-z", "--format=%H%n%ce%n%B", commits, "--"]);
+    const log = git(cwd, ["log", "-z", "--format=%H%n%P%n%ce%n%B", commits, "--"]);
     for (const entry of log.split("\0").filter(Boolean)) {
-      const [sha = "", committer = "", ...lines] = entry.split("\n");
-      const message = lines.join("\n");
-      findings.push(
-        ...scanText(
-          `commit ${sha.slice(0, 12)}`,
-          committer === githubCommitter ? maskGitHubMergeNumber(message) : message,
-        ),
-      );
+      const [sha = "", parents = "", committerEmail = "", ...lines] = entry.split("\n");
+      const commit: Commit = {
+        sha,
+        parents: parents.split(" ").filter(Boolean).length,
+        committerEmail,
+        message: lines.join("\n"),
+      };
+      findings.push(...scanText(`commit ${sha.slice(0, 12)}`, maskGitHubMergeNumber(commit, isPullRequestMerge)));
     }
   }
   return findings;
