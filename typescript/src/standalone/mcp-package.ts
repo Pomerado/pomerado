@@ -13,12 +13,12 @@ import { Deployment, writeArtifact } from "./artifact-files.js";
 
 const launcher = `import { fileURLToPath } from 'node:url';
 const runtime = process.argv[2];
-if (!runtime) throw new Error('Start this integration using its generated Codex configuration.');
+if (!runtime) throw new Error('Start this integration with the command and arguments in its mcp.json.');
 const { startMcpCli } = await import(runtime);
 startMcpCli(['serve', '--artifact', fileURLToPath(new URL('.', import.meta.url))]);
 `;
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-const reserved = new Set(["deployment.json", "mcp.mjs", "codex-mcp.toml", "readme.md"]);
+const reserved = new Set(["deployment.json", "mcp.mjs", "mcp.json", "readme.md"]);
 
 /** Only the local operator's configuration chooses the root; tool arguments choose one slug. */
 export const prepareIntegration = (options: {
@@ -69,39 +69,71 @@ export const prepareIntegration = (options: {
         yield* writeArtifact(directory, artifact);
         const workspace = yield* createLocalWorkspace({ root: directory });
         const launcherPath = join(directory, "mcp.mjs");
-        const configPath = join(directory, "codex-mcp.toml");
+        const configPath = join(directory, "mcp.json");
         const runtime = new URL("./mcp-cli.js", import.meta.url).href;
-        const configuration = `[mcp_servers.${deployment.name}]
-command = ${JSON.stringify(process.execPath)}
-args = ${JSON.stringify([launcherPath, runtime])}
-env_vars = ["OPENAI_API_KEY"]
-`;
+        const args = [launcherPath, runtime];
+        const configuration = {
+          mcpServers: { [deployment.name]: { command: process.execPath, args } },
+        };
+        const command = [process.execPath, ...args].map(shellQuote).join(" ");
         yield* workspace.write("deployment.json", `${JSON.stringify(deployment, null, 2)}\n`);
         yield* workspace.write("mcp.mjs", launcher);
-        yield* workspace.write("codex-mcp.toml", configuration);
+        yield* workspace.write("mcp.json", `${JSON.stringify(configuration, null, 2)}\n`);
         yield* workspace.write(
           "README.md",
           `# ${deployment.name}
 
-This integration is hosted locally over MCP stdio. Add the command and arguments from
-codex-mcp.toml to your Codex configuration (~/.codex/config.toml). Alternatively, register it with:
+This integration runs on your computer as a local MCP stdio server. mcp.json holds its server
+entry in the standard mcpServers format. The entry starts your Node with this directory's
+launcher and your installed Pomerado runtime.
 
-\`\`\`sh
-codex mcp add ${deployment.name} -- ${shellQuote(process.execPath)} ${shellQuote(launcherPath)} ${shellQuote(runtime)}
-\`\`\`
+## Add it to your MCP client
+
+- Claude Code passes its own environment to the server.
+
+  \`\`\`sh
+  claude mcp add ${deployment.name} -- ${command}
+  \`\`\`
+
+- Codex passes servers only a short list of environment variables. After adding the server, put
+  \`env_vars = ["OPENAI_API_KEY"]\` under \`[mcp_servers.${deployment.name}]\` in its config.toml.
+
+  \`\`\`sh
+  codex mcp add ${deployment.name} -- ${command}
+  \`\`\`
+
+- Gemini CLI hides variables named like keys from servers. The -e flag below passes
+  OPENAI_API_KEY by reference, so the settings file holds no key.
+
+  \`\`\`sh
+  gemini mcp add -e 'OPENAI_API_KEY=$OPENAI_API_KEY' ${deployment.name} ${command}
+  \`\`\`
+
+- Cursor, Claude Desktop and other clients that read an mcpServers JSON file take the entry
+  from mcp.json. In Cursor, add \`"env": { "OPENAI_API_KEY": "\${env:OPENAI_API_KEY}" }\` to it.
+- VS Code takes the same entry under "servers" in .vscode/mcp.json.
+
+## Model key
+
+The server needs OPENAI_API_KEY in its environment, because Guardian reviews every run. Model
+requests go to the configured provider. This directory and mcp.json hold no key. Give the key to
+the server through your client's environment settings, never through chat.
+
+## Call it
 
 Call ${deployment.name} with its discovered input schema. Its URL, intent, authority and
-authentication origins are pinned in deployment.json. Jobs and questions continue through
-get_job, provide_input and cancel_job; polling never resubmits an operation.
+authentication origins are pinned in deployment.json. A call that needs an answer or more time
+returns a job ID. Continue that job with get_job, provide_input and cancel_job. Polling never
+resubmits an operation.
 
-The launcher uses the shared installed Pomerado runtime, minter/Guardian dependencies and
-local Chromium. Configured model providers receive model requests. The TOML forwards
-OPENAI_API_KEY from Codex's environment. Supply provider keys in
-the server's environment; this directory and its configuration contain no keys. Answers sent
-through provide_input are visible to the MCP client and its model. Restarting loses live jobs.
+Answers sent through provide_input are visible to your MCP client and its model provider.
+Restarting the server loses live jobs.
 
-The launcher source is portable. The local configuration references your current Node and
-runtime installation; update those paths if you move either installation or this directory.
+## Paths
+
+The launcher uses your installed Pomerado runtime, its minter and Guardian dependencies, and
+local Chromium. The launcher source is portable. mcp.json names your current Node and Pomerado
+installation. Update those paths if you move either installation or this directory.
 `,
         );
         completed = true;
