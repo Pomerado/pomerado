@@ -1,11 +1,9 @@
 name: Check
 on:
-  # Only main: pull requests run below, and merge queue branches (gh-readonly-queue/*) run as
-  # merge groups, so other pushes would only run the same commit twice.
+  # Only main: pull requests run below, so other pushes would only run the same commit twice.
   push:
     branches: [main]
   pull_request:
-  merge_group:
   workflow_call:
 permissions:
   contents: read
@@ -73,8 +71,8 @@ jobs:
           path: ${{ runner.temp }}/pomerado-artifact/*.tgz
       - run: corepack pnpm exec playwright install --with-deps chromium
       - run: corepack pnpm test:browser --workers=2
-  # `CI` is the required check. It fails unless every job it needs succeeded, so a skipped or
-  # cancelled job never passes for a green one. Add every new job to `needs`.
+  # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
+  # skipped or cancelled job never passes for a green one. Add every new job to `needs`.
   ci:
     name: CI
     if: always()
