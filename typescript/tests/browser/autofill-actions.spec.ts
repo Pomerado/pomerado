@@ -102,6 +102,16 @@ test("the host shows native and ARIA actions to Guardian on a fieldless verifica
   });
 });
 
+test("the host shows Guardian the page's origin and that the submit it clicks is enabled", async ({
+  page,
+}) => {
+  await serve(page, '<button id="continue">Sign in</button>');
+  const inspection = await inspect(page);
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  expect(inspection.screen.origin).toBe(site);
+  expect(inspection.screen.submit).toMatchObject({ tag: "button", enabled: true });
+});
+
 for (const [name, control] of [
   ["a button", '<button id="continue">Sign in</button>'],
   ["a submit input", '<input id="continue" type="submit" value="Sign in">'],

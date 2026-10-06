@@ -26,7 +26,7 @@ for (const frame of primary.frames()) {
 }
 return {
   fields: fields.map(({ target, described }) => ({ target, described })),
-  submit: submit === null ? null : { target: submit.target, described: submit.described },
+  submit: submit === null ? null : { target: submit.target, described: submit.described, enabled: !submit.disabled },
   located,
   buttons,
   ...(popupTargetId === undefined ? {} : { popupTargetId }),

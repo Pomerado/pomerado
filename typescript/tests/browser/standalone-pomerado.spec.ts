@@ -326,7 +326,18 @@ for (const authentication of [false, true]) {
       expect(asked).toHaveLength(1);
       expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
       expect(JSON.stringify(reviewRequests)).not.toContain(shopAccount.password);
-      if (shop !== undefined) expect(shop.state.loginPosts).toBe(1);
+      if (shop !== undefined) {
+        expect(shop.state.loginPosts).toBe(1);
+        // Guardian judged the sign-in step against the screen the host observed: the page's
+        // origin and that the submit it clicks is enabled.
+        const reviewed = objects(reviewRequests.map((request) => request.input)).find(
+          (item) => "step" in item && "screen" in item,
+        );
+        expect(reviewed?.["screen"]).toMatchObject({
+          origin: shop.origin,
+          submit: { tag: "button", enabled: true },
+        });
+      }
     } finally {
       await remote?.close();
       await shop?.close();

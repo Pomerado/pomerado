@@ -174,7 +174,9 @@ const Located = Schema.Union(
   LocatedError,
   Schema.Struct({
     fields: Schema.Array(Schema.Struct({ target: Target, described: Described })),
-    submit: Schema.NullOr(Schema.Struct({ target: Target, described: Described })),
+    submit: Schema.NullOr(
+      Schema.Struct({ target: Target, described: Described, enabled: Schema.Boolean }),
+    ),
     located: Schema.optional(FoundAt),
     buttons: Schema.Array(Schema.String),
     popupTargetId: Schema.optional(Schema.String),
@@ -231,12 +233,15 @@ export interface AutofillInspection {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly screen: {
+    /** The origin of the page the step's controls are on, as the host found it. */
+    readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: AutofillSlot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
       readonly format?: DateOfBirthFormat | undefined;
     })[];
-    readonly submit: typeof Described.Type | null;
+    /** The control the host clicks. The host refuses a disabled one, so `enabled` is true. */
+    readonly submit: (typeof Described.Type & { readonly enabled: boolean }) | null;
     /** Visible native and ARIA actions, links included, for a step that names no submit. */
     readonly buttons: readonly string[];
   };
@@ -424,6 +429,7 @@ export const inspectAutofillStep = (input: {
       siteOrigin,
       authenticationOrigins,
       screen: {
+        origin: at === null ? "" : at.origin,
         fields: found.fields.map(({ described }, index) => {
           const field = step.fields[index];
           return {
@@ -433,7 +439,10 @@ export const inspectAutofillStep = (input: {
             ...(field?.format === undefined ? {} : { format: field.format }),
           };
         }),
-        submit: found.submit === null ? null : found.submit.described,
+        submit:
+          found.submit === null
+            ? null
+            : { ...found.submit.described, enabled: found.submit.enabled },
         buttons: found.buttons,
       },
     };

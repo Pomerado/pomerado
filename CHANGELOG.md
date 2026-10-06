@@ -7,6 +7,11 @@
 - `pomerado run` no longer requires `--intent`, and it ignores `--intent` and `--effect`.
 - A failed run that has no more specific message now reads "Operation failed. Check the local browser and integration configuration." Minting keeps its message.
 
+### Breaking changes
+
+- Guardian's review of a host sign-in step now shows the origin of the page the step's controls are on and that the submit the host clicks is enabled. `AutofillInspection.screen` from `pomerado/core/destinations/autofill-step` adds a required `origin`, and its `submit` adds a required `enabled`. `inspectAutofillStep` sets both.
+  - Migrate by setting both on any inspection you build yourself.
+
 ## 0.2.0
 
 This release changes how a host embeds the minting core's authoring and which MCP entry a generated integration writes. Other standalone use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
