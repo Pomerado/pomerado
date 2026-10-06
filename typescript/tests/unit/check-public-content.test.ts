@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -338,5 +338,90 @@ describe("public content scan command", () => {
     for (const path of [script, fileURLToPath(import.meta.url)]) {
       expect(scanText(path, readFileSync(path, "utf8"))).toEqual([]);
     }
+  });
+});
+
+describe("GitHub pull request check", () => {
+  const repository = "Pomerado/pomerado";
+  const directories: string[] = [];
+  afterEach(() => {
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  /**
+   * A repository whose last commit looks like GitHub's squash of a pull request, and a stand-in
+   * for `gh` that logs its arguments and runs real jq, with the scan's query, on a canned body.
+   */
+  const setup = () => {
+    const cwd = mkdtempSync(join(tmpdir(), "public-content-gh-"));
+    const bin = mkdtempSync(join(tmpdir(), "public-content-gh-bin-"));
+    directories.push(cwd, bin);
+    const git = (args: string[], committer = "test@example.com") =>
+      execFileSync("git", ["-c", "user.name=Test", "-c", "commit.gpgsign=false", ...args], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_EMAIL: committer },
+      }).trim();
+    git(["init", "--quiet"]);
+    git(["commit", "--quiet", "--allow-empty", "--message", "Base"]);
+    const base = git(["rev-parse", "HEAD"]);
+    git(["commit", "--quiet", "--allow-empty", "--message", j("Add a scan (", "#", "5)")], "noreply@github.com");
+    const squash = git(["rev-parse", "HEAD"]);
+    const log = join(bin, "gh.log");
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> '${log}'`,
+        '[ "$1" = api ] && [ "$3" = --jq ] || exit 64',
+        'if [ -n "${GH_EXIT:-}" ]; then echo "gh: request failed" >&2; exit "$GH_EXIT"; fi',
+        'if [ -n "${GH_STDOUT+set}" ]; then printf \'%s\' "$GH_STDOUT"; exit 0; fi',
+        'printf \'%s\' "$GH_BODY" | jq -r "$4"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(bin, "gh"), 0o755);
+    const ask = (gh: Readonly<Record<string, string>>) => {
+      const result = spawnSync(process.execPath, [script, "--commits", `${base}..HEAD`], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, GITHUB_REPOSITORY: repository, ...gh },
+      });
+      return { ...result, calls: readFileSync(log, "utf8").split("\n").filter(Boolean) };
+    };
+    return { squash, ask };
+  };
+
+  /** The merged pull request of this repository that the squash names, with `sha` as its merge commit. */
+  const pull = (sha: string, overrides: object = {}) => ({
+    number: 5,
+    merged_at: "2026-10-05T00:00:00Z",
+    merge_commit_sha: sha,
+    base: { repo: { full_name: repository } },
+    ...overrides,
+  });
+  const body = (value: unknown) => ({ GH_BODY: JSON.stringify(value) });
+
+  // Exit 0 means GitHub confirmed the number, 1 a finding for it, and 2 that the scan stopped.
+  it.each<[string, (sha: string) => Record<string, string>, number]>([
+    ["a match", (sha) => body([pull(sha)]), 0],
+    ["several pull requests, one of which matches", (sha) => body([pull(sha, { number: 6 }), pull(sha), pull(sha, { merged_at: null })]), 0],
+    ["a wrong number", (sha) => body([pull(sha, { number: 6 })]), 1],
+    ["an unmerged pull request", (sha) => body([pull(sha, { merged_at: null })]), 1],
+    ["a different merge commit", (sha) => body([pull(sha, { merge_commit_sha: "f".repeat(40) })]), 1],
+    ["a different base repository", (sha) => body([pull(sha, { base: { repo: { full_name: "acme/fork" } } })]), 1],
+    ["no pull requests", () => body([]), 1],
+    ["a null body", () => body(null), 2],
+    ["empty output", () => ({ GH_STDOUT: "" }), 2],
+    ["null output", () => ({ GH_STDOUT: "null" }), 2],
+    ["a count as output", () => ({ GH_STDOUT: "1" }), 2],
+    ["gh failing", () => ({ GH_EXIT: "1" }), 2],
+  ])("handles %s", (_label, response, status) => {
+    const { squash, ask } = setup();
+    const result = ask(response(squash));
+    expect(result.calls).toEqual([expect.stringMatching(new RegExp(`^api repos/${repository}/commits/${squash}/pulls --jq `, "u"))]);
+    expect(result.status).toBe(status);
+    if (status === 1) expect(result.stdout).toContain(`commit ${squash.slice(0, 12)}:1:`);
+    if (status === 2) expect(result.stderr).toContain("could not run");
   });
 });

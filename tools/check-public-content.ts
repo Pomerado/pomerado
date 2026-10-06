@@ -239,7 +239,8 @@ export const maskGitHubMergeNumber = (commit: Commit, isPullRequestMerge: PullRe
 
 /**
  * Asks GitHub's API, through `gh`, whether the commit is the merge commit of this repository's
- * merged pull request `number`. Only GitHub sets a pull request's merge commit.
+ * merged pull request `number`. Only GitHub sets a pull request's merge commit. The query prints
+ * true or false, and anything else, such as no output at all, stops the scan instead of passing.
  */
 const githubPullRequestCheck: PullRequestCheck = (sha, number) => {
   const repository = process.env["GITHUB_REPOSITORY"];
@@ -248,13 +249,18 @@ const githubPullRequestCheck: PullRequestCheck = (sha, number) => {
       `Set GITHUB_REPOSITORY and sign in to gh to confirm which pull request commit ${sha.slice(0, 12)} merged.`,
     );
   }
-  const filter =
-    `[.[] | select(.number == ${number} and .merged_at != null and ` +
-    `.merge_commit_sha == ${JSON.stringify(sha)} and .base.repo.full_name == ${JSON.stringify(repository)})] | length`;
+  const matches =
+    `.number == ${number} and .merged_at != null and .merge_commit_sha == ${JSON.stringify(sha)} ` +
+    `and .base.repo.full_name == ${JSON.stringify(repository)}`;
+  const filter = `if type == "array" then any(.[]; ${matches}) else "not a list" end`;
   const answer = execFileSync("gh", ["api", `repos/${repository}/commits/${sha}/pulls`, "--jq", filter], {
     encoding: "utf8",
-  });
-  return answer.trim() !== "0";
+  }).trim();
+  if (answer === "true") return true;
+  if (answer === "false") return false;
+  throw new Error(
+    `GitHub's answer about commit ${sha.slice(0, 12)} was neither true nor false: ${JSON.stringify(answer.slice(0, 80))}.`,
+  );
 };
 
 /** Findings for every tracked file and, given a range such as `A..B`, its commit messages. */
