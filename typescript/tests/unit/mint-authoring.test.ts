@@ -162,7 +162,7 @@ it("renders the pinned standalone authoring", async () => {
     ["97287c44e1b4629efa00f066d65ba0859cb4a4625d44b97faea7784b0a084afd", "forms"],
     ["4b99ef8281a9e202be17a353f7a7b25e7c4da7bc00afc84088e2077be6d0683f", "writes"],
     ["c6f95c20707e9f3e799ffe71999997aa887c0ffa0c893af0f8c408c5d04ab179", "caller-input"],
-    ["1476c2ae5a2ef3250df463e2a87951bcf2cfda2afe36e5fd95896da6338606c2", "workspace/AGENTS.md"],
+    ["a512d0e5ea0a6a7a34ce5b8635a6580b376afeddf223d7c63de64e9ac4674755", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });
