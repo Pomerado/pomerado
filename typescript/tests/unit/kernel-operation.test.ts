@@ -15,9 +15,11 @@ import {
 } from "../../src/runtime/kernel-operation.js";
 import { CaptureUnavailable } from "../../src/runtime/errors.js";
 import { defineOperation } from "../../src/runtime/operation.js";
+import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js";
+import type { ScriptQuestionHandler } from "../../src/runtime/script-input.js";
 
 import type { BrowserExecuteResponse } from "../../src/runtime/browser-execution.js";
-import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
+import type { DialogDecider, KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
 
 /** Scripted answers through the portable execution port, without provider HTTP. */
 const fakeKernel = (answer: (code: string) => BrowserExecuteResponse) => {
@@ -512,5 +514,171 @@ it("retains a provider exception as the marker inspection failure's cause", asyn
       _tag: "OperationFailure",
       cause,
     },
+  });
+});
+
+describe("host pauses across calls", () => {
+  /**
+   * A fake site behind the execute port: a sign-in form that asks for a one-time code, and a
+   * delete button that raises a confirm. `steps` records each call and each host pause in order.
+   */
+  const fakeSite = () => {
+    const steps: string[] = [];
+    const site = { signIns: 0, code: "", deletes: 0, dialog: "none" };
+    const act = (code: string): unknown => {
+      if (code.includes('page.click("#sign-in")')) {
+        site.signIns += 1;
+        return { needsCode: true };
+      }
+      if (code.includes('page.fill("#otp"')) {
+        site.code = /page\.fill\("#otp", "(\w+)"\)/u.exec(code)?.[1] ?? "";
+        return { signedIn: true };
+      }
+      if (code.includes('page.click("#delete")')) {
+        site.deletes += 1;
+        site.dialog = "open";
+        return {
+          type: "confirm",
+          message: "Delete invoice 42?",
+          url: "https://billing.example.com/invoices/42",
+        };
+      }
+      if (code.includes("globalThis.dialog.accept()") && site.dialog === "open") {
+        site.dialog = "accepted";
+        return { deleted: true };
+      }
+      return undefined;
+    };
+    const { client } = fakeKernel((code) => {
+      steps.push("execute");
+      const result = act(code);
+      return { success: result !== undefined, result };
+    });
+    return { client, steps, site };
+  };
+
+  const codeQuestion = {
+    code: { type: "secret", secretKind: "one_time_code", prompt: "The code the site sent?" },
+  } as const;
+
+  /** Signs in with a code the caller supplies, then deletes an invoice behind a confirm dialog. */
+  const script = defineOperation(
+    {
+      input: Schema.Struct({}),
+      output: Schema.Struct({ deleted: Schema.Boolean, remainingMs: Schema.Number }),
+      questions: codeQuestion,
+    },
+    async ({ kernel, sessionId, ask, decideDialog, remainingMs }) => {
+      const call = async (code: string) => {
+        const answer = await kernel.browsers.playwright.execute(sessionId, {
+          timeout_sec: 60,
+          code,
+        });
+        if (!answer.success) throw new Error(`Call failed: ${String(answer.error)}`);
+        return answer.result;
+      };
+      await call('await page.fill("#user", "synthetic-user"); await page.click("#sign-in");');
+      const code = await ask("code");
+      await call(`await page.fill("#otp", ${JSON.stringify(code)}); await page.click("#go");`);
+      const shown = Schema.decodeUnknownSync(
+        Schema.Struct({
+          type: Schema.Literal("confirm"),
+          message: Schema.String,
+          url: Schema.String,
+        }),
+      )(
+        await call(`const shown = new Promise((resolve) => page.once("dialog", (dialog) => {
+  globalThis.dialog = dialog;
+  resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
+}));
+void page.click("#delete").catch(() => {});
+return await shown;`),
+      );
+      const decision = await decideDialog({ step: "delete-invoice", ...shown });
+      if (decision.choice !== "accept") return { deleted: false, remainingMs: remainingMs() };
+      const done = Schema.decodeUnknownSync(Schema.Struct({ deleted: Schema.Boolean }))(
+        await call("await globalThis.dialog.accept(); return { deleted: true };"),
+      );
+      return { ...done, remainingMs: remainingMs() };
+    },
+  );
+
+  const runAsking = async <A, E>(
+    program: Effect.Effect<A, E, ExecutionContext | Scope.Scope>,
+    deadline: Deadline,
+    ask: ScriptQuestionHandler,
+  ) => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    return Effect.runPromiseExit(
+      Effect.scoped(
+        program.pipe(
+          Effect.provideService(ScriptInput, makeScriptInput(codeQuestion, ask, deadline)),
+          Effect.provideService(ExecutionContext, {
+            deadline,
+            journal,
+            events: { emit: () => Effect.void },
+            capture: { start: Effect.void, finish: Effect.void },
+          }),
+        ),
+      ),
+    );
+  };
+
+  it("finishes a code login and a host-decided confirm across calls, repeating none", async () => {
+    const kernel = fakeSite();
+    const decided: unknown[] = [];
+    const dialogs: DialogDecider = ({ step, type, message, url }) =>
+      Effect.sync(() => {
+        kernel.steps.push("dialog");
+        decided.push({ step, type, message, url });
+        return { choice: "accept" as const };
+      });
+    const exit = await runAsking(
+      executeKernelOperation(script, {}, { kernel: kernel.client, sessionId: "session-1", dialogs }),
+      Deadline.after(60_000),
+      () =>
+        Effect.sync(() => {
+          kernel.steps.push("code");
+          return { code: "693104" };
+        }),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(kernel.steps).toEqual(["execute", "code", "execute", "execute", "dialog", "execute"]);
+    expect(kernel.site).toEqual({ signIns: 1, code: "693104", deletes: 1, dialog: "accepted" });
+    // The host decides on the script's own report: the raising step, the dialog and its page.
+    expect(decided).toEqual([
+      {
+        step: "delete-invoice",
+        type: "confirm",
+        message: "Delete invoice 42?",
+        url: "https://billing.example.com/invoices/42",
+      },
+    ]);
+  });
+
+  it("never counts a host wait against the operation's deadline", async () => {
+    let now = 0;
+    const deadline = Deadline.after(60_000, () => now);
+    const kernel = fakeSite();
+    // Each person takes longer than the whole budget to answer.
+    const slow = <A>(answer: A) =>
+      Effect.sync(() => {
+        now += 170_000;
+        return answer;
+      });
+    const exit = await runAsking(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          dialogs: () => slow({ choice: "accept" as const }),
+        },
+      ),
+      deadline,
+      () => slow({ code: "693104" }),
+    );
+    expect(exit).toEqual(Exit.succeed({ deleted: true, remainingMs: 60_000 }));
   });
 });
