@@ -61,6 +61,7 @@ Tests use synthetic sites and scripted model responses. They need no model API k
 - Outside pull requests will also need a maintainer's approval, and a maintainer approves each of their CI runs.
 - CI checks every pull request and every push to `main`. It runs typecheck, build, unit tests, the packed package check, browser tests, a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
+- This package holds only code the local host runs, plus the hook interfaces another host implements.
 
 ## License
 
