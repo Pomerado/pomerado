@@ -115,6 +115,32 @@ test("reads adjacent questions again while the private-answer label stays unchan
   expectNotCarried(browser.calls, "synthetic-private-answer");
 });
 
+test("the local signed-in check refuses while a recorded private-answer field still shows", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="identity">Signed in</p><form id="challenge"><label>Security answer<input id="answer"></label></form>' }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker(() => Effect.succeed({ private_answer: "synthetic-private-answer" })),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  await Effect.runPromise(auth.step({ fields: [{ selector: "#answer", slot: "private_answer" }] }));
+  expect(await Effect.runPromise(auth.signedIn({ selector: "#identity" }))).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/login`,
+  });
+  await page.locator("#challenge").evaluate((element) => { element.remove(); });
+  expect(await Effect.runPromise(auth.signedIn({ selector: "#identity" }))).toEqual({
+    signedIn: true,
+    url: `${site}/login`,
+  });
+  expectNotCarried(browser.calls, "synthetic-private-answer");
+});
+
 test("question inspection omits uncertain text and never uses a different frame", async ({ page }) => {
   const site = "https://bank.example.test";
   await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body: "" }));
