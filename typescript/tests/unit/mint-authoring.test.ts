@@ -198,6 +198,32 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller",
   ],
   ["workspace/AGENTS.md", "Do not manufacture success from model prose."],
+  [
+    "publication",
+    "Read this before your first `finish_build`. `finish_build` asks the host to review the current source and publish it against an execution that already ran",
+  ],
+  ["publication", "Guardian reports what it finds in rounds, and each round costs minutes"],
+  [
+    "publication",
+    "- Published files are all of `src/`, the named entrypoints and any `explore/`, `test/` or `scratch/` module they import.",
+  ],
+  ["publication", "## Never put these in published files"],
+  [
+    "publication",
+    "| `reason` | `input_feedback_unresolved` | The feedback rounds are spent | End the attempt; do not execute again |",
+  ],
+  [
+    "publication",
+    "A rejection never authorizes repeating a claimed example or a write that may have committed.",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "## Publication Read .agents/publication/SKILL.md before your first `finish_build`",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "Keep the build's own execution and result separate from future code publication.",
+  ],
 ];
 
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
@@ -228,6 +254,38 @@ it("gives the local host and a composing host the same shared guidance", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/*
+ * A local build that still has input feedback after its rounds ends unpublished, and the local
+ * host has no site metadata, login URL, HTTP version, recorded requests, session tokens or
+ * private fallback, so its builder reads none of them.
+ */
+it("tells the local builder what its own publication checks and how it ends", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const publication = (texts.get("publication") ?? "").replace(/\s+/g, " ");
+  expect(publication).toContain(
+    "Never run the write again. After the last round the build ends unpublished with Guardian's findings |",
+  );
+  expect(publication).toContain(
+    "`finish_build`'s metadata names the tool and describes it in the public definition Guardian reviews (`publication/definition.json`):",
+  );
+  for (const hosted of [
+    "publishes privately",
+    "siteName",
+    "loginUrl",
+    "routes.json",
+    "tool-http.mjs",
+    "recorded-requests",
+    "session token",
+    "integration",
+    "confirm_action_unmatched",
+    "missing_protected_result",
+  ])
+    expect(publication).not.toContain(hosted);
+  expect(texts.get("core")?.replace(/\s+/g, " ")).toContain(
+    "during the run, and publication before the first `finish_build`.",
+  );
 });
 
 it("leaves no heading, list or skill header of the local host's authoring empty", async () => {
