@@ -163,32 +163,33 @@ test(`does not fill an answer when its observed question changes during ${change
         if (question) question.textContent = "First school?";
       });
     });
+  const insertions: string[] = [];
   const auth = makeLiveAuthentication({
     page: browser,
-    keyboard: changeAt === "insertion" ? {
-      insertText: (target, text) => Effect.promise(changeQuestion).pipe(
-        Effect.flatMap(() => keyboard.insertText(target, text)),
-      ),
-    } : keyboard,
+    keyboard: {
+      insertText: (target, text) =>
+        (changeAt === "insertion" ? Effect.promise(changeQuestion) : Effect.void).pipe(
+          Effect.flatMap(() => keyboard.insertText(target, text)),
+          Effect.tap((answer) => { insertions.push(answer); }),
+        ),
+    },
     siteOrigin: site, authenticationOrigins: [],
     ask: makeInputAsker(() => Effect.promise(async () => {
       if (changeAt === "protected prompting") await changeQuestion();
       return { private_answer: "synthetic-first-pet" };
     })), registerSecret: () => undefined, review: () => Effect.void,
   });
-  // A refused field fails the step as a host refusal that submitted nothing.
+  // A refused field fails the step as a host refusal that submitted nothing. Whenever the question
+  // changed, the minter hears it as a change on the screen, not as a field that blocks typing.
   const failure = await Effect.runPromise(Effect.flip(auth.step({ fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }] })));
   expect(failure).toMatchObject({
     authentication: {
       code: "AutofillRefused",
-      hostRefusal: {
-        check: changeAt === "protected prompting" ? "change" : "typing_refused",
-        field: 0,
-        slot: "private_answer",
-      },
+      hostRefusal: { check: "change", field: 0, slot: "private_answer" },
       nothingSubmitted: true,
     },
   });
+  expect(insertions).toEqual(changeAt === "protected prompting" ? [] : ["question_changed"]);
   expect(await page.locator("#answer").inputValue()).toBe("");
   expectNotCarried(browser.calls, "synthetic-first-pet");
 });
