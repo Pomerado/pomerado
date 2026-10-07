@@ -298,3 +298,48 @@ test("says in the prompt that a recorded question could not be read", async ({ p
     `Enter your security answer for ${site}. The question it answers could not be read from the page. The answer field reads "Security answer".`,
   ]);
 });
+
+/**
+ * Fills a code screen through local sign-in, by `selector`, then checks the signed-in page
+ * `account`, as a check right after the code screen does in the same sign-in.
+ */
+const codeThenAccount = async (
+  page: import("@playwright/test").Page,
+  codeForm: string,
+  selector: string,
+  account: string,
+) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body: codeForm }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker(() => Effect.succeed({ code: "482913" })),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  await Effect.runPromise(auth.step({ fields: [{ selector, slot: "code" }] }));
+  await page.setContent(`<p id="identity">Signed in</p>${account}`);
+  return Effect.runPromise(auth.signedIn({ selector: "#identity" }));
+};
+
+// The check right after a code screen runs in the same sign-in. A control on the signed-in page
+// that the code's selector also matches, such as one a role name pattern matches, is no challenge
+// unless it is the same control: the same words name it, with the type and autocomplete
+// inspection recorded.
+const codeForm = '<form><label>Verification code<input name="code" autocomplete="one-time-code"></label><button type="button">Verify</button></form>';
+const roleCodeForm = '<form><label>Code<input name="otp"></label><button type="button">Verify</button></form>';
+for (const [name, form, selector, account, failed] of [
+  ["an editable gift-card box", codeForm, 'input[name="code"]', '<form><label>Gift card code<input name="code"></label><button>Redeem</button></form>', undefined],
+  ["a Promo code textbox", roleCodeForm, 'role=textbox[name=/code/i]', '<form><label>Promo code<input name="promo"></label><button>Apply</button></form>', undefined],
+  ["the code form itself, still showing", codeForm, 'input[name="code"]', codeForm, "challenge_form_visible"],
+  ["the role-named code field itself, still showing", roleCodeForm, 'role=textbox[name=/code/i]', roleCodeForm, "challenge_form_visible"],
+] as const)
+  test(`a check right after a code screen ${failed === undefined ? "passes" : "refuses"} with ${name} on the page`, async ({ page }) => {
+    expect(await codeThenAccount(page, form, selector, account)).toEqual(
+      failed === undefined
+        ? { signedIn: true, url: "https://bank.example.test/login" }
+        : { signedIn: false, failed, url: "https://bank.example.test/login" },
+    );
+  });

@@ -23,6 +23,30 @@ const screens = [
 ];
 
 /**
+ * A recorded challenge field: its selector and slot, and the words that named the control when the
+ * host inspected it, which a control must share to count as that field still asking.
+ */
+const recorded = (
+  selector: string,
+  slot: "code" | "private_answer",
+  naming: { readonly label?: string; readonly ariaLabel?: string },
+) => ({
+  fields: [
+    {
+      selector,
+      slot,
+      identity: {
+        label: naming.label ?? null,
+        ariaLabel: naming.ariaLabel ?? null,
+        placeholder: null,
+        type: null,
+        autocomplete: null,
+      },
+    },
+  ],
+});
+
+/**
  * Serves the signed-in page, each of `options.frames` at its path, and `frame` at any other path,
  * then runs the host's check on it.
  */
@@ -64,21 +88,21 @@ for (const [name, body, frame, failed, signIn] of [
     `<form><p id="identity">Signed in</p><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
     null,
     "challenge_form_visible",
-    [...screens, { fields: [{ selector: "input[name=securityAnswer]", slot: "private_answer" }] }],
+    [...screens, recorded("input[name=securityAnswer]", "private_answer", { label: "Security answer" })],
   ],
   [
     "a header marker outside an unfinished security-answer form",
     `${marker}<form><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
     null,
     "challenge_form_visible",
-    [...screens, { fields: [{ selector: "input[name=securityAnswer]", slot: "private_answer" }] }],
+    [...screens, recorded("input[name=securityAnswer]", "private_answer", { label: "Security answer" })],
   ],
   [
     "a header marker outside an unfinished verification-code form",
     `${marker}<form><label>Verification code<input name="verificationCode" required></label><button>Verify</button></form>`,
     null,
     "challenge_form_visible",
-    [...screens, { fields: [{ selector: "input[name=verificationCode]", slot: "code" }] }],
+    [...screens, recorded("input[name=verificationCode]", "code", { label: "Verification code" })],
   ],
   [
     "an account search form that shares the page path",
@@ -190,7 +214,7 @@ test("an auth-named route does not classify an unrecorded account form as a chal
 
 test("a visible contenteditable security answer remains an unfinished challenge", async ({ page }) => {
   const account = `${marker}<form><div contenteditable="true" aria-label="Security answer"></div><button>Continue</button></form>`;
-  expect(await checkPage(page, account, null, [...screens, { fields: [{ selector: '[contenteditable="true"]', slot: "private_answer" }] }])).toEqual({
+  expect(await checkPage(page, account, null, [...screens, recorded('[contenteditable="true"]', "private_answer", { ariaLabel: "Security answer" })])).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
     url: `${site}/account`,
@@ -199,7 +223,7 @@ test("a visible contenteditable security answer remains an unfinished challenge"
 
 test("a recorded challenge field associated with its form by form attribute remains unfinished", async ({ page }) => {
   const account = `${marker}<form id="challenge"><button>Continue</button></form><label>Security answer<input id="answer" name="securityAnswer" form="challenge" required></label>`;
-  expect(await checkPage(page, account, null, [...screens, { fields: [{ selector: "#answer", slot: "private_answer" }] }])).toEqual({
+  expect(await checkPage(page, account, null, [...screens, recorded("#answer", "private_answer", { label: "Security answer" })])).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
     url: `${site}/account`,
@@ -209,28 +233,27 @@ test("a recorded challenge field associated with its form by form attribute rema
 test("a recorded challenge field in a visible frame of a configured sign-in origin remains unfinished", async ({ page }) => {
   const account = `${marker}<iframe src="${widget}/security-question"></iframe>`;
   const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
-  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }], "/account", { authenticationOrigins: [widget] })).toEqual({
+  expect(await checkPage(page, account, challenge, [...screens, recorded("#challenge-answer", "private_answer", { label: "Security answer" })], "/account", { authenticationOrigins: [widget] })).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
     url: `${site}/account`,
   });
 });
 
-// A recorded selector can match an unrelated control on the signed-in page: a gift-card or
-// referral code box. Only an editable control, on the site or a configured sign-in origin, in a
-// frame that shows, counts as the challenge still asking.
-const codeScreen = [...screens, { fields: [{ selector: 'input[name="code"]', slot: "code" as const }] }];
-test("an account page's code box in an unconfigured off-site frame does not block signed-in proof", async ({ page }) => {
-  const account = `${marker}<iframe src="${widget}/gift-cards"></iframe>`;
-  const giftCard = '<form><label>Gift card code<input name="code"></label><button>Redeem</button></form>';
-  expect(await checkPage(page, account, giftCard, codeScreen)).toEqual({
+// Even the recorded control itself counts as the challenge still asking only while it takes
+// typing, on the site or a configured sign-in origin, in a frame that shows with every frame above.
+const codeScreen = [...screens, recorded('input[name="code"]', "code", { label: "Verification code" })];
+test("a recorded code field in an unconfigured off-site frame does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe src="${widget}/verify"></iframe>`;
+  const codeForm = '<form><label>Verification code<input name="code"></label><button>Verify</button></form>';
+  expect(await checkPage(page, account, codeForm, codeScreen)).toEqual({
     signedIn: true,
     url: `${site}/account`,
   });
 });
 
-test("an account page's read-only or disabled code box does not block signed-in proof", async ({ page }) => {
-  const account = `${marker}<p>Your referral code <input name="code" readonly value="REF-2041"></p><p>Promotion <input name="code" disabled></p>`;
+test("a read-only or disabled recorded code field does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<label>Verification code<input name="code" readonly></label><label>Verification code<input name="code" disabled></label>`;
   expect(await checkPage(page, account, null, codeScreen)).toEqual({
     signedIn: true,
     url: `${site}/account`,
@@ -252,7 +275,7 @@ test("a recorded challenge field in a frame inside a hidden frame does not block
 test("a challenge field in a hidden provider iframe does not block signed-in proof", async ({ page }) => {
   const account = `${marker}<iframe style="display:none" src="${widget}/security-question"></iframe>`;
   const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
-  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }])).toEqual({
+  expect(await checkPage(page, account, challenge, [...screens, recorded("#challenge-answer", "private_answer", { label: "Security answer" })])).toEqual({
     signedIn: true,
     url: `${site}/account`,
   });
