@@ -313,6 +313,23 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
   expect(auth).not.toContain("enabled submit");
 });
 
+// A local build asks for a username, email, phone or account number as text, which the terminal
+// shows, and records a verified sign-in's screens as a recipe that runs don't replay yet.
+it("tells the local minter how its sign-in values are asked and what it records", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const auth = (contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(auth).toContain(
+    "The host obtains the needed value through the caller's input callback or the terminal, checks the original field/document/origin/focus binding and inserts privately. The terminal hides a password, code or other secret as it is typed, and shows a username, email, phone number or account number.",
+  );
+  expect(auth).toContain(
+    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; runs don't replay them yet.",
+  );
+  expect(auth).not.toContain("masked terminal");
+});
+
 // A write committed values the page never showed matching the input; a page's own recent-search
 // save looked like an unintended write; a value the site keeps a few clicks away was called
 // invalid input.
@@ -349,7 +366,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["b3178422adc1e62391ed67925d7945206ed55ba2781687f70482798295aeb3d8", "core"],
-    ["8e8aff4b67a99c283a0f4e58a0e753917117aec21a69a5ff37f1de52e16c5a06", "auth"],
+    ["9cf6653162985fb31362d79b1db124b1c35f20724ed7bd7b4b97da1d75ca8478", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
