@@ -2609,14 +2609,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   inputFeedbackRounds++;
                   inputFeedbackCoverage = coverage;
                   const fallback = dependencies.inputFeedbackFallback;
-                  inputFeedbackPublicTool = fallback !== undefined && !fallback.kept();
-                  const rationale = yield* screenRationale(error.review.rationale);
+                  const privateFallback = fallback?.kept() === true;
+                  inputFeedbackPublicTool = fallback !== undefined && !privateFallback;
                   const findings = error.review.findings ?? [];
-                  inputFeedbackReview = {
-                    categories: [...new Set(findings.map(({ category }) => category))],
-                    rationale,
-                  };
-                  if (inputFeedbackRounds <= maximumInputFeedbackRounds)
+                  const inRounds = inputFeedbackRounds <= maximumInputFeedbackRounds;
+                  // The minter reads the screened rationale in each round, and a build with no
+                  // fallback ends on it; a fallback's last round never reads it.
+                  const rationale =
+                    inRounds || fallback === undefined
+                      ? yield* screenRationale(error.review.rationale)
+                      : undefined;
+                  if (fallback === undefined && rationale !== undefined)
+                    inputFeedbackReview = {
+                      categories: [...new Set(findings.map(({ category }) => category))],
+                      rationale,
+                    };
+                  if (inRounds && rationale !== undefined)
                     return notPublished(
                       error.code,
                       "input_feedback",
@@ -2628,7 +2636,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       },
                       inputFeedbackInstruction(maximumInputFeedbackRounds - inputFeedbackRounds, {
                         write: buildEffect === "write",
-                        ending: fallback === undefined ? "none" : { outcome: fallback.outcome() },
+                        ...(fallback === undefined ? {} : { privateFallback }),
                       }),
                     );
                   if (yield* settleUnresolvedInputFeedback)

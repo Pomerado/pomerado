@@ -59,6 +59,14 @@ export interface GuardianDiagnostics {
   }) => Effect.Effect<void, Error>;
 }
 export interface GuardianReviewOptions {
+  /**
+   * Decodes a publication decision in place of `decodePublicationDecision`, for a host that runs
+   * its own publication review.
+   */
+  readonly decodePublication?: (
+    scope: PublicationScope,
+    raw: unknown,
+  ) => Effect.Effect<GuardianDecision, ReviewFailure>;
   readonly diagnosticFailure?: (error: unknown, operation: string) => ReviewFailure;
   readonly bestEffort?: <A, E>(
     effect: Effect.Effect<A, E>,
@@ -955,7 +963,10 @@ export const makeGuardian = (
           review(run, pending, readSource, (raw) =>
             scope === undefined
               ? decodeExecution(raw)
-              : decodePublicationDecision(scope, boundedRationale(raw)),
+              : (options.decodePublication ?? decodePublicationDecision)(
+                  scope,
+                  boundedRationale(raw),
+                ),
           ),
         );
       }),

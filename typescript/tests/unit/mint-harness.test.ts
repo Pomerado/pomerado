@@ -2603,13 +2603,17 @@ it("keeps a fallback host's instructions, screenings and snapshots", async () =>
   const snapshots: MintHarnessSnapshot[] = [];
   let capture: (() => MintHarnessSnapshot) | undefined;
   let screenings = 0;
+  /** How often each finish_build screened the review's rationale. */
+  const perRound: number[] = [];
   const projection = portableMintProjection();
   const f = await fixture(
     (turn) =>
       Effect.gen(function* () {
         yield* turn.actions.execute(execution);
         for (let round = 0; round < 3; round++) {
+          const before = screenings;
           replies.push(JSON.parse(yield* turn.actions.finish(publication)));
+          perRound.push(screenings - before);
           if (capture !== undefined) snapshots.push(capture());
         }
       }),
@@ -2642,7 +2646,8 @@ it("keeps a fallback host's instructions, screenings and snapshots", async () =>
   );
   expect(String(replies[0]?.["instruction"])).not.toContain(noFallbackEnding);
   expect(replies[2]?.["reason"]).toBe("input_feedback_unresolved");
-  expect(screenings).toBe(2);
+  // As before, the round past the limit screens the rationale once fewer: its reply omits it.
+  expect(perRound).toEqual([2, 2, 1]);
   expect(snapshots).toHaveLength(3);
   for (const snapshot of snapshots) expect(snapshot).not.toHaveProperty("inputFeedbackReview");
 });

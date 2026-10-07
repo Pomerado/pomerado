@@ -33,12 +33,6 @@ export interface InputFeedbackFallback {
    */
   readonly kept: () => boolean;
   /**
-   * What the host does once the minter's feedback rounds run out, as a clause the feedback
-   * instruction ends with, such as publishing the last reviewed version privately. Read after
-   * each input-feedback review.
-   */
-  readonly outcome: () => string;
-  /**
    * Publishes the kept candidate, at most once: private to this tenant and flagged, without
    * another review. Undefined when none is kept.
    */
@@ -54,17 +48,13 @@ export interface InputFeedbackFallback {
 /** Guardian input-feedback rounds returned to the minter before the build's ending. */
 export const maximumInputFeedbackRounds = 2;
 
-/**
- * What follows the last feedback round: with `none` the build ends unpublished and reports
- * Guardian's findings; a host with `InputFeedbackFallback` names its own outcome.
- */
-type InputFeedbackEnding = "none" | { readonly outcome: string };
-
-const unresolvedOutcome = (roundsRemaining: number, ending: InputFeedbackEnding) => {
+const unresolvedOutcome = (roundsRemaining: number, privateFallback: boolean | undefined) => {
   const outcome =
-    ending === "none"
+    privateFallback === undefined
       ? "the build ends unpublished and reports Guardian's findings to the owner"
-      : ending.outcome;
+      : privateFallback
+        ? "the host publishes the last reviewed version privately to this account and flags it"
+        : "nothing new is published, because this tool is already public and cannot fall back to a private version; its existing version stays";
   return roundsRemaining === 0
     ? `This was the last feedback round: if the next review still finds input problems, ${outcome}.`
     : `If input findings remain after ${roundsRemaining} more feedback round${roundsRemaining === 1 ? "" : "s"}, or the build ends first, ${outcome}.`;
@@ -73,13 +63,15 @@ const unresolvedOutcome = (roundsRemaining: number, ending: InputFeedbackEnding)
 /**
  * What the minter is told to fix, and what happens once its rounds run out. It is feedback, never
  * the end of the build: a write's schemas are extracted offline from current source, and so are
- * a read's once its source changes.
+ * a read's once its source changes. `privateFallback` is whether a host's fallback publishes the
+ * last reviewed version privately, false for a tool already public; it is absent for a build
+ * with no fallback, which ends unpublished.
  */
 export const inputFeedbackInstruction = (
   roundsRemaining: number,
-  build: { readonly write: boolean; readonly ending: InputFeedbackEnding },
+  build: { readonly write: boolean; readonly privateFallback?: boolean },
 ) =>
-  `Not published yet: publication review found input problems in this tool's public schema or the code that fills it. An account_specific_enum finding is an account-specific value (a passenger, loyalty or member number, saved card or address, account ID) listed as an enum member, example or default: make that input free-form. An input_option finding is an option on the write's path, such as an add-on, a pre-selected paid option or a saved payment, that the tool settles by itself: make it an input, required when the site requires a choice and optional otherwise. An optional input left unset keeps the page's default. An example_value finding is an input narrowed to the example's value, or code that works only for it: make it accept what the site's field accepts, in the schema and in the code that sets it. An example_input finding is a key of the example's exampleInput that the input schema does not list: make it an input property. ${build.write ? "A write's schema is read offline from current source: correct the source, then call finish_build again with the same executionId. Never run the write again." : "The host reads a read's schemas offline from current source once it changes: correct the schema and the code that sets that input there, then call finish_build again with the same executionId. The example's own input and output must still decode against them. Do not run the example again for this."} ${unresolvedOutcome(roundsRemaining, build.ending)}`;
+  `Not published yet: publication review found input problems in this tool's public schema or the code that fills it. An account_specific_enum finding is an account-specific value (a passenger, loyalty or member number, saved card or address, account ID) listed as an enum member, example or default: make that input free-form. An input_option finding is an option on the write's path, such as an add-on, a pre-selected paid option or a saved payment, that the tool settles by itself: make it an input, required when the site requires a choice and optional otherwise. An optional input left unset keeps the page's default. An example_value finding is an input narrowed to the example's value, or code that works only for it: make it accept what the site's field accepts, in the schema and in the code that sets it. An example_input finding is a key of the example's exampleInput that the input schema does not list: make it an input property. ${build.write ? "A write's schema is read offline from current source: correct the source, then call finish_build again with the same executionId. Never run the write again." : "The host reads a read's schemas offline from current source once it changes: correct the schema and the code that sets that input there, then call finish_build again with the same executionId. The example's own input and output must still decode against them. Do not run the example again for this."} ${unresolvedOutcome(roundsRemaining, build.privateFallback)}`;
 
 /** The last input-feedback review, as a build that ends on it reports it. */
 export interface InputFeedbackReview {
