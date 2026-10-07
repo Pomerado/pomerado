@@ -48,13 +48,6 @@ export interface WebsiteCredentials {
   readonly dateOfBirth?: string | undefined;
   readonly zip?: string | undefined;
   readonly recoveryCodes?: readonly string[] | undefined;
-  /**
-   * Host-held answers bound to this verified site/login. Match a unique current question after
-   * trimming and collapsing whitespace only; never expose answers to model text or recipes.
-   * Hosts own protected prompting, explicit consent to save and encrypted persistence.
-   */
-  readonly securityAnswers?:
-    readonly { readonly question: string; readonly answer: string }[] | undefined;
   readonly preferredSignInMethod?: SignInMethodChoice | undefined;
 }
 

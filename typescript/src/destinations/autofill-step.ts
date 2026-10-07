@@ -66,11 +66,6 @@ export interface AutofillField {
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
   /**
-   * Host-read question from inspection, never an answer or recipe field. Local prompts may fall
-   * back to a field label, but saved-answer reuse requires the explicit current questionText.
-   */
-  readonly privateAnswerPrompt?: string | undefined;
-  /**
    * The accepted kinds the login held when the host filled the field, as kinds only: its saved
    * record's (`vault`) and the owner's answers this attempt (`given`).
    */
