@@ -17,7 +17,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
   - Once a write session started, the check loads no page and reports itself unavailable.
   - The `signedIn` step refuses a marker that one of those signed-out pages shows.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
-- The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire` or a `#` import, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript.
+- The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.

@@ -26,7 +26,7 @@ const loaderNames = new Set([
 ]);
 /**
  * The names the save rule also treats as loaders: a CommonJS module's wrapper arguments hold its
- * `require`, as `arguments[1]`, outside any function that binds its own (see `usesLoader`). Only
+ * `require`, as `arguments[1]`, wherever the name reaches the wrapper's (see `usesLoader`). Only
  * the local save rule reads this set.
  */
 const savedLoaderNames: ReadonlySet<string> = new Set([...loaderNames, "arguments"]);
@@ -59,26 +59,65 @@ const plainPackage = (request: string) => {
 const keyedMembers = new Set(["MethodDefinition", "Property", "PropertyDefinition"]);
 const field = (node: object, key: string): unknown =>
   key in node ? Reflect.get(node, key) : undefined;
+/** The name a member expression reads: `name` in `x.name`, or the string in `x["name"]`. */
+const memberKey = (node: object): unknown => {
+  const property = field(node, "property");
+  if (typeof property !== "object" || property === null) return undefined;
+  if (field(node, "computed") === true) return field(property, "value");
+  return field(property, "type") === "Identifier" ? field(property, "name") : undefined;
+};
+/** Expressions whose value is their `expression`'s: parentheses, a chain, a TypeScript cast. */
+const passThrough = new Set([
+  "ParenthesizedExpression",
+  "ChainExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+]);
+/** Whether an expression's value is a call's result. */
+const callResult = (node: unknown): boolean => {
+  if (typeof node !== "object" || node === null) return false;
+  const type = field(node, "type");
+  if (type === "CallExpression") return true;
+  return typeof type === "string" && passThrough.has(type) && callResult(field(node, "expression"));
+};
 /**
- * Whether the syntax tree uses a loader name: as an identifier or a property name, or as the
- * string of a computed key (`x["constructor"]`). A class's own `constructor` method, another
- * plain key it or an object literal declares, and any other string, the page code a template
- * literal holds included, are not uses.
+ * Whether a node is one of `names` itself: an identifier, or a member's property name or computed
+ * key string (`x.constructor`, `x["constructor"]`). As a property, `arguments` is a value's own
+ * field, so it counts only off a call's result: a stack frame's `getFunction()` can return a
+ * CommonJS module's wrapper, whose `arguments` hold its `require`.
  */
-/** Whether a node is one of `names` itself: an identifier, or a computed key's string. */
 const loaderName = (node: object, type: unknown, names: ReadonlySet<string>): boolean => {
   if (type === "Identifier") {
     const name = field(node, "name");
     return typeof name === "string" && names.has(name);
   }
-  if (type !== "MemberExpression" || field(node, "computed") !== true) return false;
-  const property = field(node, "property");
-  const key =
-    typeof property === "object" && property !== null ? field(property, "value") : undefined;
-  return typeof key === "string" && names.has(key);
+  if (type !== "MemberExpression") return false;
+  const key = memberKey(node);
+  return (
+    typeof key === "string" &&
+    names.has(key) &&
+    (key !== "arguments" || callResult(field(node, "object")))
+  );
 };
-/** Functions that bind their own `arguments`; an arrow function reads its parent's. */
-const ownArguments = new Set(["FunctionDeclaration", "FunctionExpression"]);
+/**
+ * Nodes inside which `arguments` is not a CommonJS wrapper's: a function that binds its own (an
+ * arrow function reads its parent's), and a TypeScript type or abstract member, which never runs.
+ */
+const otherArguments = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "TSPropertySignature",
+  "TSMethodSignature",
+  "TSAbstractPropertyDefinition",
+  "TSAbstractMethodDefinition",
+]);
+/**
+ * Whether the syntax tree uses a loader name (see `loaderName`). A class's own `constructor`
+ * method, another plain key it or an object literal declares, and any other string, the page code
+ * a template literal holds included, are not uses. Nor is `arguments` inside `otherArguments`.
+ */
 const usesLoader = (node: unknown, names: ReadonlySet<string>): boolean => {
   if (Array.isArray(node)) return node.some((entry) => usesLoader(entry, names));
   if (typeof node !== "object" || node === null) return false;
@@ -87,9 +126,11 @@ const usesLoader = (node: unknown, names: ReadonlySet<string>): boolean => {
     return usesLoader(field(node, "value"), names);
   if (loaderName(node, type, names)) return true;
   if (type === "Identifier" || type === "Literal") return false;
-  // Inside a function that binds its own `arguments`, the name no longer reaches the wrapper's.
+  // `loaderName` checked the property's name; only the object can hold another use.
+  if (type === "MemberExpression" && field(node, "computed") === false)
+    return usesLoader(field(node, "object"), names);
   const inner =
-    typeof type === "string" && ownArguments.has(type) && names.has("arguments")
+    typeof type === "string" && otherArguments.has(type) && names.has("arguments")
       ? new Set([...names].filter((name) => name !== "arguments"))
       : names;
   return Object.values(node).some((value) => usesLoader(value, inner));
@@ -181,6 +222,16 @@ const savedSourcePath = /^(src|explore|test|scratch)\//u;
 const opaqueModulePath = /\.(?:wasm|node)$/u;
 
 /**
+ * A path as a file system that ignores letter case and Unicode normalization compares it, as
+ * macOS does by default.
+ */
+const folded = (path: string) => posix.normalize(path).normalize("NFC").toLowerCase();
+
+/** A request for Playwright's internal modules, which can run a test config and files it names. */
+const playwrightInternals = (request: string) =>
+  request.toLowerCase().startsWith("playwright/lib/");
+
+/**
  * Whether a saved package manifest could map the package's own name to a saved file: it declares
  * `exports`, or does not parse. A manifest without them, such as `{}`, maps nothing.
  */
@@ -199,9 +250,10 @@ const mapsOwnName = (source: string) => {
  * whatever their extension; an extensionless file, which Node loads as ESM in a module scope, is
  * read as JavaScript. An import of another path, such as the host's runtime, is not followed.
  * Undefined, and the walk stops, when Node could load a saved file those imports do not name: a
- * saved manifest maps the package's own name, a saved folder holds `node_modules`, or one of the
- * files is a WebAssembly module or native addon, could load a file its imports do not name (see
- * `moduleRequests`), or does not parse.
+ * saved manifest outside src/ maps the package's own name, a saved folder holds `node_modules`, or
+ * one of the files is a WebAssembly module or native addon, could load a file its imports do not
+ * name (see `moduleRequests`), imports Playwright's internal modules, or does not parse. Paths
+ * compare in any letter case and Unicode normalization.
  */
 const importedCandidates = (
   candidates: ReadonlyMap<string, string>,
@@ -210,12 +262,16 @@ const importedCandidates = (
   if (
     [...candidates].some(
       ([path, source]) =>
-        path.split("/").includes("node_modules") ||
-        (posix.basename(path) === "package.json" && mapsOwnName(source)),
+        folded(path).split("/").includes("node_modules") ||
+        // Node keeps a manifest's exports inside its folder: one under src/ maps only src/ files.
+        (posix.basename(folded(path)) === "package.json" &&
+          !path.startsWith("src/") &&
+          mapsOwnName(source)),
     )
   )
     return undefined;
   const files = new Map<string, string>();
+  const spellings = Map.groupBy(candidates.keys(), folded);
   const pending = [...[...candidates.keys()].filter((path) => path.startsWith("src/")), entrypoint];
   for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
     const source = candidates.get(path);
@@ -224,9 +280,9 @@ const importedCandidates = (
     if (opaqueModulePath.test(path)) return undefined;
     if (sourceSyntax(path) === undefined && posix.extname(path) !== "") continue;
     const requests = moduleRequests(source, path, savedLoaderNames);
-    if (requests === undefined) return undefined;
+    if (requests === undefined || requests.some(playwrightInternals)) return undefined;
     for (const request of requests.filter(plainRelative))
-      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+      pending.push(...(spellings.get(folded(posix.join(posix.dirname(path), request))) ?? []));
   }
   return files;
 };
@@ -248,14 +304,14 @@ export const runnableOperationFiles = (
  * The files a local build saves for `entrypoint`: the files it could run (see
  * `runnableOperationFiles`), which are every file under src/, the entrypoint and the files under
  * explore/, test/ or scratch/ that they import, or every file under the four folders when Node
- * could load one those imports do not name. A package manifest anywhere in the workspace keeps
- * every file under the four folders as a precaution.
+ * could load one those imports do not name. A package manifest anywhere in the workspace, in any
+ * letter case, keeps every file under the four folders as a precaution.
  */
 export const savedOperationFiles = (
   workspace: ReadonlyMap<string, string>,
   entrypoint: string,
 ): Map<string, string> =>
-  [...workspace.keys()].some((path) => posix.basename(path) === "package.json")
+  [...workspace.keys()].some((path) => posix.basename(folded(path)) === "package.json")
     ? new Map([...workspace].filter(([path]) => savedSourcePath.test(path)))
     : runnableOperationFiles(workspace, entrypoint);
 
