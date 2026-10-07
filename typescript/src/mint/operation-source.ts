@@ -26,7 +26,8 @@ const loaderNames = new Set([
 ]);
 /**
  * The names the save rule also treats as loaders: a CommonJS module's wrapper arguments hold its
- * `require`, as `arguments[1]`. Only the local save rule reads this set.
+ * `require`, as `arguments[1]`, outside any function that binds its own (see `usesLoader`). Only
+ * the local save rule reads this set.
  */
 const savedLoaderNames: ReadonlySet<string> = new Set([...loaderNames, "arguments"]);
 /** Node built-ins that run, spawn or read and load code. */
@@ -76,6 +77,8 @@ const loaderName = (node: object, type: unknown, names: ReadonlySet<string>): bo
     typeof property === "object" && property !== null ? field(property, "value") : undefined;
   return typeof key === "string" && names.has(key);
 };
+/** Functions that bind their own `arguments`; an arrow function reads its parent's. */
+const ownArguments = new Set(["FunctionDeclaration", "FunctionExpression"]);
 const usesLoader = (node: unknown, names: ReadonlySet<string>): boolean => {
   if (Array.isArray(node)) return node.some((entry) => usesLoader(entry, names));
   if (typeof node !== "object" || node === null) return false;
@@ -84,7 +87,12 @@ const usesLoader = (node: unknown, names: ReadonlySet<string>): boolean => {
     return usesLoader(field(node, "value"), names);
   if (loaderName(node, type, names)) return true;
   if (type === "Identifier" || type === "Literal") return false;
-  return Object.values(node).some((value) => usesLoader(value, names));
+  // Inside a function that binds its own `arguments`, the name no longer reaches the wrapper's.
+  const inner =
+    typeof type === "string" && ownArguments.has(type) && names.has("arguments")
+      ? new Set([...names].filter((name) => name !== "arguments"))
+      : names;
+  return Object.values(node).some((value) => usesLoader(value, inner));
 };
 
 /**
@@ -239,8 +247,9 @@ export const runnableOperationFiles = (
 /**
  * The files a local build saves for `entrypoint`: the files it could run (see
  * `runnableOperationFiles`), which are every file under src/, the entrypoint and the files under
- * explore/, test/ or scratch/ that they import. A workspace package manifest, which can map a
- * specifier to any file, keeps every file under those four folders.
+ * explore/, test/ or scratch/ that they import, or every file under the four folders when Node
+ * could load one those imports do not name. A package manifest anywhere in the workspace keeps
+ * every file under the four folders as a precaution.
  */
 export const savedOperationFiles = (
   workspace: ReadonlyMap<string, string>,
