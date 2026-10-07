@@ -37,8 +37,10 @@ import {
   MintRequest,
   MintServices,
   PublicationRequest,
+  SignedInMarkerCheckRequest,
   withOwnWords,
 } from "./contracts.js";
+import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
 import type {
@@ -311,6 +313,9 @@ const withHostNotices = (
     ...(actions.requestBrowserRecovery === undefined
       ? {}
       : { requestBrowserRecovery: wrap(actions.requestBrowserRecovery) }),
+    ...(actions.checkSignedInMarker === undefined
+      ? {}
+      : { checkSignedInMarker: wrap(actions.checkSignedInMarker) }),
   };
 };
 
@@ -330,7 +335,7 @@ const scriptQuestionInstruction: Readonly<
   Record<NonNullable<ExecutionEvidence["scriptQuestion"]>["outcome"], string>
 > = {
   reword:
-    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows: read a value the caller's input or the request gives from the tool's input (when the caller's input is empty, pass it in exampleInput on the example, or on the write session's first act step), and use the {{secret.<id>}} handle of a protected answer you already hold.",
+    "Guardian did not allow the question this script asked, so nobody was asked and the script's ask failed. Revise the script's declared question using the rationale, then execute again; the revised question is reviewed again. Do not ask for a value you were already given or that the site shows: read a value the caller's input or the request gives from the tool's input (when the caller's input is empty, pass it in exampleInput on the example, or on each write act step that needs it), and use the {{secret.<id>}} handle of a protected answer you already hold.",
   authentication:
     "The script's question asks for a website login, which only the host requests, so nobody was asked. Remove it from the script's questions and sign in with execute purpose authenticate instead.",
   invalid:
@@ -1852,7 +1857,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               failure?.code === "LoginIdentityConflict"
                 ? ("login_identity_conflict" as const)
                 : ("sign_in_unavailable" as const),
-            summary: signInUnavailableSummary(failure, error.spentSignIn),
+            summary: signInUnavailableSummary(failure, error.spentSignIn, error.sessionLoss),
           };
           signInUnavailable = { answer, outcome };
           if (!publishableReceipt()) terminal ??= outcome;
@@ -1868,6 +1873,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   credentialSent: failure.nothingSubmitted !== true,
                 }),
             spentSignIn: error.spentSignIn,
+            sessionLoss: error.sessionLoss,
           });
         });
       const diagnosticUnavailableFeedback = (error: MintFailure) =>
@@ -2379,6 +2385,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.execution !== undefined ||
                   error.authentication !== undefined ||
                   error.spentSignIn !== undefined ||
+                  error.sessionLoss !== undefined ||
                   error.reason === "login_in_use",
               ),
             ),
@@ -3110,6 +3117,42 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     return JSON.stringify({
                       kind: "host_browser_recovery",
                       ...(yield* request(rationale)),
+                    });
+                  }),
+                ),
+            }),
+        // The agent tests a signed-in marker before it sends it. The host may reload the page,
+        // so the check holds the execution permit; it signs nothing in and sends no value. A host
+        // without the check says so, and the agent compares the pages itself.
+        ...(questionOnly
+          ? {}
+          : {
+              checkSignedInMarker: (input: unknown) =>
+                serial.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* active();
+                    const marker = yield* decode(SignedInMarkerCheckRequest, input);
+                    const check = dependencies.checkSignedInMarker;
+                    if (check === undefined)
+                      return JSON.stringify({
+                        kind: "host_signed_in_marker",
+                        status: "unavailable",
+                        notice:
+                          "This host cannot test a marker. Confirm yourself that it is absent on the signed-out pages you explored before signing in, and present on the signed-in page and on another page you visited signed in.",
+                      });
+                    const result = yield* check(marker);
+                    const verdict = validateSignedInMarker({ marker, check: result });
+                    return JSON.stringify({
+                      kind: "host_signed_in_marker",
+                      // A pass the signed-out page could not confirm is not a plain pass.
+                      status: !verdict.accepted
+                        ? "refused"
+                        : result.signedOutSnapshot === "unchecked"
+                          ? "passed_unchecked"
+                          : "passed",
+                      ...result,
+                      ...(verdict.accepted ? {} : { refusals: verdict.refusals }),
+                      ...(verdict.warnings.length === 0 ? {} : { warnings: verdict.warnings }),
                     });
                   }),
                 ),

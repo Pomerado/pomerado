@@ -19,6 +19,7 @@ import type { KernelExecuteClient } from "./kernel-execute-client.js";
 import { inspectSignInRejection } from "./sign-in-rejection.js";
 import type { SignInRejectionMarker } from "./sign-in-rejection.js";
 import {
+  CredentialsRejected,
   OperationFailure,
   operationErrors,
   scriptFailure,
@@ -148,6 +149,17 @@ export interface KernelOperationContext<
   readonly remainingMs: () => number;
   /** Inspect a value-free marker on the authorized page; throw only when it is visible. */
   readonly rejectedSignIn: (options: SignInRejectionMarker) => Promise<void>;
+  /**
+   * Asks the host to make sure the page is still signed in, after a full page load that may have
+   * lost the session. The host checks its signed-in marker on the current page without moving it,
+   * and signs in again only when the page is signed out: `signedInAgain` says it did, so the script
+   * opens the page it was on again. The runtime already calls it once before the script runs. The
+   * deadline pauses while the host works. A run with no sign-in, or an offline run, gets
+   * `{ signedInAgain: false }`. When the host cannot sign in again it throws `OperationFailure`
+   * with `sessionLoss: "session_not_kept"`; a value the site refused throws `CredentialsRejected`.
+   * Never call it between a write's commit and its read-back.
+   */
+  readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   readonly errors: typeof operationErrors;
 }
 
@@ -211,7 +223,15 @@ interface ScriptBrowser {
   readonly siteOrigin?: string;
   /** The host's registrable domain for `siteOrigin`; the sandbox has no public suffix list. */
   readonly siteDomain?: string;
+  /** An offline run cannot reach a site, so it never signs in. */
+  readonly offline?: boolean;
   readonly dialogs?: DialogDecider;
+  /**
+   * The host's sign-in for an operation that runs signed in, bound only then: it checks the
+   * signed-in marker on the current page and, only when it is absent, signs in again. It rejects
+   * when it cannot, such as when its sign-ins are spent or the sign-in did not verify.
+   */
+  readonly signIn?: () => Promise<{ readonly signedInAgain: boolean }>;
   /** Hosted HTTP authoring diagnostics; native browser scripts use the portable errors. */
   readonly scriptError?: (error: unknown, dispatch: Dispatch) => OperationFailure;
 }
@@ -221,6 +241,7 @@ const makeKernelOperationContext = <Input>(
   options: ScriptBrowser & {
     readonly input: Input;
     readonly deadline: Deadline;
+    readonly ensureSignedIn: KernelOperationContext<Input>["ensureSignedIn"];
     /** The runner's caller questions; the login hooks get none, so they can never ask. */
     readonly scriptInput?: Context.Tag.Service<ScriptInput>;
     /** A live run's journal. An offline run has none, so its effect stays not started. */
@@ -250,6 +271,7 @@ const makeKernelOperationContext = <Input>(
   remainingMs: () => options.deadline.remainingMs(),
   errors: operationErrors,
   rejectedSignIn: (request) => settle(inspectSignInRejection(options, request)),
+  ensureSignedIn: options.ensureSignedIn,
   decideDialog: async (shown) => {
     const decide = options.dialogs;
     if (decide === undefined) throw new DialogFailure({ reason: "unavailable" });
@@ -345,13 +367,36 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         },
       },
     };
+    // The host's sign-in, with the deadline paused. A refusal before the script's first call
+    // sent nothing; after it, the script's own calls may have.
+    const ensureSignedIn = async () => {
+      const signIn = browser.signIn;
+      if (signIn === undefined || browser.offline === true) return { signedInAgain: false };
+      const resume = browser.deadline.suspend();
+      try {
+        const { signedInAgain } = await signIn();
+        return { signedInAgain: signedInAgain === true };
+      } catch (error) {
+        if (error instanceof CredentialsRejected) throw error;
+        throw new OperationFailure("The host could not sign the site in again", {
+          cause: error,
+          dispatch: calls === 0 ? "not_sent" : "unknown",
+          sessionLoss: "session_not_kept",
+        });
+      } finally {
+        resume();
+      }
+    };
     return Effect.tryPromise({
       try: async () => {
+        // A page that lost its session since the host signed in is signed in again first.
+        await ensureSignedIn();
         const output = await operation.run(
           makeKernelOperationContext({
             ...browser,
             kernel,
             input,
+            ensureSignedIn,
             ...(operation.write === undefined ? {} : { write: operation.write }),
           }),
         );

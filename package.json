@@ -147,6 +147,11 @@
       "import": "./dist/typescript/src/destinations/private-candidate.js",
       "default": "./dist/typescript/src/destinations/private-candidate.js"
     },
+    "./core/destinations/signed-in-marker": {
+      "types": "./dist/typescript/src/destinations/signed-in-marker.d.ts",
+      "import": "./dist/typescript/src/destinations/signed-in-marker.js",
+      "default": "./dist/typescript/src/destinations/signed-in-marker.js"
+    },
     "./core/destinations/sign-in-provider-codes": {
       "types": "./dist/typescript/src/destinations/sign-in-provider-codes.d.ts",
       "import": "./dist/typescript/src/destinations/sign-in-provider-codes.js",

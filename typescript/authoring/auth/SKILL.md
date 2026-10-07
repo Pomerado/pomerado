@@ -125,7 +125,9 @@ signed-in indicator; confirmation alone does not verify the session.
 <!-- pomerado:section auth.signed-in-evidence:start
 Prefer an observed protected account page or authenticated workflow control that the signed-out
 flow cannot reach, corroborated by the live business example. Generic Sign out or account chrome
-alone does not establish access to the caller's workflow.
+alone does not establish access to the caller's workflow. The signed-in marker you send is a
+separate check, of presence only (below): for it, a site-wide account menu or sign-out control is
+the right choice once `check_signed_in_marker` shows that the signed-out page lacks it.
 pomerado:section auth.signed-in-evidence:end -->
 
 # Popup sign-in
@@ -158,9 +160,31 @@ the same field on the same screen three times in a row ends sign-in in this buil
 # Every sign-in ends with its check
 
 <!-- pomerado:section auth.sign-in-check:start
-End every sign-in with a check that it worked: an observed signed-in marker that every
-signed-in account shows and a signed-out page never does. Never use an account's name, email or
-number as the marker.
+End every sign-in with a check that it worked, sent as `signInStep.signedIn`: an observed
+signed-in marker that every signed-in account shows and a signed-out page never does. Never use an
+account's name, email or number as the marker.
+
+The marker is checked in many places across the site, not only where this sign-in lands: after
+every reset, at the start of every operation, after a page load in the middle of a script, and on
+whatever page a failure lands on. So choose a site-wide element only a signed-in user sees, such as
+the global header's account menu or sign-out control, never something only the page after sign-in
+shows. It must show on any signed-in page, not only on `openPath`.
+
+- Prefer stable attributes and names, such as `aria-label`, a role and its name, visible text or a
+  test id, over generated class names such as `css-1q2w3e`.
+- Never send a `urlPath` alone on a single-page app, or for a page the site also serves signed out:
+  the path stays the same when the session is gone. Never use the login page's path.
+- Test the marker with `check_signed_in_marker` before you send it, and choose another until every
+  check passes: absent on the signed-out page the host saw before the sign-in, and present on the
+  signed-in page now, after a fresh load and on another page you visited signed in. The host
+  refuses a marker that the signed-out page shows. When the tool reports the check unavailable,
+  or passed with the signed-out page unchecked, compare it yourself against the signed-out pages
+  you explored before signing in.
+
+For example, after sign-in the header shows an "Account" link, which the signed-out header shows
+too, and an account menu button, which it does not. `{ "selector": "text=Account" }` matches the
+signed-out page and is refused. `{ "selector": "header [aria-label=\"Account menu\"]" }` passes
+every check, and is the marker to send.
 pomerado:section auth.sign-in-check:end -->
 
 ## A sign-in refusal found by operation code
@@ -168,6 +192,22 @@ pomerado:section auth.sign-in-check:end -->
 An operation may find a field-specific refusal after the host's sign-in setup. Use an error marker observed during normal authorized sign-in; never submit deliberately bad credentials to invent a marker. Call `await rejectedSignIn({ field: "password", selector: observedPasswordErrorSelector })` on the authorized page. The helper reads only boolean locator visibility: a visible marker throws `errors.CredentialsRejected(field)`, an absent marker returns, and unavailable or malformed inspection throws `OperationFailure` with its cause. When operation code already observed the specific refusal, it may instead throw `new errors.CredentialsRejected(field)` directly. Pass only the finite field kind, never a credential value or error text.
 
 The caller receives `credentials_rejected` and `rejected_field`; this requests no repair. Preserve every named commit mark. A write whose commit may have been sent still returns `outcome_unknown` with `possible_commit`; read back its outcome before any retry. A refusal before any declared commit step was entered stays rejected without a possible commit.
+
+## Staying signed in during an operation
+
+Some sites keep their session only in the page, so a full page load signs them out. The runtime
+calls `ensureSignedIn()` once before your operation code runs, so every signed-in operation starts
+signed in. After that, call `const { signedInAgain } = await ensureSignedIn()` after each full page
+load in the middle of the script: a `page.goto`, a reload, or a click or submit that loads a new
+document. In-page navigation in a single-page app needs no call. The host checks the signed-in
+marker on the current page without moving it and signs in again only when the page is signed out.
+When `signedInAgain` is true, the sign-in left the page somewhere else: open the page you were on
+again before you go on. The operation's deadline pauses while the host signs in.
+
+Never call it between a write's commit and its read-back: read the outcome back first. Let its
+failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
+could not sign in again, and the run reports that the site did not keep its session. Never catch it
+to go on signed out, and never sign in from the script yourself.
 
 # A direct sign-in request
 

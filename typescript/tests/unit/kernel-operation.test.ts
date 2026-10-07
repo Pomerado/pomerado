@@ -7,7 +7,12 @@ import {
   makeEffectJournalWith,
 } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { isKernelOperation, kernelTimeoutSec } from "../../src/runtime/kernel-operation.js";
+import {
+  isKernelOperation,
+  kernelTimeoutSec,
+  operationErrors,
+} from "../../src/runtime/kernel-operation.js";
+import { offlineKernel } from "../support/offline-kernel.js";
 import { runKernelOperation } from "../support/kernel-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js";
@@ -595,5 +600,170 @@ return await shown;`),
       () => slow({ code: "693104" }),
     );
     expect(exit).toEqual(Exit.succeed({ deleted: true, remainingMs: 60_000 }));
+  });
+});
+
+describe("a signed-in session kept across page loads", () => {
+  /**
+   * A script that loads a page in full, then asks the host to restore the session the load may
+   * have lost, and re-opens its page when the host signed in again. `steps` records each call and
+   * each host sign-in in order.
+   */
+  const reloading = defineOperation(
+    {
+      input: Schema.Struct({}),
+      output: Schema.Struct({ signedInAgain: Schema.Boolean, remainingMs: Schema.Number }),
+    },
+    async ({ kernel, sessionId, ensureSignedIn, remainingMs }) => {
+      await kernel.browsers.playwright.execute(sessionId, {
+        code: 'await page.goto("https://shop.example.test/orders");',
+        timeout_sec: 10,
+      });
+      const { signedInAgain } = await ensureSignedIn();
+      if (signedInAgain)
+        await kernel.browsers.playwright.execute(sessionId, {
+          code: 'await page.goto("https://shop.example.test/orders");',
+          timeout_sec: 10,
+        });
+      return { signedInAgain, remainingMs: remainingMs() };
+    },
+  );
+
+  const tracked = () => {
+    const steps: string[] = [];
+    const kernel = fakeKernel(() => {
+      steps.push("execute");
+      return { success: true, result: null };
+    });
+    return { steps, kernel };
+  };
+
+  it("leaves the page alone when the host keeps no session, or the run is offline", async () => {
+    const withoutHook = tracked();
+    const unbound = await run(
+      runKernelOperation(
+        reloading,
+        {},
+        { kernel: withoutHook.kernel.client, sessionId: "session-1" },
+      ),
+      Deadline.after(60_000, () => 0),
+    );
+    expect(unbound.exit).toEqual(Exit.succeed({ signedInAgain: false, remainingMs: 60_000 }));
+    expect(withoutHook.steps).toEqual(["execute"]);
+
+    // An offline run has no site to sign in to, so the host's hook never runs.
+    let signIns = 0;
+    const parser = defineOperation(
+      { input: Schema.Struct({}), output: Schema.Boolean },
+      async ({ ensureSignedIn }) => (await ensureSignedIn()).signedInAgain,
+    );
+    const offline = await run(
+      runKernelOperation(
+        parser,
+        {},
+        {
+          kernel: offlineKernel,
+          sessionId: "offline",
+          offline: true,
+          signIn: async () => {
+            signIns++;
+            return { signedInAgain: true };
+          },
+        },
+      ),
+    );
+    expect(offline.exit).toEqual(Exit.succeed(false));
+    expect(signIns).toBe(0);
+  });
+
+  it("signs in once before the script, again when it asks, and never spends its deadline", async () => {
+    let now = 0;
+    const { steps, kernel } = tracked();
+    // The page loaded signed in, and the script's full page load signed it out.
+    const signedOut = [false, true];
+    const { exit } = await run(
+      runKernelOperation(
+        reloading,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          signIn: async () => {
+            steps.push("sign-in");
+            // Signing in takes longer than the whole operation's budget.
+            now += 170_000;
+            return { signedInAgain: signedOut.shift() ?? false };
+          },
+        },
+      ),
+      Deadline.after(60_000, () => now),
+    );
+    expect(exit).toEqual(Exit.succeed({ signedInAgain: true, remainingMs: 60_000 }));
+    expect(steps).toEqual(["sign-in", "execute", "sign-in", "execute"]);
+  });
+
+  it("fails as a session not kept when the host cannot sign in again", async () => {
+    const refusing = async () => {
+      throw new Error("The automatic sign-in budget is spent");
+    };
+    // Refused at the start, the script never runs and nothing was sent.
+    const atStart = tracked();
+    const start = await run(
+      runKernelOperation(
+        reloading,
+        {},
+        { kernel: atStart.kernel.client, sessionId: "session-1", signIn: refusing },
+      ),
+    );
+    expect(failureOf(start.exit)).toMatchObject(
+      Option.some({
+        _tag: "OperationFailure",
+        sessionLoss: "session_not_kept",
+        dispatch: "not_sent",
+      }),
+    );
+    expect(atStart.steps).toEqual([]);
+
+    // Refused after the script's own page load, the call that loaded it may have sent.
+    let signIns = 0;
+    const midway = tracked();
+    const later = await run(
+      runKernelOperation(
+        reloading,
+        {},
+        {
+          kernel: midway.kernel.client,
+          sessionId: "session-1",
+          signIn: async () => {
+            if (signIns++ > 0) return refusing();
+            return { signedInAgain: false };
+          },
+        },
+      ),
+    );
+    expect(failureOf(later.exit)).toMatchObject(
+      Option.some({
+        _tag: "OperationFailure",
+        sessionLoss: "session_not_kept",
+        dispatch: "unknown",
+      }),
+    );
+    expect(midway.steps).toEqual(["execute"]);
+
+    // A value the site refused during the host's sign-in stays the rejected credential.
+    const rejected = await run(
+      runKernelOperation(
+        reloading,
+        {},
+        {
+          kernel: tracked().kernel.client,
+          sessionId: "session-1",
+          signIn: () => Promise.reject(new operationErrors.CredentialsRejected("password")),
+        },
+      ),
+    );
+    expect(failureOf(rejected.exit)).toMatchObject(
+      Option.some({ _tag: "CredentialsRejected", field: "password" }),
+    );
   });
 });
