@@ -631,10 +631,10 @@ test("a write session refuses exampleInput that is not an object, and takes it o
       url: site.url,
       guardian,
       turns: [
-        () => patch({ "src/look.mjs": probe() }),
+        () => patch({ "src/look.mjs": probe(), "src/read.mjs": readNote }),
         () => [call("execute", act("src/look.mjs", "[1]"), "not_object")],
         () => [call("execute", act("src/look.mjs"), "started")],
-        () => [call("execute", act("src/look.mjs", { note: "late" }), "late")],
+        () => [call("execute", act("src/read.mjs", { note: "late" }), "late")],
       ],
     });
     expect(toolResult(last, "started")).toMatchObject({ status: "completed" });

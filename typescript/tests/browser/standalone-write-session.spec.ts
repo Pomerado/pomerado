@@ -142,14 +142,14 @@ test("the first act step that passes exampleInput fixes the session's input afte
         // The first act step needs no input, so it runs the caller's empty one.
         () => [call("execute", act("src/look.mjs"), "look")],
         // The first step that passes exampleInput fixes the session's input.
-        () => [call("execute", act("src/save.mjs", stated), "save")],
-        // A later step that omits it runs it, and one that passes another is refused.
-        () => [call("execute", act("src/read.mjs"), "read")],
-        () => [call("execute", act("src/read.mjs", { note: "other" }), "changed")],
+        () => [call("execute", act("src/read.mjs", stated), "read")],
+        // A step that passes another is refused, and one that omits it runs it.
+        () => [call("execute", act("src/save.mjs", { note: "other" }), "changed")],
+        () => [call("execute", act("src/save.mjs"), "save")],
         (request) => [finish("src/tool.mjs", executionIdOf(request, "save"), "publish")],
       ],
     });
-    for (const id of ["look", "save", "read"])
+    for (const id of ["look", "read", "save"])
       expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
     expect(toolResult(last, "changed")).toMatchObject({ status: "unsupported" });
     expect(JSON.stringify(toolResult(last, "changed"))).toContain(
