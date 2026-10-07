@@ -89,7 +89,10 @@ export const makeBuildStart = (
     },
     /** The user completed the sign-in's approval. */
     approved: () => tracker.sent("proof"),
-    /** An explore's typing call delivered a code the site sent for the sign-in under way. */
+    /**
+     * An explore made a completed typing call on the site with a code the site sent for the
+     * sign-in under way.
+     */
     typedCode: () => tracker.sent("proof"),
     /** Whether the current sign-in sent the login. */
     get submitted() {
