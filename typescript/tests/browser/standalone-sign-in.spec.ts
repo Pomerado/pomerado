@@ -876,9 +876,10 @@ test("a sign-in screen on another origin and a root that failed to load are no s
   });
 });
 
-for (const [home, shell] of [
-  ["late", "an empty shell"],
-  ["splash", "a splash screen that shows Loading…"],
+for (const [home, renderMs, shell] of [
+  ["late", 300, "an empty shell"],
+  ["splash", 300, "a splash screen that shows Loading…"],
+  ["splash", 1500, "a splash screen that shows Loading… for 1.5 seconds"],
 ] as const)
   test(`a client-rendered root counts as signed out once it renders past ${shell}`, async () => {
     test.info().annotations.push({
@@ -888,6 +889,7 @@ for (const [home, shell] of [
     test.setTimeout(60_000);
     await withShop(async (shop, endpoint) => {
       shop.state.home = home;
+      shop.state.homeRenderMs = renderMs;
       const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
         [
           ...markerFiles,
@@ -916,6 +918,48 @@ for (const [home, shell] of [
       });
     });
   });
+
+test("a root whose load never ends is kept within the wait, and the browser keeps working", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a live test, an exploration, a host sign-in and a check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    // The root shows an image whose request never answers, so neither its load nor a quiet
+    // network ever comes.
+    shop.state.home = "hang";
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [
+        ...markerFiles,
+        create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+      ],
+      [testWhere],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+          "explore_login",
+        ),
+      ],
+      [signInFields()],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+    ]);
+    expect(objects(toolResult(mintRequests, "test_where"))).toContainEqual({ where: "/" });
+    // The host gave up its waits in time, so the browser still runs the next steps.
+    expect(objects(toolResult(mintRequests, "explore_login"))).toContainEqual(
+      expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+    );
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+    });
+    expect(JSON.stringify(mintRequests)).not.toContain("invalidated");
+  });
+});
 
 /** An exploration that posts an empty form to the shop's search page, as a search form may. */
 const postSearch = `import { Schema } from "effect";
