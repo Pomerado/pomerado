@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { savedOperationFiles } from "../../src/mint/operation-source.js";
+import { runnableOperationFiles, savedOperationFiles } from "../../src/mint/operation-source.js";
 
 /** The paths a local build saves from `files` for `entrypoint`, sorted. */
 const saved = (files: Readonly<Record<string, string>>, entrypoint = "src/tool.mjs") =>
@@ -141,5 +141,41 @@ describe("the files a local build saves", () => {
     expect(saved({ ...workspace, "src/package.json": '{"imports":{"#q":"./query.mjs"}}' })).toEqual(
       [...everyCandidate, "src/package.json"].sort(),
     );
+  });
+});
+
+/** The paths of saved files the operation could run, sorted. */
+const runnable = (files: Readonly<Record<string, string>>, entrypoint = "src/tool.mjs") =>
+  [...runnableOperationFiles(new Map(Object.entries(files)), entrypoint).keys()].sort();
+
+describe("the saved files the operation could run", () => {
+  it("are the saved files when every one is reached through imports", () => {
+    const files = {
+      ...workspace,
+      "src/tool.mjs": 'import { pad } from "../explore/pad.cjs";\nexport default pad;',
+      "explore/pad.cjs": "module.exports = { pad: 1 };",
+    };
+    expect(runnable(files)).toEqual(saved(files));
+  });
+
+  // A package manifest saves every candidate as a precaution; a probe no import names is not run.
+  it("leave out a probe saved only because the workspace has a package manifest", () => {
+    const files = { ...workspace, "scratch/package.json": "{}" };
+    expect(saved(files)).toContain("explore/look.mjs");
+    expect(runnable(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
+  });
+
+  it.each([
+    [
+      "reads a file with fs",
+      'import { readFileSync } from "node:fs";\nexport default readFileSync(new URL("../explore/data.json", import.meta.url), "utf8");',
+    ],
+    ["imports a package path", 'import data from "#data";\nexport default data;'],
+    [
+      "imports a computed path",
+      'const name = "look";\nexport default await import(`../explore/${name}.mjs`);',
+    ],
+  ])("are every saved file when a module the operation runs %s", (_case, source) => {
+    expect(runnable({ ...workspace, "src/tool.mjs": source })).toEqual(everyCandidate);
   });
 });
