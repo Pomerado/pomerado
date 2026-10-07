@@ -35,6 +35,8 @@
   - A rejected value is accepted only when this sign-in sent it. A rejected code gets two fresh ones. A rejected login gets one correction, and the build ends with `credentials_rejected` when the site rejects it again or the correction repeats it.
   - A screen's result holds its report as `step`, with a `nextStep`.
 - A local build publishes its verified sign-in with the integration, with no value in it. `auth-fill.json`, beside `pomerado.json`, holds the sign-in recipe: each screen's page, field selectors and slots, submit, and the signed-in check. It is version 3 only when a security answer names its question, and version 1 or 2 otherwise. `pomerado.json` names it as `signIn: { recipe: "auth-fill.json", entryUrl }`, where the entry is the minter's `loginUrl`, else the first screen's address, without any credentials or fragment it held. `MintArtifact` and `Artifact` take the same optional `signIn`.
+  - A login URL that holds a value the build was given, such as the login's email in its query, is not published. `finish_build` answers `login_url_contains_credential` for the login URL and never shows the value, and the build can sign in again from a URL without it. A recipe that holds such a value is not published either.
+  - `writeArtifact` writes `auth-fill.json` with each screen's keys in one fixed order, indented two spaces, with no final newline, so the same recipe gives the same bytes.
   - `auth-fill.json` is reserved, like `pomerado.json`: an artifact's source may not use the name.
   - `readArtifact` refuses an artifact whose recipe it cannot read or whose version it does not know. An artifact with no `signIn` reads as before.
   - A run in a new session still starts signed out.

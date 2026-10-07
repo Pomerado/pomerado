@@ -1,5 +1,9 @@
 import { Effect, Schema } from "effect";
-import { decodeSignInRecipe, signInRecipePath } from "../destinations/sign-in-recipe.js";
+import {
+  decodeSignInRecipe,
+  signInRecipePath,
+  signInRecipeText,
+} from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
 import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
@@ -109,10 +113,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
     const workspace = yield* createLocalWorkspace({ root: directory });
     for (const file of checked.files) yield* workspace.write(file.path, file.content);
     if (checked.signIn !== undefined)
-      yield* workspace.write(
-        signInRecipePath,
-        `${JSON.stringify(checked.signIn.recipe, null, 2)}\n`,
-      );
+      yield* workspace.write(signInRecipePath, signInRecipeText(checked.signIn.recipe));
     yield* workspace.write(
       "pomerado.json",
       `${JSON.stringify(
