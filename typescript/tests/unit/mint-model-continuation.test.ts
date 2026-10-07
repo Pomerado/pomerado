@@ -6,6 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { MintFailure } from "../../src/mint/contracts.js";
 import type { MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
+import { signInUnavailableSummary } from "../../src/mint/sign-in-failure.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -265,6 +266,48 @@ it("ends the build as sign_in_unavailable once a failed sign-in leaves none, nev
   expect(signIns).toBe(2);
   expect(f.requests).toHaveLength(2);
   expect(outcome.diagnostics.join("\n")).not.toContain("repeated_final_without_tool");
+});
+
+// Every sign-in verified, but the site lost its signed-in session on a page load, and the host
+// could not sign in again. The build ends as sign-in unavailable on that cause, not a failed
+// sign-in's, and the agent hears to report it rather than authenticate again.
+it("ends the build as sign_in_unavailable when the site keeps no signed-in session", async () => {
+  let executions = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call("execute", { ...execution, purpose: "test", target: "liveBrowser" }, "test"),
+      ][index] ?? prose("The site does not keep its session."),
+    {
+      // The example completes; the live test finds the session gone for good.
+      reviewAndExecute: (_submitted, beforeDispatch = Effect.void) =>
+        executions++ === 0
+          ? beforeDispatch.pipe(
+              Effect.as({
+                executionId: "execution_one",
+                status: "completed" as const,
+                effect: "verified" as const,
+                resultRef: "protected_result",
+                observations: { value: "public" },
+              }),
+            )
+          : Effect.fail(new MintFailure({ code: "Unavailable", sessionLoss: "session_not_kept" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+  // The owner's summary names the lost session, not a failed sign-in or a spent relogin.
+  for (const other of [
+    signInUnavailableSummary(undefined, undefined),
+    signInUnavailableSummary(undefined, "relogin_spent"),
+  ])
+    expect(outcome.summary).not.toBe(other);
+  const answer = JSON.stringify(f.requests[2]?.input);
+  expect(answer).toContain("report_sign_in_unavailable");
+  expect(answer).toContain('\\"sessionLoss\\":\\"session_not_kept\\"');
+  expect(outcome.diagnostics.join("\n")).toContain('"sessionLoss":"session_not_kept"');
+  expect(f.requests).toHaveLength(3);
 });
 
 // A task impossible as asked (the site does not offer the form, or the owner's constraints cannot
