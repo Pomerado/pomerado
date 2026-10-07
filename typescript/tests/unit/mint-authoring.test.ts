@@ -259,7 +259,8 @@ it("gives the local host and a composing host the same shared guidance", async (
 /*
  * A local build that still has input feedback after its rounds ends unpublished, and the local
  * host has no site metadata, login URL, HTTP version, recorded requests, session tokens or
- * private fallback, so its builder reads none of them.
+ * private fallback, so its builder reads none of them. It saves every file under the four
+ * folders when Node could load one the operation's imports do not name.
  */
 it("tells the local builder what its own publication checks and how it ends", async () => {
   const texts = await renderedTexts("typescript/authoring");
@@ -270,6 +271,9 @@ it("tells the local builder what its own publication checks and how it ends", as
   expect(publication).toContain(
     "`finish_build`'s metadata names the tool and describes it in the public definition Guardian reviews (`publication/definition.json`):",
   );
+  expect(publication).toContain(
+    "module they import, or every file under those four folders when Node could load a saved file those imports do not name, or the workspace has a `package.json`.",
+  );
   for (const hosted of [
     "publishes privately",
     "siteName",
@@ -278,6 +282,7 @@ it("tells the local builder what its own publication checks and how it ends", as
     "tool-http.mjs",
     "recorded-requests",
     "session token",
+    "issuing response",
     "integration",
     "confirm_action_unmatched",
     "missing_protected_result",
