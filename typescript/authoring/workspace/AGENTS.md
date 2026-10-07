@@ -324,11 +324,27 @@ feedback you can act on, a sign-in problem, a browser<!-- pomerado:section agent
 only the caller knows (ask with `request_input`), or a timeout. A target on another
 registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
 
-<!-- pomerado:section agents.publication-heading -->
+## Publication
 
-<!-- pomerado:section agents.publication-skill -->
+Read .agents/publication/SKILL.md before your first `finish_build`: it says what publication
+checks, what to settle first, which private values never go into published files and how to
+act on each rejection.
+Publication requires a completed read example, or the write session step that read its
+confirmation (or read back the saved state; for a write declared unverifiable, the step that
+committed).
 
-<!-- pomerado:section agents.publication-evidence -->
+Keep the build's own execution and result separate from future code publication. For a write,
+compose `src/tool.mjs`<!-- pomerado:section agents.http-version --> from the
+session's steps<!-- pomerado:section agents.write-captures -->, declare `write.confirmation`, then call
+`finish_build` with the confirming step's `executionId`: the host extracts the schemas offline
+and never re-runs the write, and an unreadable output never justifies a re-run.<!-- pomerado:section agents.publication-evidence --> Unknown or lost contract
+evidence fails closed. Describe actual tests and remaining gaps; future publication does not
+reconcile the prior write. Diagnostic exploration may guide repair, but even an honestly
+disclosed diagnostic-only tool cannot replace a materially different requested outcome. At
+`finish_build` keep the requested capability and its effect limits, such as search only and never
+book, in the extracted contract, current source and public definition; continue source correction
+under existing authority when they do not align. The example's input values are one case of the
+tool, never its limits (.agents/core/SKILL.md, the input schema).
 
 Do not manufacture success from model prose. Publish with `finish_build`. Source, extraction,
 validation and semantic errors require continued diagnosis and repair within the original

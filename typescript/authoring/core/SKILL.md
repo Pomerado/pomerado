@@ -311,7 +311,8 @@ does not use every field; do not replace it with an empty or probe-only schema.
 
 <!-- pomerado:section core.references:start
 Choose relevant references: writes, pagination, forms, caller input for a choice only
-the page can offer, or a code, during the run.
+the page can offer, or a code, during the run, and publication before the first
+`finish_build`.
 pomerado:section core.references:end --> Read their bodies only when useful.
 Finish with actual execution evidence and
 truthful coverage through `finish_build`. A write finishes after its session's

@@ -2253,6 +2253,8 @@ test("finish_build runs a contract review, then one publication review, and save
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
   );
   const guardian = recordingGuardian();
+  // What the minter had read of the publication skill when it called finish_build.
+  let skillRead: Record<string, unknown> | undefined;
   try {
     const { built, requests } = await mintWith({
       effect: "read",
@@ -2271,15 +2273,29 @@ test("finish_build runs a contract review, then one publication review, and save
             "scratch/notes.mjs": "export const notes = 1;",
           }),
         () => [fixtureCall("execute", fixtureExecution("example", "src/tool.mjs"), "example")],
-        (request) => [
-          fixtureCall("finish_build", {
-            intent: "Return the fixture integration",
-            entrypoint: "src/tool.mjs",
-            executionId: executionIdOf(request, "example"),
-            metadata: { name: "read_fixture", description: "Read the fixture heading" },
-            coverage: "One live example",
-          }),
+        () => [
+          fixtureCall(
+            "read_source",
+            { path: ".agents/publication/SKILL.md", offset: null, limit: null },
+            "publication_skill",
+          ),
         ],
+        (request) => {
+          skillRead = objects(request.input).find(
+            (item) =>
+              item["kind"] === "untrusted_source" &&
+              item["path"] === ".agents/publication/SKILL.md",
+          );
+          return [
+            fixtureCall("finish_build", {
+              intent: "Return the fixture integration",
+              entrypoint: "src/tool.mjs",
+              executionId: executionIdOf(request, "example"),
+              metadata: { name: "read_fixture", description: "Read the fixture heading" },
+              coverage: "One live example",
+            }),
+          ];
+        },
       ],
     });
     expect(built.build, JSON.stringify(built)).toBe("published");
@@ -2302,8 +2318,15 @@ test("finish_build runs a contract review, then one publication review, and save
       "src/query.graphql",
       "src/tool.mjs",
     ]);
-    // The builder is offered no publication skill.
-    expect(JSON.stringify(requests)).not.toContain("publication/SKILL.md");
+    // The builder's instructions send it to the publication skill before its first
+    // finish_build, and the skill it reads there describes the local host's publication.
+    expect(String(requests[0]?.systemInstructions)).toContain(
+      "Read .agents/publication/SKILL.md before your first `finish_build`",
+    );
+    expect(String(skillRead?.["source"])).toContain("# Publishing a build");
+    expect(String(skillRead?.["source"]).replace(/\s+/g, " ")).toContain(
+      "After the last round the build ends unpublished with Guardian's findings",
+    );
   } finally {
     await site.close();
   }
