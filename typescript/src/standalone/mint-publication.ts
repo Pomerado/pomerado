@@ -35,7 +35,8 @@ export const mintPublication =
       const { secrets, browser } = state.session;
       const sample = yield* retainedPublicationSample(state, evidence, publication.entrypoint);
       // A write's composed contract decodes the input its session ran: the agent's exampleInput
-      // when the caller sent none, else the caller's own.
+      // when the caller sent none, as the first act step that passed one fixed it, even when the
+      // named step ran before it; else the caller's own.
       const input =
         sample.purpose === "act" ? (state.writeSession.input ?? sample.input) : sample.input;
       const sources = (yield* workspace.snapshot).filter(([path]) =>
