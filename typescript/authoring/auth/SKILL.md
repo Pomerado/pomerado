@@ -93,9 +93,22 @@ choice, and that a step without one advances by itself. The host checks that eac
 and visible and that its frame, form actions and link destination are on the site or a configured
 sign-in origin. A refused step typed and sent nothing and spends no sign-in: fix it from the evidence.
 
-<!-- pomerado:section auth.slow-screens -->
+Sign-in pages are often slow, and the next screen can take a while to show. Wait for its field with
+a bounded readiness wait (such as `locator.waitFor` with a timeout of about 30 seconds) before you
+map or fill it, and read the page again.<!-- pomerado:section auth.slow-screens -->
 
-<!-- pomerado:section auth.next-screen -->
+After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`
+(`nextScreen`), where the host saved the next screen's controls: role, name or label, input type,
+and whether each is required, visible and enabled, never a value. Read it with `read_source` first
+to see what the screen asks for. A step that did not resolve shows the last saved controls inline
+(`lastScreen`), at most 30, and the file holds the rest.
+Then read what the file lacks, such as a selector or form destination, with a read-only `explore`. Never read, change or return a field
+the host filled, not even to check it. If the host reports that its click of the submit failed after
+the fields filled, you may click that one submit yourself in an `explore`, and nothing else; the host
+counts a value as sent only once it sees the form go out carrying it, whoever clicked. If it reports `submit: refused`, never click it.
+If the site says a field was wrong, send `signInStep: { rejected: { slot: "password" } }`
+with the actual rejected slot at once. The host asks for corrections; never ask for substitute
+credentials yourself or send a rejected value again.<!-- pomerado:section auth.next-screen -->
 
 A rejected code permits at most two fresh-code corrections within the remaining sign-in time.
 This does not extend the unchanged password's limit of two sends, including sends before worker

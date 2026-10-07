@@ -18,7 +18,46 @@ verified query. For an in-page update, wait for evidence that the new query has
 completed. An immediate snapshot with an empty title and missing controls can be
 a transition observation; it does not establish an empty business result.
 
-<!-- pomerado:section forms.role-names -->
+Derive `getByRole` names from a scoped `locator.ariaSnapshot()` or a retained ARIA
+snapshot. `getAttribute("aria-label")` reads only that DOM attribute, not the
+computed accessible name. The name may exist when the attribute is absent because
+it comes from text, labels or `aria-labelledby`. Read the snapshot or use an
+observed `getByRole` name; an `aria-label || innerText` fallback does not compute it.
+Use the observed role/name to build native locators and check their count,
+visibility and current value. Do not make exact indentation or adjacency in a
+whole-page ARIA snapshot a prerequisite for using an otherwise verified control.
+Snapshots describe a tree whose nesting and extra siblings can change. If a
+locator is missing or ambiguous, inspect its relevant scope and report what was
+observed before changing the locator. Use `inputValue()` on that same verified
+input for query readback instead of reconstructing its accessible name from DOM
+attributes inside a separate `evaluate` call.
+One broad body or main snapshot can be useful for initial orientation. When that
+snapshot has already succeeded, reuse it for related reads. If broad snapshot work
+is measured slow or times out during repeated-result extraction, prefer the
+established local result container or item locators instead of recomputing the
+whole subtree. CSS `locator("main")` matches a literal `main` element, while
+`getByRole("main")` matches the computed accessible role. When retained evidence
+does not establish which structure exists, compare their finite counts once under
+a bounded call, require the intended scope to be unique, then use that scope.
+Do this before changing timeouts. ARIA snapshots are multiline structured text;
+do not use a greedy cross-line capture for one quoted accessible name. Keep parsing
+bounded to the intended record, handle quoted escapes, and fail explicitly when
+the observed record does not match the established grammar.
+Keep the control's label, current value and selected state as separate observations.
+Use `inputValue()` for an input's current value; a nonempty label must not hide it.
+Treat counts as presentation text: support the site's observed singular and plural
+forms, and allow an owned menu option's computed accessible name to include an
+observed count suffix. Scope the option lookup to that menu and match only the
+established suffix grammar; do not require an exact raw `aria-label`.
+During exploration, read the selected state after the action to establish how this
+control commits a choice. For dates, establish the committed day, month and year
+from the control and its owned calendar state; a navigation URL, field label or
+requested input alone does not prove that the application accepted the date. In
+published code, keep a committed-state check when selection is the operation's
+final result or the next action needs that value. Do not turn every selection in a
+larger flow into an intermediate success assertion; the read-back before returning
+(`AGENTS.md`) checks each input the page shows. Reuse the current authorized
+page for missing observations instead of restarting a completed search.
 
 A committed selection can change a control's accessible name. During exploration,
 reinspect its owned container to learn the committed state. If a later action needs
@@ -70,7 +109,14 @@ picker into a larger flow, establish its popup ownership and fresh-query signal 
 choose the right option; read the committed state during exploration, when the next
 action needs it, or as part of validating the requested final outcome.
 
-<!-- pomerado:section forms.selection-intent -->
+Preserve add/replace and single/multiple intent. Query aliases
+are alternate searches for one stable choice, not extra selections. Demonstrate
+portal ownership, query-generation freshness and complete/windowed option coverage;
+virtualized options require bounded traversal with stable keys. An ambiguous choice
+needs a resolver or a `request_input` question, as `AGENTS.md`'s "Try hard, then
+ask" says; take the site's default only when the choice is not a write and is easy
+to reverse, and list it in `finish_build` `assumptions`. Do not claim uncaptured
+options do not exist.
 
 Playwright `locator.count()` and `locator.isVisible()` are immediate observations,
 not waits. After opening a popup, wait for its owned, named container and requested
@@ -109,7 +155,20 @@ field change, file upload or draft creation may already be a website write.
 
 <!-- pomerado:section forms.saved-steps -->
 
-<!-- pomerado:section forms.step-rules -->
+- Walk every step for real, in the session, with the caller's values. Never infer a
+  later step's fields, options or wording in place of reaching it; the page after
+  "Continue" is evidence only once you are on it.
+- Before the first `act` step, read what is already visible on the page, and read the
+  page's own scripts or<!-- pomerado:section forms.step-rules --> responses that describe the form (field lists,
+  validation rules, step definitions) to anticipate what later steps ask. Use that to
+  ask for the values up front, in one `request_input`, for every field you can see or
+  anticipate that the input does not settle.
+- A step that asks for something you could not anticipate is asked in place when you
+  reach it, with `request_input` during the session, or as a declared `ask` in the
+  next step's script for a choice that exists only on that page. Check the page again
+  after the answer.
+- A step the site saved stays saved. If a step fails, read the page before running it
+  again; redo it only when it did not finish.
 
 Expose prerequisite resolvers for valid choices. A prepare/confirm flow binds the
 draft to the account and requires caller-expected item, quantity, amount/currency
