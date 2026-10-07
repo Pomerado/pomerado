@@ -10,16 +10,11 @@
 import { createHash } from "node:crypto";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
-import {
-  GuardianDecision,
-  ReviewFailure,
-  guardianOutageRetry,
-  makeGuardian,
-} from "../../src/guardian/review.js";
+import { ReviewFailure, guardianOutageRetry, makeGuardian } from "../../src/guardian/review.js";
 import type {
   GuardianDiagnostics,
   HostReview,
@@ -182,12 +177,6 @@ it("keeps instructions, tools and output format identical across all five review
     makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
     undefined,
     {},
-    {
-      decodePublication: (_scope, raw) =>
-        Schema.decodeUnknown(GuardianDecision)(raw).pipe(
-          Effect.mapError(() => new ReviewFailure({ code: "InvalidDecision" })),
-        ),
-    },
   );
   const reader = sourcesOf(files());
   const execution = await Effect.runPromise(guardian.review(pending, reader));

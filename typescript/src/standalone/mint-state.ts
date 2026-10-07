@@ -166,6 +166,8 @@ export const mintState = (
         readonly sources: readonly (readonly [string, string])[];
         readonly entrypoint: string;
         readonly input: unknown;
+        /** The agent's exampleInput the step ran because the caller sent none. */
+        readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
         readonly output: unknown;
         readonly purpose: ExecutionRequest["purpose"];
         readonly journal: LocalOperationJournal;

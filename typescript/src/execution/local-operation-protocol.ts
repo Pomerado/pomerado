@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
+import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 
 const InputIssue = Schema.Struct({
   path: Schema.String.pipe(Schema.maxLength(maximumInputIssuePath)),
@@ -61,6 +62,8 @@ export const LocalOperationMessage = Schema.Union(
     inputSchema: Schema.Unknown,
     outputSchema: Schema.Unknown,
     write: Schema.optionalWith(WriteDeclaration, { exact: true }),
+    /** A contract extraction's declared questions, which the public definition lists. */
+    questions: Schema.optionalWith(ScriptQuestionDeclarations, { exact: true }),
     inputDecodes: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     ...JournalFields,
   }),
