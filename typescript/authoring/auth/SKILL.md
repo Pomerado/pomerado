@@ -97,6 +97,10 @@ visibility and retains every rejected value so it cannot send that value again.
 an answer, inspect the question screen and stop rather than resending the same answer. A host
 refusal with cause `question_changed` is not the site's rejection: nothing was typed, so read the
 screen again and send its step, and the owner is asked the question it shows now.
+A `typing_refused` host refusal names why the host's insertion failed in its cause. Only
+`insertion_rejected` means the field kept the focus but the text did not land. Under every other
+cause nothing was inserted: the focus left the field, the field or page was replaced, or the host
+could not find the one field it focused. Follow the notice's next step for that cause.
 Do not mark sign-in complete while a recorded answer or verification field is still visible,
 including one inside a provider frame. Account search, support and security-settings forms are
 not sign-in evidence. Inspect and record each new authentication screen before checking completion.

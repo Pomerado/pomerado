@@ -302,6 +302,29 @@ it("leaves no heading, list or skill header of the local host's authoring empty"
   expect(texts.get("writes")).toMatch(/^---\nname: writes\ndescription: \S/u);
 });
 
+/*
+ * The local host restores the session saved right after sign-in and never signs in again by
+ * itself, so a stale session shows up as a login wall that the minter's own sign-in fixes. A host
+ * whose sessions behave otherwise replaces that sentence, and the text around it stays shared.
+ */
+it("lets a host replace the stale-session sentence", async () => {
+  const sentence =
+    "A signed-in build gets back the session saved right after sign-in instead, so a stale session shows up as a login wall that a new sign-in fixes. That source must perform the flow from its input, never rely on a page an exploration left open.";
+  const local = (await renderedTexts("typescript/authoring")).get("core") ?? "";
+  expect(local.replace(/\s+/g, " ")).toContain(sentence);
+  expect(local).not.toContain("session_not_kept");
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    const composed = (await renderedTexts(root)).get("core")?.replace(/\s+/g, " ") ?? "";
+    expect(composed).toContain(
+      "A signed-in build gets back the session saved right after sign-in instead never rely on a page an exploration left open.",
+    );
+    expect(composed).not.toContain("stale session");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
 // it. The minter records such a submit as it observes it, disabled or not.
 it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
@@ -366,7 +389,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["b3178422adc1e62391ed67925d7945206ed55ba2781687f70482798295aeb3d8", "core"],
-    ["9cf6653162985fb31362d79b1db124b1c35f20724ed7bd7b4b97da1d75ca8478", "auth"],
+    ["029de5cd345a8faa5a2e6e77c44d0a46ac5074ed30402a6c71b0d8fa2dac52bb", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],

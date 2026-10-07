@@ -235,8 +235,10 @@ A live example, a live read `test`, and a write session's first `act` step are
 different: the host resets
 the browser to the site origin before it runs,
 and clears exploration cookies and site storage. A signed-in build gets back the session
-saved right after sign-in instead, so a stale session shows up as a login wall that a new
+saved right after sign-in instead<!-- pomerado:section core.stale-session:start
+, so a stale session shows up as a login wall that a new
 sign-in fixes. That source must perform the flow from its input,
+pomerado:section core.stale-session:end -->
 never rely on a page an exploration left open. So a read iterates from a clean start,
 and re-running its example or live test is normal. A live test stays read-only. A write
 session's later `act` steps continue on the page the previous step left.
