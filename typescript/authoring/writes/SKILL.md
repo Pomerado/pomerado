@@ -98,9 +98,9 @@ values to the input and calls `verified()`, as the references do. Nothing runs l
 before publishing, so a read the session never made, added to that call, can fail
 after the write has landed, and a run that hits it reports a successful write as
 possibly completed. Declare the script's contract, `defineOperation({ name,
-input, output, write: { confirmation: "message", commits: ["place-order"] } }, run)`
-(or `"readback"`, or `"unverifiable"` when the site offers neither), marking the
-same commit steps as the session. A script declared `unverifiable` cannot call
+input, output, write: { confirmation: "readback", commits: ["place-order"] } }, run)`
+(or `"unverifiable"` when the site shows neither a confirmation nor the saved state),
+marking the same commit steps as the session. A script declared `unverifiable` cannot call
 `verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
 and one that declares a mark no `act` step of the session entered is refused as
 `commit_marks_unentered`. If the declaration names the wrong marks, correct it to

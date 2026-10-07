@@ -96,8 +96,8 @@ const placeAndConfirm = async ({
     throw new errors.OperationFailure(result.failure, {
       dispatch: result.failure === "review_missing" ? "not_sent" : "sent",
     });
-  // The site's own confirmation for this submission: the write landed.
-  verified({ confirmation: "message" });
+  // The site's own confirmation for this submission, read back: the write landed.
+  verified();
   return result;
 };
 
@@ -128,7 +128,7 @@ export default defineOperation(
     name: "place_order",
     input: OrderInput,
     output: Placed,
-    write: { confirmation: "message", commits: ["place-order"] },
+    write: { confirmation: "readback", commits: ["place-order"] },
   },
   async (context) => {
     await fillCheckout(context);

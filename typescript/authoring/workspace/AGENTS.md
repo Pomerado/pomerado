@@ -93,6 +93,19 @@ lets the probe establish its own page scope. Return observations and tentative c
 such, without claiming they are a verified selection or result. Authentication, autosave and
 other business effects still need their existing authority.
 
+**Reach every page the way a person does.** In the Playwright version and your browser probes,
+open the site's entry page and get everywhere else through the site itself: type into its
+search boxes and forms, pick its suggestions and options, and click its links and buttons.
+Never open a URL, path or query string that holds the caller's input, such as a slug made from
+a name, a code or date placed in a path, or a parameter the site did not send. This holds for
+`src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run
+is fine to read, return, reload or follow, such as the results page your search landed on or a
+link's own `href`. So is a fixed page the site links to, opened without caller input. When a
+site control does not offer the caller's value, wait for it, retry it or use another of the
+site's own controls, and return `InvalidInput` when the site shows the value does not exist.
+Never fall back to a URL you wrote. This rule does not cover the HTTP version
+(`src/tool-http.mjs`), which may build its requests from the caller's input.
+
 Before claiming a requested search or list result, also verify the requested input and
 committed selection against the site's state. A path or query naming the input is a
 sufficient page identity guard, but a URL or query the tool built itself is not evidence of
@@ -315,6 +328,12 @@ never with final text, which the host treats as unfinished work:
   invent a value or substitute a different field.
 - `policy`: a Guardian decision, or a constraint the owner set, refuses what the task needs, and
   no change within your authority gets past it, such as a requirement the site cannot meet.
+
+Before ending blocked because a value the request gave is unavailable or invalid on the site,
+such as a time slot the site does not offer that day, a date outside its calendar or a name it
+does not list, ask the owner with `request_input`: name the value, say what the site offers
+instead, and let them pick another value or change the request. End blocked only when their
+answer cannot be met either. In maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
 in your own words: Guardian reviews it first, and the caller sees only a fixed sentence when it

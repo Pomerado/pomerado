@@ -10,7 +10,9 @@ import { expect, it } from "vitest";
 import parser from "../../authoring/examples/parser.js";
 import { detailNavigation } from "../../authoring/examples/navigation.js";
 import authEntry from "../../authoring/examples/auth-entry.js";
+import bookSeat from "../../authoring/examples/caller-choice.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
+import placeOrder from "../../authoring/examples/write-session.js";
 import { continueInvoices } from "../../authoring/examples/pagination.js";
 import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
 import { inputFeedbackInstruction } from "../../src/mint/input-feedback.js";
@@ -224,6 +226,25 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "Keep the build's own execution and result separate from future code publication.",
   ],
+  // A write proves itself with `verified()` and no argument, whatever it read back.
+  [
+    "core",
+    "- After a write, call `verified()` with no argument just before returning, once a call has read the result back, either the site's confirmation for this submission or the saved state. Return the confirmation number or record in the output. Without it the write stays a possible effect.",
+  ],
+  // A browser version reaches every page through the site, never through a URL it built.
+  [
+    "core",
+    'For a detail read, reach the record through the site\'s own search, list or link for the schema-validated caller identifier (AGENTS.md, "Reach every page the way a person does"). Never build its page URL from the identifier, and never accept a caller URL as the target. A successful response or plausible content is insufficient',
+  ],
+  [
+    "workspace/AGENTS.md",
+    "**Reach every page the way a person does.** In the Playwright version and your browser probes, open the site's entry page and get everywhere else through the site itself: type into its search boxes and forms, pick its suggestions and options, and click its links and buttons. Never open a URL, path or query string that holds the caller's input, such as a slug made from a name, a code or date placed in a path, or a parameter the site did not send. This holds for `src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run is fine to read, return, reload or follow, such as the results page your search landed on or a link's own `href`. So is a fixed page the site links to, opened without caller input. When a site control does not offer the caller's value, wait for it, retry it or use another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist. Never fall back to a URL you wrote. This rule does not cover the HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input. Before claiming a requested search or list result",
+  ],
+  // A value the request gave that the site does not offer goes to the owner before the build ends.
+  [
+    "workspace/AGENTS.md",
+    "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input`: name the value, say what the site offers instead, and let them pick another value or change the request. End blocked only when their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+  ],
   // A format read from one sample breaks on the next value, so the minter reads it off the page.
   [
     "core",
@@ -393,6 +414,20 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+// A write that passed the page's headings to `verified` lost its receipt. With no argument there
+// is nothing to get wrong, so no skill or reference teaches the argument form any more.
+it("teaches every write to call verified() with no argument and declare a read-back", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const examples = await readdir("typescript/authoring/examples");
+  for (const name of examples)
+    texts.set(name, await readFile(join("typescript/authoring/examples", name), "utf8"));
+  expect(
+    [...texts].filter(([, text]) => /verified\(\s*\{|confirmation: "message"/u.test(text)),
+  ).toStrictEqual([]);
+  expect(placeOrder.write).toEqual({ confirmation: "readback", commits: ["place-order"] });
+  expect(bookSeat.write).toEqual({ confirmation: "readback", commits: ["book-seat"] });
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -409,14 +444,14 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["66048433dfade7c91bd89b85eb83a42319e9b481b82ee8989d8c45d1d89e0d28", "core"],
+    ["9d25055c9445a8ba8bc250081471fed224530b0370e5d3358d254f509aad5ae7", "core"],
     ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
-    ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
-    ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
-    ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
+    ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
+    ["0e4584d71b07af68dc54696c280c853b2eca74d533a3f92356848ae0a19fb860", "writes"],
+    ["fbe89bf0980002d81d36dde0d131a412887c55eeb87a0a21502cbf5865a15bc9", "caller-input"],
     ["b6c17fb7b3bdabea246b4894d341d4812945d059f60cb73efec3cfe272ce0554", "publication"],
-    ["e6535a5e10931c9d04b7f6d407c6e8a48f918ccd2d2b5a088767a8cf55ddf1ac", "workspace/AGENTS.md"],
+    ["11dec21a63aa019343e176f67089aceceb7b0748f7af579524611e13f25a6af4", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });

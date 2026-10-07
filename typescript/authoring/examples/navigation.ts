@@ -4,8 +4,12 @@ import { defineOperation } from "../../src/browser/index.js";
 const RecordId = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,100}$/));
 const Detail = Schema.Union(
   Schema.Struct({ title: Schema.NonEmptyString }),
+  Schema.Struct({ refused: Schema.NonEmptyString }),
   Schema.Struct({
     failure: Schema.Literal(
+      "search_unavailable",
+      "results_unavailable",
+      "result_ambiguous",
       "detail_unavailable",
       "identity_mismatch",
       "interstitial_unowned",
@@ -14,14 +18,17 @@ const Detail = Schema.Union(
   }),
 );
 
-// The path, roles and identity attributes represent one observed site contract.
-// They are not heuristics to apply to unrelated detail pages.
+// Reaches the record the way a person does: the site's own search, then the result's own link,
+// never a page URL built from the identifier. This site's search loads a results page that is
+// busy until it lists each record as a link named by its ID, or says none match, and shows an
+// alert when the search fails. Adapt every role, name and attribute from your own session's
+// evidence.
 export const detailNavigation = defineOperation(
   {
     name: "read_record_detail",
     input: Schema.Struct({
       record_id: RecordId.annotations({
-        description: "ID of the record to read, as in its URL",
+        description: "ID of the record to read, as the site shows it",
         examples: ["record_42"],
       }),
     }),
@@ -33,17 +40,54 @@ export const detailNavigation = defineOperation(
   async ({ kernel, sessionId, siteOrigin, siteDomain, input, errors }) => {
     if (siteOrigin === undefined)
       throw new errors.OperationFailure("No site origin for a live run", { dispatch: "not_sent" });
-    const target = new URL(`/records/${input.record_id}`, siteOrigin);
     const answer = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 90,
+      timeout_sec: 120,
       code: `
-        const target = ${JSON.stringify(target.href)};
-        const targetPath = ${JSON.stringify(target.pathname)};
         // On the site: any https host on the host's site domain, else the site origin alone.
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const recordId = ${JSON.stringify(input.record_id)};
+        // Poll while the page is in a pending state. Polling only observes.
+        const settle = async (classify, pending) => {
+          const until = Date.now() + 30000;
+          let state = await classify();
+          while (pending.includes(state) && Date.now() < until) {
+            await page.waitForTimeout(100);
+            state = await classify();
+          }
+          return state;
+        };
+        // The entry page holds no caller input. Type the identifier into the site's own search.
+        await page.goto(${JSON.stringify(siteOrigin)}, { waitUntil: "domcontentloaded", timeout: 30000 });
+        const search = page.getByRole("search").getByRole("searchbox", { name: "Record ID", exact: true });
+        if ((await search.count()) !== 1) return { failure: "search_unavailable" };
+        await search.fill(recordId, { timeout: 30000 });
+        await search.press("Enter", { timeout: 30000 });
+        const results = page.getByRole("region", { name: "Search results", exact: true });
+        const links = results.getByRole("link", { name: recordId, exact: true });
+        const noMatch = results.getByRole("status").filter({ hasText: /^No matching records$/ });
+        // The search has finished only when the site shows its outcome: one matching link, or its
+        // own word that nothing matches. A busy, failed or unknown page proves nothing either way.
+        const searched = async () => {
+          if ((await page.getByRole("alert").count()) > 0) return "results_unavailable";
+          if ((await results.count()) !== 1) return "loading";
+          if ((await results.getAttribute("aria-busy")) === "true") return "loading";
+          const found = await links.count();
+          if (found > 1) return "result_ambiguous";
+          if (found === 1) return "found";
+          return (await noMatch.count()) === 1 ? "no_match" : "loading";
+        };
+        const outcome = await settle(searched, ["loading"]);
+        // Only the site's own empty result says the record does not exist.
+        if (outcome === "no_match") return { refused: "The site's search lists no record with this ID" };
+        if (outcome !== "found")
+          return { failure: outcome === "loading" ? "results_unavailable" : outcome };
+        const resultsUrl = page.url();
+        // The final page is checked against the link's own href, a URL the site produced.
+        const target = new URL(await links.getAttribute("href"), resultsUrl);
+        if (!onSite(target)) return { failure: "target_mismatch" };
+        const targetPath = target.pathname;
         const detail = page.getByRole("region", { name: "Record details", exact: true });
         const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
         const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
@@ -66,22 +110,13 @@ export const detailNavigation = defineOperation(
           }
           return "loading";
         };
-        // Poll while the page is in a pending state. Polling only observes.
-        const settle = async (pending) => {
-          const until = Date.now() + 30000;
-          let state = await classify();
-          while (pending.includes(state) && Date.now() < until) {
-            await page.waitForTimeout(100);
-            state = await classify();
-          }
-          return state;
-        };
-        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30000 });
-        let state = await settle(["loading"]);
+        await links.click({ timeout: 30000 });
+        await page.waitForURL((url) => url.href !== resultsUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+        let state = await settle(classify, ["loading"]);
         // Continue only through an interstitial whose own identity matches the request.
         if (state === "interstitial") {
           await proceed.click({ timeout: 30000 });
-          state = await settle(["loading", "interstitial"]);
+          state = await settle(classify, ["loading", "interstitial"]);
         }
         if (state !== "detail")
           return { failure: state === "loading" || state === "interstitial" ? "detail_unavailable" : state };
@@ -94,6 +129,7 @@ export const detailNavigation = defineOperation(
     if (!answer.success)
       throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
     const result = Schema.decodeUnknownSync(Detail)(answer.result);
+    if ("refused" in result) throw new errors.InvalidInput(result.refused);
     if ("failure" in result) throw new errors.OperationFailure(result.failure);
     return { record_id: input.record_id, title: result.title };
   },
