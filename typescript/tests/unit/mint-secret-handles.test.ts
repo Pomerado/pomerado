@@ -5,6 +5,7 @@ import {
   makeSecretHandles,
   SecretHandlesSnapshot,
   publishedHandlePath,
+  secretHandleRefusal,
 } from "../../src/mint/secret-handles.js";
 import { standaloneNumber } from "../support/canary.js";
 
@@ -470,4 +471,63 @@ it("restores exact private handles and continues numbering without replacing pri
     ["fill", "#first", "first-private-code"],
     ["fill", "#second", "second-private-code"],
   ]);
+});
+
+describe("secretHandleRefusal", () => {
+  const handles = () => {
+    const issued = makeSecretHandles();
+    issued.issue({ code: { type: "secret", value: "private-code-value" } });
+    return issued;
+  };
+  const step = (
+    purpose: "explore" | "example" | "authenticate" | "test",
+    entrypoint = "explore/step.mjs",
+    target: "liveBrowser" | "pureFiles" = "liveBrowser",
+  ) => ({ purpose, target, entrypoint });
+
+  it("refuses a handle this attempt never issued, on live steps other than sign-in", () => {
+    const files = new Map([
+      ["explore/step.mjs", kernelStep('await page.getByLabel("Code").fill("{{secret.s9}}");')],
+    ]);
+    expect(secretHandleRefusal(handles(), files, step("explore"), site)).toBe(
+      "The source names {{secret.s9}}, which no request_input secret answer in this attempt returned. Use only a handle an answer gave you, exactly as given. Nothing was executed.",
+    );
+    // Offline targets never receive a value and run the handle text as written.
+    expect(
+      secretHandleRefusal(handles(), files, step("test", "explore/step.mjs", "pureFiles"), site),
+    ).toBeUndefined();
+    expect(secretHandleRefusal(handles(), files, step("authenticate"), site)).toBeUndefined();
+  });
+
+  it("refuses a handle outside a site-input sink with its file, line and rule", () => {
+    const files = new Map([
+      [
+        "explore/leak.mjs",
+        `const handle = "{{secret.s1}}";\nconsole.log(handle);\nexport default {};`,
+      ],
+    ]);
+    const refusal = secretHandleRefusal(
+      handles(),
+      files,
+      step("explore", "explore/leak.mjs"),
+      site,
+    );
+    // The rule, then an example of exactly what the check accepts: a literal in the code string
+    // passed to the runtime's page-execute call.
+    expect(refusal).toBe(
+      'explore/leak.mjs line 1: a secret handle may only be the whole string passed as the value to fill, type or pressSequentially, or a field of a request to this site, in code that never reads a typed field back (inputValue, evaluate), reads its own source, or redefines JSON, a global, a prototype or a page, keyboard or Kernel method; anything else is refused. Write the handle as a string literal, with no escaped quotes, inside the code string passed to the runtime\'s page-execute call, kernel.browsers.playwright.execute: the whole value passed to fill, type or pressSequentially, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.',
+    );
+  });
+
+  it("refuses an example whose published source holds a handle, and lets an explore run it", () => {
+    const files = new Map([
+      ["src/tool.mjs", kernelStep('await page.getByLabel("Code").fill("{{secret.s1}}");')],
+    ]);
+    expect(secretHandleRefusal(handles(), files, step("example", "src/tool.mjs"), site)).toContain(
+      "src/tool.mjs holds a secret handle. An example runs the source you publish",
+    );
+    expect(
+      secretHandleRefusal(handles(), files, step("explore", "src/tool.mjs"), site),
+    ).toBeUndefined();
+  });
 });
