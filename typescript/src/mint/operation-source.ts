@@ -160,6 +160,64 @@ export const operationSourceFiles = (
   return included;
 };
 
+/** The folders a local build saves files from: its operation source and its probes. */
+const savedSourcePath = /^(src|explore|test|scratch)\//u;
+
+/**
+ * Every file under src/ and the entrypoint, with the saved candidates they import, transitively,
+ * whatever their extension; an extensionless file, which Node loads as ESM in a module scope, is
+ * read as JavaScript. An import of another path, such as the host's runtime, is not followed.
+ * `loads` is whether one of them could load a file its imports do not name (see
+ * `moduleRequests`), or does not parse.
+ */
+const importedCandidates = (candidates: ReadonlyMap<string, string>, entrypoint: string) => {
+  const files = new Map<string, string>();
+  let loads = false;
+  const pending = [...[...candidates.keys()].filter((path) => path.startsWith("src/")), entrypoint];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const source = candidates.get(path);
+    if (files.has(path) || source === undefined) continue;
+    files.set(path, source);
+    if (sourceSyntax(path) === undefined && posix.extname(path) !== "") continue;
+    let requests = moduleRequests(source, path, true);
+    if (requests === undefined) {
+      loads = true;
+      requests = moduleRequests(source, path, false) ?? [];
+    }
+    for (const request of requests.filter(plainRelative))
+      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+  }
+  return { files, loads };
+};
+
+/**
+ * The saved files the operation could run: those `entrypoint` reaches through its imports (see
+ * `importedCandidates`), or every file under the four folders when one of them could load a file
+ * its imports do not name. The check that published code holds no secret handle reads these.
+ */
+export const runnableOperationFiles = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoint: string,
+): Map<string, string> => {
+  const candidates = new Map([...workspace].filter(([path]) => savedSourcePath.test(path)));
+  const imported = importedCandidates(candidates, entrypoint);
+  return imported.loads ? candidates : imported.files;
+};
+
+/**
+ * The files a local build saves for `entrypoint`: the files it could run (see
+ * `runnableOperationFiles`), which are every file under src/, the entrypoint and the files under
+ * explore/, test/ or scratch/ that they import. A workspace package manifest, which can map a
+ * specifier to any file, keeps every file under those four folders.
+ */
+export const savedOperationFiles = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoint: string,
+): Map<string, string> =>
+  [...workspace.keys()].some((path) => posix.basename(path) === "package.json")
+    ? new Map([...workspace].filter(([path]) => savedSourcePath.test(path)))
+    : runnableOperationFiles(workspace, entrypoint);
+
 /**
  * One entrypoint and the workspace modules it imports, transitively; unlike the published bundle
  * it leaves out unrelated `src/` files. A module whose imports cannot be resolved statically keeps

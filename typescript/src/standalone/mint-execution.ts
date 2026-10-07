@@ -84,13 +84,20 @@ const credentialsNotSubmitted = {
   nextStep:
     "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
 } as const;
+/** A marker that a page the build saw signed out shows cannot tell signed in from signed out. */
+const markerOnSignedOutPage = {
+  signedIn: false,
+  failed: "marker_matches_signed_out_page",
+  nextStep:
+    "A page this build saw signed out shows this marker too, so it cannot tell the site signed in from signed out. The sign-in is still open. Choose an element only a signed-in user sees, test it with check_signed_in_marker, then check again.",
+} as const;
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { start, auth, afterSubmit, mintAsk, context } = state;
+    const { start, auth, afterSubmit, mintAsk, context, markers } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
@@ -100,7 +107,11 @@ const executeAuthentication = (
     let authenticated = false;
     if ("fields" in signIn) {
       start.signIn();
-      const report = yield* auth.step(signIn, beforeDispatch);
+      markers.signInStep();
+      const report = yield* auth.step(
+        signIn,
+        Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
+      );
       start.sent(report, signIn.fields);
       result = yield* afterSubmit(report);
     } else if ("signedIn" in signIn) {
@@ -108,15 +119,21 @@ const executeAuthentication = (
       start.signIn();
       if (start.submitted) {
         const checked = yield* auth.signedIn(signIn.signedIn);
-        authenticated = checked.signedIn && start.verified();
-        result = checked;
+        if (checked.signedIn && markers.signedOutShows(signIn.signedIn))
+          result = markerOnSignedOutPage;
+        else {
+          authenticated = checked.signedIn && start.verified();
+          result = checked;
+        }
       } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
       start.signIn();
+      markers.signInStep();
       auth.rejected(signIn.rejected.slot);
       result = { outcome: "correction_requested" };
     } else {
       start.signIn();
+      markers.signInStep();
       result = yield* mintAsk(
         noticeRequest(
           randomUUID(),
@@ -206,6 +223,7 @@ interface ReceiptInput {
   readonly id: string;
   readonly sources: readonly (readonly [string, string])[];
   readonly input: unknown;
+  readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
   readonly reviewed: {
     readonly reviewId: string;
     readonly decision: {
@@ -224,7 +242,7 @@ const failedReceipt = (
   },
 ) =>
   Effect.gen(function* () {
-    const { state, execution, id, sources, input, reviewed, journal } = receipt;
+    const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
@@ -240,6 +258,7 @@ const failedReceipt = (
       sources,
       entrypoint: execution.entrypoint,
       input,
+      ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: undefined,
       purpose: execution.purpose,
       journal: failureJournal,
@@ -268,7 +287,7 @@ const failedReceipt = (
   });
 const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =>
   Effect.gen(function* () {
-    const { state, execution, id, sources, input, reviewed, journal } = receipt;
+    const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
     const { runs } = state;
     const { projection } = state.session;
 
@@ -291,6 +310,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       sources,
       entrypoint: execution.entrypoint,
       input,
+      ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
       purpose: execution.purpose,
       journal: result,
@@ -398,8 +418,14 @@ const authoredExecution = (
             decideDialog: makeDialogDecider(mintAsk, secrets.redact),
           }),
         );
-        if (watch !== undefined && watch.typed().size > 0) start.typedCode();
-        if (live) yield* context.observe;
+        if (watch !== undefined && watch.typed().size > 0) {
+          start.typedCode();
+          state.markers.signInStep();
+        }
+        if (live) {
+          yield* context.observe;
+          if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
+        }
         if (execution.purpose === "act")
           writeSession.steps.push({
             entrypoint: execution.entrypoint,
@@ -413,7 +439,16 @@ const authoredExecution = (
           });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
-        const receipt = { state, execution, id, sources, input, reviewed, journal };
+        const receipt = {
+          state,
+          execution,
+          id,
+          sources,
+          input,
+          ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
+          reviewed,
+          journal,
+        };
         return yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)
           : completedReceipt(receipt, executed.right);

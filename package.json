@@ -628,9 +628,9 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.2.0",
     "openai": "7.23.0",
-    "oxc-parser": "0.151.0",
+    "oxc-parser": "0.152.0",
     "playwright": "1.63.0",
-    "tldts": "7.4.15"
+    "tldts": "7.4.16"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.2.0",
@@ -644,7 +644,7 @@
   "peerDependencies": {
     "@openai/agents": "0.18.0",
     "effect": "3.22.2",
-    "vitest": "5.0.2"
+    "vitest": "^5.0.2"
   },
   "peerDependenciesMeta": {
     "vitest": {

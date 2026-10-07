@@ -10,7 +10,14 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - Its first live step opens the URL you gave, unless that step is one of those resets. Explorations then continue on whatever page the last step left.
 - A build counts as signed in only after its own sign-in steps typed the login's identifier and a password or code, or you completed an approval, and the page then shows the account. A code the site sent for that sign-in counts too once the agent asked you for it and an explore made a completed `fill`, `type` or `pressSequentially` call with it on a page, frame, locator or keyboard, in a frame on the site or on one of the sign-in origins you configured. A frame with no address of its own, such as `about:srcdoc`, isn't the site. Keys typed with nothing focused count only when every frame of the page is on the site or one of those origins. Waiting for the code field before typing the code makes sure the field is there when the typing starts. A page that already showed an account proves nothing. Every sign-in step drops the saved session, a check included, and a check after a confirmed sign-in starts a new sign-in.
 - A signed-in build saves its session before its first live step after sign-in, other than another sign-in step. The save passes through the page-code worker, which caps a result at 1 MiB. A larger session, usually from a big IndexedDB, fails the save. Every later live step except a sign-in step then fails too, since each tries the save first. Signing in again hits the same cap.
+- Before it sends a signed-in marker, the minter can test it with `check_signed_in_marker`.
+  - The host compares the marker with the pages it saw signed out: the page of the build's first sign-in screen, just before the host types into it, and each page a reset cleared. It waits up to 3 seconds for a page, for its load, a quiet network and then 1.5 seconds without a change to the document, and reads a slower page as it is at 3 seconds. It keeps only a page on the site's origin that shows something. Once the host typed a sign-in value in the session, it keeps no sign-in screen's page, since builds in a session share cookies.
+  - It then checks the page as it is, the marker's `openPath` or the site's root loaded again, and the newest other page the build explored once its sign-in sent the login. It loads that other page only when the current page shows the marker.
+  - The loads move the tab. The host opens the agent's page again when that page showed the marker and isn't the direct answer to a form. Otherwise the tab stays where the loads left it.
+  - Once a write session started, the check loads no page and reports itself unavailable.
+  - The `signedIn` step refuses a marker that one of those signed-out pages shows.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
+- The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Other probes there aren't saved, unless a saved module reads or loads files another way, such as through `fs`, `createRequire` or a `#` import. Then every file under those four folders is saved.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
@@ -43,6 +50,16 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
   - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
   - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
+
+### Publication review
+
+- `finish_build` runs one publication review after its own checks. Guardian reads the files that would ship, the public definition the host writes from the build's name, description and schemas, and the evidence they are judged against.
+  - For a read, the evidence is the example's output, with the build's secrets masked and cut at 96 KiB, and the source the example ran, under `executed/`.
+  - For a write, it is each act step's source under `publication/session/`, in order, and the output of the step the build names.
+- `trusted_publication` indexes those files: whether each ships, whether it is current and who wrote it, the host or the minter. A publication review gets 32 turns.
+- Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
+- Any other denial goes back to the minter with Guardian's reason and findings.
+- A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
 
 ## The runtime
 

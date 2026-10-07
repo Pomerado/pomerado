@@ -13,6 +13,7 @@ import authEntry from "../../authoring/examples/auth-entry.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import { continueInvoices } from "../../authoring/examples/pagination.js";
 import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
+import { inputFeedbackInstruction } from "../../src/mint/input-feedback.js";
 import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
@@ -292,6 +293,27 @@ it("renders the pinned standalone authoring", async () => {
     ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
     ["87803f3cff6aab719f0ecbc528747b306c2e4dad9d6a0f9cb69435a4cb869f58", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
+  ]);
+});
+
+/*
+ * Pins the input-feedback instruction a standalone build's minter reads after a publication
+ * review, for a read and a write, with one round left and with none. A standalone build has no
+ * fallback, so each ends with the build ending unpublished.
+ */
+it("renders the pinned standalone input-feedback instructions", () => {
+  expect(
+    [false, true].flatMap((write) =>
+      [1, 0].map((rounds) => [
+        sha256(inputFeedbackInstruction(rounds, { write })),
+        `${write ? "write" : "read"}, ${rounds} left`,
+      ]),
+    ),
+  ).toStrictEqual([
+    ["7d8808e98d27441c029303a499d4d30fa874b6199fec2dd65a3a90b5a26787f6", "read, 1 left"],
+    ["230ad9c68c6607199a3ee2daf483a8017babb18597d22789aacb84392d1da7e8", "read, 0 left"],
+    ["455b35df112a08a4e6a100a9a54ef810810580cf3d33e9dd2c5279ca299c08e6", "write, 1 left"],
+    ["fb7a6750993e7c9c453ae695165f07036f95c971a475684a916fb5a6ed2fa8df", "write, 0 left"],
   ]);
 });
 

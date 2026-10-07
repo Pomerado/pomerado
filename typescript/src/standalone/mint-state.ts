@@ -26,6 +26,7 @@ import {
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
+import { makeMarkerChecks } from "./signed-in-marker.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
@@ -45,13 +46,15 @@ const unavailable = (operation: string) => (error: unknown) =>
  * root; see `startStateFor`. A new sign-in drops the session saved after the last one, and a
  * check counts the build signed in only once a sign-in step sent the login (see `sent`).
  * `leavePage` runs before each reset, so the page the last step left is never taken for the
- * reset step's page, even when the reset fails.
+ * reset step's page, even when the reset fails. `afterClear` runs once a reset cleared the
+ * browser's cookies and site storage, on that signed-out page.
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
   siteOrigin: string,
   enterRequest: Effect.Effect<void, Error>,
   leavePage: () => void,
+  afterClear: Effect.Effect<void> = Effect.void,
 ) => {
   const tracker = makeStartTracker();
   const hooks = localStartHooks(browser.execute, browser.targetId);
@@ -134,6 +137,7 @@ export const makeBuildStart = (
             hooks,
           ).pipe(Effect.mapError(unavailable("standalone.startPage")));
           entered = true;
+          if (plan.start === "clear") yield* afterClear;
         }
         tracker.dispatched(planned);
       }),
@@ -166,6 +170,8 @@ export const mintState = (
         readonly sources: readonly (readonly [string, string])[];
         readonly entrypoint: string;
         readonly input: unknown;
+        /** The agent's exampleInput the step ran because the caller sent none. */
+        readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
         readonly output: unknown;
         readonly purpose: ExecutionRequest["purpose"];
         readonly journal: LocalOperationJournal;
@@ -212,7 +218,22 @@ export const mintState = (
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    const start = makeBuildStart(browser, context.siteOrigin, context.navigate, context.leavePage);
+    const markers = makeMarkerChecks({
+      page: browser,
+      siteOrigin: context.siteOrigin,
+      check: auth.signedIn,
+      typing: session.signInTyping,
+      loginSent: () => start.submitted || context.signedIn,
+      writeSessionStarted: () => writeSession.started,
+      observe: context.observe,
+    });
+    const start = makeBuildStart(
+      browser,
+      context.siteOrigin,
+      context.navigate,
+      context.leavePage,
+      markers.afterClear,
+    );
     return {
       session,
       context,
@@ -227,6 +248,7 @@ export const mintState = (
       writeSession,
       start,
       afterSubmit,
+      markers,
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;

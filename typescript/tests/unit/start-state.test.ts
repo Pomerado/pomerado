@@ -209,6 +209,8 @@ const modeledBuild = (
     readonly saveFailures?: number;
     readonly resetFailures?: number;
     readonly rootLoads?: boolean;
+    /** Records the host keeping the page a reset cleared, as the local mint state does. */
+    readonly keepsClearedPage?: boolean;
   } = {},
 ) => {
   const targetId = "primary-target";
@@ -256,6 +258,11 @@ const modeledBuild = (
     () => {
       left.push(calls.length);
     },
+    options.keepsClearedPage === true
+      ? Effect.sync(() => {
+          calls.push("keep signed-out page");
+        })
+      : undefined,
   );
   const step = (purpose: StepPurpose, target: "liveBrowser" | "pureFiles" = "liveBrowser") =>
     Effect.runPromise(
@@ -311,6 +318,34 @@ describe("makeBuildStart", () => {
     // The exploration runs on its retained page; the example resets first. A later exploration
     // continues the example's page rather than loading the request's URL again.
     expect(build.calls).toEqual(["entry", "run", "reset:clear", "root", "run", "run"]);
+  });
+
+  it("keeps the page a clearing reset loaded, after the root loads, and no restored page", async () => {
+    const build = modeledBuild({ keepsClearedPage: true });
+    await build.step("explore");
+    await build.step("test");
+    await build.signIn();
+    await build.step("example");
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "reset:clear",
+      "root",
+      "keep signed-out page",
+      "run",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+  });
+
+  it("keeps no signed-out page when the clearing reset fails", async () => {
+    const build = modeledBuild({ keepsClearedPage: true, resetFailures: 1 });
+    await build.step("explore");
+    await build.step("example");
+    expect(build.calls).toEqual(["entry", "run", "reset:clear failed"]);
   });
 
   it("saves the signed-in session once and restores it before each signed-in example", async () => {

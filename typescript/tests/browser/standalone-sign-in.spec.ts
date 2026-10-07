@@ -11,7 +11,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { recordingGuardian } from "./guardian-context-fixture.js";
-import { startShop, shopAccount, type Shop } from "./shop-fixture.js";
+import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in today, on the shop's one-screen and two-screen sign-ins: what the
 // host asks, what a later run does, what a second screen's submit may carry, and what Guardian
@@ -132,7 +132,7 @@ const toolResult = (requests: readonly ModelRequest[], callId: string) => {
   if (result === undefined) throw new Error(`No ${callId} result`);
   return result;
 };
-/** Answers each sign-in question with the shop account's value for its slot. */
+/** Answers each sign-in question with the shop account's value for it, and confirms a notice. */
 const answers = (asked: InputRequest[]) =>
   makeInputAsker((request) =>
     Effect.sync(() => {
@@ -140,19 +140,27 @@ const answers = (asked: InputRequest[]) =>
       return Object.fromEntries(
         request.questions.map((question) => [
           question.id,
-          question.id === "password" ? shopAccount.password : shopAccount.username,
+          question.type === "confirm"
+            ? { confirmed: true }
+            : question.id === "password"
+              ? shopAccount.password
+              : question.id === "code"
+                ? shopCode
+                : shopAccount.username,
         ]),
       );
     }),
   );
 
-/** A shop and a browser that resolves its host, closed after `use`. */
+/** Another host the shop's server answers for, as a sign-in site on its own origin. */
+const signInHost = "login.shop.test";
+/** A shop and a browser that resolves its hosts, closed after `use`. */
 const withShop = async (use: (shop: Shop, endpoint: string) => Promise<void>) => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-"));
   const shop = await startShop(directory);
   const browser = await chromium.launchServer({
     args: [
-      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1, MAP ${signInHost} 127.0.0.1`,
       "--no-proxy-server",
       "--ignore-certificate-errors",
     ],
@@ -481,3 +489,668 @@ test("a password screen that shows the typed email signs in, and Guardian reads 
     }
   });
 });
+
+/** An exploration that opens `path` on the shop. */
+const openPage = (name: string, path: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:${JSON.stringify(name)},input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    `await page.goto(new URL(${JSON.stringify(path)}, page.url()).href); return true;`,
+  )},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+/** Returns the address the primary tab shows. */
+const readWhere = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_where",input:Schema.Struct({}),output:Schema.Struct({where:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"const url = new URL(page.url()); return url.pathname + url.search;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {where:String(response.result)};
+});`;
+const create = (path: string, content: string, callId: string): Output[number] => ({
+  type: "apply_patch_call",
+  callId,
+  status: "completed",
+  operation: {
+    type: "create_file",
+    path,
+    diff: `${content
+      .split("\n")
+      .map((line) => `+${line}`)
+      .join("\n")}\n`,
+  },
+});
+/** The explorations the marker tests run: the search page, the account page and where it is. */
+const markerFiles: Output = [
+  create("explore/search.mjs", openPage("open_search", "/search?q=lamp"), "patch_search"),
+  create("explore/account.mjs", openPage("open_account", "/account"), "patch_account"),
+  create("explore/where.mjs", readWhere, "patch_where"),
+];
+const explore = (name: "search" | "account" | "where", callId = `explore_${name}`) =>
+  execute(
+    "explore",
+    { entrypoint: `explore/${name}.mjs`, intent: `Run the ${name} exploration` },
+    callId,
+  );
+const signInFields = (callId = "sign_in") =>
+  signInStep(
+    {
+      fields: [
+        { selector: "input[name=username]", accepts: ["username"] },
+        { selector: "input[name=password]", slot: "password" },
+      ],
+      submit: "button",
+    },
+    callId,
+  );
+const checkMarker = (marker: object, callId: string) =>
+  call("check_signed_in_marker", { intent: "Test the signed-in marker", ...marker }, callId);
+/** The host's answer to the minter's marker check `callId`. */
+const markerResult = (requests: readonly ModelRequest[], callId: string) =>
+  objects(toolResult(requests, callId)).find((item) => item["kind"] === "host_signed_in_marker");
+/**
+ * Mints the shop in one session, one build for each of `builds`: each from its `url`, a read
+ * unless its `effect` says otherwise, with a minter that plays its `steps`, one per model request.
+ * Returns each build's requests.
+ */
+const markerSession = async (
+  endpoint: string,
+  builds: readonly {
+    readonly url: string;
+    readonly effect?: "read" | "write";
+    readonly steps: readonly (Output | (() => Output))[];
+  }[],
+) => {
+  const requests: ModelRequest[][] = builds.map(() => []);
+  let build = 0;
+  const minter = provider((request) => {
+    const own = requests[build] ?? [];
+    own.push(request);
+    const step = builds[build]?.steps[own.length - 1] ?? [message("Stopping here.")];
+    return typeof step === "function" ? step() : step;
+  });
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* createPomerado({
+          browser: { endpoint },
+          minterProvider: minter,
+          guardianProvider: guardian(),
+          ask: answers([]),
+          timeoutMs: 45_000,
+        });
+        for (const [index, { url, effect = "read" }] of builds.entries()) {
+          build = index;
+          yield* service.mint({ url, intent: "Read the account", effect, input: {} });
+        }
+      }),
+    ),
+  );
+  return requests;
+};
+/** Mints a read of the shop from `url` with a minter that plays `steps`, one per model request. */
+const markerBuild = async (
+  endpoint: string,
+  url: string,
+  steps: readonly (Output | (() => Output))[],
+) => (await markerSession(endpoint, [{ url, steps }]))[0] ?? [];
+
+test("the local minter's marker check before the signedIn step compares a page explored once the login was sent", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium, a host sign-in, two marker checks and three explorations",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    // The skill's order: sign in, explore signed in, test the marker, then send it.
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      markerFiles,
+      [signInFields()],
+      [explore("search")],
+      [explore("account")],
+      // The search page, explored after the login was sent, lacks the account page's element.
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+      // The sign-in page the host saw before typing shows it.
+      [checkMarker({ selector: "body" }, "shared")],
+      // Sent anyway, the signedIn step refuses it too, and the sign-in stays open.
+      [signInStep({ signedIn: { selector: "body" } }, "signed_in_shared")],
+      [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      [explore("where")],
+    ]);
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "refused",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+      secondPage: false,
+      refusals: ["marker_missing_on_second_page"],
+    });
+    expect(markerResult(mintRequests, "shared")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "refused",
+      signedOutSnapshot: "matches",
+      signedInNow: true,
+      freshLoad: true,
+      secondPage: true,
+      refusals: ["marker_matches_signed_out_page"],
+    });
+    expect(objects(toolResult(mintRequests, "signed_in_shared"))).toContainEqual(
+      expect.objectContaining({ signedIn: false, failed: "marker_matches_signed_out_page" }),
+    );
+    expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+      expect.objectContaining({ signedIn: true }),
+    );
+    // The checks left the agent on the account page, where it was.
+    expect(objects(toolResult(mintRequests, "explore_where"))).toContainEqual({
+      where: "/account",
+    });
+    // The checks only loaded pages: one sign-in, and no value reached the minter.
+    expect(shop.state.loginPosts).toBe(1);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+  });
+});
+
+test("the local minter's marker check after the signedIn step compares the signed-out sign-in page, a fresh load and another signed-in page", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium, a host sign-in, four marker checks and three explorations",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [signInFields()],
+      [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      // The sign-in page the host saw before typing shows it too.
+      [checkMarker({ selector: "body" }, "shared")],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+      // XPath is beyond the signed-out page's match, so that page leaves it unchecked.
+      [checkMarker({ selector: "xpath=//p[@id='account']", openPath: "/account" }, "xpath")],
+      markerFiles,
+      [explore("search")],
+      [explore("account")],
+      // The search page, visited signed in, doesn't show the account page's own element.
+      [checkMarker({ selector: "#account", openPath: "/account" }, "second")],
+      [explore("where")],
+    ]);
+    expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+      expect.objectContaining({ signedIn: true }),
+    );
+    expect(markerResult(mintRequests, "shared")).toEqual(
+      expect.objectContaining({
+        status: "refused",
+        signedOutSnapshot: "matches",
+        signedInNow: true,
+        freshLoad: true,
+        refusals: ["marker_matches_signed_out_page"],
+      }),
+    );
+    // The shared check loaded the root, then went back to the account page, which shows the
+    // marker now. No other page was visited signed in yet, so there is no second page.
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+    });
+    expect(markerResult(mintRequests, "xpath")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed_unchecked",
+      signedOutSnapshot: "unchecked",
+      signedInNow: true,
+      freshLoad: true,
+      warnings: ["signed_out_page_unchecked"],
+    });
+    expect(markerResult(mintRequests, "second")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "refused",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+      secondPage: false,
+      refusals: ["marker_missing_on_second_page"],
+    });
+    expect(objects(toolResult(mintRequests, "explore_where"))).toContainEqual({
+      where: "/account",
+    });
+    expect(shop.state.loginPosts).toBe(1);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+  });
+});
+
+test("a later build in the same session keeps no signed-in page as a signed-out page", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two scripted builds with host sign-ins in one session",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const [, later] = await markerSession(endpoint, [
+      {
+        url: `${shop.origin}/login`,
+        steps: [
+          [signInFields()],
+          [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+        ],
+      },
+      {
+        // The session is still signed in, so the account page shows the account, and the first
+        // sign-in step finds no form there.
+        url: `${shop.origin}/account`,
+        steps: [
+          [signInFields()],
+          [create("explore/login.mjs", openPage("open_login", "/login"), "patch_login")],
+          [
+            execute(
+              "explore",
+              { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+              "explore_login",
+            ),
+          ],
+          [signInFields("sign_in_again")],
+          [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+        ],
+      },
+    ]);
+    if (later === undefined) throw new Error("No later build");
+    expect(objects(toolResult(later, "sign_in"))).toContainEqual(
+      expect.objectContaining({ outcome: "refused", reason: "not_found" }),
+    );
+    // The account page the later build started on was signed in, so it is no signed-out page.
+    // The build has none, and the marker passes unchecked.
+    expect(markerResult(later, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed_unchecked",
+      signedOutSnapshot: "unchecked",
+      signedInNow: true,
+      freshLoad: true,
+      warnings: ["signed_out_page_unchecked"],
+    });
+    expect(shop.state.loginPosts).toBe(2);
+  });
+});
+
+test("the local minter's marker check loads no page once the write session started", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a host sign-in, two act steps and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    let searchLoads: number | undefined;
+    const [build] = await markerSession(endpoint, [
+      {
+        url: `${shop.origin}/login`,
+        effect: "write",
+        steps: [
+          [
+            create("src/search.mjs", openPage("open_search", "/search?q=lamp"), "patch_search"),
+            create("src/account.mjs", openPage("open_account", "/account"), "patch_account"),
+          ],
+          [signInFields()],
+          [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+          // An act step leaves the search page, whose load a site could take as an action.
+          [
+            execute(
+              "act",
+              { entrypoint: "src/search.mjs", intent: "Search the shop" },
+              "act_search",
+            ),
+          ],
+          [
+            execute(
+              "act",
+              { entrypoint: "src/account.mjs", intent: "Open the account" },
+              "act_account",
+            ),
+          ],
+          () => {
+            searchLoads = shop.state.searchPageLoads;
+            return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+          },
+        ],
+      },
+    ]);
+    if (build === undefined) throw new Error("No build");
+    expect(objects(toolResult(build, "act_account"))).toContainEqual(
+      expect.objectContaining({ status: "completed" }),
+    );
+    expect(searchLoads).toBe(1);
+    // The next act step continues the page as it is, so the check loads nothing: not the
+    // marker's page, and not the search page the earlier act step left.
+    expect(shop.state.searchPageLoads).toBe(1);
+    expect(objects(toolResult(build, "account"))).toContainEqual(
+      expect.objectContaining({ status: "tool_failed", code: "Unavailable" }),
+    );
+  });
+});
+
+/** A live test of where the page is, which resets the browser and loads the site's root first. */
+const testWhere = execute(
+  "test",
+  { entrypoint: "explore/where.mjs", intent: "Read where a live test starts" },
+  "test_where",
+);
+
+test("a sign-in screen on another origin and a root that failed to load are no signed-out pages", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    shop.state.home = "broken";
+    const signInSite = `https://${signInHost}:${shop.port}/login`;
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [
+        ...markerFiles,
+        create("explore/sign-in-site.mjs", openPage("open_sign_in", signInSite), "patch_sign_in"),
+      ],
+      // The test's reset loads the root, which fails and leaves a blank page.
+      [testWhere],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/sign-in-site.mjs", intent: "Open the sign-in site" },
+          "explore_sign_in",
+        ),
+      ],
+      [signInFields()],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+    ]);
+    expect(objects(toolResult(mintRequests, "sign_in"))).toContainEqual(
+      expect.objectContaining({ outcome: "filled", submit: "clicked" }),
+    );
+    // Neither page could show the shop's own pages signed out, so the check has none.
+    expect(markerResult(mintRequests, "account")).toEqual(
+      expect.objectContaining({
+        signedOutSnapshot: "unchecked",
+        warnings: ["signed_out_page_unchecked"],
+      }),
+    );
+  });
+});
+
+for (const [home, renderMs, shell] of [
+  ["late", 300, "an empty shell"],
+  ["splash", 300, "a splash screen that shows Loading…"],
+  ["splash", 1500, "a splash screen that shows Loading… for 1.5 seconds"],
+] as const)
+  test(`a client-rendered root counts as signed out once it renders past ${shell}`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      shop.state.home = home;
+      shop.state.homeRenderMs = renderMs;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        [
+          ...markerFiles,
+          create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+        ],
+        // The test's reset loads the root, which renders its header only after it loads.
+        [testWhere],
+        [
+          execute(
+            "explore",
+            { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+            "explore_login",
+          ),
+        ],
+        [signInFields()],
+        [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+      ]);
+      // The rendered root shows its Account link signed out too.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "refused",
+        signedOutSnapshot: "matches",
+        signedInNow: true,
+        freshLoad: true,
+        refusals: ["marker_matches_signed_out_page"],
+      });
+    });
+  });
+
+test("a root whose load never ends is kept within the wait, and the browser keeps working", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a live test, an exploration, a host sign-in and a check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    // The root shows an image whose request never answers, so neither its load nor a quiet
+    // network ever comes.
+    shop.state.home = "hang";
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [
+        ...markerFiles,
+        create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+      ],
+      [testWhere],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+          "explore_login",
+        ),
+      ],
+      [signInFields()],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+    ]);
+    expect(objects(toolResult(mintRequests, "test_where"))).toContainEqual({ where: "/" });
+    // The host gave up its waits in time, so the browser still runs the next steps.
+    expect(objects(toolResult(mintRequests, "explore_login"))).toContainEqual(
+      expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+    );
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+    });
+    expect(JSON.stringify(mintRequests)).not.toContain("invalidated");
+  });
+});
+
+/** An exploration that posts an empty form to the shop's search page, as a search form may. */
+const postSearch = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"post_search",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    `await Promise.all([page.waitForURL("**/search?q=lamp"), page.evaluate(() => { const form = document.createElement("form"); form.method = "post"; form.action = "/search?q=lamp"; document.body.append(form); form.submit(); })]); return true;`,
+  )},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+
+test("the local minter's marker check leaves a form's answer where its loads left the tab", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a host sign-in, two explorations and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    let searchLoads: number | undefined;
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [...markerFiles, create("explore/post-search.mjs", postSearch, "patch_post_search")],
+      [signInFields()],
+      [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/post-search.mjs", intent: "Post the search form" },
+          "explore_post_search",
+        ),
+      ],
+      () => {
+        searchLoads = shop.state.searchPageLoads;
+        return [checkMarker({ selector: "#results" }, "results")];
+      },
+      [explore("where")],
+    ]);
+    expect(searchLoads).toBe(1);
+    expect(markerResult(mintRequests, "results")).toEqual(
+      expect.objectContaining({ signedInNow: true, freshLoad: false }),
+    );
+    // The search page answered the form's post, so its address alone would send a GET in its
+    // place: the host leaves the tab on the root it loaded.
+    expect(shop.state.searchPageLoads).toBe(1);
+    expect(objects(toolResult(mintRequests, "explore_where"))).toContainEqual({ where: "/" });
+  });
+});
+
+/** Types the code the agent was given into the shop's code screen, then submits it. */
+const typeCode = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"type_code",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    "await page.locator('input[name=code]').fill('{{secret.s1}}'); await Promise.all([page.waitForURL('**/account'), page.locator('button').click()]); return true;",
+  )},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+/** How the code screen's sign-in finishes: a code sign-in step, or a code an exploration types. */
+const codeEntries: readonly (readonly [string, readonly Output[]])[] = [
+  [
+    "a code sign-in step",
+    [
+      [
+        signInStep(
+          { fields: [{ selector: "input[name=code]", slot: "code" }], submit: "button" },
+          "code",
+        ),
+      ],
+    ],
+  ],
+  [
+    "a code an exploration types",
+    [
+      [
+        call(
+          "request_input",
+          {
+            intent: "Ask for the code the shop sent to finish signing in",
+            questions: [
+              {
+                id: "code",
+                type: "secret",
+                secretKind: "one_time_code",
+                prompt: "Enter the code the shop sent you to finish signing in.",
+              },
+            ],
+          },
+          "ask_code",
+        ),
+      ],
+      // Written once the code's handle is issued.
+      [create("explore/type-code.mjs", typeCode, "patch_type_code")],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/type-code.mjs", intent: "Type the code the shop sent" },
+          "code",
+        ),
+      ],
+    ],
+  ],
+];
+
+for (const [entry, codeSteps] of codeEntries)
+  test(`${entry} forgets the code screen explored before it, so the marker check never loads it`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a host sign-in with a code screen and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      shop.state.loginCode = true;
+      let codeLoads: number | undefined;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        markerFiles,
+        // The password goes first: the login is sent, and the shop shows its code screen.
+        [signInFields()],
+        [explore("where", "explore_code_screen")],
+        ...codeSteps,
+        [explore("account")],
+        () => {
+          codeLoads = shop.state.codePageLoads;
+          return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+        },
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      ]);
+      expect(objects(toolResult(mintRequests, "explore_code_screen"))).toContainEqual({
+        where: "/two-factor",
+      });
+      expect(objects(toolResult(mintRequests, "code"))).toContainEqual(
+        expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+      );
+      expect(codeLoads).toBe(1);
+      // The code finished the sign-in, so the code screen explored before it is no signed-in
+      // page: the check has no other page than the account page it loads fresh.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "passed",
+        signedOutSnapshot: "absent",
+        signedInNow: true,
+        freshLoad: true,
+      });
+      expect(shop.state.codePageLoads).toBe(1);
+      expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+        expect.objectContaining({ signedIn: true }),
+      );
+      expect(JSON.stringify(mintRequests)).not.toContain(shopCode);
+    });
+  });
+
+for (const [entry, step] of [
+  ["a rejected value", { rejected: { slot: "password" } }],
+  ["an approval", { approval: "device" }],
+] as const)
+  test(`${entry} forgets the pages explored before it, so the marker check never loads them`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a host sign-in, two explorations and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      let searchLoads: number | undefined;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        markerFiles,
+        [signInFields()],
+        [explore("search")],
+        // The sign-in goes on: the pages explored before this step may be screens of it.
+        [signInStep(step, "sign_in_step")],
+        [explore("account")],
+        () => {
+          searchLoads = shop.state.searchPageLoads;
+          return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+        },
+      ]);
+      expect(objects(toolResult(mintRequests, "sign_in_step"))).toContainEqual(
+        expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+      );
+      expect(searchLoads).toBe(1);
+      // The search page was explored before the step, so the check has no other page.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "passed",
+        signedOutSnapshot: "absent",
+        signedInNow: true,
+        freshLoad: true,
+      });
+      expect(shop.state.searchPageLoads).toBe(1);
+    });
+  });
