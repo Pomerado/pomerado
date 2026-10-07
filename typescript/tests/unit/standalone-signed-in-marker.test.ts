@@ -62,7 +62,7 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
  */
 const markerChecks = (
   tab: ReturnType<typeof modeledTab>,
-  state: { loginSent: boolean } = { loginSent: true },
+  state: { loginSent: boolean; writeSessionStarted?: boolean } = { loginSent: true },
   typing = { typed: false },
 ) =>
   makeMarkerChecks({
@@ -71,20 +71,21 @@ const markerChecks = (
     check: tab.check,
     typing,
     loginSent: () => state.loginSent,
+    writeSessionStarted: () => state.writeSessionStarted === true,
   });
 
 const accountMarker = { selector: "#account", openPath: "/account" };
 
 describe("makeMarkerChecks", () => {
-  it("loads the newest other page visited once the login was sent, then returns the tab", async () => {
+  it("loads the newest other page explored once the login was sent, then returns the tab", async () => {
     const tab = modeledTab({ at: "/account", shows: ["/account"] });
     const state = { loginSent: false };
     const markers = markerChecks(tab, state);
     // Before the login was sent, a page proves nothing about the account.
-    markers.visited(`${origin}/help`);
+    markers.explored(`${origin}/help`);
     state.loginSent = true;
-    markers.visited(`${origin}/search?q=lamp`);
-    markers.visited(`${origin}/account`);
+    markers.explored(`${origin}/search?q=lamp`);
+    markers.explored(`${origin}/account`);
     const checked = await Effect.runPromise(markers.check(accountMarker));
     expect(checked).toEqual({
       signedOutSnapshot: "unchecked",
@@ -96,12 +97,12 @@ describe("makeMarkerChecks", () => {
     expect(tab.where).toBe("/account");
   });
 
-  it("forgets the pages visited before a later sign-in step, such as a code screen", async () => {
+  it("forgets the pages explored before a later sign-in step, such as a code screen", async () => {
     const tab = modeledTab({ at: "/account", shows: ["/account"] });
     const markers = markerChecks(tab);
-    markers.visited(`${origin}/sign-in/code`);
+    markers.explored(`${origin}/sign-in/code`);
     markers.signInStep();
-    markers.visited(`${origin}/account`);
+    markers.explored(`${origin}/account`);
     const checked = await Effect.runPromise(markers.check(accountMarker));
     expect(checked).not.toHaveProperty("secondPage");
     expect(tab.loads).toEqual(["/account"]);
@@ -110,8 +111,8 @@ describe("makeMarkerChecks", () => {
   it("loads no second page while the agent's page lacks the marker", async () => {
     const tab = modeledTab({ at: "/sign-in/code", shows: ["/account"] });
     const markers = markerChecks(tab);
-    markers.visited(`${origin}/search`);
-    markers.visited(`${origin}/sign-in/code`);
+    markers.explored(`${origin}/search`);
+    markers.explored(`${origin}/sign-in/code`);
     const checked = await Effect.runPromise(markers.check(accountMarker));
     expect(checked).toEqual({
       signedOutSnapshot: "unchecked",
@@ -124,9 +125,9 @@ describe("makeMarkerChecks", () => {
   it("never takes the agent's own page or the page loaded fresh as the second page", async () => {
     const tab = modeledTab({ at: "/orders", shows: ["/account", "/orders"] });
     const markers = markerChecks(tab);
-    markers.visited(`${origin}/search`);
-    markers.visited(`${origin}/account`);
-    markers.visited(`${origin}/orders`);
+    markers.explored(`${origin}/search`);
+    markers.explored(`${origin}/account`);
+    markers.explored(`${origin}/orders`);
     await Effect.runPromise(markers.check(accountMarker));
     expect(tab.loads).toEqual(["/account", "/search", "/orders"]);
   });
@@ -151,5 +152,14 @@ describe("makeMarkerChecks", () => {
       "signedOutSnapshot",
       "unchecked",
     );
+  });
+
+  it("loads no page once the write session started", async () => {
+    const tab = modeledTab({ at: "/account", shows: ["/account"] });
+    const markers = markerChecks(tab, { loginSent: true, writeSessionStarted: true });
+    markers.explored(`${origin}/search`);
+    const checked = await Effect.runPromise(Effect.either(markers.check(accountMarker)));
+    expect(checked).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
+    expect(tab.loads).toEqual([]);
   });
 });

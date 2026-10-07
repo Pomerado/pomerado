@@ -63,20 +63,21 @@ const makeSignedOutPages = (page: AutofillPage) => {
 /** How long a loaded page may take to show the marker, as checks one interval apart. */
 const markerSettle = { checks: 6, interval: Duration.millis(500) };
 
-/** The most pages a build notes as visited signed in, newest last. */
+/** The most pages a build notes as explored signed in, newest last. */
 const keptPaths = 10;
 
-/** A page's path with its query, as the build notes the pages it visited. */
+/** A page's path with its query, as the build notes the pages it explored. */
 const pathOf = (url: URL) => `${url.pathname}${url.search}`;
 
 /**
  * The local host's `MintDependencies.checkSignedInMarker`, and the pages it compares. It tests the
  * marker against the build's signed-out pages, on the live page as it is, after the host loads
  * the marker's page (`openPath`, else `urlPath`, else the site's root) again, and on the newest
- * other page the build visited once its sign-in sent the login. It signs nothing in and sends no
+ * other page the build explored once its sign-in sent the login. It signs nothing in and sends no
  * value. The loads move the primary tab, so the host then opens the address it was on again; what
  * that page held only in memory, such as a half-filled form, is gone. A current page the host
- * cannot read fails the check as unavailable.
+ * cannot read fails the check as unavailable, and so does a check once the write session started:
+ * its act steps continue the page as it is.
  */
 export const makeMarkerChecks = (input: {
   readonly page: AutofillPage;
@@ -91,10 +92,12 @@ export const makeMarkerChecks = (input: {
   readonly typing: SessionTyping;
   /** Whether the build's current sign-in sent the login, or a sign-in of the build is verified. */
   readonly loginSent: () => boolean;
+  /** Whether the build's write session started: its act steps continue the page as it is. */
+  readonly writeSessionStarted: () => boolean;
 }) => {
   const signedOut = makeSignedOutPages(input.page);
-  /** Pages the build visited once its sign-in sent the login, as paths, oldest first. */
-  const visitedPaths: string[] = [];
+  /** Pages the build explored once its sign-in sent the login, as paths, oldest first. */
+  const exploredPaths: string[] = [];
   let firstScreen = true;
   // A page that renders after it loads gets a few seconds to show the marker.
   const load = (indicator: AutofillSignedIn, path: string) =>
@@ -127,24 +130,37 @@ export const makeMarkerChecks = (input: {
     ),
     /**
      * A sign-in screen, a rejected value, an approval or a code an exploration typed: the pages
-     * visited before it may be screens of the sign-in under way, such as a code's, so none of them
+     * explored before it may be screens of the sign-in under way, such as a code's, so none of them
      * is loaded as a signed-in page.
      */
     signInStep: () => {
-      visitedPaths.length = 0;
+      exploredPaths.length = 0;
     },
-    /** Notes the page a live step left, once the build's sign-in sent the login. */
-    visited: (url: string | undefined) => {
+    /**
+     * Notes the page an exploration left, once the build's sign-in sent the login. Guardian
+     * reviewed that exploration as one that reads, so loading its page again repeats a read. The
+     * page an act step left is never noted.
+     */
+    explored: (url: string | undefined) => {
       const page = URL.parse(url ?? "");
       if (!input.loginSent() || page === null || page.origin !== input.siteOrigin) return;
       const path = pathOf(page);
-      const seen = visitedPaths.indexOf(path);
-      if (seen !== -1) visitedPaths.splice(seen, 1);
-      visitedPaths.push(path);
-      if (visitedPaths.length > keptPaths) visitedPaths.shift();
+      const seen = exploredPaths.indexOf(path);
+      if (seen !== -1) exploredPaths.splice(seen, 1);
+      exploredPaths.push(path);
+      if (exploredPaths.length > keptPaths) exploredPaths.shift();
     },
     check: (marker: SignedInMarkerCheckRequest): Effect.Effect<SignedInMarkerCheck, MintFailure> =>
       Effect.gen(function* () {
+        // The write session's next act step continues the page as it is, so no load may move it.
+        if (input.writeSessionStarted())
+          return yield* new MintFailure({
+            code: "Unavailable",
+            failureDetail: failureDetail("mint_host_dependency_failed", {
+              operation: "standalone.checkSignedInMarker",
+              error: new Error("The write session started, so the check loads no page"),
+            }),
+          });
         const indicator = { selector: marker.selector, urlPath: marker.urlPath };
         const signedInNow = yield* input.check(indicator);
         if (!signedInNow.signedIn && signedInNow.failed === "page_unavailable")
@@ -165,7 +181,7 @@ export const makeMarkerChecks = (input: {
         // may still be under way. Neither the page loaded fresh nor the agent's own page counts.
         const second = !signedInNow.signedIn
           ? undefined
-          : visitedPaths.findLast(
+          : exploredPaths.findLast(
               (path) =>
                 path !== pathOf(fresh) &&
                 (here === null || here.origin !== input.siteOrigin || path !== pathOf(here)),

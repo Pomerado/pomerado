@@ -410,7 +410,7 @@ const authoredExecution = (
         }
         if (live) {
           yield* context.observe;
-          state.markers.visited(context.observedUrl);
+          if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
         if (execution.purpose === "act")
           writeSession.steps.push({
