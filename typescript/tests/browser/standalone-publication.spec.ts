@@ -147,7 +147,6 @@ async ({kernel,sessionId}) => {
       status: "not_published",
       code: "PublicationUnavailable",
       reason: "secret_handle",
-      path: "src/query.graphql",
     });
     expect(publications(guardian.reviews)).toHaveLength(0);
   } finally {

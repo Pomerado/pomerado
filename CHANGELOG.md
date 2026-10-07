@@ -58,6 +58,7 @@ The package now holds the code the local host runs, the hook interfaces another 
 
 - `makeGuardian` decodes a publication decision with the package's own decoder, which checks each finding against the review's file index, when the host passes no `decodePublication`, instead of failing it as an invalid decision. A host's own `decodePublication` still decodes when given.
 - `savedOperationFiles` from `pomerado/core/mint/operation-source` gives the files a local build saves. `operationSourceFiles` is unchanged.
+- A local `finish_build` refuses to publish when any saved file holds a secret handle, whatever its extension. `holdsSecretHandle`, the check it uses, is exported from `pomerado/core/mint/secret-handles`; `publishedHandlePath` is unchanged.
 - `reviewDenied` from `pomerado/core/mint/review-context` keeps a decision's `reason` and `findings` on the failure's `review` when the decision has them.
 - `pomerado/core/mint/step-checks` exports `sourceDigest`, the sha256 digest of a set of source files in any order.
 - `inputFeedbackInstruction`'s `privateFallback` is optional. Leaving it out, for a build with no fallback, ends the instruction with the build ending unpublished. `unresolvedInputFeedbackSummary(cause?, review?)` reports a review's categories and rationale when given one and no cause.

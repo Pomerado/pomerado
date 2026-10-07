@@ -14,7 +14,7 @@ import {
   type ExampleOutputSource,
 } from "../mint/publication-review.js";
 import { contractExtractionNote } from "../mint/review-context.js";
-import { publishedHandlePath } from "../mint/secret-handles.js";
+import { holdsSecretHandle } from "../mint/secret-handles.js";
 import { sourceDigest } from "../mint/step-checks.js";
 import type { MintState } from "./mint-state.js";
 import { validateStandaloneWrite } from "./write-completion.js";
@@ -75,7 +75,8 @@ export const mintPublication =
       const files = savedOperationFiles(new Map(yield* workspace.snapshot), publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
-      if (publishedHandlePath(files, [publication.entrypoint]) !== undefined)
+      // Published code never holds a handle, in any file it ships, whatever its extension.
+      if (sources.some(([, text]) => holdsSecretHandle(text)))
         return yield* Effect.fail(
           new MintFailure({
             code: "PublicationUnavailable",
