@@ -211,7 +211,7 @@ test(`does not fill an answer when its observed question changes during ${change
   expect(failure).toMatchObject({
     authentication: {
       code: "AutofillRefused",
-      hostRefusal: { check: "change", field: 0, slot: "private_answer" },
+      hostRefusal: { check: "change", field: 0, slot: "private_answer", cause: "question_changed" },
       nothingSubmitted: true,
     },
   });
@@ -220,3 +220,81 @@ test(`does not fill an answer when its observed question changes during ${change
   expectNotCarried(browser.calls, "synthetic-first-pet");
 });
 }
+
+// A sign-in the check showed signed in is over, so its code screen's selector no longer counts. A
+// later sign-in that skipped the code, as on a remembered device, lands on an account page whose
+// gift-card box matches that selector, and the site is signed in.
+test("a later sign-in's check ignores an earlier sign-in's code selector on an account control", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="identity">Signed in</p><form id="challenge"><label>Verification code<input name="code"></label></form>' }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker((request) => Effect.succeed(Object.fromEntries(request.questions.map(
+      (question) => [question.id, question.id === "code" ? "482913" : "synthetic-password"])))),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  const indicator = { selector: "#identity" };
+  await Effect.runPromise(auth.step({ fields: [{ selector: 'input[name="code"]', slot: "code" }] }));
+  expect(await Effect.runPromise(auth.signedIn(indicator))).toMatchObject({ failed: "challenge_form_visible" });
+  await page.locator("#challenge").evaluate((element) => { element.remove(); });
+  expect(await Effect.runPromise(auth.signedIn(indicator))).toMatchObject({ signedIn: true });
+  await page.setContent('<form><label>Password<input id="password" type="password"></label></form>');
+  await Effect.runPromise(auth.step({ fields: [{ selector: "#password", slot: "password" }] }));
+  await page.setContent('<p id="identity">Signed in</p><form><label>Gift card code<input name="code"></label><button>Redeem</button></form>');
+  expect(await Effect.runPromise(auth.signedIn(indicator))).toEqual({ signedIn: true, url: `${site}/login` });
+});
+
+// The prompt holds at most 2,000 characters, so a long question is cut to leave room for the
+// site's origin, and the owner is still asked.
+test("asks a question too long for the prompt with the site's origin, cut to fit", async ({ page }) => {
+  const site = "https://bank.example.test";
+  const question = `${"Which of these did you pick ".repeat(80).trim()}?`.slice(-1982);
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    `<p id="question">${question}</p><label>Security answer<input id="answer"></label>` }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const prompts: string[] = [];
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker((request) => Effect.sync(() => {
+      prompts.push(request.questions[0]?.prompt ?? "");
+      return { private_answer: "synthetic-private-answer" };
+    })),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  await Effect.runPromise(auth.step({ fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }] }));
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]?.length).toBeLessThanOrEqual(2000);
+  expect(prompts[0]?.startsWith(question.slice(0, 1900))).toBe(true);
+  expect(prompts[0]?.endsWith(`… (${site})`)).toBe(true);
+  expect(await page.locator("#answer").inputValue()).toBe("synthetic-private-answer");
+});
+
+// A recorded question the host could not read, as with no one visible match, is said so in the
+// prompt rather than left for the field's label to stand in for.
+test("says in the prompt that a recorded question could not be read", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p class="question">First pet?</p><p class="question">First school?</p><label>Security answer<input id="answer"></label>' }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const prompts: string[] = [];
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker((request) => Effect.sync(() => {
+      prompts.push(request.questions[0]?.prompt ?? "");
+      return { private_answer: "synthetic-private-answer" };
+    })),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  await Effect.runPromise(auth.step({ fields: [{ selector: "#answer", slot: "private_answer", questionSelector: ".question" }] }));
+  expect(prompts).toEqual([
+    `Enter your security answer for ${site}. The question it answers could not be read from the page. The answer field reads "Security answer".`,
+  ]);
+});

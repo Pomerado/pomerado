@@ -22,20 +22,28 @@ const screens = [
   { fields: [{ selector: "#password" }] },
 ];
 
-/** Serves the signed-in page, and `frame` at any other path, then runs the host's check on it. */
+/**
+ * Serves the signed-in page, each of `options.frames` at its path, and `frame` at any other path,
+ * then runs the host's check on it.
+ */
 const checkPage = async (
   page: Page,
   body: string,
   frame: string | null,
   signIn: AutofillScreens,
   path = "/account",
+  options: {
+    readonly authenticationOrigins?: readonly string[];
+    readonly frames?: Readonly<Record<string, string>>;
+  } = {},
 ) => {
-  await page.route(/^https:\/\//u, (route) =>
-    route.fulfill({
+  await page.route(/^https:\/\//u, (route) => {
+    const at = new URL(route.request().url()).pathname;
+    return route.fulfill({
       contentType: "text/html",
-      body: new URL(route.request().url()).pathname === path ? body : (frame ?? ""),
-    }),
-  );
+      body: at === path ? body : (options.frames?.[at] ?? frame ?? ""),
+    });
+  });
   await page.goto(`${site}${path}`);
   return Effect.runPromise(
     checkAutofillSignedIn({
@@ -43,6 +51,9 @@ const checkPage = async (
       page: await hostPage(page),
       siteOrigin: site,
       screens: signIn,
+      ...(options.authenticationOrigins === undefined
+        ? {}
+        : { authenticationOrigins: options.authenticationOrigins }),
     }),
   );
 };
@@ -195,12 +206,45 @@ test("a recorded challenge field associated with its form by form attribute rema
   });
 });
 
-test("a recorded challenge field in a visible provider iframe remains unfinished", async ({ page }) => {
+test("a recorded challenge field in a visible frame of a configured sign-in origin remains unfinished", async ({ page }) => {
   const account = `${marker}<iframe src="${widget}/security-question"></iframe>`;
   const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
-  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }])).toEqual({
+  expect(await checkPage(page, account, challenge, [...screens, { fields: [{ selector: "#challenge-answer", slot: "private_answer" }] }], "/account", { authenticationOrigins: [widget] })).toEqual({
     signedIn: false,
     failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+});
+
+// A recorded selector can match an unrelated control on the signed-in page: a gift-card or
+// referral code box. Only an editable control, on the site or a configured sign-in origin, in a
+// frame that shows, counts as the challenge still asking.
+const codeScreen = [...screens, { fields: [{ selector: 'input[name="code"]', slot: "code" as const }] }];
+test("an account page's code box in an unconfigured off-site frame does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe src="${widget}/gift-cards"></iframe>`;
+  const giftCard = '<form><label>Gift card code<input name="code"></label><button>Redeem</button></form>';
+  expect(await checkPage(page, account, giftCard, codeScreen)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("an account page's read-only or disabled code box does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<p>Your referral code <input name="code" readonly value="REF-2041"></p><p>Promotion <input name="code" disabled></p>`;
+  expect(await checkPage(page, account, null, codeScreen)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("a recorded challenge field in a frame inside a hidden frame does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe style="visibility:hidden" src="/outer"></iframe>`;
+  const frames = {
+    "/outer": '<iframe src="/inner"></iframe>',
+    "/inner": '<form><label>Verification code<input name="code"></label><button>Verify</button></form>',
+  };
+  expect(await checkPage(page, account, null, codeScreen, "/account", { frames })).toEqual({
+    signedIn: true,
     url: `${site}/account`,
   });
 });
