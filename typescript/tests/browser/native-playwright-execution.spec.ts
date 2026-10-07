@@ -16,7 +16,7 @@ import invoiceHeading from "../../authoring/examples/native-page.js";
 import { detailNavigation } from "../../authoring/examples/navigation.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { executeKernelOperation } from "../../src/runtime/kernel-operation.js";
+import { runKernelOperation } from "../support/kernel-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
@@ -799,7 +799,7 @@ test("unchanged authored operations run through schema validation and native exe
     expect(
       await Effect.runPromise(
         Effect.scoped(
-          executeKernelOperation(invoiceHeading, {}, browser).pipe(
+          runKernelOperation(invoiceHeading, {}, browser).pipe(
             Effect.provideService(ExecutionContext, execution),
           ),
         ),
@@ -808,7 +808,7 @@ test("unchanged authored operations run through schema validation and native exe
     expect(
       await Effect.runPromise(
         Effect.scoped(
-          executeKernelOperation(detailNavigation, { record_id: "alpha" }, browser).pipe(
+          runKernelOperation(detailNavigation, { record_id: "alpha" }, browser).pipe(
             Effect.provideService(ExecutionContext, execution),
           ),
         ),
@@ -816,7 +816,7 @@ test("unchanged authored operations run through schema validation and native exe
     ).toEqual({ record_id: "alpha", title: "Requested record" });
     const refusedInput = await Effect.runPromise(
       Effect.scoped(
-        executeKernelOperation(detailNavigation, { record_id: "bad/id" }, browser).pipe(
+        runKernelOperation(detailNavigation, { record_id: "bad/id" }, browser).pipe(
           Effect.provideService(ExecutionContext, execution),
           Effect.either,
         ),

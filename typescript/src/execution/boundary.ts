@@ -1,5 +1,5 @@
 import { Data } from "effect";
-import { failureDetail, type FailureDetail } from "../runtime/failure-detail.js";
+import type { FailureDetail } from "../runtime/failure-detail.js";
 
 export type ProcessStatus = "running" | "completed" | "failed" | "killed" | "stopped" | "unknown";
 
@@ -108,22 +108,6 @@ export class ExecutionBoundaryError extends Data.TaggedError("ExecutionBoundaryE
     | "HOST_CALL_TIMEOUT"
     | "PROCESS_DEADLINE_EXCEEDED";
 }> {}
-
-/**
- * A provider failure with no stage of its own: nothing went out before launch, anything after.
- * Its detail names the caller as its site.
- */
-export const boundaryError = (phase: "prepare" | "execute" | "stop", error?: unknown) =>
-  new ExecutionBoundaryError({
-    phase,
-    reason: "provider_unavailable",
-    dispatch: phase === "execute" ? "unknown" : "not_sent",
-    failureDetail: failureDetail("executor_boundary_failed", {
-      phase,
-      ...(error === undefined ? {} : { error }),
-      helperFrames: 1,
-    }),
-  });
 
 /** The operation runner's four output channels, each a file its launch opened. */
 export type RunnerChannel = "result" | "stdout" | "stderr" | "events";

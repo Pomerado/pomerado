@@ -2,7 +2,10 @@ import { OpenAIProvider, setDefaultModelProvider } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import type { PendingExecution } from "../../src/guardian/review.js";
+
+const native = { executionEnvironment: nativeExecutionEnvironment };
 
 const pending: PendingExecution = {
   invocationId: "job_deadline",
@@ -54,7 +57,7 @@ it("stalled SDK review retains the finite configured deadline", async () => {
     }),
   });
   const result = Effect.runPromise(
-    makeOpenAIReviewer("{{ tenant_policy_config }}")
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)
       .run({
         reviewId: "review_deadline",
         pending,

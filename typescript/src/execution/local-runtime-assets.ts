@@ -12,7 +12,6 @@ const runtimeFiles = [
   "browser/dialogs/contracts",
   "browser/dialogs/service",
   "browser/form-controls",
-  "privacy/common-values",
   "privacy/credential-policy",
   "privacy/secret-keys",
   "privacy/url-spans",

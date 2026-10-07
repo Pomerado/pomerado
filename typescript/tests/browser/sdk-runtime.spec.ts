@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import { Effect, Schema } from "effect";
-import { browserPromise } from "../../src/browser/promise.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { defineOperation, executeOperation } from "../../src/runtime/operation.js";
@@ -17,44 +16,6 @@ const fixtureContext = () =>
       };
     }),
   );
-
-test("pw identifies its configured timeout when a native locator waits longer than the action budget", async ({
-  page,
-}) => {
-  await page.setContent(
-    "<div id='ready'></div><script>setTimeout(() => { document.querySelector('#ready').textContent = 'Ready'; }, 5_500)</script>",
-  );
-  const execution = await fixtureContext();
-  const started = performance.now();
-  const first = await Effect.runPromise(
-    browserPromise(execution, "wait for ready control", () =>
-      page.getByText("Ready").waitFor({ timeout: 15_000 }),
-    ).pipe(Effect.either),
-  );
-  expect(first).toMatchObject({
-    _tag: "Left",
-    left: {
-      _tag: "DeadlineExceeded",
-      phase: "wait for ready control",
-      dispatch: "unknown",
-      pwTimeoutSource: "action_default",
-    },
-  });
-  expect(performance.now() - started).toBeLessThan(7_000);
-  const second = await Effect.runPromise(
-    browserPromise(
-      execution,
-      "wait for ready control",
-      () => page.getByText("Ready").waitFor({ timeout: 15_000 }),
-      {
-        timeoutMs: 7_000,
-      },
-    ).pipe(Effect.either),
-  );
-  expect(second).toMatchObject({ _tag: "Right" });
-  await expect(page.getByText("Ready")).toBeVisible();
-  expect(await Effect.runPromise(execution.journal.state)).toBe("not_started");
-});
 
 test("an Effect write declared unverifiable cannot record a confirmation or mark itself verified", async () => {
   const outcome = async (record: "confirmed" | "verified") => {

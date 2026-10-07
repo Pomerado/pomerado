@@ -16,6 +16,39 @@
   - A secret handle is refused before Guardian reviews the step, instead of failing after review, when this attempt never issued it, when it sits in the source an example publishes, or when it is misplaced. A misplaced handle's refusal names its file and line. An offline step runs handle text as written.
   - A Guardian outage is retried for up to five minutes before the step reports the review as unavailable. A spent model quota ends the build with `model_quota_exhausted`.
 
+The package now holds the code the local host runs, the hook interfaces another host implements, and the signed-in marker checks behind `MintDependencies.checkSignedInMarker`. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
+
+- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
+  - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
+  - Migrate from `"hosted"` by passing your own `GuardianExecutionEnvironment`. Its `name` reaches the model as `trusted_execution_environment`.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` take an optional `render` function in place of the `"standalone"` or `"hosted"` mode, and `AuthoringMode` is gone. The default still renders each section's standalone text.
+  - Migrate from `"hosted"` by passing a render that returns your composed text and refuses any section marker left in it.
+- `makeCredentialKeyboard` takes an optional `bindingWorld` function in place of `utilityWorldName`. The function returns the execution context to resolve the field in. Without it, the field resolves in the page's main world, as before.
+  - Migrate by creating your isolated world in that function and returning its context ID.
+- Modules and exports nothing in the package used are removed.
+  - `pomerado/core/browser/promise`, with `browserPromise`. The local host never ran it.
+  - `pomerado/core/destinations/cdp-contracts`, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
+  - `pomerado/core/privacy/common-values`, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
+  - `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` and `KnownDialog` from `pomerado/core/browser/dialogs/contracts`. `ExpectedConfirm` stays.
+  - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
+  - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`
+  - `mintSourceSyntaxFailure` from `pomerado/core/mint/operation-source`
+  - `boundaryError` from `pomerado/core/execution/boundary`
+  - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
+  - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
+  - `refusalEvidence` and `callFailure` from `pomerado/core/destinations/autofill-refusal`. A refused step's evidence is still its report's `failureDetail.context`.
+  - `executeKernelOperation` and `offlineKernel` from `pomerado/core/runtime/kernel-operation`. The local runner runs a script with `runKernelScript`, which stays. To run one as `executeKernelOperation` did, wrap `runKernelScript` in `decodeKernelOperationInput` and `validateKernelOperationOutput`, now exported from `pomerado/core/runtime/kernel-operation-validation`.
+  - `failureCause` from `pomerado/core/runtime/errors`
+  - `asksAsDeclared` from `pomerado/core/runtime/script-input`
+  - `autofillMarkerVisible` from `pomerado/core/destinations/autofill-page`, which keeps `openAutofillLogin`. The page code it built on, `autofillPageCode`, is now exported from `pomerado/core/destinations/autofill-page-code`.
+  - `credentialRequestMessage`, `holdsSecrets`, `inputWindowMs`, `keepAnswerRecovery` and `validateKeptAnswers` from `pomerado/core/runtime/input-request`
+  - `loginFieldsOfRecipe`, `publicLoginFields`, `revisionLoginFields`, `unusedRunLoginField`, `inlineLoginFields`, `InlineLoginField` and `LoginFieldsUsed` from `pomerado/core/destinations/login-fields`, which keeps `LoginField`, `LoginFields` and `SignInMethods`
+  - `isHostIncident` from `pomerado/core/mint/incident-contracts`
+  - `SignInRecoveryEvent` from `pomerado/core/execution/sign-in-diagnostics`
+  - `BrowserMode` from `pomerado/core/runtime/provider-metadata`
+  - `sameRegistrableDomain` from `pomerado/core/runtime/same-site`
+  - Migrate by keeping your own copy of what you use in your host.
+
 ### Other changes
 
 - Each Guardian review of a local build carries that step's own context: the effects its kind of step may have, the files its entrypoint imports, the last six step results, the input schema of the latest example or contract run, the page the browser last showed with a redacted readable capture, a command's sandbox limits, steps still running and whether the browser has opened yet. A step that starts on a reset page, such as a live example, gets no page, nor does a question it asks while it runs. A question review gets no allowed effects. A read step's effects keep the limits the request states, such as a date range or filter, and tell Guardian that context the request gives, such as today's date, is no filter unless the request applies it.
@@ -29,9 +62,9 @@
 - Guardian's execution review applies its `intent_derived` input rule to a write's act step as well as a read's example.
 - A write session's `exampleInput` may come from any act step, as the core authoring skill tells the minter to pass it on each act step that needs it. The first act step that passes it fixes the session's input, even after earlier act steps ran on the caller's empty input. Later act steps repeat it unchanged or omit it, a different one is still refused before review, and publication decodes the composed contract against that input. Before, an act step that passed it after one that did not was refused.
 - An operation can ask the host to restore a signed-in session that a full page load lost, as on a site that keeps its session only in page memory. A script calls `await ensureSignedIn()` after a full page load mid-script. It returns `{ signedInAgain }`, and a script that gets `true` opens its page again. The host checks the page and signs in again only when it is signed out. The operation's deadline pauses meanwhile. The auth skill says when to call it, and never to call it between a write's commit and its read-back.
-  - A host provides it through the optional `signIn` hook on the browser it passes `executeKernelOperation`, and binds it only for an operation that runs signed in. The runtime calls it once before the operation's code runs. With no hook, or on an offline run, `ensureSignedIn` returns `{ signedInAgain: false }` and calls nothing.
+  - A host provides it through the optional `signIn` hook on the browser it passes `runKernelScript`, and binds it only for an operation that runs signed in. The runtime calls it once before the operation's code runs. With no hook, or on an offline run, `ensureSignedIn` returns `{ signedInAgain: false }` and calls nothing.
   - When the host cannot sign in again, the call throws `OperationFailure` with the new `sessionLoss: "session_not_kept"`. A credential the site rejected still throws `CredentialsRejected`.
-  - `pomerado/core/mint/contracts` adds `MintFailure.sessionLoss` (`SessionLoss`), and `AutomaticSignInCause` (`"signed_out_at_start" | "signed_out_mid_operation"`) for hosts that record automatic sign-ins.
+  - `pomerado/core/mint/contracts` adds `MintFailure.sessionLoss` (`SessionLoss`).
   - A build ended by `sessionLoss`, with every sign-in verified, now says the site accepted the login each time but the signed-in session did not survive the page load. It no longer reports a failed or spent sign-in. The agent is told to report it, the sign-in diagnostic records the cause, and the result stays `sign_in_unavailable`.
 - The minter can test a signed-in marker against the signed-out page before it sends it, with the new `check_signed_in_marker` tool (`{ selector, urlPath?, openPath? }`). A host implements it with the optional `MintDependencies.checkSignedInMarker`, which returns `SignedInMarkerCheck`: whether the signed-out snapshot shows the marker (`signedOutSnapshot`: `absent`, `matches` or `unchecked`), and whether the live page shows it now, after a fresh load and on a second signed-in page. The tool is offered on every turn but the first question, and reports the check unavailable on a host without it. A host may describe it through `HostToolDescriptions.checkSignedInMarker`.
   - `pomerado/core/destinations/signed-in-marker` holds `evaluateSignedInMarker` and `matchSignedOutSnapshots`, which match a marker against a saved, masked signed-out document, and the validators a host runs before it accepts a marker: `signedOutMatchRefusal` (`marker_matches_signed_out_page`), `loginPathRefusal` (`marker_is_login_path`, for a path alone that is the login page's), `generatedClassWarning` (`selector_relies_on_generated_classes`) and `validateSignedInMarker`, which runs them all with the live checks. The match is approximate: CSS, text and role selectors on the static main document (no shadow roots or frames), with visibility estimated without stylesheets or layout, so an element only a stylesheet hides counts as visible. A role it doesn't know, or a role name it can't compute, such as a form field's label, leaves the page `unchecked`, and the tool then reports `passed_unchecked` rather than a plain pass.
