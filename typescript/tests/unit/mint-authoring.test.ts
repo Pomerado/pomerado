@@ -16,13 +16,14 @@ import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
 import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { executeKernelOperation, offlineKernel } from "../../src/runtime/kernel-operation.js";
+import { offlineKernel } from "../support/offline-kernel.js";
+import { runKernelOperation } from "../support/kernel-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
 it("loads modular skill references and keeps auth discovery outside managed login", async () => {
   expect("websiteAuth" in authEntry).toBe(false);
-  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring", "standalone"));
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
   const skill = (name: string) => skills.find((entry) => entry.name === name);
   expect(new Set(skills.map((entry) => entry.name)).size).toBe(skills.length);
   // Host tool descriptions, failure guidance and AGENTS.md send the agent to these skills by path.
@@ -39,11 +40,11 @@ it("loads modular skill references and keeps auth discovery outside managed logi
 
 it("names only skills that load and workspace sections that install", async () => {
   const skills = new Set(
-    (await Effect.runPromise(loadAuthoringSkills("typescript/authoring", "standalone"))).map(
+    (await Effect.runPromise(loadAuthoringSkills("typescript/authoring"))).map(
       (skill) => skill.name,
     ),
   );
-  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring", "standalone"));
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
   expect(guide.files.get("AGENTS.md")).toBe(guide.instructions);
   for (const text of guide.files.values()) {
     for (const [, name] of text.matchAll(/\.agents\/([a-z-]+)\/SKILL\.md/gu))
@@ -67,7 +68,7 @@ const authoringCopy = async (edit: (path: string, text: string) => string) => {
   return root;
 };
 
-/** What a host does before loading in hosted mode: every section gets the host's text. */
+/** What a host that supplies its own text does first: every section gets the host's text. */
 const composeHostText = (text: string) =>
   text.replace(sectionMarker, (_match, id: string) => `host text for ${id}`);
 
@@ -77,34 +78,43 @@ const contents = (skills: readonly SkillDescriptor[]) =>
     return new TextDecoder().decode(skill.content);
   });
 
-it("loads standalone text by default and refuses uncomposed sections in hosted mode", async () => {
+it("loads standalone text by default", async () => {
   const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
   const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
-  expect(skills).toEqual(
-    await Effect.runPromise(loadAuthoringSkills("typescript/authoring", "standalone")),
-  );
   for (const text of [...contents(skills), ...guide.files.values()])
     expect(text).not.toContain("<!-- pomerado:");
-  const refused = { _tag: "Left", left: { code: "Unavailable" } };
-  expect(
-    await Effect.runPromise(Effect.either(loadAuthoringSkills("typescript/authoring", "hosted"))),
-  ).toMatchObject(refused);
-  expect(
-    await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", "hosted"))),
-  ).toMatchObject(refused);
 });
 
-it("loads a host-composed directory in hosted mode exactly as composed", async () => {
+it("reads every skill and guide file through a host's render, with its key", async () => {
   const root = await authoringCopy((_path, text) => composeHostText(text));
+  const keys: string[] = [];
+  // A host that composed the directory keeps its text and refuses any section it left.
+  const composed = (text: string, sectionKey: string) => {
+    keys.push(sectionKey);
+    if (text.includes("pomerado:")) throw new Error("Uncomposed section");
+    return text;
+  };
   try {
-    const skills = await Effect.runPromise(loadAuthoringSkills(root, "hosted"));
-    const guide = await Effect.runPromise(loadWorkspaceGuide(root, "hosted"));
+    const skills = await Effect.runPromise(loadAuthoringSkills(root, composed));
+    const guide = await Effect.runPromise(loadWorkspaceGuide(root, composed));
     for (const [index, skill] of skills.entries())
       expect(contents(skills)[index]).toBe(
         await readFile(join(root, skill.name, "SKILL.md"), "utf8"),
       );
     expect(guide.instructions).toBe(await readFile(join(root, "workspace/AGENTS.md"), "utf8"));
     expect(guide.instructions).toContain("host text for ");
+    // Skills load concurrently, so their keys arrive in any order before the guide's.
+    expect(keys.slice(0, skills.length).sort()).toEqual(skills.map((skill) => skill.name).sort());
+    expect(keys.slice(skills.length)).toEqual(["agents", "guide"]);
+    const refused = { _tag: "Left", left: { code: "Unavailable" } };
+    expect(
+      await Effect.runPromise(
+        Effect.either(loadAuthoringSkills("typescript/authoring", composed)),
+      ),
+    ).toMatchObject(refused);
+    expect(
+      await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", composed))),
+    ).toMatchObject(refused);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -183,21 +193,17 @@ it.each([
   ["a 0.1.1 end marker", "pomerado:hosted:end -->\n"],
   ["an uppercase marker", "<!-- Pomerado:section core.upper -->\n"],
   ["an uppercase end marker", "POMERADO:SECTION core.upper:end -->\n"],
-])("refuses %s in either mode", async (_case, appended) => {
-  const append = (path: string, text: string) =>
-    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text;
-  // The hosted copy is composed as in the test above, which loads, so only the marker fails it.
-  const roots = {
-    standalone: await authoringCopy(append),
-    hosted: await authoringCopy((path, text) => append(path, composeHostText(text))),
-  };
+])("refuses %s", async (_case, appended) => {
+  const root = await authoringCopy((path, text) =>
+    path.endsWith(join("core", "SKILL.md")) ? `${text}${appended}` : text,
+  );
   try {
-    for (const [mode, root] of Object.entries(roots) as [keyof typeof roots, string][])
-      expect(await Effect.runPromise(Effect.either(loadAuthoringSkills(root, mode)))).toMatchObject(
-        { _tag: "Left", left: { code: "Unavailable" } },
-      );
+    expect(await Effect.runPromise(Effect.either(loadAuthoringSkills(root)))).toMatchObject({
+      _tag: "Left",
+      left: { code: "Unavailable" },
+    });
   } finally {
-    for (const root of Object.values(roots)) await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -234,10 +240,10 @@ it("accepts authoritative empty invoices and rejects absent/invalid bodies", asy
     return Effect.runPromise(
       Effect.either(
         Effect.scoped(
-          executeKernelOperation(
+          runKernelOperation(
             parser,
             { body },
-            { kernel: offlineKernel, sessionId: "offline", offline: true },
+            { kernel: offlineKernel, sessionId: "offline" },
           ).pipe(
             Effect.provideService(ExecutionContext, {
               deadline: Deadline.after(5_000),
@@ -366,7 +372,7 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   const journal = await Effect.runPromise(makeEffectJournal);
   const result = await Effect.runPromise(
     Effect.scoped(
-      executeKernelOperation(
+      runKernelOperation(
         authEntry,
         {},
         {

@@ -149,15 +149,6 @@ interface RetainedLoginFailureEvidence {
   readonly privateRedactionUnavailable?: true;
 }
 
-export interface SignInRecoveryEvent {
-  readonly event:
-    | "uncertain_signed_in"
-    | "uncertain_relogin"
-    | "fresh_session_relogin"
-    | "unsent_retry"
-    | "uncertain_signed_out";
-  readonly code?: SignInFailureCode;
-}
 /** Unconfirmed cleanup or a possibly submitted sign-in requires inspection before further work. */
 export const signInOutcomeUnknown = (diagnostic: SignInDiagnostic) =>
   diagnostic.cleanupCode !== undefined ||

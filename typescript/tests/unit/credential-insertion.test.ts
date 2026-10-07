@@ -2,7 +2,6 @@ import { Effect } from "effect";
 import { expect, it } from "vitest";
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import type { AutofillInspection, AutofillStep } from "../../src/destinations/autofill-step.js";
-import { refusalEvidence } from "../../src/destinations/autofill-refusal.js";
 import { makeCredentialKeyboard } from "../../src/destinations/credential-keyboard.js";
 
 const site = "https://login.example.test";
@@ -79,10 +78,7 @@ for (const { name, markedPerSession, cause } of [
         context: { check: "typing_refused", insertion: cause },
       },
     });
-    // The step event's refusal evidence.
-    const event = refusalEvidence(report);
-    expect(event).toMatchObject({ check: "typing_refused", insertion: cause });
-    const recorded = JSON.stringify([report, event]);
+    const recorded = JSON.stringify(report);
     for (const secret of [bindingKey, password, "#password"])
       expect(recorded).not.toContain(secret);
   });
