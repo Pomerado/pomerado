@@ -528,6 +528,8 @@ test("the local minter's marker check before the signedIn step compares a page e
       [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
       // The sign-in page the host saw before typing shows it.
       [checkMarker({ selector: "body" }, "shared")],
+      // Sent anyway, the signedIn step refuses it too, and the sign-in stays open.
+      [signInStep({ signedIn: { selector: "body" } }, "signed_in_shared")],
       [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
       [explore("where")],
     ]);
@@ -549,6 +551,9 @@ test("the local minter's marker check before the signedIn step compares a page e
       secondPage: true,
       refusals: ["marker_matches_signed_out_page"],
     });
+    expect(objects(toolResult(mintRequests, "signed_in_shared"))).toContainEqual(
+      expect.objectContaining({ signedIn: false, failed: "marker_matches_signed_out_page" }),
+    );
     expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
       expect.objectContaining({ signedIn: true }),
     );
