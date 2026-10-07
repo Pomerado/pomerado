@@ -26,6 +26,8 @@ interface ShopState {
   curlApiRequests: number;
   cartPosts: number;
   loginPosts: number;
+  /** Posts to the two-screen sign-in's session endpoint, whatever they carry. */
+  sessionPosts: number;
   /** The HTTP version's contract: `error` and `changed` break it for curl traffic only. */
   api: "ok" | "error" | "changed";
   /** `refuse` makes the modeled Kernel curl fail before sending anything. */
@@ -96,15 +98,18 @@ const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string,
     `shop_session=${sessionValue}; Path=/; Secure; HttpOnly; SameSite=Lax`,
     `csrf_token=${csrfValue}; Path=/; Secure; SameSite=Lax`,
   ];
-  const home: Route = (_request, response) =>
+  // A page load keeps a signed-in session; a signed-out browser gets a fresh one.
+  const cookiesFor = (request: IncomingMessage) =>
+    cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
+  const home: Route = (request, response) =>
     html(
       response,
       `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
 <button id="add">Add to cart</button><p id="added"></p>
 <script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>`,
-      { "set-cookie": sessionCookies },
+      { "set-cookie": cookiesFor(request) },
     );
-  const search: Route = (_request, response) => {
+  const search: Route = (request, response) => {
     state.searchPageLoads += 1;
     html(
       response,
@@ -112,7 +117,7 @@ const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string,
 fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search).get('q')),{headers:{accept:'application/json'}})
 .then(r=>r.json()).then(data=>{for(const item of data.items){const li=document.createElement('li');li.dataset.id=item.id;li.dataset.name=item.name;li.dataset.price=String(item.priceMinor);li.textContent=item.name;document.querySelector('#results').append(li)}});
 </script>`,
-      { "set-cookie": sessionCookies },
+      { "set-cookie": cookiesFor(request) },
     );
   };
   const productsApi: Route = (request, response) => {
@@ -137,7 +142,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       return json(response, 403, { error: "csrf" });
     return json(response, 200, { cartId: "c-9" });
   };
-  const loginPage: Route = (_request, response) =>
+  const loginPage: Route = (request, response) =>
     html(
       response,
       `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button${state.loginSubmit === "after_input" ? " disabled" : ""}>Sign in</button></form>
@@ -148,7 +153,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
           : ""
       }
 <script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(response.ok)location.href='/account'})</script>`,
-      { "set-cookie": sessionCookies },
+      { "set-cookie": cookiesFor(request) },
     );
   const login: Route = async (request, response) => {
     state.loginPosts += 1;
@@ -177,7 +182,9 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     );
   // The sign-in's query goes on to the password screen: `hidden=N` puts N hidden text fields
   // ahead of its own field, `pad=N` puts N spaces ahead of the identifier its label echoes in
-  // place of "Password for", and `tag` marks its help links, so a test finds its own screen.
+  // place of "Password for", `tag` marks its help links, so a test finds its own screen,
+  // `echo=none` shows the identifier only in the hidden field, and `stash=password` puts the
+  // account's password in its form's action, as page code that kept a typed value could.
   const queryOf = (request: IncomingMessage) =>
     new URL(request.url ?? "/", "https://www.shop.test").searchParams;
   const identifierScreen: Route = (request, response) =>
@@ -193,20 +200,38 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       (_, index) => `<a href="/help/${index}">Help topic ${index} ${queryOf(request).get("tag") ?? ""}</a>`,
     ).join("");
     const pad = Number(queryOf(request).get("pad") ?? 0);
-    const label = pad > 0 ? `${" ".repeat(pad)}${typed}` : `Password for ${typed}`;
+    const echo = queryOf(request).get("echo") !== "none";
+    const label = !echo ? "Password" : pad > 0 ? `${" ".repeat(pad)}${typed}` : `Password for ${typed}`;
     const hidden = Array.from(
       { length: Number(queryOf(request).get("hidden") ?? 0) },
       (_, index) => `<input name="extra${index}" style="display:none">`,
     ).join("");
+    const action =
+      queryOf(request).get("stash") === "password"
+        ? `/sign-in/session?next=${encodeURIComponent(shopAccount.password)}`
+        : "/sign-in/session";
     html(
       response,
-      `<title>Password</title><p>Signing in as ${typed}</p><form method="post" action="/sign-in/session"><input type="hidden" name="user" value="${typed}">${hidden}<label>${label}<input id="password" name="password" type="password" required placeholder="${typed}"></label><input id="otp" style="display:none" aria-label="Code"><button id="sign-in">Sign in</button><button id="trouble" disabled>Trouble signing in</button></form><nav>${links}</nav>`,
+      `<title>Password</title>${echo ? `<p>Signing in as ${typed}</p>` : ""}<form method="post" action="${action}"><input type="hidden" name="user" value="${typed}">${hidden}<label>${label}<input id="password" name="password" type="password" required placeholder="${echo ? typed : ""}"></label><input id="otp" style="display:none" aria-label="Code"><button id="sign-in">Sign in</button><button id="trouble" disabled>Trouble signing in</button></form><nav>${links}</nav>`,
     );
+  };
+  // The password screen's form posts here: the shop's account signs in, any other is refused.
+  const passwordSession: Route = async (request, response) => {
+    state.sessionPosts += 1;
+    const form = new URLSearchParams(await readBody(request));
+    if (form.get("user") !== shopAccount.username || form.get("password") !== shopAccount.password)
+      return html(response, "<title>Password</title><p id='wrong-password'>Wrong password</p>");
+    response.writeHead(303, {
+      location: "/account",
+      "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
+    });
+    response.end();
   };
   return new Map([
     ["/", home],
     ["/sign-in", identifierScreen],
     ["/sign-in/password", postOnly(passwordScreen)],
+    ["/sign-in/session", postOnly(passwordSession)],
     ["/search", search],
     ["/api/products", productsApi],
     ["/api/cart", postOnly(cart)],
@@ -243,6 +268,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     curlApiRequests: 0,
     cartPosts: 0,
     loginPosts: 0,
+    sessionPosts: 0,
     api: "ok",
     curl: "ok",
     loginSubmit: "enabled",
