@@ -758,7 +758,7 @@ it("forwards a failed private host kind's final timing without its error or deta
   const result = await Effect.runPromise(
     Effect.either(
       makeGuardian(
-        makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+        makeOpenAIReviewer("{{ tenant_policy_config }}", false, { ...native, observerFactory }),
         diagnostics,
       ).reviewHostKind(pending, listing({})),
     ),
