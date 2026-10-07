@@ -185,7 +185,6 @@ export const mintState = (
         screenMintText(
           { projection: session.projection },
           { step, screen: inspection.screen },
-          { area: "review" },
         ).pipe(
           Effect.flatMap((source) =>
             context.review(
