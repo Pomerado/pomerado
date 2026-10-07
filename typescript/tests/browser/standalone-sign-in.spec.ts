@@ -399,3 +399,153 @@ test("a later build in the same session judges its first sign-in screen as typed
     expectRefusedSubmit(shop, mintRequests);
   });
 });
+
+/** Opens the shop's search page, so the build visits a second page once signed in. */
+const openSearch = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"open_search",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/search?q=lamp', page.url()).href); return true;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+/** Returns the address the primary tab shows. */
+const readWhere = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_where",input:Schema.Struct({}),output:Schema.Struct({where:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"const url = new URL(page.url()); return url.pathname + url.search;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {where:String(response.result)};
+});`;
+const create = (path: string, content: string, callId: string): Output[number] => ({
+  type: "apply_patch_call",
+  callId,
+  status: "completed",
+  operation: {
+    type: "create_file",
+    path,
+    diff: `${content
+      .split("\n")
+      .map((line) => `+${line}`)
+      .join("\n")}\n`,
+  },
+});
+const checkMarker = (marker: object, callId: string) =>
+  call("check_signed_in_marker", { intent: "Test the signed-in marker", ...marker }, callId);
+/** The host's answer to the minter's marker check `callId`. */
+const markerResult = (requests: readonly ModelRequest[], callId: string) =>
+  objects(toolResult(requests, callId)).find((item) => item["kind"] === "host_signed_in_marker");
+
+test("the local minter's marker check compares the signed-out sign-in page, a fresh load and another signed-in page", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a host sign-in, four marker checks and an exploration",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests: ModelRequest[] = [];
+    const steps: Output[] = [
+      [
+        signInStep(
+          {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+          "sign_in",
+        ),
+      ],
+      [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      // The sign-in page the host saw before typing shows it too.
+      [checkMarker({ selector: "body" }, "shared")],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+      // XPath is beyond the signed-out page's match, so that page leaves it unchecked.
+      [checkMarker({ selector: "xpath=//p[@id='account']", openPath: "/account" }, "xpath")],
+      [
+        create("explore/search.mjs", openSearch, "patch_search"),
+        create("explore/where.mjs", readWhere, "patch_where"),
+      ],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/search.mjs", intent: "Open the search page signed in" },
+          "search",
+        ),
+      ],
+      // The search page, visited signed in, doesn't show the account page's own element.
+      [checkMarker({ selector: "#account", openPath: "/account" }, "second")],
+      // The check left the agent on the search page, where it was.
+      [execute("explore", { entrypoint: "explore/where.mjs", intent: "Read the page" }, "where")],
+    ];
+    const minter = provider(
+      (_request, index) => steps[index] ?? [message("Stopping here.")],
+      mintRequests,
+    );
+    const asked: InputRequest[] = [];
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: guardian(),
+            ask: answers(asked),
+            timeoutMs: 45_000,
+          });
+          yield* service.mint({
+            url: `${shop.origin}/login`,
+            intent: "Read the account",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+      expect.objectContaining({ signedIn: true }),
+    );
+    expect(markerResult(mintRequests, "shared")).toEqual(
+      expect.objectContaining({
+        status: "refused",
+        signedOutSnapshot: "matches",
+        signedInNow: true,
+        freshLoad: true,
+        refusals: ["marker_matches_signed_out_page"],
+      }),
+    );
+    // The shared check loaded the root, then went back to the account page, which shows the
+    // marker now. No other page was visited signed in yet, so there is no second page.
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed",
+      signedOutSnapshot: "absent",
+      signedInNow: true,
+      freshLoad: true,
+    });
+    expect(markerResult(mintRequests, "xpath")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed_unchecked",
+      signedOutSnapshot: "unchecked",
+      signedInNow: true,
+      freshLoad: true,
+      warnings: ["signed_out_page_unchecked"],
+    });
+    // The agent is on the search page now, and the account page loads with the marker.
+    expect(markerResult(mintRequests, "second")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "refused",
+      signedOutSnapshot: "absent",
+      signedInNow: false,
+      freshLoad: true,
+      secondPage: false,
+      refusals: ["marker_not_signed_in_now", "marker_missing_on_second_page"],
+    });
+    expect(objects(toolResult(mintRequests, "where"))).toContainEqual({ where: "/search?q=lamp" });
+    // The checks only loaded pages: one sign-in, and no value reached the minter.
+    expect(shop.state.loginPosts).toBe(1);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+  });
+});
