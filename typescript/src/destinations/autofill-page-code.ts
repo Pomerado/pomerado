@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
 import type { AutofillPopup, DateOfBirthFormat } from "./autofill-contracts.js";
 import { locateCode, questionTextCode } from "./autofill-locate-code.js";
+import { clipCode, controlNamingCode } from "./control-naming-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
 import { pageControlsCode } from "./page-controls.js";
@@ -320,6 +321,15 @@ if (submit !== null && submit.inert)
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check)}`;
 
+/** What named a control when the host inspected it, each as `clip` keeps it. */
+export interface ControlIdentity {
+  readonly label: string | null;
+  readonly ariaLabel: string | null;
+  readonly placeholder: string | null;
+  readonly type: string | null;
+  readonly autocomplete: string | null;
+}
+
 /** What `autofillSignedInCode` answers. */
 export const SignedInPage = Schema.Struct({
   url: Schema.String,
@@ -330,10 +340,23 @@ export const SignedInPage = Schema.Struct({
 
 /**
  * Page code: whether a recorded challenge field still asks. A selector counts only where it
- * matches a control that shows and takes typing, in a frame on the site or a configured sign-in
- * origin whose every frame above it shows. A frame that detaches during the check shows nothing.
+ * matches the same control the host inspected (`sameControl`), one that shows and takes typing, in
+ * a frame on the site or a configured sign-in origin whose every frame above it shows. A frame
+ * that detaches during the check shows nothing.
  */
 const signedInChallengeFormCode = `
+${clipCode}
+// The same words name it as named the recorded field, with its type and autocomplete where
+// inspection recorded one.
+const sameControl = async (control, identity) => {
+  const named = await control.evaluate((element) => {
+    ${controlNamingCode}
+    return controlNaming(element);
+  });
+  const found = Object.fromEntries(Object.entries(named).map(([key, value]) => [key, clip(value)]));
+  return ["label", "ariaLabel", "placeholder"].every((key) => found[key] === identity[key]) &&
+    ["type", "autocomplete"].every((key) => identity[key] === null || found[key] === identity[key]);
+};
 // A frame's own address, or for an about:blank or about:srcdoc frame, the first one above it with
 // a real address, as locate reads where a control sits.
 const frameAddress = (frame) => {
@@ -358,17 +381,18 @@ const frameShows = async (frame) => {
 };
 // A read-only or disabled control takes no typing, and one that is no form control throws.
 const takesTyping = (control) => control.isEditable({ timeout: 1000 }).catch(() => false);
-const recordedChallengeVisible = async (selectors) => {
-  if (selectors.length === 0) return false;
+const recordedChallengeVisible = async (fields) => {
+  if (fields.length === 0) return false;
   for (const frame of primary.frames()) {
     try {
       if (!challengeOrigin(frame) || !(await frameShows(frame))) continue;
-      for (const selector of selectors) {
+      for (const { selector, identity } of fields) {
         const located = frame.locator(selector);
         const count = Math.min(await located.count(), 100);
         for (let index = 0; index < count; index++) {
           const control = located.nth(index);
-          if (await control.isVisible() && await takesTyping(control)) return true;
+          if (await control.isVisible() && await takesTyping(control) && await sameControl(control, identity))
+            return true;
         }
       }
     } catch (error) {
@@ -387,15 +411,18 @@ const recordedChallengeVisible = async (selectors) => {
  * does not count unless one of those selectors matches in it. A hidden match, such as the username
  * a change-password form keeps for password managers, is no sign-in form showing. With no
  * `signInFields`, any visible password field counts. A recorded challenge field
- * (`challengeFields`) still asks as `signedInChallengeFormCode` reads it, on the site or one of
- * `authenticationOrigins`.
+ * (`challengeFields`, each with the identity the host inspected) still asks as
+ * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`.
  */
 export const autofillSignedInCode = (
   targetId: string,
   selector: string | undefined,
   siteHost: string,
   signInFields: readonly string[],
-  challengeFields: readonly string[],
+  challengeFields: readonly {
+    readonly selector: string;
+    readonly identity: ControlIdentity;
+  }[],
   popups: readonly AutofillPopup[] = [],
   authenticationOrigins: readonly string[] = [],
 ) =>

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { opaqueOrigins } from "./autofill-refusal.js";
+import { clipCode, controlNamingCode } from "./control-naming-code.js";
 
 /**
  * The primary page's window key for what each step call found, the same for every call of this
@@ -91,7 +92,7 @@ export const questionTextCode = `(element) => {
  * in the page (`destinations`), for the guard. For the host's evidence it says which frame matched
  * and how many it searched, or, with no one visible match, each frame that matched and how often.
  */
-const findCode = `const clip = (value) => (typeof value === "string" && value.trim() !== "" ? value.trim().replace(/\\s+/g, " ").slice(0, 200) : null);
+const findCode = `${clipCode}
 // Questions are explicit observed locators, never inferred from names or routes.
 const readQuestion = async (frame, selector) => {
   if (selector == null || selector.includes(">>") || selector.includes("internal:")) return undefined;
@@ -172,14 +173,8 @@ const locate = async (selector, questionSelector) => {
     const empty =
       (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
       element.value === "";
-    const labels = "labels" in element && element.labels ? Array.from(element.labels) : [];
-    const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
-      .split(/\\s+/).map((id) => document.getElementById(id)).filter(Boolean);
-    const words = (node) => {
-      const copy = node.cloneNode(true);
-      for (const field of copy.querySelectorAll("input,textarea,select")) field.remove();
-      return copy.textContent;
-    };
+    ${controlNamingCode}
+    const naming = controlNaming(element);
     return {
       disabled,
       inert,
@@ -188,14 +183,14 @@ const locate = async (selector, questionSelector) => {
         role: element.getAttribute("role"),
         formMethod: methods.join(",") || null,
         tag: element.tagName.toLowerCase(),
-        type: element.getAttribute("type"),
+        type: naming.type,
         name: element.getAttribute("name"),
         id: element.getAttribute("id"),
-        autocomplete: element.getAttribute("autocomplete"),
+        autocomplete: naming.autocomplete,
         inputmode: element.getAttribute("inputmode"),
-        label: [...labels, ...labelledBy].map(words).join(" "),
-        placeholder: element.getAttribute("placeholder"),
-        ariaLabel: element.getAttribute("aria-label"),
+        label: naming.label,
+        placeholder: naming.placeholder,
+        ariaLabel: naming.ariaLabel,
         text: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? null : element.textContent,
       },
     };

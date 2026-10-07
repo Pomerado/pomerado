@@ -11,6 +11,7 @@ import type {
   AutofillField,
   AutofillInspection,
   AutofillPage,
+  AutofillScreens,
   AutofillSignedIn,
   AutofillSlot,
   AutofillStep,
@@ -118,7 +119,8 @@ export const makeLiveAuthentication = (options: {
     typed: typing.typed,
   });
   const values: Partial<Record<AutofillSlot, string>> = {};
-  const screens: AutofillStep[] = [];
+  /** Each filled screen, each field with what named its control at inspection. */
+  const screens: AutofillScreens[number][] = [];
   /** Where the current sign-in's screens start in `screens`. */
   let signInStart = 0;
   /** Whether a screen's fill may have sent anything to the site. */
@@ -205,7 +207,24 @@ export const makeLiveAuthentication = (options: {
           item.slot === "private_answer" ? (privateAnswers[index] ?? "") : (values[item.slot] ?? ""),
         ),
       });
-      screens.push(selected);
+      screens.push({
+        ...selected,
+        fields: selected.fields.map((item, index) => {
+          const named = inspected.screen.fields[index];
+          return named === undefined
+            ? item
+            : {
+                ...item,
+                identity: {
+                  label: named.label,
+                  ariaLabel: named.ariaLabel,
+                  placeholder: named.placeholder,
+                  type: named.type,
+                  autocomplete: named.autocomplete,
+                },
+              };
+        }),
+      });
       delete values.code;
       delete values.recovery_code;
       if (maySend(result)) sent = true;

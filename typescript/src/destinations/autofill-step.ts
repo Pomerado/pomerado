@@ -4,7 +4,12 @@ import { failureDetail } from "../runtime/failure-detail.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 import { frameCrossing, unsupportedSelector } from "./autofill-locate-code.js";
-import { autofillSignedInCode, autofillStepCode, SignedInPage } from "./autofill-page-code.js";
+import {
+  autofillSignedInCode,
+  autofillStepCode,
+  type ControlIdentity,
+  SignedInPage,
+} from "./autofill-page-code.js";
 import { openAutofillLogin } from "./autofill-page.js";
 import {
   foundEvidence,
@@ -488,10 +493,17 @@ const openAccountPage = (openPath: string | undefined, page: AutofillPage, siteO
     };
   });
 
-/** A sign-in's recorded fields: selectors and, when present, slots of one-use challenges. */
+/**
+ * A sign-in's recorded fields: selectors and, when present, slots of one-use challenges, with the
+ * words, type and autocomplete that named each control when the host inspected it (`identity`).
+ */
 export type AutofillScreens = readonly {
   readonly popup?: AutofillPopup | undefined;
-  readonly fields: readonly { readonly selector: string; readonly slot?: AutofillSlot }[];
+  readonly fields: readonly {
+    readonly selector: string;
+    readonly slot?: AutofillSlot;
+    readonly identity?: ControlIdentity | undefined;
+  }[];
 }[];
 
 /**
@@ -499,9 +511,13 @@ export type AutofillScreens = readonly {
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
  * visible one. It also refuses an explicitly recorded challenge field of the current sign-in's
- * `challengeScreens` (`screens` unless given) that still shows and takes typing, on the site or
- * one of `authenticationOrigins`, a provider frame included. A read-only or disabled control, an
- * unconfigured off-site frame and a frame inside a hidden one do not count. It does not classify
+ * `challengeScreens` (`screens` unless given) while the same control still shows and takes
+ * typing, on the site or one of `authenticationOrigins`, a provider frame included. The same
+ * control is one the same words name as named the field at inspection (its label, `aria-label`
+ * and placeholder), with its type and autocomplete where recorded. A field recorded with no such
+ * words counts for nothing, since the host cannot tell it from another control its selector
+ * matches. A read-only or disabled control, an unconfigured off-site frame and a frame inside a
+ * hidden one do not count. It does not classify
  * unrecorded controls or infer a challenge from the page route. Callers must inspect and record
  * each authentication screen before checking completion. Another form's password field does not
  * count unless a recorded selector matches in it. Screens with no field leave any visible
@@ -531,11 +547,14 @@ export const checkAutofillSignedIn = (input: {
     const challengeFields = (input.challengeScreens ?? input.screens)
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
-      .filter((field) =>
-        field.slot === "private_answer" || field.slot === "code" || field.slot === "recovery_code",
-      )
-      .map((field) => field.selector)
-      .filter((selector) => !frameCrossing(selector));
+      .flatMap((field) =>
+        (field.slot === "private_answer" || field.slot === "code" || field.slot === "recovery_code") &&
+        !frameCrossing(field.selector) &&
+        field.identity !== undefined &&
+        (field.identity.label ?? field.identity.ariaLabel ?? field.identity.placeholder) !== null
+          ? [{ selector: field.selector, identity: field.identity }]
+          : [],
+      );
     const read = yield* page
       .execute(
         autofillSignedInCode(
