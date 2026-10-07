@@ -162,4 +162,15 @@ describe("makeMarkerChecks", () => {
     expect(checked).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
     expect(tab.loads).toEqual([]);
   });
+
+  it("loads openPath, or else the site's root, as the fresh page", async () => {
+    const tab = modeledTab({ at: "/account", shows: ["/account"] });
+    const markers = markerChecks(tab);
+    const checked = await Effect.runPromise(
+      markers.check({ selector: "#account", urlPath: "/account" }),
+    );
+    // The root is not the marker's path, as a run's reset finds it.
+    expect(checked).toMatchObject({ signedInNow: true, freshLoad: false });
+    expect(tab.loads[0]).toBe("/");
+  });
 });

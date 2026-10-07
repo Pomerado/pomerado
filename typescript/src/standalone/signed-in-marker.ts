@@ -103,7 +103,7 @@ const pathOf = (url: URL) => `${url.pathname}${url.search}`;
 /**
  * The local host's `MintDependencies.checkSignedInMarker`, and the pages it compares. It tests the
  * marker against the build's signed-out pages, on the live page as it is, after the host loads
- * the marker's page (`openPath`, else `urlPath`, else the site's root) again, and on the newest
+ * the marker's page (`openPath`, else the site's root) again, and on the newest
  * other page the build explored once its sign-in sent the login. It signs nothing in and sends no
  * value. The loads move the primary tab, so the host then opens the address it was on again; what
  * that page held only in memory, such as a half-filled form, is gone. A current page the host
@@ -204,7 +204,8 @@ export const makeMarkerChecks = (input: {
                 error: new Error("The current page could not be read"),
               }),
           });
-        const freshPath = marker.openPath ?? marker.urlPath ?? "/";
+        // The tool's text: `openPath`, or the site's origin.
+        const freshPath = marker.openPath ?? "/";
         const freshLoad = yield* load(indicator, freshPath);
         const here = URL.parse(signedInNow.url ?? "");
         const fresh = new URL(freshPath, input.siteOrigin);
