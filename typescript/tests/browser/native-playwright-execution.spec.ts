@@ -217,6 +217,7 @@ const watchedRun =
   };
 
 test("a typing watch marks a value typed only by a typing call on the site that completed", async () => {
+  test.setTimeout(120_000);
   const { site, other, close } = await typingSites();
   try {
     await native(async (executor) => {

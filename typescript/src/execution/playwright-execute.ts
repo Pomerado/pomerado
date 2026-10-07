@@ -56,7 +56,8 @@ export interface PlaywrightOptions {
 }
 /**
  * An answered script and which watched values its typing calls delivered, by index, each with the
- * URLs of the frame it went into when the call started and once it completed.
+ * URLs of the frames it may have gone into: when the call started and once it completed, and for
+ * keys typed with nothing focused every address a frame of the page loaded while the call ran.
  */
 const WatchedResponse = Schema.Struct({
   ...BrowserExecuteResponse.fields,
@@ -69,9 +70,10 @@ const WatchedResponse = Schema.Struct({
 /**
  * Page code run while the host watches for `values`. A value counts as typed once a `fill`,
  * `type` or `pressSequentially` call on a page, frame, locator or keyboard got it as the text to
- * enter, completed without error and typed it in a frame whose URL `where` accepts both when the
- * call started and once it completed. A call that failed or typed elsewhere, or code that never
- * ran, types nothing.
+ * enter, completed without error and typed it where `where` accepts every URL reported for it: the
+ * frame's when the call started and once it completed, and for keys typed with nothing focused
+ * every frame's of the page and every address one loaded while the call ran. A call that failed
+ * or typed elsewhere, or code that never ran, types nothing.
  */
 export interface TypingWatch {
   readonly executeResponse: BrowserExecute;

@@ -60,7 +60,8 @@ const identify = (context: BrowserContext, page: Page) =>
 
 /**
  * A watched value's index and the URLs of the frames a completed typing call may have entered it
- * in, when the call started and once it completed.
+ * in, when the call started and once it completed, and for keys typed with nothing focused every
+ * address a frame of the page loaded while the call ran.
  */
 type Delivery = readonly [index: number, urls: readonly string[]];
 
