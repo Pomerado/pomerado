@@ -6,7 +6,7 @@ import {
   ReviewFailure,
   type PendingExecution,
 } from "../guardian/review.js";
-import { makeOpenAIReviewer } from "../guardian/openai.js";
+import { makeOpenAIReviewer, nativeExecutionEnvironment } from "../guardian/openai.js";
 import {
   answersForReview,
   type AnsweredQuestion,
@@ -172,7 +172,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const guardian = makeGuardian(
       {
         ...makeOpenAIReviewer(policy, false, {
-          executionEnvironment: "native",
+          executionEnvironment: nativeExecutionEnvironment,
           ...(options.guardianProvider === undefined
             ? {}
             : { modelProvider: options.guardianProvider }),
