@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import { CredentialRejectedField } from "./authentication.js";
+import type { SessionLoss } from "./authentication.js";
 import { ChallengeFailure } from "./challenge.js";
 import { CommitAlreadySent, WriteConfirmationRefused } from "./errors.js";
 import type { Dispatch } from "./errors.js";
@@ -57,13 +58,15 @@ export class CredentialsRejected extends Error {
 /**
  * A Kernel script's own failure: a call returned `success: false`, or the page was not in the
  * state the script needs. `dispatch` says whether a website write may have gone out. A failed
- * call's `stderr` becomes the cause, so its stack reaches the failure detail.
+ * call's `stderr` becomes the cause, so its stack reaches the failure detail. `sessionLoss` is set
+ * by the runtime when the host could not sign the page in again (`ensureSignedIn`).
  */
 export class OperationFailure extends Error {
   override readonly name = "OperationFailure";
   readonly _tag = "OperationFailure";
   readonly dispatch: Dispatch;
   readonly http?: HttpAnswerFailure;
+  readonly sessionLoss?: SessionLoss;
   constructor(
     message: string,
     options: {
@@ -71,6 +74,7 @@ export class OperationFailure extends Error {
       readonly cause?: unknown;
       readonly stderr?: string | undefined;
       readonly http?: HttpAnswerFailure;
+      readonly sessionLoss?: SessionLoss;
     } = {},
   ) {
     const cause =
@@ -78,6 +82,7 @@ export class OperationFailure extends Error {
     super(message.slice(0, 4096), cause === undefined ? {} : { cause });
     this.dispatch = options.dispatch ?? "unknown";
     if (options.http !== undefined) this.http = options.http;
+    if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
   }
 }
 

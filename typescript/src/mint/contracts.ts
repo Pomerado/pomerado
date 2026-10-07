@@ -1,6 +1,7 @@
 import type { MintDiagnostics, MintReporting } from "./diagnostics.js";
 import type { MintProjection } from "./projection.js";
 import { CredentialRejectedField } from "../runtime/authentication.js";
+import type { SessionLoss } from "../runtime/authentication.js";
 import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
@@ -88,6 +89,14 @@ export interface RunnerChannels {
 export type SpentSignIn =
   "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
 
+export type { SessionLoss };
+
+/**
+ * Why the host signed a page in again by itself, as it records each automatic sign-in: the page
+ * was signed out when the operation started, or became signed out while it ran.
+ */
+export type AutomaticSignInCause = "signed_out_at_start" | "signed_out_mid_operation";
+
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
@@ -139,6 +148,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    * was refused, once the attempt's sign-ins are spent: the build ends `sign_in_unavailable`.
    */
   readonly spentSignIn?: SpentSignIn;
+  /**
+   * Set by the host when the site lost its signed-in session, as on a page load, and the host
+   * could not sign in again: the build ends `sign_in_unavailable` with this cause.
+   */
+  readonly sessionLoss?: SessionLoss;
   /** The build's owner left a request unanswered; the build ends as `no_response`. */
   readonly noResponse?: { readonly possibleCommit: boolean };
   /**

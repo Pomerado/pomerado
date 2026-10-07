@@ -1,6 +1,6 @@
 import type { HostRefusal } from "../destinations/autofill-refusal.js";
 import type { failureRootCause } from "../runtime/failure-detail.js";
-import { MintFailure, type SpentSignIn } from "./contracts.js";
+import { MintFailure, type SessionLoss, type SpentSignIn } from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 
 /**
@@ -97,6 +97,15 @@ const spentReason: Record<SpentSignIn, string> = {
   fresh_profile_sign_ins_spent:
     "the sign-ins the attempt allows on a recovery's new profile are spent",
   host_refusals_repeated: `the host refused the same field of the same screen the same way ${maximumHostRefusals} times in a row, and no correction of the step got past it`,
+};
+
+/**
+ * How a session the site did not keep reads, once every sign-in verified: the login was never
+ * the problem, so the agent and the owner are not told a sign-in failed.
+ */
+const sessionLossReason: Record<SessionLoss, string> = {
+  session_not_kept:
+    "the site accepted the login each time, but the signed-in session did not survive the page load",
 };
 
 /**
@@ -219,27 +228,35 @@ export const savedProfileSetAsideNotice = (
 });
 
 /**
- * What the agent hears when it calls authenticate once the attempt's sign-ins are spent and no
- * failed sign-in is pending: the host starts none, and sign-in is unavailable in this build.
+ * What the agent hears when no failed sign-in is pending and none can run: it called authenticate
+ * once the attempt's sign-ins were spent, or every sign-in verified but the site did not keep its
+ * session (`sessionLoss`). The host starts none, and sign-in is unavailable in this build.
  */
-const spentSignInFeedback = (spent: SpentSignIn) => ({
+const spentSignInFeedback = (spent: SpentSignIn | undefined, sessionLoss?: SessionLoss) => ({
   nextStep: "report_sign_in_unavailable" as const,
   credentialSent: false as const,
-  notice: `The host started no sign-in, and sent nothing: ${spentReason[spent]}. ${unavailableInBuild} Report that the site could not be signed in in this attempt.`,
+  notice:
+    sessionLoss !== undefined
+      ? `The host could not keep the site signed in: ${sessionLossReason[sessionLoss]}${spent === undefined ? "" : `, and ${spentReason[spent]}`}. The host sent nothing again. ${unavailableInBuild} Report that the site did not keep its signed-in session, with this cause.`
+      : `The host started no sign-in, and sent nothing${spent === undefined ? "" : `: ${spentReason[spent]}`}. ${unavailableInBuild} Report that the site could not be signed in in this attempt.`,
 });
 
-/** A failed or refused sign-in as the host hands it on: its diagnostic and what was spent. */
+/**
+ * A failed or refused sign-in as the host hands it on: its diagnostic, what was spent, and a
+ * session the site did not keep.
+ */
 interface SignInFailure {
   readonly authentication?: SignInDiagnostic;
   readonly spentSignIn?: SpentSignIn;
+  readonly sessionLoss?: SessionLoss;
 }
 
 /** What a failed or refused sign-in tells the agent, or undefined for any other failure. */
 export const signInFeedbackOf = (error: SignInFailure) =>
   error.authentication !== undefined
     ? signInFailureFeedback(error.authentication, error.spentSignIn)
-    : error.spentSignIn !== undefined
-      ? spentSignInFeedback(error.spentSignIn)
+    : error.spentSignIn !== undefined || error.sessionLoss !== undefined
+      ? spentSignInFeedback(error.spentSignIn, error.sessionLoss)
       : undefined;
 
 /** How the answer closes, by whether sign-in is unavailable and when the build then ends. */
@@ -261,7 +278,9 @@ export const signInAnswer = (
   ending: keyof typeof endingNotice,
 ) => ({
   code:
-    error.authentication === undefined ? error.spentSignIn : signInRootCode(error.authentication),
+    error.authentication === undefined
+      ? (error.sessionLoss ?? error.spentSignIn)
+      : signInRootCode(error.authentication),
   fields: {
     ...("signInOutcome" in feedback ? { signInOutcome: feedback.signInOutcome } : {}),
     nextStep: feedback.nextStep,
@@ -270,6 +289,7 @@ export const signInAnswer = (
       ? { countsTowardSignInCap: feedback.countsTowardSignInCap }
       : {}),
     ...(error.spentSignIn === undefined ? {} : { spentSignIn: error.spentSignIn }),
+    ...(error.sessionLoss === undefined ? {} : { sessionLoss: error.sessionLoss }),
     ...(ending === "none" ? {} : { buildOutcome: "sign_in_unavailable" as const }),
   },
   notice: `${feedback.notice}${endingNotice[ending]}`,
@@ -277,21 +297,27 @@ export const signInAnswer = (
 
 /**
  * The build's result once sign-in is unavailable, as its owner reads it: the root cause's code
- * and phase, whether the login reached the site, and what spent the attempt's sign-ins. It holds
- * no provider or site text.
+ * and phase, whether the login reached the site, what spent the attempt's sign-ins, and a session
+ * the site did not keep. It holds no provider or site text.
  */
 export const signInUnavailableSummary = (
   failure: SignInDiagnostic | undefined,
   spent: SpentSignIn | undefined,
+  sessionLoss?: SessionLoss,
 ) => {
   const why =
     spent !== undefined
       ? `no further sign-in could run in this attempt, since ${spentReason[spent]}`
       : failure?.code === "SignInsSpent"
         ? "the attempt's sign-in allowance was spent"
-        : "no further sign-in could run in this attempt";
+        : sessionLoss !== undefined
+          ? "the site did not keep its signed-in session, and the host could not sign in again"
+          : "no further sign-in could run in this attempt";
   if (failure?.code === "LoginIdentityConflict")
     return "Sign-in was unavailable, so the build stopped without publishing. This login conflicts with the one the owner's Personal account has locked this site to, so it can never sign in here. Nothing was sent. Recorded effects and receipts are preserved.";
+  // Every sign-in verified: the login was never the problem, the session's survival was.
+  if (failure === undefined && sessionLoss !== undefined)
+    return `Sign-in was unavailable, so the build stopped without publishing. The site accepted the login each time, but the signed-in session did not survive the page load${spent === undefined ? "" : `, and ${spentReason[spent]}`}. The host sent nothing again. Recorded effects and receipts are preserved.`;
   const failed =
     failure === undefined || failure.code === "SignInsSpent"
       ? "The site could not be signed in"
