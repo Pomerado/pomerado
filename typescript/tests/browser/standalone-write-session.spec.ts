@@ -120,6 +120,64 @@ test("publication refuses a contract that rejects the session's input, and publi
   }
 });
 
+test("the first act step that passes exampleInput fixes the session's input after steps on the caller's empty input", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  const stated = JSON.stringify({ note: "kept" });
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/look.mjs": probe(),
+            "src/save.mjs": saveNote,
+            "src/read.mjs": readNote,
+            "src/tool.mjs": saveNote,
+          }),
+        // The first act step needs no input, so it runs the caller's empty one.
+        () => [call("execute", act("src/look.mjs"), "look")],
+        // The first step that passes exampleInput fixes the session's input.
+        () => [call("execute", act("src/read.mjs", stated), "read")],
+        // A step that passes another is refused, and one that omits it runs it.
+        () => [call("execute", act("src/save.mjs", { note: "other" }), "changed")],
+        () => [call("execute", act("src/save.mjs"), "save")],
+        (request) => [finish("src/tool.mjs", executionIdOf(request, "save"), "publish")],
+      ],
+    });
+    for (const id of ["look", "read", "save"])
+      expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "changed")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "changed"))).toContain(
+      "already runs the exampleInput an earlier act step passed",
+    );
+    expect(fixture.saved).toEqual(["kept"]);
+    // Publication decodes the session's input, so the published tool requires it.
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.inputSchema).toMatchObject({ required: ["note"] });
+    const reviewed = executions(guardian.reviews);
+    expect(reviewed.map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "act",
+      "act",
+      "act",
+      "contract",
+    ]);
+    expect(reviewed.map(submittedInput)).toEqual(["{}", stated, stated, stated]);
+    expect(reviewed.map((review) => currentOf(review)?.["input"])).toEqual([
+      undefined,
+      "intent_derived",
+      "intent_derived",
+      undefined,
+    ]);
+  } finally {
+    await site.close();
+  }
+});
+
 test("a build with nothing to recover refuses inspect and residual before review", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();

@@ -1,4 +1,3 @@
-export type BrowserMode = "headless" | "headful" | "headful-gpu";
 export type RetainedProviderStage =
   | "profile_decode"
   | "connection_decode"

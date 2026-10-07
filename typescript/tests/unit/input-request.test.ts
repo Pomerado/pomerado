@@ -1,12 +1,6 @@
 import { Either, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import {
-  InputRequest,
-  inputWindowMs,
-  maximumInputWaitMs,
-  noticeRequest,
-  validateAnswer,
-} from "../../src/runtime/input-request.js";
+import { InputRequest, noticeRequest, validateAnswer } from "../../src/runtime/input-request.js";
 
 const request = Schema.decodeUnknownSync(InputRequest)({
   id: "3f0c2a4e-7c1e-4a55-9d3b-1f2e3d4c5b6a",
@@ -290,14 +284,5 @@ describe("validateAnswer", () => {
       "password_required",
       "login",
     ]);
-  });
-});
-
-describe("inputWindowMs", () => {
-  it("is the smallest of the policy bound, the source's end and the job window", () => {
-    expect(inputWindowMs({ now: 0 })).toBe(maximumInputWaitMs);
-    expect(inputWindowMs({ now: 1_000, sourceEndsAt: 61_000 })).toBe(60_000);
-    expect(inputWindowMs({ now: 0, jobWindowEndsAt: 30_000, endMarginMs: 10_000 })).toBe(20_000);
-    expect(inputWindowMs({ now: 50_000, jobWindowEndsAt: 40_000 })).toBeLessThan(0);
   });
 });

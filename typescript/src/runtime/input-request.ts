@@ -172,16 +172,6 @@ export const CredentialQuestion = Schema.Struct({
 });
 
 /**
- * The host's standard message for a login request (`credentialMessage`): its notice, which only
- * the host writes for a request with a login question.
- */
-export const credentialRequestMessage = (request: {
-  readonly notice?: string | undefined;
-  readonly questions: readonly { readonly type: string }[];
-}) =>
-  request.questions.some((question) => question.type === "credential") ? request.notice : undefined;
-
-/**
  * Whether a login may begin with only its username: a new unsaved login, never a saved login's
  * repair, which keeps its username and replaces only the password. The gateway also refuses such
  * an answer unless it accepts username-only logins (`allowPasswordless`).
@@ -484,27 +474,6 @@ export const validateAnswer = (
   return Either.right(valid);
 };
 
-const KeptAnswers = Schema.Record({
-  key: Schema.String,
-  value: Schema.Struct({ type: Schema.String, value: Schema.Unknown }),
-});
-/**
- * Validates answers a recovery checkpoint kept as validated answers, each `{ type, value }`, by
- * the same rules as the caller's own answer values.
- */
-export const validateKeptAnswers = (
-  request: InputRequest,
-  kept: unknown,
-): Either.Either<ValidAnswers, InvalidAnswer> => {
-  const decoded = Schema.decodeUnknownEither(KeptAnswers)(kept);
-  return Either.isLeft(decoded)
-    ? Either.left(new InvalidAnswer({ reason: "malformed" }))
-    : validateAnswer(
-        request,
-        Object.fromEntries(Object.entries(decoded.right).map(([id, answer]) => [id, answer.value])),
-      );
-};
-
 /**
  * Whether a question's answer is protected: a secret or a website login, which goes only to the
  * broker or the credential store. Every other answer is a plain business answer.
@@ -512,34 +481,11 @@ export const validateKeptAnswers = (
 export const isProtectedQuestion = (question: Question) =>
   question.type === "secret" || question.type === "credential";
 
-/** Whether any answer to this request is a credential or secret, which the host keeps sensitive. */
-export const holdsSecrets = (request: InputRequest) => request.questions.some(isProtectedQuestion);
-
 /**
  * The longest any request waits: Kernel waits about ten minutes for one
  * step's input, and nothing parks, so every source shares this one bound.
  */
 export const maximumInputWaitMs = 10 * 60_000;
-
-/**
- * How long one request may wait: the policy bound, the source's own limit (a provider step's
- * expiry, a native dialog's), and what is left of the job's window. Zero or less means it
- * cannot be asked at all.
- */
-export const inputWindowMs = (input: {
-  readonly now: number;
-  readonly sourceEndsAt?: number;
-  readonly jobWindowEndsAt?: number;
-  /** Time kept after the window to deliver the answer and finish cleanly. */
-  readonly endMarginMs?: number;
-}) =>
-  Math.floor(
-    Math.min(
-      maximumInputWaitMs,
-      (input.sourceEndsAt ?? Number.POSITIVE_INFINITY) - input.now,
-      (input.jobWindowEndsAt ?? Number.POSITIVE_INFINITY) - input.now - (input.endMarginMs ?? 0),
-    ),
-  );
 
 /**
  * `NoResponse`: the window ended unanswered, and the job fails as `no_response`. The others
@@ -599,9 +545,3 @@ export type InputAsker = ((
     requestIds: readonly string[],
   ) => Effect.Effect<readonly string[], InputRequestFailure>;
 };
-
-/** A wrapper of `asker` that keeps its answer recovery. */
-export const keepAnswerRecovery = (wrapped: InputAsker, asker: InputAsker): InputAsker =>
-  asker.recoverSecrets === undefined
-    ? wrapped
-    : Object.assign(wrapped, { recoverSecrets: asker.recoverSecrets });

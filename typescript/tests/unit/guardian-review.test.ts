@@ -5,7 +5,11 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { guardianExecutionPolicy } from "../../src/guardian/execution-policy.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
+import type { GuardianExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
@@ -512,7 +516,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   };
   const readEntrypoint = () => Effect.succeed(sourceEnvelope);
   const reviewer = (upstreamPolicy: string) =>
-    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: "native" });
+    makeOpenAIReviewer(upstreamPolicy, false, { executionEnvironment: nativeExecutionEnvironment });
   const modelInput = (requests: readonly ModelRequest[]): unknown => {
     const input = requests[0]?.input;
     const [message] = Array.isArray(input) ? input : [];
@@ -541,6 +545,18 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     },
   );
 
+  // Another host's texts fill only the policy's host slots; every other sentence is shared.
+  const otherHost: GuardianExecutionEnvironment = {
+    name: "other-host",
+    operations: "OTHER-OPERATIONS runs operations elsewhere.",
+    bypassTarget: "OTHER-BYPASS",
+    offlineTargets: "OTHER-OFFLINE stays offline.",
+    commands: "OTHER-COMMANDS runs commands elsewhere.",
+    signIn: "OTHER-SIGN-IN",
+    challenges: "OTHER-CHALLENGES waits elsewhere.",
+    executor: "OTHER-EXECUTOR",
+  };
+
   // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
   // the page to enable it before it clicks. Guardian judges what the submit is, not whether the page
   // has enabled it yet.
@@ -553,7 +569,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
     for (const policy of [
       requests[0]?.systemInstructions ?? "",
-      guardianExecutionPolicy("hosted"),
+      guardianExecutionPolicy(otherHost),
     ]) {
       expect(policy).toContain(sentence);
       expect(policy).not.toContain("enabled control");
@@ -574,8 +590,8 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     ];
     for (const policy of [
       requests[0]?.systemInstructions ?? "",
-      guardianExecutionPolicy("hosted"),
-      guardianExecutionPolicy("native"),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
     ])
       for (const sentence of sentences) expect(policy).toContain(sentence);
   });

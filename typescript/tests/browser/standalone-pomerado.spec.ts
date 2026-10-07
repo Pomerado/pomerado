@@ -40,6 +40,12 @@ import {
   startSite,
 } from "./guardian-context-fixture.js";
 import { mint as mintWith } from "./standalone-mint-fixture.js";
+import { loadStandaloneAuthoring } from "../../src/mint/skills.js";
+import { getAuthoringDirectory } from "../../src/assets.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 
 const message = (text: string): ModelResponse["output"][number] => ({
   type: "message",
@@ -1685,6 +1691,80 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// What the local host sends its two models: Guardian the native execution policy, and the minter
+// the workspace guide with every section rendered.
+test("a local mint sends Guardian the native policy and the minter the rendered workspace guide", async () => {
+  test.setTimeout(45_000);
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Public fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const mintRequests: ModelRequest[] = [];
+  const reviewRequests: ModelRequest[] = [];
+  try {
+    const built = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            minterProvider: minter(mintRequests),
+            guardianProvider: guardian(reviewRequests),
+            ask: makeInputAsker((request) =>
+              Effect.succeed(
+                Object.fromEntries(request.questions.map((question) => [question.id, "read"])),
+              ),
+            ),
+            timeoutMs: 20_000,
+          });
+          return yield* service.mint({
+            url: `http://127.0.0.1:${address.port}/`,
+            intent: "Read the fixture heading",
+            input: {},
+          });
+        }),
+      ),
+    );
+    expect(built.build).toBe("published");
+    // Reviews share one conversation, so a request also carries the earlier question review.
+    // Its own kind is that of its last submitted call.
+    const executionReviews = reviewRequests.filter((request) => {
+      const current = objects(request.input)
+        .filter((item) => "submitted_call" in item)
+        .at(-1);
+      return current !== undefined && !("question_review" in current);
+    });
+    expect(executionReviews.length).toBeGreaterThan(0);
+    for (const request of executionReviews) {
+      expect(reviewedNative(request)).toBe(true);
+      const policy = String(request.systemInstructions);
+      for (const native of [
+        "Operations use Kernel-shaped browser execute calls supplied by native Playwright",
+        "attempts to bypass the reviewed execution path",
+        "Offline targets (pureFiles, savedDOM, savedHTTP) authorize local fixture computation only",
+        "runs through the user's local shell with the user's operating-system permissions",
+        "Sign-in is handled by the host through its protected autofill of the observed sign-in screens",
+        "waitPastChallenge is only a passive readiness wait. The native host supplies no automatic CAPTCHA solver.",
+        "confirms only executor cleanup",
+      ])
+        expect(policy).toContain(native);
+      expect(policy).toContain(guardianExecutionPolicy(nativeExecutionEnvironment));
+    }
+    const guide = await Effect.runPromise(loadStandaloneAuthoring(getAuthoringDirectory()));
+    expect(mintRequests.length).toBeGreaterThan(0);
+    for (const request of mintRequests) {
+      expect(String(request.systemInstructions)).toContain(guide.instructions);
+      expect(String(request.systemInstructions)).not.toContain("pomerado:");
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 });
 

@@ -118,9 +118,6 @@ export const MintIncident = Schema.Union(
   }),
 );
 
-export const isHostIncident = (incident: MintIncident): incident is HostIncident =>
-  "source" in incident && incident.source === "host";
-
 /** The finite, URL-free fields of one suspected bug, as `mint.model_finished` records them. */
 export interface HostAnomalyEntry {
   readonly kind: MintIncident["kind"];

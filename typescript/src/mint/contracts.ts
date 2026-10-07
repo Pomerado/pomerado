@@ -93,12 +93,6 @@ export type SpentSignIn =
 
 export type { SessionLoss };
 
-/**
- * Why the host signed a page in again by itself, as it records each automatic sign-in: the page
- * was signed out when the operation started, or became signed out while it ran.
- */
-export type AutomaticSignInCause = "signed_out_at_start" | "signed_out_mid_operation";
-
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
@@ -484,9 +478,9 @@ export const ExecutionRequest = Schema.Struct({
   /**
    * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
    * act step: the tool's input as JSON text, which the agent writes from the request and the
-   * owner's answers. The example, or each act step that passes it, runs it. A write session's
-   * first act step fixes it: its later act steps repeat it unchanged, or omit it where the host
-   * keeps the session's input and runs it on them.
+   * owner's answers. The example, or each act step that passes it, runs it. In a write session,
+   * the first act step that passes it fixes it, whichever step that is: its later act steps
+   * repeat it unchanged, or omit it where the host keeps the session's input and runs it on them.
    */
   exampleInput: Schema.optional(Schema.String),
 });
@@ -738,11 +732,6 @@ const mintHostFailures = [
   "recovery_unconfirmed",
 ] as const;
 type MintHostFailure = (typeof mintHostFailures)[number];
-/**
- * Host failures no later attempt gets past: a spent model quota stays spent until someone restores
- * it, so maintenance never requeues the repair.
- */
-export const finalHostFailures: ReadonlySet<MintHostFailure> = new Set(["model_quota_exhausted"]);
 
 /** Guardian's finite reason for denying a publication, as a build's result carries it. */
 export const PublicationDenial = Schema.Struct({
@@ -1108,11 +1097,6 @@ const HarnessTerminal = Schema.Struct({
   // new workers each restore the other's checkpoint.
   blocked: Schema.optionalWith(BuildBlockedOutcome, { exact: true }),
 });
-/**
- * The part of a successful build's result its caller gets: its summary and the site defaults it
- * took. The rest of the result is the host's own record and stays in the stored result.
- */
-export const BuildCallerResult = HarnessTerminal.pick("summary", "assumptions");
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
@@ -1276,12 +1260,6 @@ export interface MintDependencies {
    * execution is reviewed under write authority and the write build rules.
    */
   readonly upgradeToWrite?: (change: string) => Effect.Effect<void, MintFailure>;
-  /**
-   * The host's part of `upgradeToWrite`: checks and screens `change`, then returns the switch of
-   * its own authority, which cannot fail, so the worker records the effect only once nothing else
-   * can fail.
-   */
-  readonly prepareWriteUpgrade?: (change: string) => Effect.Effect<() => void, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;

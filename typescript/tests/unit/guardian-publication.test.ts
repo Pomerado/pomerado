@@ -2,6 +2,7 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { guardianPublicationPolicy } from "../../src/guardian/publication.js";
 import {
@@ -14,6 +15,8 @@ import {
 import { makeSourceInspector } from "../../src/guardian/source.js";
 
 afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
+
+const native = { executionEnvironment: nativeExecutionEnvironment };
 
 const files = new Map([
   ["operation/src/tool.mjs", 'export const city = "Paris"; // synthetic é'],
@@ -402,7 +405,7 @@ describe("the OpenAI publication reviewer", () => {
     await Effect.runPromise(
       makeGuardian(
         makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
-          executionEnvironment: "native",
+          ...native,
           specialize: () => ({
             policy: "Synthetic host policy.",
             publicationPolicy: sections,
@@ -439,6 +442,7 @@ describe("the OpenAI publication reviewer", () => {
     await Effect.runPromise(
       makeGuardian(
         makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+          ...native,
           specialize: () => ({ publicationPolicy: { requestMarks: "Synthetic request marks." } }),
         }),
       ).review(execution, sourcesOf(files)),
@@ -488,7 +492,7 @@ describe("the OpenAI publication reviewer", () => {
       const result = await Effect.runPromise(
         Effect.either(
           makeGuardian(
-            makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}"),
+            makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
             diagnostics,
           ).review(request, sourcesOf(new Map(manifest.map((file) => [file.path, source])))),
         ),
@@ -511,6 +515,7 @@ describe("the OpenAI publication reviewer", () => {
       Effect.either(
         makeGuardian(
           makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+            ...native,
             specialize: () => ({ maxTurns: 3 }),
           }),
         ).review(pending, sourcesOf(files)),
@@ -536,7 +541,9 @@ describe("the OpenAI publication reviewer", () => {
         }),
       ]);
       const result = await Effect.runPromise(
-        makeGuardian(makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}")).review(
+        makeGuardian(
+          makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+        ).review(
           pending,
           sourcesOf(files),
         ),
@@ -577,7 +584,9 @@ describe("the OpenAI publication reviewer", () => {
     });
     const result = await Effect.runPromise(
       Effect.either(
-        makeGuardian(makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}")).review(
+        makeGuardian(
+          makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+        ).review(
           request,
           sourcesOf(new Map([[path, source]])),
         ),

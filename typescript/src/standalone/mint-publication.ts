@@ -68,7 +68,8 @@ export const mintPublication =
       const sample = yield* retainedPublicationSample(state, evidence, publication.entrypoint);
       const write = sample.purpose === "act";
       // A write's composed contract decodes the input its session ran: the agent's exampleInput
-      // when the caller sent none, else the caller's own.
+      // when the caller sent none, as the first act step that passed one fixed it, even when the
+      // named step ran before it; else the caller's own.
       const input = write ? (writeSession.input ?? sample.input) : sample.input;
       // Only what the operation can load ships: src/, the entrypoint and the probes it imports.
       const files = operationSourceFiles(new Map(yield* workspace.snapshot), [

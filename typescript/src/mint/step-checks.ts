@@ -45,7 +45,7 @@ export const preflightTestInput = (
     );
   if (scope.buildEffect !== "read")
     return refused(
-      "A write build never runs a live test or an input you chose; its session runs the caller's input, or the exampleInput its first act step passed when that input is empty. Nothing was executed.",
+      "A write build never runs a live test or an input you chose; its session runs the caller's input, or, when that input is empty, the exampleInput that the first act step to pass one fixed. Nothing was executed.",
     );
   if (Option.isNone(Schema.decodeUnknownOption(JsonText)(submitted.testInput)))
     return refused(testInputNotJson);
@@ -70,9 +70,8 @@ const intentDerivedInput = (submitted: ExecutionRequest): InputObject | undefine
     ? undefined
     : Option.getOrUndefined(Schema.decodeUnknownOption(ExampleInput)(submitted.exampleInput));
 
-/** The write session the `exampleInput` rule reads: whether it started, and the input it runs. */
+/** The write session the `exampleInput` rule reads: the input it runs, once a step fixed one. */
 interface SessionInput {
-  readonly started: boolean;
   readonly input: InputObject | undefined;
 }
 
@@ -101,17 +100,15 @@ const exampleInputPlaceRefusal = (
 
 /** Why an act step's `exampleInput` differs from the one input its session runs, if it does. */
 const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
-  session.started && session.input === undefined
-    ? "This write session started on the caller's empty input, and its steps run that input; only the session's first act step can pass exampleInput."
-    : session.input !== undefined && !isDeepStrictEqual(decoded, session.input)
-      ? "This write session already runs the exampleInput its first act step passed. Repeat it unchanged or omit it."
-      : undefined;
+  session.input !== undefined && !isDeepStrictEqual(decoded, session.input)
+    ? "This write session already runs the exampleInput an earlier act step passed. Repeat it unchanged or omit it."
+    : undefined;
 
 /**
  * Preflight's refusal of a step's `exampleInput`, if any: the agent's reading of the request runs
  * only where the caller gave it nothing to run, as a read's example or a write's act session. A
- * session runs one input: the first act step that passes it fixes it, and a later step repeats it
- * unchanged or omits it.
+ * session runs one input: the first act step that passes it fixes it, whichever step that is, and
+ * a later step repeats it unchanged or omits it. Act steps before it run the caller's empty input.
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
@@ -139,8 +136,8 @@ export const exampleInputRefusal = (
  * The input a step runs, with its mark for Guardian and the history: a read's live test on an
  * input the agent chose is `agent_chosen`; a read's example, or a write's act step, on the agent's
  * reading of an empty caller input is `intent_derived`, and an act step that omits it runs the
- * one its session fixed; every other step runs the caller's input unmarked. Preflight already
- * refused a misplaced input.
+ * one its session fixed, if an earlier step fixed one; every other step runs the caller's input
+ * unmarked. Preflight already refused a misplaced input.
  */
 export const stepInput = (
   submitted: ExecutionRequest,
