@@ -8,7 +8,10 @@ import {
   type AutofillStep,
   type StepSlot,
 } from "../../src/destinations/autofill-step.js";
-import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
+import {
+  fillAutofillStep,
+  fillAutofillStepWithAnswers,
+} from "../../src/destinations/autofill-fill.js";
 import { judgedOrigins } from "../../src/destinations/autofill-refusal.js";
 import { rememberTyping } from "../../src/destinations/autofill-typed-page.js";
 import {
@@ -43,7 +46,7 @@ const serve = async (page: Page, controls: string, passwordField = true) => {
   return received;
 };
 
-const inspect = async (page: Page, step: AutofillStep<StepSlot> = passwordStep) =>
+const inspect = async (page: Page, step: AutofillStep = passwordStep) =>
   Effect.runPromise(
     inspectAutofillStep({
       step,
@@ -55,8 +58,8 @@ const inspect = async (page: Page, step: AutofillStep<StepSlot> = passwordStep) 
 
 const fill = async (
   page: Page,
-  inspection: AutofillInspection<StepSlot>,
-  step: AutofillStep<StepSlot> = passwordStep,
+  inspection: AutofillInspection,
+  step: AutofillStep = passwordStep,
   values: readonly string[] = [password],
 ) =>
   Effect.runPromise(
@@ -859,9 +862,25 @@ test("a private answer the click handler puts inside the action's path is refuse
 <button id="continue" onclick="this.form.action = '/session/pet' + this.form.answer.value + 'name'">Verify</button>`,
     false,
   );
-  const inspection = await inspect(page, answerStep);
+  const inspection = await Effect.runPromise(
+    inspectAutofillStep({
+      step: answerStep,
+      page: await hostPage(page),
+      siteOrigin: site,
+      authenticationOrigins: [],
+    }),
+  );
   if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
-  const report = await fill(page, inspection, answerStep, [answer]);
+  const report = await Effect.runPromise(
+    fillAutofillStepWithAnswers({
+      step: answerStep,
+      values: [answer],
+      inspection,
+      page: await hostPage(page),
+      keyboard: (await hostKeyboard(page)).keyboard,
+      settleMs: 500,
+    }),
+  );
   expect(requested.filter((url) => url.includes(answer))).toEqual([]);
   expect(received).toEqual([]);
   expect(report).toMatchObject({

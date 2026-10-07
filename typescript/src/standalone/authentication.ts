@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
-import { fillAutofillStep } from "../destinations/autofill-fill.js";
+import { fillAutofillStepWithAnswers } from "../destinations/autofill-fill.js";
 import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
 import {
   checkAutofillSignedIn,
@@ -116,7 +116,7 @@ export const makeLiveAuthentication = (options: {
         authenticationOrigins: options.authenticationOrigins,
       }),
     fill: (input) =>
-      fillAutofillStep({ ...input, page: options.page, keyboard: options.keyboard }).pipe(
+      fillAutofillStepWithAnswers({ ...input, page: options.page, keyboard: options.keyboard }).pipe(
         // The shared record counts what `rememberTyping` counts: a fill that typed.
         Effect.tap((report) =>
           Effect.sync(() => {

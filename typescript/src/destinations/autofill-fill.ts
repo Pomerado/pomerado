@@ -480,14 +480,19 @@ const afterFieldCall = (
  * clicked: the host waits for the page to enable it once the fields are filled, and when it stays
  * disabled the report says so (`stayed_disabled`).
  */
-export const fillAutofillStep = <Slot extends StepSlot = AutofillSlot>(
-  input: FillInput<Slot>,
-): Effect.Effect<AutofillStepReport<Slot>> =>
+export const fillAutofillStep = (
+  input: FillInput<AutofillSlot>,
+): Effect.Effect<AutofillStepReport> =>
   // The report names each field by the step's own slot.
-  fillStep(input) as Effect.Effect<AutofillStepReport<Slot>>;
+  fillAutofillStepWithAnswers(input) as Effect.Effect<AutofillStepReport>;
 
-/** `fillAutofillStep` over any slot. */
-const fillStep = (input: FillInput): Effect.Effect<AutofillStepReport<StepSlot>> =>
+/**
+ * `fillAutofillStep` for a host that fills private answers (`MintDependencies.privateAnswers`): a
+ * step's fields may also take `private_answer`.
+ */
+export const fillAutofillStepWithAnswers = (
+  input: FillInput<StepSlot>,
+): Effect.Effect<AutofillStepReport<StepSlot>> =>
   Effect.gen(function* () {
     const { step } = input;
     if (input.typing === "keyboard")
