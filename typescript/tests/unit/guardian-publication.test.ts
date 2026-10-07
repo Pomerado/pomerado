@@ -88,6 +88,36 @@ const inspectAll: Reviewer["run"] = (turn) =>
   });
 
 describe("a publication decision", () => {
+  // A host that decodes publication decisions itself keeps its own decoder.
+  it("is decoded by a host's own decoder when the host gives one", async () => {
+    const scopes: unknown[] = [];
+    const reviewer: Reviewer = {
+      run: (turn) =>
+        inspectAll(turn).pipe(
+          Effect.as({ outcome: "deny", reason: "host_specific", rationale: "Host raw." }),
+        ),
+    };
+    const result = await Effect.runPromise(
+      makeGuardian(
+        reviewer,
+        undefined,
+        {},
+        {
+          decodePublication: (scope, raw) =>
+            Effect.sync(() => {
+              scopes.push(scope);
+              return {
+                outcome: "allow" as const,
+                rationale: `Host decoded: ${(raw as { rationale: string }).rationale}`,
+              };
+            }),
+        },
+      ).review(pending, sourcesOf(files)),
+    );
+    expect(result.decision).toEqual({ outcome: "allow", rationale: "Host decoded: Host raw." });
+    expect(scopes).toEqual([pending.publication]);
+  });
+
   it("returns corrective locations for publication/definition.json and records them in the completion diagnostic", async () => {
     const path = "publication/definition.json";
     const findings = [{ path, byteStart: 0, byteEnd: 12, category: "private_literal" }];

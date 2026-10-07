@@ -1,11 +1,17 @@
 import { makeMintHarnessFixture, portableJobSession } from "../support/mint-fixtures.js";
+import { portableMintProjection } from "../support/portable-mint.js";
 import { solModel } from "../../src/models/models.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Clock, Effect, Either, Fiber, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { MintFailure, MintRequest, MintServices } from "../../src/mint/contracts.js";
-import type { AgentInputRequest, ExecutionEvidence, MintTurn } from "../../src/mint/contracts.js";
+import type {
+  AgentInputRequest,
+  ExecutionEvidence,
+  MintHarnessSnapshot,
+  MintTurn,
+} from "../../src/mint/contracts.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
 import { Deadline } from "../../src/runtime/deadline.js";
@@ -2469,7 +2475,6 @@ it("never publishes Guardian's input-feedback fallback after the claimed attempt
         ),
       inputFeedbackFallback: {
         kept: () => true,
-        outcome: () => "the host publishes it privately",
         flagPublished: Effect.void,
         publish: Effect.sync(() => {
           fallbackPublications++;
@@ -2590,29 +2595,56 @@ it("reports no input feedback a later completed review replaced", async () => {
   expect(outcome.summary).not.toContain("input feedback");
 });
 
-it("ends each input-feedback instruction with the outcome a host's fallback names", async () => {
-  let reply: Record<string, unknown> = {};
+// A host with its own fallback sees the harness as before the local publication review: the same
+// instruction, one rationale screening per feedback round and no input-feedback record in its
+// snapshots.
+it("keeps a fallback host's instructions, screenings and snapshots", async () => {
+  const replies: Record<string, unknown>[] = [];
+  const snapshots: MintHarnessSnapshot[] = [];
+  let capture: (() => MintHarnessSnapshot) | undefined;
+  let screenings = 0;
+  const projection = portableMintProjection();
   const f = await fixture(
     (turn) =>
       Effect.gen(function* () {
         yield* turn.actions.execute(execution);
-        reply = JSON.parse(yield* turn.actions.finish(publication));
+        for (let round = 0; round < 3; round++) {
+          replies.push(JSON.parse(yield* turn.actions.finish(publication)));
+          if (capture !== undefined) snapshots.push(capture());
+        }
       }),
     {
+      projection: {
+        ...projection,
+        text: (value, area) => {
+          if (value === "Make the account an input.") screenings++;
+          return projection.text(value, area);
+        },
+      },
+      agentRecovery: {
+        bindHarness: (bound) =>
+          Effect.sync(() => {
+            capture = bound;
+          }),
+        save: () => Effect.void,
+      },
       publish: () => Effect.fail(inputFeedback("account_specific_enum")),
       inputFeedbackFallback: {
         kept: () => true,
-        outcome: () => "the host keeps a synthetic fallback version",
         flagPublished: Effect.void,
         publish: Effect.succeed(undefined),
       },
     },
   );
   await f.run();
-  expect(String(reply["instruction"])).toContain(
-    "If input findings remain after 1 more feedback round, or the build ends first, the host keeps a synthetic fallback version.",
+  expect(String(replies[0]?.["instruction"])).toContain(
+    "If input findings remain after 1 more feedback round, or the build ends first, the host publishes the last reviewed version privately to this account and flags it.",
   );
-  expect(String(reply["instruction"])).not.toContain(noFallbackEnding);
+  expect(String(replies[0]?.["instruction"])).not.toContain(noFallbackEnding);
+  expect(replies[2]?.["reason"]).toBe("input_feedback_unresolved");
+  expect(screenings).toBe(2);
+  expect(snapshots).toHaveLength(3);
+  for (const snapshot of snapshots) expect(snapshot).not.toHaveProperty("inputFeedbackReview");
 });
 
 it("joins an in-flight editor promise before asking and refuses edits after the build ends", async () => {

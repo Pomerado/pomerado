@@ -187,7 +187,7 @@ it("renders the pinned standalone input-feedback instructions", () => {
   expect(
     [false, true].flatMap((write) =>
       [1, 0].map((rounds) => [
-        sha256(inputFeedbackInstruction(rounds, { write, ending: "none" })),
+        sha256(inputFeedbackInstruction(rounds, { write })),
         `${write ? "write" : "read"}, ${rounds} left`,
       ]),
     ),

@@ -690,7 +690,6 @@ it("still publishes the flagged input-feedback fallback when sign-in is unavaila
       ),
     inputFeedbackFallback: {
       kept: () => true,
-      outcome: () => "the host publishes it privately",
       flagPublished: Effect.void,
       publish: Effect.sync(() => {
         fallbackPublications++;
