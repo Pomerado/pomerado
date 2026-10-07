@@ -146,7 +146,9 @@ const runCli = (
 
 /**
  * Runs the terminal CLI on `args` and sets the exit code: 1 when the command fails or a mint
- * saves nothing. `options` is for a caller that starts the CLI with its own model providers.
+ * saves nothing. `options` lets a caller start it with its own model providers, as
+ * `startMcpCli` does for the MCP CLI. The browser tests start the compiled CLI this way with
+ * recorded providers, since no test may call a real model.
  */
 export const startCli = (
   args: readonly string[] = process.argv.slice(2),
