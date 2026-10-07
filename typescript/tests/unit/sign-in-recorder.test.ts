@@ -72,6 +72,10 @@ interface Options {
   readonly report?: (step: AutofillStep) => AutofillStepReport;
   /** The live address the host finds a screen at. */
   readonly liveUrl?: string;
+  /** The page the host finds a screen on, origin and path. */
+  readonly page?: string;
+  /** Whether the page still shows a recorded challenge of the current sign-in. */
+  readonly challengeAsks?: boolean;
   /** The questions each inspected private-answer field shows, in order. */
   readonly questions?: string[];
   /** The owner's answers to each question by id, in order. */
@@ -87,6 +91,8 @@ const harness = (options: Options = {}) => {
   const asked: InputRequest[] = [];
   const logins: string[] = [];
   const filled: { readonly step: AutofillStep; readonly values: readonly string[] }[] = [];
+  /** The very value lists each fill was given, as the recorder holds them after. */
+  const given: (readonly string[])[] = [];
   const reviewed: AutofillStep[] = [];
   const confirmed: unknown[] = [];
   const listeners = new Set<(request: SignInRequest) => void>();
@@ -98,7 +104,7 @@ const harness = (options: Options = {}) => {
     inspect: (step) =>
       Effect.sync((): AutofillInspection => ({
         url: options.liveUrl ?? `${origin}/login`,
-        page: `${origin}/login`,
+        page: options.page ?? `${origin}/login`,
         targets: { fields: step.fields.map(() => target), submit: target },
         siteOrigin: origin,
         authenticationOrigins: [],
@@ -118,6 +124,7 @@ const harness = (options: Options = {}) => {
     fill: ({ step, values }) =>
       Effect.sync(() => {
         filled.push({ step, values: [...values] });
+        given.push(values);
         for (const request of options.send?.(step, values) ?? [formRequest(values)])
           for (const listener of [...listeners]) listener(request);
         return (
@@ -132,7 +139,9 @@ const harness = (options: Options = {}) => {
     confirm: (indicator, screens, challengeScreens) =>
       Effect.sync((): AutofillSignedInCheck => {
         confirmed.push({ indicator, screens, challengeScreens });
-        return { signedIn: true, url: `${origin}/account` };
+        return options.challengeAsks === true && challengeScreens.length > 0
+          ? { signedIn: false, failed: "challenge_form_visible", url: `${origin}/account` }
+          : { signedIn: true, url: `${origin}/account` };
       }),
     onRequest: (listener) => {
       listeners.add(listener);
@@ -196,7 +205,7 @@ const harness = (options: Options = {}) => {
   /** Runs `use` with the recorder, in its own scope. */
   const run = <A, E>(use: (made: Effect.Effect.Success<typeof recorder>) => Effect.Effect<A, E>) =>
     Effect.runPromise(Effect.scoped(Effect.flatMap(recorder, use)));
-  return { run, asked, logins, filled, reviewed, confirmed, listeners };
+  return { run, asked, logins, filled, given, reviewed, confirmed, listeners };
 };
 
 const identifierAndPassword: SignInStep = {
@@ -265,6 +274,56 @@ it("enters from the first screen's live address, without its fragment, when no l
     }),
   );
   expect(published?.entryUrl).toBe(`${origin}/login?flow=web`);
+});
+
+it("enters from a login URL without the credentials or fragment it held", async () => {
+  const host = harness();
+  const published = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(
+        identifierAndPassword,
+        "https://visitor:synthetic-secret@www.example.test/login?next=%2F#top",
+        Effect.void,
+      );
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.published();
+    }),
+  );
+  expect(published?.entryUrl).toBe(`${origin}/login?next=%2F`);
+});
+
+it("refuses a screen whose address names the account before anything is asked or typed", async () => {
+  const host = harness({ held: account, page: `${origin}/accounts/${account.username}/sign-in` });
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      const refused = yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      expect(recorder.published()).toBeUndefined();
+      return refused;
+    }),
+  );
+  expect(result.result).toMatchObject({
+    step: { outcome: "refused", reason: "page_names_contact" },
+  });
+  expect(host.filled).toEqual([]);
+  expect(host.asked).toEqual([]);
+  expect(host.listeners.size).toBe(0);
+});
+
+it("keeps a sign-in open through a marker check while its recorded challenge still asks", async () => {
+  const host = harness({ held: account, challengeAsks: true });
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      // A marker check reads the screens, as `check_signed_in_marker` does, and ends nothing.
+      expect(recorder.screens().challengeScreens).toHaveLength(1);
+      expect(recorder.screens().challengeScreens).toHaveLength(1);
+      const checked = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(recorder.published()).toBeUndefined();
+      return checked;
+    }),
+  );
+  expect(result.verified).toBeUndefined();
+  expect(result.result).toMatchObject({ signedIn: false, failed: "challenge_form_visible" });
 });
 
 it("refuses a signed-in check until a request carried the identifier and a password or code", async () => {
@@ -557,6 +616,30 @@ it("records a private answer's question selector as version 3, never its questio
   const text = JSON.stringify(published);
   for (const secret of ["first pet", "synthetic-answer", account.password, "Field"])
     expect(text).not.toContain(secret);
+});
+
+it("discards a private answer from the values it filled once the fill is over", async () => {
+  const host = harness({
+    held: account,
+    questions: ["What was your first pet's name?"],
+    answers: { private_answer: ["synthetic-answer"] },
+  });
+  await host.run((recorder) =>
+    recorder.step(
+      {
+        fields: [
+          { selector: "#user", accepts: ["username"] },
+          { selector: "#answer", slot: "private_answer", questionSelector: "#question" },
+        ],
+        submit: "#continue",
+      },
+      undefined,
+      Effect.void,
+    ),
+  );
+  // The fill typed the answer, and the list the host filled from no longer holds it.
+  expect(host.filled[0]?.values).toEqual([account.username, "synthetic-answer"]);
+  expect(host.given[0]).toEqual([account.username, ""]);
 });
 
 it("publishes only the latest verified sign-in, and none once a later one started", async () => {

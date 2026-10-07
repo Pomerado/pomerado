@@ -1,4 +1,5 @@
 import type { HostRefusal } from "../destinations/autofill-refusal.js";
+import type { InsertionRefusal } from "../destinations/credential-keyboard.js";
 import { MintFailure, type SessionLoss, type SpentSignIn } from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 
@@ -9,12 +10,21 @@ import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-i
  */
 export const maximumHostRefusals = 3;
 
+/** Why a host check refused a field, and what may get past it; value-free. */
+interface RefusalNotice {
+  readonly why: string;
+  readonly next: string;
+}
+
+/** A native insertion the browser rejected: the field took the focus, but nothing landed. */
+const insertionRejected = {
+  why: "the field took the focus, but the value the host inserted did not land in it, so the page's own code blocks inserted text or replaces the field as it is typed",
+  next: "Inspect the field read-only: name the control that holds the typed text itself, not a wrapper, a mask or a decoy, and send the signInStep again.",
+};
+
 /** Why each check refuses a field, and what may get past it; value-free. */
-const refusalNotices: Readonly<Record<string, { readonly why: string; readonly next: string }>> = {
-  typing_refused: {
-    why: "the field took the focus, but the value the host inserted did not land in it, so the page's own code blocks inserted text or replaces the field as it is typed",
-    next: "Inspect the field read-only: name the control that holds the typed text itself, not a wrapper, a mask or a decoy, and send the signInStep again.",
-  },
+const refusalNotices: Readonly<Record<string, RefusalNotice>> = {
+  typing_refused: insertionRejected,
   not_focused: {
     why: "the field did not take the focus: another element holds it, such as an overlay, a dialog or a field the page moves the focus to",
     next: "Inspect read-only what covers the field or holds the focus. Dismiss a covering cookie or consent control in an explore if it is one, or name the field that takes the focus, then send the signInStep again.",
@@ -48,6 +58,36 @@ const questionChanged = {
 const otherRefusal = {
   why: "a host check refused the field",
   next: "Inspect the current browser read-only, then correct the screen's signInStep.",
+};
+/** A native insertion refused because the focus left the field before the host inserted. */
+const focusLeft = {
+  why: "the field took the focus, but the focus left it before the host inserted anything: page code, an overlay, a dialog or another window took it, so nothing was inserted",
+  next: "Inspect read-only what takes the focus from the field, such as a script that focuses another control, a covering overlay or a popup. Dismiss a covering cookie or consent control in an explore if it is one, or name the field that keeps the focus, then send the signInStep again.",
+};
+/** A native insertion refused because the field or its page was replaced or navigated. */
+const fieldReplaced = {
+  why: "the field or its page was replaced or navigated after the field took the focus and before the host inserted anything: the field left its document, or its document, frame or origin changed, so nothing was inserted",
+  next: "Wait for the screen to settle, read it again read-only, then send the signInStep again for the screen it shows now.",
+};
+/** A native insertion refused because the host could not find the one field it had bound. */
+const bindingUnresolved = {
+  why: "the host could not find the one field it focused when it went to insert: that control was gone, more than one control claimed to be it, or it no longer resolved, so nothing was inserted",
+  next: "Inspect the field read-only and name it more precisely: the one control that holds the typed text itself, not a wrapper, a copy or a decoy, then send the signInStep again.",
+};
+/** Why a native insertion inserted nothing, by its cause, and what may get past it; value-free. */
+const insertionNotices: Readonly<Record<InsertionRefusal, RefusalNotice>> = {
+  focus_moved: focusLeft,
+  document_unfocused: focusLeft,
+  detached: fieldReplaced,
+  document_changed: fieldReplaced,
+  frame_changed: fieldReplaced,
+  origin_changed: fieldReplaced,
+  binding_not_found: bindingUnresolved,
+  binding_ambiguous: bindingUnresolved,
+  binding_unresolved: bindingUnresolved,
+  binding_not_in_world: bindingUnresolved,
+  insertion_rejected: insertionRejected,
+  question_changed: questionChanged,
 };
 
 /** What the host refused to type and where, value-free. */
@@ -190,13 +230,13 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
 
 /**
  * A refused field while the attempt may still sign in again: what was refused and why, by the
- * check that refused it, and what may get past it.
+ * cause the check found or else the check that refused it, and what may get past it.
  */
 const refusalFeedback = (failure: SignInDiagnostic, refusal: HostRefusal) => {
   const notice =
-    refusal.cause === "question_changed"
-      ? questionChanged
-      : (refusalNotices[refusal.check] ?? otherRefusal);
+    refusal.cause === undefined
+      ? (refusalNotices[refusal.check] ?? otherRefusal)
+      : insertionNotices[refusal.cause];
   const field = refusedField(refusal);
   return {
     signInOutcome: "signed_out" as const,

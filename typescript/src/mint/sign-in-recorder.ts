@@ -186,11 +186,13 @@ const indicatorHoldsIdentity = {
   nextStep: `The signed-in check names this account's own identity, which publishes with the tool and fails for every other login. Name a marker every signed-in account shows, such as a sign-out control or the account menu, never the account's name, email or number, ${recovery}.`,
 } as const;
 
-/** A web address a run can open, without its fragment; undefined for anything else. */
+/** A web address a run can open, without credentials or fragment; undefined for anything else. */
 const entryOf = (url: string | undefined) => {
   const parsed = URL.parse(url ?? "");
   if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:"))
     return undefined;
+  parsed.username = "";
+  parsed.password = "";
   parsed.hash = "";
   return parsed.href;
 };

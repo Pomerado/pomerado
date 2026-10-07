@@ -1,5 +1,10 @@
+import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runnableOperationFiles, savedOperationFiles } from "../../src/mint/operation-source.js";
+import {
+  executedSourceClosure,
+  runnableOperationFiles,
+  savedOperationFiles,
+} from "../../src/mint/operation-source.js";
 
 /** The paths a local build saves from `files` for `entrypoint`, sorted. */
 const saved = (files: Readonly<Record<string, string>>, entrypoint = "src/tool.mjs") =>
@@ -142,11 +147,33 @@ describe("the files a local build saves", () => {
       [...everyCandidate, "src/package.json"].sort(),
     );
   });
+
+  // macOS file systems ignore letter case and Unicode normalization by default.
+  it("keeps every candidate file when a package manifest's name differs in letter case", () => {
+    expect(saved({ ...workspace, "scratch/Package.JSON": "{}" })).toEqual(
+      [...everyCandidate, "scratch/Package.JSON"].sort(),
+    );
+  });
+
+  it("follows an import whose path differs in letter case or Unicode normalization", () => {
+    expect(
+      saved({
+        ...workspace,
+        "src/tool.mjs":
+          'import { look } from "../Explore/LOOK.mjs";\nimport { cafe } from "../explore/caf\u00e9.mjs";\nexport default [look, cafe];',
+        "explore/cafe\u0301.mjs": "export const cafe = 1;",
+      }),
+    ).toEqual(["explore/cafe\u0301.mjs", "explore/look.mjs", "src/query.mjs", "src/tool.mjs"]);
+  });
 });
 
 /** The paths of saved files the operation could run, sorted. */
 const runnable = (files: Readonly<Record<string, string>>, entrypoint = "src/tool.mjs") =>
   [...runnableOperationFiles(new Map(Object.entries(files)), entrypoint).keys()].sort();
+/** Whether a path is under one of the four folders a local build saves from. */
+const isCandidate = (path: string) => /^(src|explore|test|scratch)\//u.test(path);
+/** A probe that holds a secret handle. */
+const handleProbe = 'export const look = "{{secret.s1}}";';
 
 describe("the saved files the operation could run", () => {
   it("are the saved files when every one is reached through imports", () => {
@@ -220,6 +247,37 @@ describe("the saved files the operation could run", () => {
         "src/look.cjs": 'module.exports = (() => arguments[1]("../explore/look.mjs"))();',
       },
     ],
+    [
+      "a saved manifest named in another letter case declares exports",
+      {
+        "src/tool.mjs": 'import { run } from "../explore/run.mjs";\nexport default run;',
+        "explore/PACKAGE.JSON": '{"name":"probes","exports":{"./look":"./look.mjs"}}',
+        "explore/run.mjs": 'export { look as run } from "probes/look";',
+      },
+    ],
+    [
+      "a saved folder holds node_modules in another letter case",
+      {
+        "src/tool.mjs": 'import { look } from "../explore/run.mjs";\nexport default look;',
+        "explore/run.mjs": 'export { look } from "helper";',
+        "explore/Node_Modules/helper/index.js": 'export { look } from "../../look.mjs";',
+      },
+    ],
+    [
+      "the operation imports Playwright's internal modules, which run a test config",
+      {
+        "src/tool.mjs":
+          'import { program } from "playwright/lib/program";\nexport default () => program.parseAsync(["node", "pw", "test", "-c", "scratch/pw.config.mjs"]);',
+        "scratch/pw.config.mjs": 'export default { testDir: "../explore" };',
+      },
+    ],
+    [
+      "the operation imports Playwright's internal modules in another letter case",
+      {
+        "src/tool.mjs":
+          'const { runAllTestsWithConfig } = await import("Playwright/lib/runner");\nexport default runAllTestsWithConfig;',
+      },
+    ],
   ])("are every saved file when %s", (_case, files) => {
     const all = { ...workspace, ...files };
     const every = Object.keys(all)
@@ -243,5 +301,143 @@ describe("the saved files the operation could run", () => {
     };
     expect(runnable(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
     expect(saved(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
+  });
+
+  // A stack frame's getFunction() can return a CommonJS module's wrapper, whose own arguments hold
+  // its require. Read straight off a call's result, a property named arguments still counts.
+  it.each([
+    ["off a call", "src/look.cjs", "frame.getFunction().arguments[1]"],
+    ["off an optional call", "src/look.cjs", "frame.getFunction?.().arguments[1]"],
+    ["off an optional call in parentheses", "src/look.cjs", "(frame?.getFunction()).arguments[1]"],
+    ["off a call in parentheses", "src/look.cjs", "(frame.getFunction()).arguments[1]"],
+    ["by a computed key", "src/look.cjs", 'frame.getFunction()["arguments"][1]'],
+    ["off a non-null call", "src/look.cts", "frame.getFunction()!.arguments[1]"],
+    ["off a call cast with as", "src/look.cts", "(frame.getFunction() as any).arguments[1]"],
+    [
+      "off a call cast with satisfies",
+      "src/look.cts",
+      "(frame.getFunction() satisfies unknown).arguments[1]",
+    ],
+    [
+      "off a call cast with angle brackets",
+      "src/look.cts",
+      "(<any>frame.getFunction()).arguments[1]",
+    ],
+  ])(
+    "are every saved file when a CommonJS module reads its wrapper's arguments %s",
+    (_case, path, read) => {
+      const all = {
+        ...workspace,
+        "src/tool.mjs": `import look from "./${posix.basename(path)}";\nexport default look;`,
+        [path]: [
+          "Error.prepareStackTrace = (_, frames) => frames;",
+          "const frame = new Error().stack[0];",
+          `module.exports = ${read}("../explore/look.mjs");`,
+        ].join("\n"),
+      };
+      expect(runnable(all)).toEqual(Object.keys(all).filter(isCandidate).sort());
+    },
+  );
+
+  // As a property or key, arguments names a value's own field, never a CommonJS wrapper's
+  // arguments; a TypeScript type or abstract member never runs. The first two are shaped like the
+  // package's own Guardian reviewer and MCP job code.
+  it.each([
+    [
+      "reads a tool call's arguments through optional chaining in a top-level arrow",
+      "src/tool.mjs",
+      [
+        "export const reviewer = (diagnostics) => ({",
+        "  execute: async (input, _context, details) =>",
+        '    diagnostics.tool({ name: "read_source", arguments: details?.toolCall?.arguments ?? JSON.stringify(input) }),',
+        "});",
+      ].join("\n"),
+    ],
+    [
+      "declares a TypeScript field named arguments",
+      "src/tool.ts",
+      [
+        "export interface JobView {",
+        "  readonly job_id: string;",
+        "  readonly next?: { readonly tool: string; readonly arguments: Record<string, unknown> };",
+        "}",
+        'export default (id: string): JobView => ({ job_id: id, next: { tool: "get_job", arguments: { job_id: id } } });',
+      ].join("\n"),
+    ],
+    [
+      "reads a member named arguments at the top level",
+      "src/tool.mjs",
+      'const call = { function: { arguments: "[]" } };\nexport default JSON.parse(call.function.arguments);',
+    ],
+    [
+      "reads a computed key named arguments",
+      "src/tool.mjs",
+      'export default (call) => call["arguments"];',
+    ],
+    [
+      "declares a TypeScript method signature named arguments",
+      "src/tool.ts",
+      "export interface Call { arguments(): string }\nexport default (call: Call) => call.arguments();",
+    ],
+    [
+      "declares an abstract field named arguments",
+      "src/tool.ts",
+      "export default abstract class Call { abstract arguments: string; }",
+    ],
+    [
+      "declares an abstract method named arguments",
+      "src/tool.ts",
+      "export default abstract class Call { abstract arguments(): string; }",
+    ],
+  ])("leave out a probe when a module %s", (_case, path, source) => {
+    const all = { ...workspace, [path]: source, "explore/look.mjs": handleProbe };
+    expect(runnable(all, path)).toEqual(
+      Object.keys(all)
+        .filter((file) => file.startsWith("src/"))
+        .sort(),
+    );
+  });
+
+  // Node keeps a manifest's exports inside its own folder, so one under src/ maps only files under
+  // src/, which are read anyway.
+  it.each([
+    ["declares exports", '{"name":"op","exports":{"./query":"./query.mjs"}}'],
+    ["does not parse", '{"name":'],
+  ])("leave out a probe beside a manifest under src/ that %s", (_case, manifest) => {
+    const files = {
+      ...workspace,
+      "src/tool.mjs": 'import { query } from "op/query";\nexport default query;',
+      "src/package.json": manifest,
+      "explore/look.mjs": handleProbe,
+    };
+    expect(runnable(files)).toEqual(["src/package.json", "src/query.mjs", "src/tool.mjs"]);
+  });
+});
+
+describe("the operation files Guardian is told an execution loads", () => {
+  // The package exports this closure for other hosts: the save rule's own loaders leave it narrow.
+  it.each([
+    [
+      "a CommonJS module calls its wrapper's require through arguments",
+      {
+        "src/tool.mjs": 'import look from "./look.cjs";\nexport default look;',
+        "src/look.cjs": 'module.exports = arguments[1]("../explore/look.mjs");',
+      },
+      ["src/look.cjs", "src/tool.mjs"],
+    ],
+    [
+      "the operation imports Playwright's internal modules",
+      {
+        "src/tool.mjs":
+          'import { program } from "playwright/lib/program";\nexport default program;',
+      },
+      ["src/tool.mjs"],
+    ],
+  ])("are the entrypoint's imports when %s", (_case, files, expected) => {
+    const closure = executedSourceClosure(
+      new Map(Object.entries({ ...workspace, ...files })),
+      "src/tool.mjs",
+    );
+    expect([...closure.keys()].sort()).toEqual(expected);
   });
 });

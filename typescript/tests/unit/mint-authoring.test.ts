@@ -302,6 +302,29 @@ it("leaves no heading, list or skill header of the local host's authoring empty"
   expect(texts.get("writes")).toMatch(/^---\nname: writes\ndescription: \S/u);
 });
 
+/*
+ * The local host restores the session saved right after sign-in and never signs in again by
+ * itself, so a stale session shows up as a login wall that the minter's own sign-in fixes. A host
+ * whose sessions behave otherwise replaces that sentence, and the text around it stays shared.
+ */
+it("lets a host replace the stale-session sentence", async () => {
+  const sentence =
+    "A signed-in build gets back the session saved right after sign-in instead, so a stale session shows up as a login wall that a new sign-in fixes. That source must perform the flow from its input, never rely on a page an exploration left open.";
+  const local = (await renderedTexts("typescript/authoring")).get("core") ?? "";
+  expect(local.replace(/\s+/g, " ")).toContain(sentence);
+  expect(local).not.toContain("session_not_kept");
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    const composed = (await renderedTexts(root)).get("core")?.replace(/\s+/g, " ") ?? "";
+    expect(composed).toContain(
+      "A signed-in build gets back the session saved right after sign-in instead never rely on a page an exploration left open.",
+    );
+    expect(composed).not.toContain("stale session");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
 // it. The minter records such a submit as it observes it, disabled or not.
 it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
@@ -311,6 +334,23 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
     "Record a field only after observing its unique visible enabled match in the intended frame and form, and a submit after observing its unique visible match there, even one the page enables only once the fields hold input.",
   );
   expect(auth).not.toContain("enabled submit");
+});
+
+// A local build asks for a username, email, phone or account number as text, which the terminal
+// shows, and records a verified sign-in's screens as a recipe that runs don't replay yet.
+it("tells the local minter how its sign-in values are asked and what it records", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const auth = (contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(auth).toContain(
+    "The host obtains the needed value through the caller's input callback or the terminal, checks the original field/document/origin/focus binding and inserts privately. The terminal hides a password, code or other secret as it is typed, and shows a username, email, phone number or account number.",
+  );
+  expect(auth).toContain(
+    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; runs don't replay them yet.",
+  );
+  expect(auth).not.toContain("masked terminal");
 });
 
 // A write committed values the page never showed matching the input; a page's own recent-search
@@ -349,7 +389,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["b3178422adc1e62391ed67925d7945206ed55ba2781687f70482798295aeb3d8", "core"],
-    ["bc9a0a19f50767953e4d5a5e70c2865f5f1f995fe1a9c205864385839fe84744", "auth"],
+    ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],

@@ -236,6 +236,50 @@ export const signInRecipe = (
   return { version: 1, steps: shipped, signedIn: indicator };
 };
 
+/** A recipe screen in `recipeStep`'s key order, whatever order it was read in. */
+const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
+  page: step.page,
+  ...(step.approval === undefined ? {} : { approval: step.approval }),
+  ...(step.popup === undefined ? {} : { popup: step.popup }),
+  ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
+  fields: step.fields.map((field) =>
+    "accepts" in field
+      ? { selector: field.selector, accepts: field.accepts }
+      : {
+          selector: field.selector,
+          slot: field.slot,
+          ...(field.format === undefined ? {} : { format: field.format }),
+          ...(field.control === undefined ? {} : { control: field.control }),
+          ...(field.questionSelector === undefined
+            ? {}
+            : { questionSelector: field.questionSelector }),
+        },
+  ),
+  ...(step.submit === undefined ? {} : { submit: step.submit }),
+  ...(step.submittedBy === undefined ? {} : { submittedBy: step.submittedBy }),
+  ...(step.methods === undefined ? {} : { methods: step.methods }),
+});
+
+/**
+ * A recipe as `auth-fill.json` holds it: each screen in `recipeStep`'s key order, indented two
+ * spaces, with no final newline. The same recipe is the same bytes from any host that writes it
+ * this way.
+ */
+export const signInRecipeText = (recipe: SignInRecipe) =>
+  JSON.stringify(
+    {
+      version: recipe.version,
+      steps: recipe.steps.map(inStepOrder),
+      signedIn: {
+        ...(recipe.signedIn.selector === undefined ? {} : { selector: recipe.signedIn.selector }),
+        ...(recipe.signedIn.urlPath === undefined ? {} : { urlPath: recipe.signedIn.urlPath }),
+        ...(recipe.signedIn.openPath === undefined ? {} : { openPath: recipe.signedIn.openPath }),
+      },
+    },
+    null,
+    2,
+  );
+
 export const isIdentifier = (slot: AutofillSlot): slot is IdentifierKind =>
   slot === "username" || slot === "email" || slot === "phone" || slot === "account_number";
 /** Whether a field's slot is a secret's: the password, a code or an extra secret. */

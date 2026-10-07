@@ -530,6 +530,90 @@ test("a run's second screen whose form posts to a URL holding the password is re
   });
 });
 
+test("a login URL that holds the login's email is refused at publication, naming the login URL and never the email", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and a scripted build with a host sign-in",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests: ModelRequest[] = [];
+    const loginUrl = `${shop.origin}/login?email=${encodeURIComponent(shopAccount.username)}`;
+    const minter = provider((request, index) => {
+      const steps: Output[] = [
+        patch,
+        [
+          execute(
+            "authenticate",
+            {
+              signInStep: {
+                fields: [
+                  { selector: "input[name=username]", accepts: ["username"] },
+                  { selector: "input[name=password]", slot: "password" },
+                ],
+                submit: "button",
+              },
+              loginUrl,
+            },
+            "sign_in",
+          ),
+        ],
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+        [execute("example", {}, "example")],
+      ];
+      if (index < steps.length) return steps[index] ?? [];
+      if (index > steps.length) return [message("Stopped.")];
+      const receipt = objects(request.input)
+        .filter((item) => typeof item["executionId"] === "string")
+        .at(-1);
+      if (receipt === undefined) throw new Error("No execution receipt to finish with");
+      return [
+        call("finish_build", {
+          intent: "Return the account reader",
+          entrypoint: "src/tool.mjs",
+          executionId: receipt["executionId"],
+          metadata: { name: "read_account", description: "Read whether the account shows" },
+          coverage: "One live example, signed in",
+        }),
+      ];
+    }, mintRequests);
+    const built = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: guardian(),
+            ask: answers([]),
+            timeoutMs: 30_000,
+          });
+          return yield* service.mint({
+            url: `${shop.origin}/login`,
+            intent: "Read the account",
+            input: {},
+            effect: "read",
+          });
+        }),
+      ),
+    );
+    // The sign-in itself went through; only its publication was refused.
+    expect(shop.state.loginPosts).toBe(1);
+    const result = toolResult(mintRequests, "finish_build");
+    const refused = objects(result).find((item) => item["status"] === "not_published");
+    expect(refused).toMatchObject({
+      reason: "login_url_contains_credential",
+      parts: [{ part: "loginUrl", credentialKinds: ["credential"] }],
+    });
+    expect(String(refused?.["instruction"])).toContain("For loginUrl, run authenticate again");
+    // Nothing is published, and the refusal never holds the email.
+    expect(built.build).not.toBe("published");
+    expect(built.artifact).toBeUndefined();
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+    expect(JSON.stringify(result)).not.toContain(shopAccount.username);
+    expect(JSON.stringify(result)).not.toContain(encodeURIComponent(shopAccount.username));
+  });
+});
+
 test("a second sign-in screen whose form posts to a URL holding the password is refused after the first screen's typing", async () => {
   test.info().annotations.push({
     type: "slow",

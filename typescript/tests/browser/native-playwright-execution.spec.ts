@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { Worker } from "node:worker_threads";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { Effect } from "effect";
@@ -1039,6 +1040,22 @@ test("reports each request the context sends, with its body up to the cap, only 
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("No fixture address");
   const site = `http://127.0.0.1:${address.port}`;
+  // Each request the browser worker reported to this process, by path, whether or not anyone heard
+  // it: once the last listener stops, the worker reports nothing more.
+  const crossed: string[] = [];
+  const ownEmit = Object.hasOwn(Worker.prototype, "emit");
+  const emit = Worker.prototype.emit;
+  Worker.prototype.emit = function (this: Worker, event: string | symbol, ...args: unknown[]) {
+    const message: unknown = args[0];
+    if (
+      event === "message" &&
+      typeof message === "object" &&
+      message !== null &&
+      Reflect.get(message, "kind") === "request"
+    )
+      crossed.push(new URL(String(Reflect.get(Reflect.get(message, "request"), "url"))).pathname);
+    return emit.call(this, event, ...args);
+  };
   try {
     await native(async (executor) => {
       const heard: SignInRequest[] = [];
@@ -1076,8 +1093,12 @@ return true;`,
         ["/large", "POST", "http", "fetch", null, true],
       ]);
       expect(own[0]).toMatchObject({ frame: "main", ownerTargetId: executor.targetId });
+      expect(crossed.filter((path) => ["/", "/after"].includes(path))).toEqual([]);
+      expect(crossed).toContain("/session");
     });
   } finally {
+    if (ownEmit) Worker.prototype.emit = emit;
+    else Reflect.deleteProperty(Worker.prototype, "emit");
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
