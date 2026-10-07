@@ -97,7 +97,8 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - It first checks without values, and asks nothing when the session already shows the account. A served call starts in a fresh browser context, so it asks.
   - Otherwise it asks for the login, and for any code, date of birth, ZIP code or security answer a screen needs. It keeps them in memory for that call only.
   - A rejected username or password is asked again at most twice, and a rejected value is never sent again.
-  - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs.
+  - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
+  - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - Restarting the server loses running jobs and keeps saved integrations.
 - A failed job is never replayed. A website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.

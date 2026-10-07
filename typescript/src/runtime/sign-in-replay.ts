@@ -502,7 +502,14 @@ export const replaySignInRecipe = <E>(
     const replay = makeReplay(input);
     const stopHearing = input.browser.onRequest(replay.session.sent.heard);
     yield* Effect.addFinalizer(() => Effect.sync(stopHearing));
-    yield* input.browser.open(input.entryUrl);
+    // An entry page that does not load fails the sign-in, value-free, before anything is typed.
+    yield* input.browser
+      .open(input.entryUrl)
+      .pipe(
+        Effect.mapError(
+          () => new SignInRunFailed({ code: "RecipeFailed", reason: "entry_page_unavailable" }),
+        ),
+      );
     const stopped = yield* runScreens(input, replay);
     return stopped ?? (yield* settle(input, replay));
   });
@@ -531,6 +538,9 @@ const afterRejection = <E>(
     if (reason === "extra_rejected")
       return yield* rejected(replayed.rejectedFields?.[0] ?? "password");
     if (reason === "private_answer_rejected") return yield* rejected("private_answer");
+    // A security question that changed before its answer was typed needs the new one answered.
+    if (reason === "question_changed")
+      return yield* new SignInRunFailed({ code: "NeedsInput", reason });
     if (reason !== "password_rejected" && reason !== "username_rejected")
       return yield* new SignInRunFailed({ code: "RecipeFailed", reason });
     const observed = (

@@ -46,13 +46,25 @@ const runFailureMessages = {
   MissingRecipe: (reason: string | undefined) =>
     `The tool's saved sign-in can't be read (${spoken(reason)}), so the tool doesn't run signed out. Build the tool again.`,
 } as const;
+/** Advice for a reason that is no fault of the recipe or of a value given. */
+const reasonMessages = new Map([
+  [
+    "question_changed",
+    "The website changed its security question before the answer was typed, so nothing was typed and the run stopped before the tool ran. Run the tool again to answer the question it shows then.",
+  ],
+  [
+    "entry_page_unavailable",
+    "The sign-in page didn't load, so the run stopped before the tool ran. Check that the website is reachable, then run the tool again.",
+  ],
+]);
 
 /** Why a run could not sign in, value-free. The run fails with it and never runs signed out. */
 export class SignInRunFailed extends Data.TaggedError("SignInRunFailed")<{
   /**
    * `CredentialsRejected`: the site rejected a value given for the sign-in, once its corrections
    * ran out or for a value that is never corrected. `NeedsInput`: a question the sign-in needs
-   * went unanswered. `RecipeFailed`: the recorded sign-in no longer matches the site.
+   * went unanswered, or a security question changed before its answer was typed. `RecipeFailed`:
+   * the recorded sign-in no longer matches the site, or its entry page did not load.
    * `MissingRecipe`: the integration's recipe cannot be read.
    */
   readonly code: "CredentialsRejected" | "NeedsInput" | "RecipeFailed" | "MissingRecipe";
@@ -60,7 +72,7 @@ export class SignInRunFailed extends Data.TaggedError("SignInRunFailed")<{
   readonly reason?: string;
 }> {
   override get message() {
-    return runFailureMessages[this.code](this.reason);
+    return reasonMessages.get(this.reason ?? "") ?? runFailureMessages[this.code](this.reason);
   }
 }
 
