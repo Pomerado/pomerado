@@ -1,7 +1,7 @@
 import { Effect, Either } from "effect";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
-import { savedOperationFiles } from "../mint/operation-source.js";
+import { runnableOperationFiles, savedOperationFiles } from "../mint/operation-source.js";
 import {
   exampleOutputEvidence,
   exampleOutputPath,
@@ -72,11 +72,14 @@ export const mintPublication =
       // named step ran before it; else the caller's own.
       const input = write ? (writeSession.input ?? sample.input) : sample.input;
       // What the operation can load ships: all of src/, the entrypoint and the probes it imports.
-      const files = savedOperationFiles(new Map(yield* workspace.snapshot), publication.entrypoint);
+      const snapshot = new Map(yield* workspace.snapshot);
+      const files = savedOperationFiles(snapshot, publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
-      // Published code never holds a handle, in any file it ships, whatever its extension.
-      if (sources.some(([, text]) => holdsSecretHandle(text)))
+      // Published code never holds a handle: no saved file the operation could run may hold one,
+      // whatever its extension. A probe saved only beside a package manifest never runs.
+      const runnable = runnableOperationFiles(snapshot, publication.entrypoint);
+      if ([...runnable.values()].some(holdsSecretHandle))
         return yield* Effect.fail(
           new MintFailure({
             code: "PublicationUnavailable",
