@@ -360,7 +360,8 @@ const withinLimit = (call) => {
   return Promise.race([call, expiry]).finally(() => clearTimeout(timer));
 };
 // The same words name it as named the recorded field, with its type, autocomplete, name and id
-// where inspection recorded one.
+// where inspection recorded one. An id or name generated on each render, such as ":r3:" or
+// "mat-input-3", differs once the page renders the control again, so that control shows nothing.
 const sameControl = async (control, identity) => {
   const named = await withinLimit(control.evaluate((element) => {
     ${controlNamingCode}
