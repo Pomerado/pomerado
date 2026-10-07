@@ -158,6 +158,7 @@ describe("GitHub merge titles", () => {
   it.each([
     ["a two-parent merge with GitHub's title", commitOf(`${mergeTitle}\n\nAdd a scan`, 2)],
     ["a one-parent squash", commitOf(`${squashTitle}\n\n* Add a scan`, 1)],
+    ["a two-parent merge titled with the pull request's title", commitOf(`${squashTitle}\n\nAdd a scan`, 2)],
   ])("blanks only the number in %s that GitHub confirms", (_label, commit) => {
     const masked = maskGitHubMergeNumber(commit, merged);
     expect(masked).toHaveLength(commit.message.length);
@@ -176,7 +177,6 @@ describe("GitHub merge titles", () => {
     ["a squash GitHub doesn't confirm", commitOf(squashTitle, 1), notMerged],
     ["a squash with another committer email", commitOf(squashTitle, 1, "dev@example.com"), merged],
     ["a squashed title on a root commit", commitOf(squashTitle, 0), merged],
-    ["a squashed title on a two-parent commit", commitOf(squashTitle, 2), merged],
     ["a squashed title on a three-parent commit", commitOf(squashTitle, 3), merged],
     ["a number before the end of the title", commitOf(j("Add a scan (", hash, "12) and docs"), 1), merged],
     ["a number with more in its brackets", commitOf(j("Fix the race (Name, ", hash, "617)"), 1), merged],
