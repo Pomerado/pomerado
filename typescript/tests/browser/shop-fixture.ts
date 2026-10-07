@@ -192,9 +192,13 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       response,
       `<title>Sign in</title><form method="post" action="/sign-in/password?${queryOf(request).toString()}"><label>Email<input id="username" name="username" type="email" autocomplete="username"></label><button id="next">Next</button></form>`,
     );
-  // The next screen echoes the typed identifier in its text, a label, a placeholder and a hidden field.
+  // The next screen echoes the typed identifier in its text, a label, a placeholder and a hidden
+  // field. Loaded directly, it is a password-only screen with no identifier.
   const passwordScreen: Route = async (request, response) => {
-    const typed = new URLSearchParams(await readBody(request)).get("username") ?? "";
+    const typed =
+      request.method === "POST"
+        ? (new URLSearchParams(await readBody(request)).get("username") ?? "")
+        : "";
     const links = Array.from(
       { length: shopHelpLinks },
       (_, index) => `<a href="/help/${index}">Help topic ${index} ${queryOf(request).get("tag") ?? ""}</a>`,
@@ -230,7 +234,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
   return new Map([
     ["/", home],
     ["/sign-in", identifierScreen],
-    ["/sign-in/password", postOnly(passwordScreen)],
+    ["/sign-in/password", passwordScreen],
     ["/sign-in/session", postOnly(passwordSession)],
     ["/search", search],
     ["/api/products", productsApi],

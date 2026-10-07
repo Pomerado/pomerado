@@ -271,7 +271,7 @@ test("a local build asks for each sign-in slot on its own, and a run in a new se
   });
 });
 
-test("a second sign-in screen whose form posts to a URL holding the password is still submitted after the first screen's typing", async () => {
+test("a second sign-in screen whose form posts to a URL holding the password is refused after the first screen's typing", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "Original SDKs, Chromium and two host sign-in steps through a form navigation",
@@ -326,12 +326,76 @@ test("a second sign-in screen whose form posts to a URL holding the password is 
     expect(objects(toolResult(mintRequests, "identifier"))).toContainEqual(
       expect.objectContaining({ outcome: "filled", submit: "clicked" }),
     );
-    // The second screen is judged as if nothing had been typed into the page, so its submit
-    // goes out with the password in its URL.
-    expect(objects(toolResult(mintRequests, "password"))).toContainEqual(
-      expect.objectContaining({ outcome: "filled", submit: "clicked" }),
+    // The host typed into the page on the first screen, so the second screen's guard no longer
+    // trusts a URL the page chose to hold the password: it refuses the submit as it fires.
+    expectRefusedSubmit(shop, mintRequests);
+  });
+});
+
+/** The password step typed, but its guard refused the submit to the URL holding the password. */
+const expectRefusedSubmit = (shop: Shop, mintRequests: readonly ModelRequest[]) => {
+  const result = objects(toolResult(mintRequests, "password"));
+  expect(result).toContainEqual(
+    expect.objectContaining({ outcome: "filled", submit: "refused", clicked: true }),
+  );
+  expect(result).toContainEqual(
+    expect.objectContaining({ changed: "submission.action", submissionActionOrigin: shop.origin }),
+  );
+  expect(shop.state.sessionPosts).toBe(0);
+  expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+};
+
+test("a later build in the same session judges its first sign-in screen as typed into", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and two scripted builds in one session",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    // Each build sends its one screen, then stops.
+    let screen: "identifier" | "password" = "identifier";
+    const mintRequests: ModelRequest[] = [];
+    const minter = provider(
+      (request) =>
+        objects(request.input).some((item) => item["type"] === "function_call_result")
+          ? [message("Stopping here.")]
+          : [
+              signInStep(
+                screen === "identifier"
+                  ? { fields: [{ selector: "#username", accepts: ["email"] }], submit: "#next" }
+                  : { fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+                screen,
+              ),
+            ],
+      mintRequests,
     );
-    expect(shop.state.sessionPosts).toBe(1);
-    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+    const asked: InputRequest[] = [];
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: guardian(),
+            ask: answers(asked),
+            timeoutMs: 30_000,
+          });
+          const request = { intent: "Read the account", effect: "read" as const, input: {} };
+          yield* service.mint({ ...request, url: `${shop.origin}/sign-in?echo=none` });
+          // The second build starts on a password-only screen. Its first screen comes after the
+          // first build typed into this session's page.
+          screen = "password";
+          yield* service.mint({
+            ...request,
+            url: `${shop.origin}/sign-in/password?echo=none&stash=password`,
+          });
+        }),
+      ),
+    );
+    expect(asked.map(({ questions }) => questions.map((question) => question.id))).toEqual([
+      ["email"],
+      ["password"],
+    ]);
+    expectRefusedSubmit(shop, mintRequests);
   });
 });
