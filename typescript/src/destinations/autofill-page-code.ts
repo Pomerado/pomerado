@@ -343,18 +343,29 @@ export const SignedInPage = Schema.Struct({
 /**
  * Page code: whether a recorded challenge field still asks. A selector counts only where it
  * matches the same control the host inspected (`sameControl`), one that shows and takes typing, in
- * a frame on the site or a configured sign-in origin whose every frame above it shows. A frame
- * that detaches during the check shows nothing.
+ * a frame on the site or a configured sign-in origin whose every frame above it shows. A control
+ * or frame the host cannot read in time, such as one that detaches during the check, shows nothing.
  */
 const signedInChallengeFormCode = `
 ${clipCode}
+/** How long the host waits to read one control's naming. */
+const namingLimitMs = 1500;
+// A call that does not answer within the limit fails, whether it waits for a control that
+// detached or the page keeps it busy.
+const withinLimit = (call) => {
+  let timer;
+  const expiry = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("Timed out")), namingLimitMs);
+  });
+  return Promise.race([call, expiry]).finally(() => clearTimeout(timer));
+};
 // The same words name it as named the recorded field, with its type, autocomplete, name and id
 // where inspection recorded one.
 const sameControl = async (control, identity) => {
-  const named = await control.evaluate((element) => {
+  const named = await withinLimit(control.evaluate((element) => {
     ${controlNamingCode}
     return controlNaming(element);
-  });
+  }, undefined, { timeout: namingLimitMs }));
   const found = Object.fromEntries(Object.entries(named).map(([key, value]) => [key, clip(value)]));
   return ["label", "ariaLabel", "placeholder"].every((key) => found[key] === identity[key]) &&
     ["type", "autocomplete", "name", "id"].every((key) => identity[key] === null || found[key] === identity[key]);
@@ -383,6 +394,14 @@ const frameShows = async (frame) => {
 };
 // A read-only or disabled control takes no typing, and one that is no form control throws.
 const takesTyping = (control) => control.isEditable({ timeout: 1000 }).catch(() => false);
+// A control the host cannot read shows nothing: a check that cannot tell does not fail.
+const stillAsks = async (control, identity) => {
+  try {
+    return (await control.isVisible()) && (await takesTyping(control)) && (await sameControl(control, identity));
+  } catch {
+    return false;
+  }
+};
 const recordedChallengeVisible = async (fields) => {
   if (fields.length === 0) return false;
   for (const frame of primary.frames()) {
@@ -391,15 +410,12 @@ const recordedChallengeVisible = async (fields) => {
       for (const { selector, identity } of fields) {
         const located = frame.locator(selector);
         const count = Math.min(await located.count(), 100);
-        for (let index = 0; index < count; index++) {
-          const control = located.nth(index);
-          if (await control.isVisible() && await takesTyping(control) && await sameControl(control, identity))
-            return true;
-        }
+        for (let index = 0; index < count; index++)
+          if (await stillAsks(located.nth(index), identity)) return true;
       }
-    } catch (error) {
-      if (frame.isDetached()) continue;
-      throw error;
+    } catch {
+      // A frame the host cannot read, such as one that detaches during the check, shows nothing.
+      continue;
     }
   }
   return false;

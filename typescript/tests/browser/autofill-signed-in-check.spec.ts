@@ -320,3 +320,24 @@ for (const [name, control, failed] of [
         : { signedIn: false, failed, url: `${site}/account` },
     );
   });
+
+// A recorded control that detaches while the host reads it, or that the host cannot read in time,
+// shows nothing: the check does not fail on what it cannot tell, and the marker still decides.
+for (const [name, script] of [
+  [
+    "detaches as the host reads it",
+    "new MutationObserver(() => document.querySelector('input[name=code]')?.remove()).observe(document.body, { attributes: true, subtree: true });",
+  ],
+  [
+    "keeps the page busy past the host's limit as the host reads it",
+    "new MutationObserver(() => { const end = Date.now() + 4000; while (Date.now() < end); }).observe(document.body, { attributes: true, subtree: true });",
+  ],
+] as const)
+  test(`the signed-in check with a recorded code field that ${name}`, async ({ page }) => {
+    const code = recorded("input[name=code]", "code", { label: "Code" });
+    const body = `${marker}<form><label>Code<input name="code"></label><button>Verify</button></form><script>${script}</script>`;
+    expect(await checkPage(page, body, null, [...screens, code])).toEqual({
+      signedIn: true,
+      url: `${site}/account`,
+    });
+  });

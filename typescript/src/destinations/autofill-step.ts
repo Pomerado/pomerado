@@ -517,8 +517,9 @@ export type AutofillScreens = readonly {
  * as named the field at inspection (its label, `aria-label` and placeholder), with its type,
  * autocomplete, name and id where recorded. A field recorded with no such words counts for nothing,
  * since the host cannot tell it from another control its selector matches. A read-only or disabled
- * control, an unconfigured off-site frame and a frame inside a hidden one do not count. It does
- * not classify unrecorded controls or infer a challenge from the page route. Callers must inspect and record
+ * control, an unconfigured off-site frame, a frame inside a hidden one, and a control or frame the
+ * host cannot read in time, such as one that detaches during the check, do not count. It does not
+ * classify unrecorded controls or infer a challenge from the page route. Callers must inspect and record
  * each authentication screen before checking completion. Another form's password field does not
  * count unless a recorded selector matches in it. Screens with no field leave any visible
  * password field failing it.
