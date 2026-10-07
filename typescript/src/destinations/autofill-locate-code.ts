@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { opaqueOrigins } from "./autofill-refusal.js";
+import { clipCode, controlNamingCode } from "./control-naming-code.js";
 
 /**
  * The primary page's window key for what each step call found, the same for every call of this
@@ -62,6 +63,26 @@ const kept = (id) =>
         .catch(() => null);
 `;
 
+/** Same value-free question read for inspection and the final synchronous credential guard. */
+export const questionTextCode = `(element) => {
+  if (!element.isConnected ||
+      !element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return null;
+  const box = element.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return null;
+  if (element.matches('input,textarea,select') || element.isContentEditable) return null;
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const words = [];
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest('input,textarea,select,[contenteditable]') ||
+        !parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
+    words.push(node.textContent);
+    if (words.join(' ').length > 8_000) return null;
+  }
+  const text = words.join(' ').trim().replace(/\\s+/g, ' ');
+  return text.length > 0 && text.length <= 2_000 ? text : null;
+}`;
+
 /**
  * Page code: `locate` finds a selector's one visible match across the primary tab's frames. Where
  * it sits is read from the element itself, never from the frame the search started in: its own
@@ -71,8 +92,25 @@ const kept = (id) =>
  * in the page (`destinations`), for the guard. For the host's evidence it says which frame matched
  * and how many it searched, or, with no one visible match, each frame that matched and how often.
  */
-const findCode = `const clip = (value) => (typeof value === "string" && value.trim() !== "" ? value.trim().replace(/\\s+/g, " ").slice(0, 200) : null);
-const locate = async (selector) => {
+const findCode = `${clipCode}
+// Questions are explicit observed locators, never inferred from names or routes.
+const readQuestion = async (frame, selector) => {
+  if (selector == null || selector.includes(">>") || selector.includes("internal:")) return undefined;
+  try {
+    for (let scope = frame; scope.parentFrame() !== null; scope = scope.parentFrame())
+      if (!(await (await scope.frameElement()).isVisible())) return undefined;
+    const candidates = frame.locator(selector);
+    const count = await candidates.count();
+    if (count > 100) return undefined;
+    const visible = [];
+    for (let index = 0; index < count; index++)
+      if (await candidates.nth(index).isVisible()) visible.push(candidates.nth(index));
+    if (visible.length !== 1) return undefined;
+    const text = await visible[0].evaluate(${questionTextCode});
+    return text === null ? undefined : { locator: visible[0], text };
+  } catch { return undefined; }
+};
+const locate = async (selector, questionSelector) => {
   const visible = [];
   const frames = primary.frames();
   const matches = [];
@@ -135,14 +173,8 @@ const locate = async (selector) => {
     const empty =
       (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
       element.value === "";
-    const labels = "labels" in element && element.labels ? Array.from(element.labels) : [];
-    const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
-      .split(/\\s+/).map((id) => document.getElementById(id)).filter(Boolean);
-    const words = (node) => {
-      const copy = node.cloneNode(true);
-      for (const field of copy.querySelectorAll("input,textarea,select")) field.remove();
-      return copy.textContent;
-    };
+    ${controlNamingCode}
+    const naming = controlNaming(element);
     return {
       disabled,
       inert,
@@ -151,24 +183,29 @@ const locate = async (selector) => {
         role: element.getAttribute("role"),
         formMethod: methods.join(",") || null,
         tag: element.tagName.toLowerCase(),
-        type: element.getAttribute("type"),
-        name: element.getAttribute("name"),
-        id: element.getAttribute("id"),
-        autocomplete: element.getAttribute("autocomplete"),
+        type: naming.type,
+        name: naming.name,
+        id: naming.id,
+        autocomplete: naming.autocomplete,
         inputmode: element.getAttribute("inputmode"),
-        label: [...labels, ...labelledBy].map(words).join(" "),
-        placeholder: element.getAttribute("placeholder"),
-        ariaLabel: element.getAttribute("aria-label"),
+        label: naming.label,
+        placeholder: naming.placeholder,
+        ariaLabel: naming.ariaLabel,
         text: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? null : element.textContent,
       },
     };
   });
   const described = Object.fromEntries(Object.entries(found.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
+  const question = await readQuestion(frame, questionSelector);
+  if (question !== undefined) described.questionText = question.text;
+  // A recorded question with no one visible match, or none the host reads, is said so.
+  else if (questionSelector != null) described.questionUnread = true;
   const shape = await formControlShape(locator);
   const control =
     (found.disabled || found.inert) && (shape === "select" || shape === "combobox") ? "other" : shape;
   return {
     locator,
+    question,
     inert: found.inert,
     target: {
       ...found.target,

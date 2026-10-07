@@ -56,12 +56,17 @@ export const SecretSlots = Schema.Literal(
   "date_of_birth",
   "zip",
   "recovery_code",
+  "private_answer",
 );
 
 const Selector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
 /** A value-free, slot-specific error marker observed on a sign-in screen. */
 export const RejectedMarker = Schema.Struct({
-  slot: Schema.Union(IdentifierKinds, SecretSlots),
+  // A one-use answer cannot be corrected from a recorded rejection marker.
+  slot: Schema.Union(
+    IdentifierKinds,
+    Schema.Literal("password", "code", "date_of_birth", "zip", "recovery_code"),
+  ),
   selector: Selector,
 });
 export type RejectedMarker = typeof RejectedMarker.Type;

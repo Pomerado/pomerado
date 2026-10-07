@@ -49,6 +49,12 @@ const catalog = [
       "Ask the run's caller mid-run for what only they know: a choice only the page offers, or a code the site sends",
     references: ["caller-choice.ts", "caller-code.ts"],
   },
+  {
+    name: "publication",
+    description:
+      "Read before the first finish_build: what publication checks, private values never to publish, and how to act on each rejection",
+    references: [],
+  },
 ] as const;
 
 /**

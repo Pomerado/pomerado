@@ -1,7 +1,8 @@
 import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
 import type { AutofillPopup, DateOfBirthFormat } from "./autofill-contracts.js";
-import { locateCode } from "./autofill-locate-code.js";
+import { locateCode, questionTextCode } from "./autofill-locate-code.js";
+import { clipCode, controlNamingCode } from "./control-naming-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
 import { pageControlsCode } from "./page-controls.js";
@@ -11,6 +12,7 @@ import { pageControlsCode } from "./page-controls.js";
  * The page keeps the controls as found, with every form destination as found, under `observed`.
  */
 const inspectCode = `await keep(observed, {
+  questions: fields.map(({ described }) => described.questionText ?? null),
   targets: { fields: fields.map(({ target }) => target), submit: submit === null ? null : submit.target },
   destinations: [submit, ...fields].flatMap((found) => found?.destinations ?? []),
 });
@@ -51,7 +53,11 @@ return {
  *   enable it.
  */
 export type AutofillFillCall =
-  | { readonly kind: "focus"; readonly index: number; readonly bindingKey: string }
+  | {
+      readonly kind: "focus";
+      readonly index: number;
+      readonly bindingKey: string;
+    }
   | {
       readonly kind: "date";
       readonly index: number;
@@ -90,7 +96,15 @@ const fillCallCode = (
   call: AutofillFillCall,
   judgedId: string | undefined,
   check: number | null,
-) => `const judged = (await kept(${JSON.stringify(judgedId ?? null)}))?.targets ?? null;
+) => `const judgment = await kept(${JSON.stringify(judgedId ?? null)});
+const judged = judgment?.targets ?? null;
+const questions = fields.map(({ described }) => described.questionText ?? null);
+for (let index = 0; index < questionSelectors.length; index++) {
+  if (questionSelectors[index] === null) continue;
+  if (judgment === null) return { error: "target_changed", target: index, url: primary.url() };
+  if (questions[index] !== judgment.questions?.[index])
+    return { error: "target_changed", target: index, question: "changed", url: primary.url() };
+}
 const same = (found, expected, editable = true) =>
   found === null || expected === null
     ? found === expected
@@ -108,7 +122,7 @@ if (
   // A submit the page enables is no change: the submit call reads whether it is disabled itself.
   !same(found.submit, judged.submit, false)
 ) {
-  await keep(observed, { targets: found });
+  await keep(observed, { targets: found, questions });
   return { changed: found, located, url: primary.url() };
 }
 const check = ${JSON.stringify(check)};
@@ -125,6 +139,7 @@ const fillCallBody = (call: AutofillFillCall) => {
   if (call.kind === "focus")
     return `const field = fields[${call.index}].locator;
 const fieldLocated = located.fields[${call.index}];
+const question = fields[${call.index}].question;
 try {
   // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
   if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0))
@@ -132,19 +147,36 @@ try {
   await field.focus({ timeout: 5000 });
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does.
-  const activeTag = await field.evaluate((element, key) => {
+  const activeTag = await field.evaluate((element, [key, questionRequired]) => {
     const active = element.ownerDocument.activeElement;
     if (active !== element) return active === null ? "none" : active.tagName.toLowerCase();
-    Object.defineProperty(element, key, { value: { document: element.ownerDocument, frame: element.ownerDocument.defaultView }, configurable: true });
+    const binding = { document: element.ownerDocument, frame: element.ownerDocument.defaultView, questionRequired };
+    Object.defineProperty(element, key, { value: binding, configurable: true });
+    // Transfer the guard through this frame's isolated world; no value is involved.
+    if (questionRequired) Object.defineProperty(element.ownerDocument.defaultView, key, { value: binding, configurable: true });
     element.setAttribute(key, "");
     return null;
-  }, ${JSON.stringify(call.bindingKey)}, undefined, true);
+  }, [${JSON.stringify(call.bindingKey)}, question !== undefined], undefined, true);
+  if (activeTag === null && question !== undefined) {
+    await question.locator.evaluate((element, { key, text }) => {
+      const scope = element.ownerDocument.defaultView;
+      const binding = scope[key];
+      delete scope[key];
+      if (!binding) throw new Error("Question binding unavailable");
+      const readQuestionText = ${questionTextCode};
+      binding.checkQuestion = () => readQuestionText(element) === text;
+    }, { key: ${JSON.stringify(call.bindingKey)}, text: question.text }, undefined, true);
+  }
   return activeTag === null
     ? { focused: true, located: fieldLocated, url: primary.url() }
     : { focused: false, unfocused: { activeTag }, located: fieldLocated, url: primary.url() };
 } catch (error) {
   const focusError = error instanceof Error && /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : "unknown";
   return { focused: false, unfocused: { focusError }, located: fieldLocated, url: primary.url() };
+} finally {
+  if (question !== undefined) await field.evaluate((element, key) => {
+    delete element.ownerDocument.defaultView[key];
+  }, ${JSON.stringify(call.bindingKey)}, { timeout: 1000 }, true).catch(() => undefined);
 }`;
   if (call.kind === "date")
     return `try {
@@ -243,7 +275,11 @@ const primary = matches[0];
 export const autofillStepCode = (
   targetId: string,
   step: {
-    readonly fields: readonly { readonly selector: string }[];
+    readonly fields: readonly {
+      readonly selector: string;
+      readonly slot?: string | undefined;
+      readonly questionSelector?: string | undefined;
+    }[];
     readonly submit?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
   },
@@ -268,9 +304,10 @@ ${formControlsCode}
 ${locateCode}
 const observed = ${JSON.stringify(observed)};
 const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
+const questionSelectors = ${JSON.stringify(step.fields.map((field) => field.slot === "private_answer" ? field.questionSelector ?? null : null))};
 const fields = [];
 for (let index = 0; index < selectors.length; index++) {
-  const found = await locate(selectors[index]);
+  const found = await locate(selectors[index], questionSelectors[index]);
   if ("error" in found) return { ...found, target: index, url: primary.url() };
   fields.push(found);
 }
@@ -284,12 +321,106 @@ if (submit !== null && submit.inert)
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check)}`;
 
+/** What named a control when the host inspected it, each as `clip` keeps it. */
+export interface ControlIdentity {
+  readonly label: string | null;
+  readonly ariaLabel: string | null;
+  readonly placeholder: string | null;
+  readonly type: string | null;
+  readonly autocomplete: string | null;
+  readonly name: string | null;
+  readonly id: string | null;
+}
+
 /** What `autofillSignedInCode` answers. */
 export const SignedInPage = Schema.Struct({
   url: Schema.String,
   indicator: Schema.NullOr(Schema.Boolean),
   passwordVisible: Schema.Boolean,
+  challengeFormVisible: Schema.Boolean,
 });
+
+/**
+ * Page code: whether a recorded challenge field still asks. A selector counts only where it
+ * matches the same control the host inspected (`sameControl`), one that shows and takes typing, in
+ * a frame on the site or a configured sign-in origin whose every frame above it shows. A control
+ * or frame the host cannot read in time, such as one that detaches during the check, shows nothing.
+ */
+const signedInChallengeFormCode = `
+${clipCode}
+/** How long the host waits to read one control's naming. */
+const namingLimitMs = 1500;
+// A call that does not answer within the limit fails, whether it waits for a control that
+// detached or the page keeps it busy.
+const withinLimit = (call) => {
+  let timer;
+  const expiry = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("Timed out")), namingLimitMs);
+  });
+  return Promise.race([call, expiry]).finally(() => clearTimeout(timer));
+};
+// The same words name it as named the recorded field, with its type, autocomplete, name and id
+// where inspection recorded one. An id or name generated on each render, such as ":r3:" or
+// "mat-input-3", differs once the page renders the control again, so that control shows nothing.
+const sameControl = async (control, identity) => {
+  const named = await withinLimit(control.evaluate((element) => {
+    ${controlNamingCode}
+    return controlNaming(element);
+  }, undefined, { timeout: namingLimitMs }));
+  const found = Object.fromEntries(Object.entries(named).map(([key, value]) => [key, clip(value)]));
+  return ["label", "ariaLabel", "placeholder"].every((key) => found[key] === identity[key]) &&
+    ["type", "autocomplete", "name", "id"].every((key) => identity[key] === null || found[key] === identity[key]);
+};
+// A frame's own address, or for an about:blank or about:srcdoc frame, the first one above it with
+// a real address, as locate reads where a control sits.
+const frameAddress = (frame) => {
+  let scope = frame;
+  while (scope !== null && ["about:blank", "about:srcdoc"].includes(scope.url())) scope = scope.parentFrame();
+  return scope === null ? "" : scope.url();
+};
+const challengeOrigin = (frame) => {
+  let url;
+  try {
+    url = new URL(frameAddress(frame));
+  } catch {
+    return false;
+  }
+  return url.hostname === siteHost || url.hostname.endsWith("." + siteHost) || authenticationOrigins.includes(url.origin);
+};
+// The frame and every frame above it show, as a question's frames are read.
+const frameShows = async (frame) => {
+  for (let scope = frame; scope.parentFrame() !== null; scope = scope.parentFrame())
+    if (!(await (await scope.frameElement()).isVisible())) return false;
+  return true;
+};
+// A read-only or disabled control takes no typing, and one that is no form control throws.
+const takesTyping = (control) => control.isEditable({ timeout: 1000 }).catch(() => false);
+// A control the host cannot read shows nothing: a check that cannot tell does not fail.
+const stillAsks = async (control, identity) => {
+  try {
+    return (await control.isVisible()) && (await takesTyping(control)) && (await sameControl(control, identity));
+  } catch {
+    return false;
+  }
+};
+const recordedChallengeVisible = async (fields) => {
+  if (fields.length === 0) return false;
+  for (const frame of primary.frames()) {
+    try {
+      if (!challengeOrigin(frame) || !(await frameShows(frame))) continue;
+      for (const { selector, identity } of fields) {
+        const located = frame.locator(selector);
+        const count = Math.min(await located.count(), 100);
+        for (let index = 0; index < count; index++)
+          if (await stillAsks(located.nth(index), identity)) return true;
+      }
+    } catch {
+      // A frame the host cannot read, such as one that detaches during the check, shows nothing.
+      continue;
+    }
+  }
+  return false;
+};`;
 
 /**
  * One host call: the page URL, whether the indicator is visible in a frame on the site (its host
@@ -298,7 +429,11 @@ export const SignedInPage = Schema.Struct({
  * Another form's password field, such as a change-password form or an inner service's login,
  * does not count unless one of those selectors matches in it. A hidden match, such as the username
  * a change-password form keeps for password managers, is no sign-in form showing. With no
- * `signInFields`, any visible password field counts.
+ * `signInFields`, any visible password field counts. A recorded challenge field
+ * (`challengeFields`, each with the identity the host inspected) still asks as
+ * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`. Both come
+ * after `popups` and default to none, so a caller that passes no challenge fields gets no
+ * challenge check.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -306,6 +441,11 @@ export const autofillSignedInCode = (
   siteHost: string,
   signInFields: readonly string[],
   popups: readonly AutofillPopup[] = [],
+  challengeFields: readonly {
+    readonly selector: string;
+    readonly identity: ControlIdentity;
+  }[] = [],
+  authenticationOrigins: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
@@ -313,7 +453,7 @@ for (const candidate of context.pages()) {
   if (candidate === primary || candidate.isClosed() || await candidate.opener() !== primary) continue;
   let origin;
   try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false };
+  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false };
 }
 const siteHost = ${JSON.stringify(siteHost)};
 const onSite = (frame) => {
@@ -325,6 +465,7 @@ const onSite = (frame) => {
   }
   return host === siteHost || host.endsWith("." + siteHost);
 };
+const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
 const visibleIn = async (selector, scopes) => {
   for (const scope of scopes) {
     const located = scope.locator(selector);
@@ -334,6 +475,7 @@ const visibleIn = async (selector, scopes) => {
   }
   return false;
 };
+${signedInChallengeFormCode}
 const password = 'input[type="password"]';
 // The field itself, or a control of its form as locate reads the form (its form attribute too),
 // that is a password field and shows: a box with an area, and not hidden.
@@ -368,9 +510,12 @@ const signInPasswordVisible = async (selectors) => {
 };
 const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
+const challengeFields = ${JSON.stringify(challengeFields)};
+const siteFrames = primary.frames().filter(onSite);
 return {
   url: primary.url(),
-  indicator: selector === null ? null : await visibleIn(selector, primary.frames().filter(onSite)),
+  indicator: selector === null ? null : await visibleIn(selector, siteFrames),
+  challengeFormVisible: await recordedChallengeVisible(challengeFields),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:
     signInFields.length === 0

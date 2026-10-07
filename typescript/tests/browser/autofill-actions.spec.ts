@@ -840,6 +840,37 @@ for (const [where, onclick, changed, actionOrigin] of [
     expect(JSON.stringify([report, { ...report.failureDetail }])).not.toContain(code);
   });
 
+// A private answer is found inside any text, like a password: the guard finds it even where
+// letters adjoin it in a path.
+test("a private answer the click handler puts inside the action's path is refused as it fires", async ({
+  page,
+}) => {
+  const answer = "synthetic-first-pet";
+  const answerStep: AutofillStep = {
+    fields: [{ selector: "#answer", slot: "private_answer" }],
+    submit: "#continue",
+  };
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  const received = await serve(
+    page,
+    `<label>Security answer<input id="answer" name="answer"></label>
+<button id="continue" onclick="this.form.action = '/session/pet' + this.form.answer.value + 'name'">Verify</button>`,
+    false,
+  );
+  const inspection = await inspect(page, answerStep);
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  const report = await fill(page, inspection, answerStep, [answer]);
+  expect(requested.filter((url) => url.includes(answer))).toEqual([]);
+  expect(received).toEqual([]);
+  expect(report).toMatchObject({
+    submit: "refused",
+    clicked: true,
+    failureDetail: { context: { changed: "submission.action", submissionActionOrigin: site } },
+  });
+  expect(JSON.stringify([report, { ...report.failureDetail }])).not.toContain(answer);
+});
+
 test("a password the click handler puts in the action's hostname is refused, naming no origin", async ({
   page,
 }) => {
