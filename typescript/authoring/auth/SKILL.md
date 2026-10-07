@@ -93,14 +93,17 @@ rejection selector. The slots are `username`, `email`, `phone`, `account_number`
 `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
-`private_answer` has no recorded rejection marker or automatic correction: inspect a refused
-question screen and stop rather than resending the same answer.
+`private_answer` has no recorded rejection marker or automatic correction: when the site rejects
+an answer, inspect the question screen and stop rather than resending the same answer. A host
+refusal with cause `question_changed` is not the site's rejection: nothing was typed, so read the
+screen again and send its step, and the owner is asked the question it shows now.
 Do not mark sign-in complete while a recorded answer or verification field is still visible,
 including one inside a provider frame. Account search, support and security-settings forms are
 not sign-in evidence. Inspect and record each new authentication screen before checking completion.
-The host checks explicitly recorded challenge fields; it does not classify unrecorded forms by
-their names or page route. A successful host check does not replace inspecting the current screen
-and verifying authenticated access.
+The host checks the challenge fields recorded since the last check that showed the site signed
+in. One counts only while it shows and takes typing, on the site or a configured sign-in origin.
+It does not classify unrecorded forms by their names or page route. A successful host check does
+not replace inspecting the current screen and verifying authenticated access.
 
 <!-- pomerado:section auth.code-rejection -->
 
