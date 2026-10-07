@@ -337,8 +337,8 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
 });
 
 // A local build asks for a username, email, phone or account number as text, which the terminal
-// shows, and records a verified sign-in's screens as a recipe that runs don't replay yet.
-it("tells the local minter how its sign-in values are asked and what it records", async () => {
+// shows, and records a verified sign-in's screens as a recipe that each run of the tool replays.
+it("tells the local minter how its sign-in values are asked, what it records and what a run does with it", async () => {
   const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
   const auth = (contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "").replace(
     /\s+/g,
@@ -348,9 +348,10 @@ it("tells the local minter how its sign-in values are asked and what it records"
     "The host obtains the needed value through the caller's input callback or the terminal, checks the original field/document/origin/focus binding and inserts privately. The terminal hides a password, code or other secret as it is typed, and shows a username, email, phone number or account number.",
   );
   expect(auth).toContain(
-    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; runs don't replay them yet.",
+    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; each run of the tool replays them, asking for the login and any code or answer only when the site needs it.",
   );
   expect(auth).not.toContain("masked terminal");
+  expect(auth).not.toContain("don't replay");
 });
 
 // A write committed values the page never showed matching the input; a page's own recent-search
