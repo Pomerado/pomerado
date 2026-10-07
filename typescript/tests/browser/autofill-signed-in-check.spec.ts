@@ -75,9 +75,8 @@ const checkPage = async (
       page: await hostPage(page),
       siteOrigin: site,
       screens: signIn,
-      ...(options.authenticationOrigins === undefined
-        ? {}
-        : { authenticationOrigins: options.authenticationOrigins }),
+      challengeScreens: signIn,
+      authenticationOrigins: options.authenticationOrigins ?? [],
     }),
   );
 };

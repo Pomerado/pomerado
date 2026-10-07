@@ -511,7 +511,7 @@ export type AutofillScreens = readonly {
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
  * visible one. It also refuses an explicitly recorded challenge field of the current sign-in's
- * `challengeScreens` (`screens` unless given) while the same control still shows and takes
+ * `challengeScreens` while the same control still shows and takes
  * typing, on the site or one of `authenticationOrigins`, a provider frame included. The same
  * control is one the same words name as named the field at inspection (its label, `aria-label`
  * and placeholder), with its type and autocomplete where recorded. A field recorded with no such
@@ -528,10 +528,10 @@ export const checkAutofillSignedIn = (input: {
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly screens: AutofillScreens;
-  /** The current sign-in's screens, whose recorded challenges count; `screens` by default. */
-  readonly challengeScreens?: AutofillScreens | undefined;
+  /** The current sign-in's screens, whose recorded challenges count. */
+  readonly challengeScreens: AutofillScreens;
   /** The configured sign-in origins off the site, where a recorded challenge also counts. */
-  readonly authenticationOrigins?: readonly string[] | undefined;
+  readonly authenticationOrigins: readonly string[];
 }): Effect.Effect<AutofillSignedInCheck> =>
   Effect.gen(function* () {
     const { indicator, page } = input;
@@ -544,7 +544,7 @@ export const checkAutofillSignedIn = (input: {
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields.map((field) => field.selector))
       .filter((selector) => !frameCrossing(selector));
-    const challengeFields = (input.challengeScreens ?? input.screens)
+    const challengeFields = input.challengeScreens
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
       .flatMap((field) =>
@@ -563,8 +563,8 @@ export const checkAutofillSignedIn = (input: {
           siteHost(input.siteOrigin),
           signInFields,
           challengeFields,
+          input.authenticationOrigins,
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
-          input.authenticationOrigins ?? [],
         ),
         15,
       )
