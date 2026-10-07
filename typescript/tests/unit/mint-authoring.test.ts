@@ -302,6 +302,29 @@ it("leaves no heading, list or skill header of the local host's authoring empty"
   expect(texts.get("writes")).toMatch(/^---\nname: writes\ndescription: \S/u);
 });
 
+/*
+ * The local host restores the session saved right after sign-in and never signs in again by
+ * itself, so a stale session shows up as a login wall that the minter's own sign-in fixes. A host
+ * whose sessions behave otherwise replaces that sentence, and the text around it stays shared.
+ */
+it("lets a host replace the stale-session sentence", async () => {
+  const sentence =
+    "A signed-in build gets back the session saved right after sign-in instead, so a stale session shows up as a login wall that a new sign-in fixes. That source must perform the flow from its input, never rely on a page an exploration left open.";
+  const local = (await renderedTexts("typescript/authoring")).get("core") ?? "";
+  expect(local.replace(/\s+/g, " ")).toContain(sentence);
+  expect(local).not.toContain("session_not_kept");
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    const composed = (await renderedTexts(root)).get("core")?.replace(/\s+/g, " ") ?? "";
+    expect(composed).toContain(
+      "A signed-in build gets back the session saved right after sign-in instead never rely on a page an exploration left open.",
+    );
+    expect(composed).not.toContain("stale session");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
 // it. The minter records such a submit as it observes it, disabled or not.
 it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
