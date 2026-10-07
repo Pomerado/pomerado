@@ -160,7 +160,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 
 - The minter, which builds integrations in a real Chromium browser
 - The minting harness and prompts that Pomerado Cloud also builds on
-- Guardian, which reviews each browser action and the finished source while minting, not when an integration runs
+- Guardian, which reviews each browser action and the finished source while minting
 - The standalone host, which serves each integration as an MCP server on your own machine
 - The integrations themselves, saved as source code in your folder that you own
 
