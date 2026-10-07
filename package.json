@@ -152,6 +152,11 @@
       "import": "./dist/typescript/src/destinations/private-candidate.js",
       "default": "./dist/typescript/src/destinations/private-candidate.js"
     },
+    "./core/destinations/signed-in-marker": {
+      "types": "./dist/typescript/src/destinations/signed-in-marker.d.ts",
+      "import": "./dist/typescript/src/destinations/signed-in-marker.js",
+      "default": "./dist/typescript/src/destinations/signed-in-marker.js"
+    },
     "./core/destinations/sign-in-provider-codes": {
       "types": "./dist/typescript/src/destinations/sign-in-provider-codes.d.ts",
       "import": "./dist/typescript/src/destinations/sign-in-provider-codes.js",
@@ -267,6 +272,11 @@
       "import": "./dist/typescript/src/mint/recovery-contracts.js",
       "default": "./dist/typescript/src/mint/recovery-contracts.js"
     },
+    "./core/mint/review-context": {
+      "types": "./dist/typescript/src/mint/review-context.d.ts",
+      "import": "./dist/typescript/src/mint/review-context.js",
+      "default": "./dist/typescript/src/mint/review-context.js"
+    },
     "./core/mint/runner-failure": {
       "types": "./dist/typescript/src/mint/runner-failure.d.ts",
       "import": "./dist/typescript/src/mint/runner-failure.js",
@@ -291,6 +301,11 @@
       "types": "./dist/typescript/src/mint/skills.d.ts",
       "import": "./dist/typescript/src/mint/skills.js",
       "default": "./dist/typescript/src/mint/skills.js"
+    },
+    "./core/mint/step-checks": {
+      "types": "./dist/typescript/src/mint/step-checks.d.ts",
+      "import": "./dist/typescript/src/mint/step-checks.js",
+      "default": "./dist/typescript/src/mint/step-checks.js"
     },
     "./core/mint/workspace": {
       "types": "./dist/typescript/src/mint/workspace.d.ts",

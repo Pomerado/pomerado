@@ -1,0 +1,837 @@
+import { test, expect } from "@playwright/test";
+import {
+  authorityOf,
+  call,
+  contextOf,
+  currentOf,
+  execution,
+  executionIdOf,
+  headingOperation,
+  html,
+  objects,
+  patch,
+  probe,
+  recordingGuardian,
+  startSite,
+  toolResult,
+  type RecordedReview,
+} from "./guardian-context-fixture.js";
+import {
+  act,
+  effectsOf,
+  executions,
+  historyOf,
+  mint,
+  noteSite,
+  readNote,
+  saveNote,
+  saveSite,
+  saveStep,
+} from "./standalone-mint-fixture.js";
+
+const sourcesOf = (review: RecordedReview, key: string) =>
+  [...((contextOf(review)?.[key] as readonly string[] | undefined) ?? [])].sort();
+const stepResultsOf = (review: RecordedReview | undefined) =>
+  review?.input["untrusted_step_results"] as
+    readonly { readonly executionId: string; readonly result: string }[] | undefined;
+const offline =
+  "Offline local files, source checks and computation only. No live website, credentials or network.";
+const dated = {
+  todayUtc: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/u),
+  nowUtc: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u),
+};
+const observationsOf = (review: RecordedReview | undefined) =>
+  String(review?.input["untrusted_observations"]).split("\n");
+const upgradeQuestion = {
+  intent: "Ask to change the site",
+  writeUpgrade: true,
+  questions: [
+    {
+      id: "effect",
+      type: "choice",
+      prompt: "Saving the note changes the site. Allow it?",
+      options: [
+        { id: "read", label: "Read" },
+        { id: "write", label: "Change" },
+      ],
+    },
+  ],
+};
+test("a read build's reviews carry each step's own context", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { built, requests, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": headingOperation,
+            "src/heading.mjs": "export const heading = (value) => String(value).trim();",
+            "src/unused.mjs": "export const unused = 1;",
+            "explore/look.mjs": probe(),
+          }),
+        () => [
+          call("request_input", {
+            intent: "Ask which note to keep",
+            questions: [{ id: "note", type: "text", prompt: "Which note should I keep?" }],
+          }),
+        ],
+        () => [call("exec_command", { cmd: "ls src" }, "command")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "explore")],
+        () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{}" }), "test")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "example_1")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "example_2")],
+        () => [call("request_input", upgradeQuestion, "upgrade")],
+        (request) => [
+          call("finish_build", {
+            intent: "Return the fixture integration",
+            entrypoint: "src/tool.mjs",
+            executionId: executionIdOf(request, "example_2"),
+            metadata: { name: "read_fixture", description: "Read the fixture heading" },
+            coverage: "One live example",
+          }),
+        ],
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    // The minter's request carries the host's date.
+    const screened = objects(requests[0]?.input).find(
+      (value) => "intent" in value && "observations" in value,
+    );
+    expect(screened?.["observations"]).toEqual(dated);
+
+    // A question review has no step: no effects, no current execution and no step results.
+    const question = guardian.reviews.find((review) => review.kind === "question");
+    expect(effectsOf(question)).toEqual([]);
+    expect(contextOf(question!)).toMatchObject({ repeatableRead: true, browser: "not_opened" });
+    expect(contextOf(question!)).not.toHaveProperty("currentExecution");
+    expect(question?.input).not.toHaveProperty("untrusted_step_results");
+
+    const reviewed = executions(guardian.reviews);
+    expect(reviewed.map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "command",
+      "explore",
+      "test",
+      "example",
+      "example",
+      "contract",
+    ]);
+    const [command, explore, liveTest, example1, example2, contract] = reviewed;
+    for (const review of reviewed) {
+      expect(contextOf(review)?.["repeatableRead"]).toBe(true);
+      expect(JSON.parse(observationsOf(review)[0] ?? "")).toEqual(dated);
+      expect(stepResultsOf(review)).toEqual(expect.any(Array));
+    }
+    // Each step gets the authority its own kind of work needs.
+    expect(effectsOf(command)).toEqual([offline]);
+    expect(effectsOf(contract)).toEqual([offline]);
+    for (const review of [explore, liveTest, example1, example2]) {
+      expect(effectsOf(review)[0]).toMatch(/^Authorized repeatable reads/u);
+      // Each read review is told the request's context, such as today's date, is not a filter.
+      expect(effectsOf(review)[0]).toContain(
+        "Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it.",
+      );
+    }
+
+    // The command runs before any page is open, with its sandbox's facts.
+    expect(currentOf(command!)).toEqual({
+      purpose: "command",
+      target: "pureFiles",
+      // The working directory is the workspace itself, never the host's path to it.
+      commandSandbox: { cwd: ".", timeoutSeconds: 30, maxOutputBytes: 1_048_576 },
+    });
+    expect(contextOf(command!)).not.toHaveProperty("executedSources");
+    expect(contextOf(command!)?.["browser"]).toBe("not_opened");
+    // Executed sources are the entrypoint's imports, not the whole workspace.
+    expect(sourcesOf(explore!, "executedSources")).toEqual(["operation/explore/look.mjs"]);
+    expect(sourcesOf(explore!, "operationSources")).toContain("operation/src/unused.mjs");
+    expect(contextOf(explore!)?.["browser"]).toBe("not_opened");
+    expect(contextOf(explore!)).not.toHaveProperty("currentPage");
+    // Once a step ran, the browser is active. A live test and an example start on a reset page,
+    // so Guardian is not shown the page the last step left; it still gets the last results.
+    expect(contextOf(liveTest!)?.["browser"]).toBe("active");
+    for (const review of [liveTest, example1, example2])
+      expect(contextOf(review!)).not.toHaveProperty("currentPage");
+    expect(sourcesOf(liveTest!, "executedSources")).toEqual([
+      "operation/src/heading.mjs",
+      "operation/src/tool.mjs",
+    ]);
+    expect(currentOf(liveTest!)).toEqual({
+      purpose: "test",
+      target: "liveBrowser",
+      input: "agent_chosen",
+    });
+    expect(stepResultsOf(liveTest)).toHaveLength(2);
+    // The input schema comes from the latest example or contract run.
+    for (const review of [command, explore, liveTest, example1])
+      expect(contextOf(review!)).not.toHaveProperty("inputSchema");
+    expect(String(contextOf(example2!)?.["inputSchema"])).toContain("object");
+    expect(String(contextOf(contract!)?.["inputSchema"])).toContain("object");
+    expect(observationsOf(contract).slice(1).join("\n")).toContain("never calls operation.run");
+    expect(
+      historyOf(example2).map(
+        (entry) =>
+          `${String(entry["purpose"])}:${String(entry["status"])}${entry["input"] === undefined ? "" : `:${String(entry["input"])}`}`,
+      ),
+    ).toEqual([
+      "command:completed",
+      "explore:completed",
+      "test:completed:agent_chosen",
+      "example:completed",
+    ]);
+
+    // A read build may run its example again; once it ran one, it can no longer become a write.
+    expect(toolResult(last, "test")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "example_2")).toMatchObject({ status: "completed" });
+    expect(JSON.stringify(objects(last?.input))).not.toContain("AlreadyExecuted");
+    expect(toolResult(last, "upgrade")).toMatchObject({
+      status: "question_refused",
+      reason: "write_upgrade_unavailable",
+    });
+  } finally {
+    await site.close();
+  }
+});
+
+test("a step that starts on a reset page is shown no page, and the next step the page it left", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((request, response) =>
+    html(
+      response,
+      `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`,
+    ),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: `${site.origin}/entry`,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": headingOperation,
+            "src/heading.mjs": "export const heading = (value) => String(value).trim();",
+            "explore/deeper.mjs": probe(
+              "await page.goto(new URL('/deep', page.url()).href); return page.url();",
+            ),
+            "explore/look.mjs": probe(),
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        () => [call("execute", execution("explore", "explore/deeper.mjs"), "deeper")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+        () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{}" }), "test")],
+      ],
+    });
+    for (const id of ["example", "deeper", "look", "test"])
+      expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
+    const [example, deeper, look, liveTest] = executions(guardian.reviews);
+    expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "example",
+      "explore",
+      "explore",
+      "test",
+    ]);
+    // The example is the first live step, so no page is open when Guardian reviews it.
+    expect(contextOf(example!)?.["browser"]).toBe("not_opened");
+    expect(contextOf(example!)).not.toHaveProperty("currentPage");
+    // It reset the page and loaded the site root, which the next explore continues from.
+    expect(contextOf(deeper!)).toMatchObject({
+      browser: "active",
+      currentPage: { origin: site.origin, path: "/" },
+    });
+    expect(contextOf(look!)).toMatchObject({
+      browser: "active",
+      currentPage: { origin: site.origin, path: "/deep" },
+    });
+    // A live test starts on a reset page again, so it is shown none.
+    expect(contextOf(liveTest!)?.["browser"]).toBe("active");
+    expect(contextOf(liveTest!)).not.toHaveProperty("currentPage");
+  } finally {
+    await site.close();
+  }
+});
+
+test("Guardian reads the page the build last observed, with private values redacted", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Account</title><h1>Account</h1><p>Code fixture-private-value</p>"),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ code: "fixture-private-value" }),
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [
+          call("request_input", {
+            intent: "Ask for the private code",
+            questions: [
+              { id: "code", type: "secret", secretKind: "private_text", prompt: "Which code?" },
+            ],
+          }),
+        ],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "first")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "second")],
+      ],
+    });
+    const [first, second] = executions(guardian.reviews);
+    expect(contextOf(first!)).not.toHaveProperty("currentPage");
+    expect(contextOf(second!)?.["currentPage"]).toEqual({
+      origin: site.origin,
+      path: "/",
+      capture: "captures/current-page.aria.yml",
+    });
+    const capture = second!.reads.find((read) => read["path"] === "captures/current-page.aria.yml");
+    expect(String(capture?.["source"])).toContain("Account");
+    expect(String(capture?.["source"])).toContain("[private]");
+    expect(JSON.stringify(guardian.reviews)).not.toContain("fixture-private-value");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a question a running step asks shows Guardian that step running", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            "explore/ask.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/ask.mjs"), "ask")],
+      ],
+    });
+    expect(toolResult(last, "ask")).toMatchObject({ status: "completed" });
+    const question = guardian.reviews.find((review) => review.kind === "question");
+    expect(effectsOf(question)).toEqual([]);
+    expect(historyOf(question)).toEqual([
+      expect.objectContaining({ purpose: "explore", status: "running", effect: "possible" }),
+    ]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a question a step asks after its page reset never shows Guardian the page the last step left", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((request, response) =>
+    html(
+      response,
+      `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`,
+    ),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: `${site.origin}/entry`,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            "explore/deeper.mjs": probe(
+              "await page.goto(new URL('/deep', page.url()).href); return page.url();",
+            ),
+            "src/tool.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/deeper.mjs"), "deeper")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+      ],
+    });
+    expect(toolResult(last, "deeper")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "example")).toMatchObject({ status: "completed" });
+    // The example reset the page before it asked, so the explore's page at /deep is gone.
+    const question = guardian.reviews.find((review) => review.kind === "question");
+    expect(historyOf(question)).toContainEqual(
+      expect.objectContaining({ purpose: "example", status: "running" }),
+    );
+    expect(contextOf(question!)?.["browser"]).toBe("active");
+    expect(contextOf(question!)).not.toHaveProperty("currentPage");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a read build runs two live tests on inputs it chose and its example on the input it read", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  const chosen = (value: number) =>
+    execution("test", "src/tool.mjs", { testInput: `{"page":${value}}` });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": headingOperation,
+            "src/heading.mjs": "export const heading = (value) => String(value).trim();",
+          }),
+        () => [call("execute", chosen(1), "test_1")],
+        () => [call("execute", chosen(2), "test_2")],
+        () => [call("execute", chosen(3), "test_3")],
+        () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{x" }), "not_json")],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { testInput: "{}" }),
+            "example_test",
+          ),
+        ],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { exampleInput: '{"venue":"Venue X"}' }),
+            "example",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "test_1")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "test_2")).toMatchObject({ status: "completed" });
+    for (const [id, reason] of [
+      ["test_3", "already ran 2 live tests with an input you chose"],
+      ["not_json", "testInput must be the tool's input as JSON text"],
+      ["example_test", "testInput is only for a read's live test"],
+    ] as const) {
+      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
+      expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
+    }
+    expect(toolResult(last, "example")).toMatchObject({ status: "completed" });
+    const reviewed = executions(guardian.reviews);
+    expect(reviewed.map((review) => currentOf(review)?.["input"])).toEqual([
+      "agent_chosen",
+      "agent_chosen",
+      "intent_derived",
+    ]);
+    const example = reviewed.at(-1);
+    expect((example?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+      '{"venue":"Venue X"}',
+    );
+    expect(historyOf(example).map((entry) => entry["input"])).toEqual([
+      "agent_chosen",
+      "agent_chosen",
+    ]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("an approved write upgrade turns a read build into a write build", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ effect: "write" }),
+      turns: [
+        () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
+        () => [call("request_input", upgradeQuestion, "upgrade")],
+        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+      ],
+    });
+    expect(toolResult(last, "upgrade")).toMatchObject({ status: "answered", buildEffect: "write" });
+    expect(toolResult(last, "act")).toMatchObject({ status: "completed" });
+    expect(fixture.writes()).toBe(1);
+    const [explore, act] = executions(guardian.reviews);
+    expect(contextOf(explore!)?.["repeatableRead"]).toBe(true);
+    expect(contextOf(act!)?.["repeatableRead"]).toBe(false);
+    expect(effectsOf(act)[0]).toMatch(/^The caller's requested task, done once/u);
+    expect(authorityOf(act!)["intent"]).toBe(
+      "Read the fixture heading\nThe owner approved turning this read build into a write build, answering this reviewed question: Saving the note changes the site. Allow it?",
+    );
+  } finally {
+    await site.close();
+  }
+});
+
+test("an approved write upgrade's question never makes its off-site link the owner's", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  const ownerInstance = "https://acme.tenant.invalid";
+  const pageLink = "https://signup.vendor.invalid";
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      intent: `Save the note here, as on my own instance at ${ownerInstance}/notes`,
+      guardian,
+      answer: () => ({ effect: "write" }),
+      turns: [
+        () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
+        () => [
+          call(
+            "request_input",
+            {
+              ...upgradeQuestion,
+              questions: [
+                {
+                  ...upgradeQuestion.questions[0],
+                  prompt: `May this build save the note at ${pageLink}/new for you?`,
+                },
+              ],
+            },
+            "upgrade",
+          ),
+        ],
+        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+      ],
+    });
+    expect(toolResult(last, "upgrade")).toMatchObject({ status: "answered", buildEffect: "write" });
+    const [explore, write] = executions(guardian.reviews);
+    // The owner's own words name their instance, before and after the upgrade.
+    expect(authorityOf(explore!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
+    // The approved question joins the intent, but its link is the agent's, never the owner's.
+    expect(String(authorityOf(write!)["intent"])).toContain(`${pageLink}/new`);
+    expect(authorityOf(write!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write build refuses a blind repeat of a write, and live tests and explores in its session", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
+        () => [call("execute", execution("act", "src/act.mjs"), "act_1")],
+        () => [call("execute", execution("act", "src/act.mjs"), "act_2")],
+        () => [call("execute", execution("test", "src/look.mjs"), "test")],
+        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
+        () => [call("execute", execution("act", "src/look.mjs"), "read_back")],
+        () => [call("execute", execution("act", "src/act.mjs"), "act_3")],
+      ],
+    });
+    expect(fixture.writes()).toBe(2);
+    for (const id of ["act_1", "read_back", "act_3"])
+      expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
+    for (const [id, reason] of [
+      ["act_2", "could commit the write twice"],
+      ["test", "never as a live example or a live test"],
+      ["explore", "live exploration is over"],
+    ] as const) {
+      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
+      expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
+    }
+    const acts = executions(guardian.reviews);
+    expect(acts.map((review) => currentOf(review)?.["purpose"])).toEqual(["act", "act", "act"]);
+    expect(effectsOf(acts[0])[0]).toMatch(/^The caller's requested task, done once/u);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write session runs the input its first act step read from the request, and publishes against it", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({ "src/read.mjs": readNote, "src/save.mjs": saveNote, "src/tool.mjs": saveNote }),
+        () => [call("execute", act("src/read.mjs", { note: "kept" }), "read")],
+        () => [call("execute", act("src/save.mjs", { note: "other" }), "changed")],
+        () => [call("execute", act("src/save.mjs"), "save")],
+        (request) => [
+          call("finish_build", {
+            intent: "Return the composed write without running it",
+            entrypoint: "src/tool.mjs",
+            executionId: executionIdOf(request, "save"),
+            metadata: { name: "save_note", description: "Save the requested note once" },
+            coverage: "One confirmed act session on the note the request gave",
+          }),
+        ],
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.inputSchema).toMatchObject({ required: ["note"] });
+    expect(fixture.saved).toEqual(["kept"]);
+    expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "changed")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "changed"))).toContain("Repeat it unchanged or omit it");
+    const reviewed = executions(guardian.reviews);
+    expect(reviewed.map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "act",
+      "act",
+      "contract",
+    ]);
+    for (const review of reviewed) {
+      expect((review.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+        '{"note":"kept"}',
+      );
+    }
+    for (const review of reviewed.slice(0, 2)) {
+      expect(currentOf(review)?.["input"]).toBe("intent_derived");
+      expect(effectsOf(review)[0]).toContain("must be stated by the trusted intent");
+    }
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write session refuses exampleInput that is not an object, or once it started without one", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/look.mjs": probe() }),
+        () => [call("execute", act("src/look.mjs", "[1]"), "not_object")],
+        () => [call("execute", act("src/look.mjs"), "started")],
+        () => [call("execute", act("src/look.mjs", { note: "late" }), "late")],
+      ],
+    });
+    expect(toolResult(last, "started")).toMatchObject({ status: "completed" });
+    for (const [id, reason] of [
+      ["not_object", "exampleInput must be JSON text of the tool's input object"],
+      ["late", "only the session's first act step can pass exampleInput"],
+    ] as const) {
+      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
+      expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
+    }
+    expect(executions(guardian.reviews)).toHaveLength(1);
+    expect(currentOf(executions(guardian.reviews)[0]!)).not.toHaveProperty("input");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a write session runs the caller's own input and refuses exampleInput beside it", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      input: { note: "given" },
+      turns: [
+        () => patch({ "src/read.mjs": readNote }),
+        () => [call("execute", act("src/read.mjs", { note: "other" }), "beside")],
+        () => [call("execute", act("src/read.mjs"), "read")],
+      ],
+    });
+    expect(toolResult(last, "beside")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "beside"))).toContain(
+      "The caller supplied input, and the session runs it as it is.",
+    );
+    expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
+    const [review] = executions(guardian.reviews);
+    expect((review?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+      '{"note":"given"}',
+    );
+    expect(effectsOf(review)[0]).toMatch(
+      /^The caller's requested task, done once with the caller's values/u,
+    );
+  } finally {
+    await site.close();
+  }
+});
+
+test("secret handle problems are refused before Guardian reviews the source", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, `<title>Code</title><h1>Code</h1><input id="code">`),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ code: "fixture-private-value" }),
+      turns: [
+        () =>
+          patch({
+            "explore/leak.mjs": `const handle = "{{secret.s1}}";\nconsole.log(handle);\nexport default {};`,
+          }),
+        () => [
+          call("request_input", {
+            intent: "Ask for the private code",
+            questions: [
+              { id: "code", type: "secret", secretKind: "private_text", prompt: "Which code?" },
+            ],
+          }),
+        ],
+        () => [call("execute", execution("explore", "explore/leak.mjs"), "misplaced")],
+        // The check reads every authored file, so the unissued handle comes after.
+        () =>
+          patch({
+            "explore/unknown.mjs": probe(
+              `await page.locator('#code').fill("{{secret.s9}}"); return 1;`,
+            ),
+          }),
+        () => [call("execute", execution("explore", "explore/unknown.mjs"), "unissued")],
+      ],
+    });
+    expect(executions(guardian.reviews)).toEqual([]);
+    expect(toolResult(last, "misplaced")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "misplaced"))).toContain("explore/leak.mjs line 1: ");
+    expect(toolResult(last, "unissued")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "unissued"))).toContain("{{secret.s9}}");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a step Guardian denies never runs", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian({ decide: () => "deny" });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "explore")],
+      ],
+    });
+    expect(executions(guardian.reviews)).toHaveLength(1);
+    expect(JSON.stringify(toolResult(last, "explore"))).toContain("ReviewDenied");
+    expect(site.requests).toEqual([]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a command Guardian denies never runs", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  let commands = 0;
+  const guardian = recordingGuardian({
+    decide: (review) =>
+      currentOf(review)?.["purpose"] === "command" && commands++ === 0 ? "deny" : "allow",
+  });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => [call("exec_command", { cmd: "touch denied-marker" }, "denied")],
+        () => [call("exec_command", { cmd: "ls -a" }, "listed")],
+      ],
+    });
+    expect(executions(guardian.reviews)).toHaveLength(2);
+    expect(JSON.stringify(toolResult(last, "denied"))).toContain("ReviewDenied");
+    expect(toolResult(last, "listed")).toMatchObject({ status: "completed" });
+    expect(JSON.stringify(toolResult(last, "listed"))).toContain("AGENTS.md");
+    expect(JSON.stringify(toolResult(last, "listed"))).not.toContain("denied-marker");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a Guardian outage is retried before the step runs", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian({
+    fail: (index) => (index === 0 ? new Error("Synthetic provider outage") : undefined),
+  });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "explore")],
+      ],
+    });
+    expect(guardian.calls()).toBeGreaterThan(1);
+    expect(toolResult(last, "explore")).toMatchObject({ status: "completed" });
+  } finally {
+    await site.close();
+  }
+});
+
+test("a spent Guardian model quota ends the build as a host failure without a retry", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian({
+    fail: () => Object.assign(new Error("Synthetic spent quota"), { code: "insufficient_quota" }),
+  });
+  try {
+    const { built } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "explore")],
+      ],
+    });
+    expect(guardian.calls()).toBe(1);
+    expect(built).toMatchObject({ build: "incomplete", hostFailure: "model_quota_exhausted" });
+  } finally {
+    await site.close();
+  }
+});

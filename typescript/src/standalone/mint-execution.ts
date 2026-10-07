@@ -7,19 +7,22 @@ import {
   type LocalOperationOutput,
 } from "../execution/local-operation.js";
 import {
-  MintFailure,
   type MintDependencies,
   type ExecutionEvidence,
   type ExecutionRequest,
   type ScriptQuestionOutcome,
 } from "../mint/contracts.js";
+import { localCommandTimeoutMs } from "../execution/local-workspace.js";
+import { localOutputLimit } from "../execution/local-path.js";
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
+import { secretHandleRefusal } from "../mint/secret-handles.js";
+import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
 import { noticeRequest, InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
-import { error, inputValue, mintError } from "./errors.js";
+import { error, mintError } from "./errors.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
 const executeCommand = (
@@ -36,21 +39,43 @@ const executeCommand = (
       (yield* workspace.snapshot).map(([path, text]) => [`operation/${path}`, text]),
     );
     sources.set("operation/command.sh", execution.command);
-    yield* context.review("operation/command.sh", sources, {}, "command", "pureFiles");
+    yield* context.review(
+      {
+        entrypoint: "operation/command.sh",
+        sources,
+        input: {},
+        currentExecution: {
+          purpose: "command",
+          target: "pureFiles",
+          commandSandbox: {
+            // The command runs in the workspace; its path on this machine is not Guardian's.
+            cwd: ".",
+            timeoutSeconds: localCommandTimeoutMs / 1000,
+            maxOutputBytes: localOutputLimit,
+          },
+        },
+      },
+      "not_sent",
+    );
     yield* beforeDispatch ?? Effect.void;
     const exec = workspace.session.exec?.bind(workspace.session);
     if (exec === undefined)
       return yield* Effect.fail(new Error("Workspace command execution unavailable"));
-    const result = yield* Effect.tryPromise({
-      try: () => exec({ cmd: execution.command }),
-      catch: error,
-    });
-    return {
-      executionId: id,
-      status: result.exitCode === 0 ? ("completed" as const) : ("failed" as const),
-      effect: "not_sent" as const,
-      observations: yield* projection.json(result),
-    };
+    return yield* context.running(
+      { purpose: "command", target: "pureFiles" },
+      Effect.gen(function* () {
+        const result = yield* Effect.tryPromise({
+          try: () => exec({ cmd: execution.command }),
+          catch: error,
+        });
+        return {
+          executionId: id,
+          status: result.exitCode === 0 ? ("completed" as const) : ("failed" as const),
+          effect: "not_sent" as const,
+          observations: yield* projection.json(result),
+        };
+      }),
+    );
   });
 /** A page check before this sign-in's steps sent the login proves nothing about this build. */
 const credentialsNotSubmitted = {
@@ -101,6 +126,7 @@ const executeAuthentication = (
       );
       start.approved();
     }
+    yield* context.observe;
     return {
       executionId: id,
       status: "completed" as const,
@@ -134,10 +160,9 @@ const scriptQuestions = (
         { credentialsAvailable: false },
         projection.text,
       );
-      const review = yield* context.guardian.reviewQuestion(
-        context.pending(`operation/${entrypoint}`, input),
+      const review = yield* context.reviewQuestion(
+        { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
         question,
-        context.readSources(sourceMap),
       );
       if (review.decision.outcome !== "allow_business") {
         scriptQuestion = {
@@ -274,6 +299,14 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
     return evidence;
   });
 
+/** A step the host refuses before review: it runs nothing and leaves no history entry. */
+const unsupported = (reason: string): ExecutionEvidence => ({
+  executionId: randomUUID(),
+  status: "unsupported",
+  effect: "not_sent",
+  observations: reason,
+});
+
 const authoredExecution = (
   state: MintState,
   execution: Exclude<Parameters<MintDependencies["reviewAndExecute"]>[0], { purpose: "command" }>,
@@ -281,36 +314,45 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, start, mintAsk } = state;
+    const { workspace, context, request, handles, start, mintAsk, writeSession } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
       /^(src|explore|test|scratch)\//u.test(path),
     );
+    const files = new Map(sources);
+    const live = execution.target === "liveBrowser";
+    const refusal =
+      secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
+      replayedWriteStep(execution, files, writeSession.steps);
+    if (refusal !== undefined) return unsupported(refusal);
+    const selected = yield* stepInput(execution, {
+      callerInput: request.input ?? {},
+      sessionInput: writeSession.input,
+    });
+    const { input, mark } = selected;
     const sourceMap = new Map(sources.map(([path, text]) => [`operation/${path}`, text]));
-    const input = yield* inputValue(
-      execution.testInput ?? execution.exampleInput,
-      request.input ?? {},
-    );
     const reviewed = yield* context.review(
-      `operation/${execution.entrypoint}`,
-      sourceMap,
-      input,
-      execution.purpose,
-      execution.target === "pureFiles" ? "pureFiles" : "liveBrowser",
+      {
+        entrypoint: `operation/${execution.entrypoint}`,
+        sources: sourceMap,
+        input,
+        currentExecution: {
+          purpose: execution.purpose,
+          target: execution.target,
+          ...(mark === undefined ? {} : { input: mark }),
+        },
+        startsOnFreshPage: start.resets(execution),
+      },
+      "not_sent",
     );
-    if (
-      handles.unissued(new Map(sources)).length > 0 ||
-      handles.misplaced(new Map(sources), context.siteOrigin) !== undefined
-    )
-      return yield* Effect.fail(new MintFailure({ code: "ScopeDenied" }));
     // A code the site sent for the sign-in under way, which an explore typed on the site,
     // finished that sign-in: it counts as the proof, as a code the host fills does. Only a typing
     // call that delivered the code's value in a frame on the site or a configured sign-in origin
     // and completed counts, never the source text.
     const known = new Map(handles.snapshot());
     const codes =
-      execution.purpose === "explore" && execution.target === "liveBrowser"
+      execution.purpose === "explore" && live
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
     const signInOrigins = request.authenticationOrigins ?? [];
@@ -319,35 +361,64 @@ const authoredExecution = (
         ? undefined
         : browser.watchTyping(codes, (url) => trustedUrl(context.siteOrigin, signInOrigins, url));
     yield* beforeDispatch ?? Effect.void;
-    yield* start.before(execution);
+    if (execution.purpose === "act") {
+      writeSession.started = true;
+      // Guardian allowed the step on this input, so the session runs it from here on.
+      if (selected.mark === "intent_derived") writeSession.input = selected.input;
+    }
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
-    const executed = yield* Effect.either(
-      runLocalOperation({
-        workspace,
-        entrypoint: execution.entrypoint,
-        sources: [...handles.fill(new Map(sources), context.siteOrigin)],
-        input,
-        browser:
-          watch === undefined
-            ? browser
-            : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
-        siteOrigin: context.siteOrigin,
-        ...(siteDomain(context.siteOrigin) === undefined
-          ? {}
-          : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
-        timeoutMs: execution.timeoutSeconds * 1000,
-        mode: "run",
-        target: execution.target === "pureFiles" ? "pureFiles" : "browser",
-        ask: scriptAsk,
-        decideDialog: makeDialogDecider(mintAsk, secrets.redact),
+    return yield* context.running(
+      {
+        purpose: execution.purpose,
+        target: execution.target,
+        ...(mark === "agent_chosen" ? { input: mark } : {}),
+      },
+      Effect.gen(function* () {
+        yield* start.before(execution);
+        const executed = yield* Effect.either(
+          runLocalOperation({
+            workspace,
+            entrypoint: execution.entrypoint,
+            // Only a live step receives a value; offline steps run the handle text as written.
+            sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
+            input,
+            browser:
+              watch === undefined
+                ? browser
+                : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
+            siteOrigin: context.siteOrigin,
+            ...(siteDomain(context.siteOrigin) === undefined
+              ? {}
+              : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
+            timeoutMs: execution.timeoutSeconds * 1000,
+            mode: "run",
+            target: live ? "browser" : "pureFiles",
+            ask: scriptAsk,
+            decideDialog: makeDialogDecider(mintAsk, secrets.redact),
+          }),
+        );
+        if (watch !== undefined && watch.typed().size > 0) start.typedCode();
+        if (live) yield* context.observe;
+        if (execution.purpose === "act")
+          writeSession.steps.push({
+            entrypoint: execution.entrypoint,
+            sourceDigest: writeStepDigest(files, execution.entrypoint),
+            stateChanging:
+              (executed._tag === "Left"
+                ? executed.left instanceof LocalOperationFailure
+                  ? executed.left.journal.effect
+                  : "possible"
+                : executed.right.effect) !== "not_sent",
+          });
+        if (execution.purpose === "example" && executed._tag === "Right")
+          context.setInputSchema(executed.right.schemas.input);
+        const receipt = { state, execution, id, sources, input, reviewed, journal };
+        return yield* executed._tag === "Left"
+          ? failedReceipt(receipt, executed.left, questions)
+          : completedReceipt(receipt, executed.right);
       }),
     );
-    if (watch !== undefined && watch.typed().size > 0) start.typedCode();
-    const receipt = { state, execution, id, sources, input, reviewed, journal };
-    return yield* executed._tag === "Left"
-      ? failedReceipt(receipt, executed.left, questions)
-      : completedReceipt(receipt, executed.right);
   });
 export const mintExecution =
   (state: MintState): MintDependencies["reviewAndExecute"] =>
@@ -356,10 +427,10 @@ export const mintExecution =
       execution.purpose === "command"
         ? executeCommand(state, execution, beforeDispatch)
         : execution.purpose === "authenticate" && execution.signInStep !== undefined
-          ? executeAuthentication(state, execution.signInStep, beforeDispatch)
+          ? state.context.recorded(
+              { purpose: "authenticate", target: "liveBrowser" },
+              executeAuthentication(state, execution.signInStep, beforeDispatch),
+            )
           : authoredExecution(state, execution, beforeDispatch, journal);
-    return perform.pipe(
-      Effect.tap((evidence) => Effect.sync(() => state.context.record(execution, evidence))),
-      Effect.mapError(mintError),
-    );
+    return perform.pipe(Effect.mapError(mintError));
   };

@@ -12,6 +12,7 @@ import {
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
+import type { WriteStep } from "../mint/step-checks.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { Deadline } from "../runtime/deadline.js";
 import { failureDetail } from "../runtime/failure-detail.js";
@@ -39,11 +40,14 @@ const unavailable = (operation: string) => (error: unknown) =>
  * A live example, a live test and a write session's first step reset the page and load the site
  * root; see `startStateFor`. A new sign-in drops the session saved after the last one, and a
  * check counts the build signed in only once a sign-in step sent the login (see `sent`).
+ * `leavePage` runs before each reset, so the page the last step left is never taken for the
+ * reset step's page, even when the reset fails.
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
   siteOrigin: string,
   enterRequest: Effect.Effect<void, Error>,
+  leavePage: () => void,
 ) => {
   const tracker = makeStartTracker();
   const hooks = localStartHooks(browser.execute, browser.targetId);
@@ -96,6 +100,9 @@ export const makeBuildStart = (
     },
     /** The site showed the build signed in. Returns whether it counted. */
     verified: tracker.verified,
+    /** Whether `step` starts on a reset page, not the one the last step left. Changes nothing. */
+    resets: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
+      tracker.plan({ purpose: step.purpose, live: step.target === "liveBrowser" }).start !== "none",
     /** Saves the session when due, then resets the page or enters the site, before `step` runs. */
     before: (step: Pick<ExecutionRequest, "purpose" | "target">) =>
       Effect.gen(function* () {
@@ -112,6 +119,7 @@ export const makeBuildStart = (
         if (plan.start === "none") {
           if (live) yield* enter;
         } else {
+          leavePage();
           yield* startPage(
             browser.execute,
             browser.targetId,
@@ -169,21 +177,33 @@ export const mintState = (
       review: (step, inspection) =>
         context
           .review(
-            "operation/sign-in-step.json",
-            new Map([
-              ["operation/sign-in-step.json", JSON.stringify({ step, screen: inspection.screen })],
-            ]),
-            {},
-            "authenticate",
-            "liveBrowser",
+            {
+              entrypoint: "operation/sign-in-step.json",
+              sources: new Map([
+                [
+                  "operation/sign-in-step.json",
+                  JSON.stringify({ step, screen: inspection.screen }),
+                ],
+              ]),
+              input: {},
+              currentExecution: { purpose: "authenticate", target: "liveBrowser" },
+            },
+            "not_sent",
           )
           .pipe(Effect.asVoid),
     });
+    /**
+     * The build's one write session: whether its first act step dispatched, the agent's
+     * `exampleInput` it runs when the caller sent none, and its act steps in order for the
+     * blind-repeat guard.
+     */
+    const writeSession: {
+      started: boolean;
+      input: Readonly<Record<string, unknown>> | undefined;
+      readonly steps: WriteStep[];
+    } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    let claimed = false;
-    let buildEffect: "read" | "write" | undefined =
-      request.effect === "read" || request.effect === "write" ? request.effect : undefined;
-    const start = makeBuildStart(browser, context.siteOrigin, context.navigate);
+    const start = makeBuildStart(browser, context.siteOrigin, context.navigate, context.leavePage);
     return {
       session,
       context,
@@ -195,20 +215,9 @@ export const mintState = (
       mintAsk,
       runs,
       auth,
+      writeSession,
       start,
       afterSubmit,
-      get claimed() {
-        return claimed;
-      },
-      claim() {
-        claimed = true;
-      },
-      get buildEffect() {
-        return buildEffect;
-      },
-      setBuildEffect(effect: "read" | "write") {
-        buildEffect = effect;
-      },
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;
