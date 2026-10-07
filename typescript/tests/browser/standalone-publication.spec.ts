@@ -114,6 +114,47 @@ async ({kernel,sessionId}) => {
   }
 });
 
+test("finish_build refuses a saved file of any extension that holds a secret handle", async () => {
+  test.setTimeout(60_000);
+  const site = await headingSite();
+  const guardian = recordingGuardian();
+  const tool = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_fixture",input:Schema.Struct({}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return await page.locator('h1').textContent();",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result).trim()};
+});`;
+  try {
+    const { built, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": tool,
+            "src/query.graphql": 'query { account(code: "{{secret.s1}}") { name } }',
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        (request) => finish(request, "finish", "example"),
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).not.toBe("published");
+    expect(built.artifact).toBeUndefined();
+    expect(toolResult(last, "finish")).toMatchObject({
+      status: "not_published",
+      code: "PublicationUnavailable",
+      reason: "secret_handle",
+      path: "src/query.graphql",
+    });
+    expect(publications(guardian.reviews)).toHaveLength(0);
+  } finally {
+    await site.close();
+  }
+});
+
 test("an account-specific enum Guardian returns as input feedback is fixed and published", async () => {
   test.setTimeout(60_000);
   const site = await headingSite();
