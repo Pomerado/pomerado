@@ -7,6 +7,8 @@ it.each([
   ["https://app.example.co.uk", "example.co.uk"],
   // A private suffix keeps each user's page its own site.
   ["https://alice.github.io", "alice.github.io"],
+  // A private suffix that tldts 7.4.16 added. Older suffix data made glideos.app the site.
+  ["https://alice.glideos.app", "alice.glideos.app"],
   ["https://flights.site.invalid", "site.invalid"],
 ])("the site of %s is %s", (origin, domain) => {
   expect(siteDomain(origin)).toBe(domain);
@@ -29,5 +31,7 @@ it.each([
 
 it("keeps other users' pages on a private suffix apart", () => {
   expect(sameSite("https://alice.github.io", new URL("https://bob.github.io/"))).toBe(false);
+  expect(sameSite("https://alice.glideos.app", new URL("https://bob.glideos.app/"))).toBe(false);
+  expect(sameSite("https://alice.glideos.app", new URL("https://x.alice.glideos.app/"))).toBe(true);
   expect(sameSite("https://flights.example.com", new URL("https://example.org/"))).toBe(false);
 });

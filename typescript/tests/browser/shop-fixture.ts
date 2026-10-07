@@ -11,6 +11,8 @@ const products = [
   { id: "p-2", name: "Oak shelf", priceMinor: 9900 },
 ];
 export const shopAccount = { username: "ada@example.test", password: "correct-horse-battery-9" };
+/** The code the shop asks for after the one-screen sign-in, when `loginCode` is set. */
+export const shopCode = "482913";
 /** How many help links the two-screen sign-in's password screen shows besides its 4 controls. */
 export const shopHelpLinks = 40;
 /** An account the shop has locked: it answers 423 whatever the password. */
@@ -22,6 +24,8 @@ export const lockedShopAccount = {
 /** Counters and switches for one controlled shop. */
 interface ShopState {
   searchPageLoads: number;
+  /** Loads of the code screen, by GET, that `loginCode` puts after the one-screen sign-in. */
+  codePageLoads: number;
   apiRequests: number;
   curlApiRequests: number;
   cartPosts: number;
@@ -34,6 +38,19 @@ interface ShopState {
   curl: "ok" | "refuse";
   /** `after_input` keeps the sign-in button disabled until both fields hold input. */
   loginSubmit: "enabled" | "after_input";
+  /**
+   * The root page: `broken` drops its connection, so it never loads, and `hang` shows an image
+   * whose request never answers, so its load never ends. `late` is an empty shell whose script
+   * renders a header with an "Account" link, signed out too, `homeRenderMs` after it runs, and
+   * `splash` is the same shell showing "Loading…" until then.
+   */
+  home: "ok" | "broken" | "hang" | "late" | "splash";
+  homeRenderMs: number;
+  /**
+   * Whether the one-screen sign-in asks for `shopCode` on a code screen, `/two-factor`, before it
+   * signs the browser in. The screen's form posts the code back to it.
+   */
+  loginCode: boolean;
 }
 
 export interface Shop {
@@ -74,6 +91,8 @@ interface ShopSecrets {
   readonly sessionValue: string;
   readonly csrfValue: string;
   readonly signedIn: string;
+  /** A sign-in that sent the password and waits for its code. */
+  readonly pending: string;
 }
 
 /** A sign-in body's username and password, when it is an object that carries them. */
@@ -92,8 +111,12 @@ const postOnly =
     request.method === "POST" ? route(request, response) : json(response, 404, {});
 
 /** The shop's routes by path; any other path answers 404. */
-const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string, Route> => {
-  const { sessionValue, csrfValue, signedIn } = secrets;
+const shopRoutes = (
+  state: ShopState,
+  secrets: ShopSecrets,
+  hanging: ServerResponse[],
+): ReadonlyMap<string, Route> => {
+  const { sessionValue, csrfValue, signedIn, pending } = secrets;
   const sessionCookies = [
     `shop_session=${sessionValue}; Path=/; Secure; HttpOnly; SameSite=Lax`,
     `csrf_token=${csrfValue}; Path=/; Secure; SameSite=Lax`,
@@ -101,14 +124,26 @@ const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string,
   // A page load keeps a signed-in session; a signed-out browser gets a fresh one.
   const cookiesFor = (request: IncomingMessage) =>
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
-  const home: Route = (request, response) =>
-    html(
+  const lateHome = (shell: string) => `<title>Shop</title><div id="app">${shell}</div>
+<script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},${state.homeRenderMs})</script>`;
+  const home: Route = (request, response) => {
+    if (state.home === "broken") return void response.destroy();
+    if (state.home === "late" || state.home === "splash")
+      return html(response, lateHome(state.home === "splash" ? "<p>Loading…</p>" : ""), {
+        "set-cookie": cookiesFor(request),
+      });
+    return html(
       response,
       `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
 <button id="add">Add to cart</button><p id="added"></p>
-<script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>`,
+<script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>${state.home === "hang" ? `<img src="/hang" alt="">` : ""}`,
       { "set-cookie": cookiesFor(request) },
     );
+  };
+  // A request that never answers, until the shop closes.
+  const hang: Route = (_request, response) => {
+    hanging.push(response);
+  };
   const search: Route = (request, response) => {
     state.searchPageLoads += 1;
     html(
@@ -152,7 +187,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
 <script>const form=document.querySelector('#login');form.addEventListener('input',()=>{form.querySelector('button').disabled=!(form.username.value&&form.password.value)})</script>`
           : ""
       }
-<script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(response.ok)location.href='/account'})</script>`,
+<script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(response.ok)location.href=(await response.json()).next??'/account'})</script>`,
       { "set-cookie": cookiesFor(request) },
     );
   const login: Route = async (request, response) => {
@@ -169,9 +204,33 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     if (!matches) return json(response, 401, { error: "invalid credentials" });
     response.writeHead(200, {
       "content-type": "application/json",
+      "set-cookie": [
+        state.loginCode
+          ? `shop_pending=${pending}; Path=/; Secure; HttpOnly; SameSite=Lax`
+          : `shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`,
+      ],
+    });
+    response.end(
+      JSON.stringify(state.loginCode ? { ok: true, next: "/two-factor" } : { ok: true }),
+    );
+  };
+  // The code screen: a GET shows its form, and the form's post with the code signs in.
+  const twoFactor: Route = async (request, response) => {
+    if (request.method !== "POST") {
+      state.codePageLoads += 1;
+      return html(
+        response,
+        `<title>Code</title><form method="post" action="/two-factor"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>`,
+      );
+    }
+    const code = new URLSearchParams(await readBody(request)).get("code");
+    if (code !== shopCode || cookieOf(request, "shop_pending") !== pending)
+      return html(response, "<title>Code</title><p id='wrong-code'>Wrong code</p>");
+    response.writeHead(303, {
+      location: "/account",
       "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
     });
-    response.end(JSON.stringify({ ok: true }));
+    response.end();
   };
   const account: Route = (request, response) =>
     html(
@@ -242,6 +301,8 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     ["/login", loginPage],
     ["/api/login", postOnly(login)],
     ["/account", account],
+    ["/two-factor", twoFactor],
+    ["/hang", hang],
   ]);
 };
 
@@ -268,6 +329,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
   ]);
   const state: ShopState = {
     searchPageLoads: 0,
+    codePageLoads: 0,
     apiRequests: 0,
     curlApiRequests: 0,
     cartPosts: 0,
@@ -276,11 +338,16 @@ export const startShop = async (directory: string): Promise<Shop> => {
     api: "ok",
     curl: "ok",
     loginSubmit: "enabled",
+    home: "ok",
+    homeRenderMs: 300,
+    loginCode: false,
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;
   const signedIn = `acct-${randomBytes(12).toString("hex")}`;
-  const routes = shopRoutes(state, { sessionValue, csrfValue, signedIn });
+  const pending = `pend-${randomBytes(12).toString("hex")}`;
+  const hanging: ServerResponse[] = [];
+  const routes = shopRoutes(state, { sessionValue, csrfValue, signedIn, pending }, hanging);
   const notFound: Route = (_request, response) => json(response, 404, {});
   const server = createServer(
     {
@@ -306,6 +373,9 @@ export const startShop = async (directory: string): Promise<Shop> => {
     state,
     sessionValue,
     csrfValue,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => {
+      for (const response of hanging) response.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 };
