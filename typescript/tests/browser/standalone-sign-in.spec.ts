@@ -11,7 +11,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { recordingGuardian } from "./guardian-context-fixture.js";
-import { startShop, shopAccount, type Shop } from "./shop-fixture.js";
+import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in today, on the shop's one-screen and two-screen sign-ins: what the
 // host asks, what a later run does, what a second screen's submit may carry, and what Guardian
@@ -140,7 +140,11 @@ const answers = (asked: InputRequest[]) =>
       return Object.fromEntries(
         request.questions.map((question) => [
           question.id,
-          question.id === "password" ? shopAccount.password : shopAccount.username,
+          question.id === "password"
+            ? shopAccount.password
+            : question.id === "code"
+              ? shopCode
+              : shopAccount.username,
         ]),
       );
     }),
@@ -960,3 +964,107 @@ test("the local minter's marker check leaves a form's answer where its loads lef
     expect(objects(toolResult(mintRequests, "explore_where"))).toContainEqual({ where: "/" });
   });
 });
+
+/** Types the code the agent was given into the shop's code screen, then submits it. */
+const typeCode = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"type_code",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    "await page.locator('input[name=code]').fill('{{secret.s1}}'); await Promise.all([page.waitForURL('**/account'), page.locator('button').click()]); return true;",
+  )},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+/** How the code screen's sign-in finishes: a code sign-in step, or a code an exploration types. */
+const codeEntries: readonly (readonly [string, readonly Output[]])[] = [
+  [
+    "a code sign-in step",
+    [
+      [
+        signInStep(
+          { fields: [{ selector: "input[name=code]", slot: "code" }], submit: "button" },
+          "code",
+        ),
+      ],
+    ],
+  ],
+  [
+    "a code an exploration types",
+    [
+      [
+        call(
+          "request_input",
+          {
+            intent: "Ask for the code the shop sent to finish signing in",
+            questions: [
+              {
+                id: "code",
+                type: "secret",
+                secretKind: "one_time_code",
+                prompt: "Enter the code the shop sent you to finish signing in.",
+              },
+            ],
+          },
+          "ask_code",
+        ),
+      ],
+      // Written once the code's handle is issued.
+      [create("explore/type-code.mjs", typeCode, "patch_type_code")],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/type-code.mjs", intent: "Type the code the shop sent" },
+          "code",
+        ),
+      ],
+    ],
+  ],
+];
+
+for (const [entry, codeSteps] of codeEntries)
+  test(`${entry} forgets the code screen explored before it, so the marker check never loads it`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a host sign-in with a code screen and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      shop.state.loginCode = true;
+      let codeLoads: number | undefined;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        markerFiles,
+        // The password goes first: the login is sent, and the shop shows its code screen.
+        [signInFields()],
+        [explore("where", "explore_code_screen")],
+        ...codeSteps,
+        [explore("account")],
+        () => {
+          codeLoads = shop.state.codePageLoads;
+          return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+        },
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      ]);
+      expect(objects(toolResult(mintRequests, "explore_code_screen"))).toContainEqual({
+        where: "/two-factor",
+      });
+      expect(objects(toolResult(mintRequests, "code"))).toContainEqual(
+        expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+      );
+      expect(codeLoads).toBe(1);
+      // The code finished the sign-in, so the code screen explored before it is no signed-in
+      // page: the check has no other page than the account page it loads fresh.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "passed",
+        signedOutSnapshot: "absent",
+        signedInNow: true,
+        freshLoad: true,
+      });
+      expect(shop.state.codePageLoads).toBe(1);
+      expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+        expect.objectContaining({ signedIn: true }),
+      );
+      expect(JSON.stringify(mintRequests)).not.toContain(shopCode);
+    });
+  });
