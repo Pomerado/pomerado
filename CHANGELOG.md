@@ -25,6 +25,16 @@ The package now holds only code the local host runs, plus the hook interfaces an
   - `withCauseEntry`, `failureDetailFiniteMetadata` and `failureFiniteNames` from `pomerado/core/runtime/failure-detail`
   - `isSecretOrLooseKey`, `isCredentialContextKey`, `isCredentialName`, `credentialFieldPropagation`, `cookiePropagation`, `isSessionTokenField` and `sessionTokenEntity` from `pomerado/core/privacy/secret-keys`, which keeps `isSecretKey`
   - `refusalEvidence` and `callFailure` from `pomerado/core/destinations/autofill-refusal`. A refused step's evidence is still its report's `failureDetail.context`.
+  - `executeKernelOperation` and `offlineKernel` from `pomerado/core/runtime/kernel-operation`. The local runner runs a script with `runKernelScript`, which stays. To run one as `executeKernelOperation` did, wrap `runKernelScript` in `decodeKernelOperationInput` and `validateKernelOperationOutput`, now exported from `pomerado/core/runtime/kernel-operation-validation`.
+  - `failureCause` from `pomerado/core/runtime/errors`
+  - `asksAsDeclared` from `pomerado/core/runtime/script-input`
+  - `autofillMarkerVisible` from `pomerado/core/destinations/autofill-page`, which keeps `openAutofillLogin`. The page code it built on, `autofillPageCode`, is now exported from `pomerado/core/destinations/autofill-page-code`.
+  - `credentialRequestMessage`, `holdsSecrets`, `inputWindowMs`, `keepAnswerRecovery` and `validateKeptAnswers` from `pomerado/core/runtime/input-request`
+  - `loginFieldsOfRecipe`, `publicLoginFields`, `revisionLoginFields`, `unusedRunLoginField`, `inlineLoginFields`, `InlineLoginField` and `LoginFieldsUsed` from `pomerado/core/destinations/login-fields`, which keeps `LoginField`, `LoginFields` and `SignInMethods`
+  - `isHostIncident` from `pomerado/core/mint/incident-contracts`
+  - `SignInRecoveryEvent` from `pomerado/core/execution/sign-in-diagnostics`
+  - `BrowserMode` from `pomerado/core/runtime/provider-metadata`
+  - `sameRegistrableDomain` from `pomerado/core/runtime/same-site`
   - Migrate by keeping your own copy of what you use in your host.
 
 ## 0.3.0

@@ -16,7 +16,8 @@ import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
 import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { executeKernelOperation, offlineKernel } from "../../src/runtime/kernel-operation.js";
+import { offlineKernel } from "../support/offline-kernel.js";
+import { runKernelOperation } from "../support/kernel-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
@@ -239,10 +240,10 @@ it("accepts authoritative empty invoices and rejects absent/invalid bodies", asy
     return Effect.runPromise(
       Effect.either(
         Effect.scoped(
-          executeKernelOperation(
+          runKernelOperation(
             parser,
             { body },
-            { kernel: offlineKernel, sessionId: "offline", offline: true },
+            { kernel: offlineKernel, sessionId: "offline" },
           ).pipe(
             Effect.provideService(ExecutionContext, {
               deadline: Deadline.after(5_000),
@@ -371,7 +372,7 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   const journal = await Effect.runPromise(makeEffectJournal);
   const result = await Effect.runPromise(
     Effect.scoped(
-      executeKernelOperation(
+      runKernelOperation(
         authEntry,
         {},
         {

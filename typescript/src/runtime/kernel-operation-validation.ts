@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import { InvalidInput, InvalidOutput, inputIssues } from "./errors.js";
 import type { KernelOperation } from "./kernel-operation.js";
 
-/** Shared contract validation for hosted and caller-owned operation runners. */
+/** Contract validation for a Kernel script run: its input decoded, its output validated. */
 export const decodeKernelOperationInput = <Input, EncodedInput, Output, EncodedOutput>(
   operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
   rawInput: unknown,

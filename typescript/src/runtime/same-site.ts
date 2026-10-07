@@ -6,10 +6,6 @@ const registrableDomain = (hostname: string) => getDomain(hostname, { allowPriva
 /** Registrable domain, else the host. */
 const siteOf = (hostname: string) => registrableDomain(hostname) ?? hostname;
 
-/** Whether two hosts share a registrable domain, or are the same host when either has none. */
-export const sameRegistrableDomain = (left: string, right: string) =>
-  siteOf(left) === siteOf(right);
-
 /**
  * The registrable domain whose HTTPS hosts `sameSite` accepts for an exact HTTPS site origin.
  * Undefined for any other origin text and for a host with no registrable domain (an IP address,

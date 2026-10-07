@@ -7,13 +7,8 @@ import {
   makeEffectJournalWith,
 } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import {
-  executeKernelOperation,
-  isKernelOperation,
-  kernelTimeoutSec,
-  offlineKernel,
-} from "../../src/runtime/kernel-operation.js";
-import { CaptureUnavailable } from "../../src/runtime/errors.js";
+import { isKernelOperation, kernelTimeoutSec } from "../../src/runtime/kernel-operation.js";
+import { runKernelOperation } from "../support/kernel-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js";
 import type { ScriptQuestionHandler } from "../../src/runtime/script-input.js";
@@ -64,43 +59,6 @@ const failureOf = <A, E>(exit: Exit.Exit<A, E>) => {
   return Cause.failureOption(exit.cause);
 };
 
-describe("Kernel script capture", () => {
-  it("returns the script's result and records a gap when capture cannot finish", async () => {
-    const events: { readonly name: string; readonly details: unknown }[] = [];
-    const journal = await Effect.runPromise(makeEffectJournal);
-    const operation = defineOperation(
-      { input: Schema.Struct({}), output: Schema.Struct({ title: Schema.String }) },
-      async () => ({ title: "Example Domain" }),
-    );
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        executeKernelOperation(
-          operation,
-          {},
-          { kernel: offlineKernel, sessionId: "session-1" },
-        ).pipe(
-          Effect.provideService(ExecutionContext, {
-            deadline: Deadline.after(60_000),
-            journal,
-            events: {
-              emit: (name, details) =>
-                Effect.sync(() => {
-                  events.push({ name, details });
-                }),
-            },
-            capture: {
-              start: Effect.void,
-              finish: Effect.fail(new CaptureUnavailable({ phase: "finish" })),
-            },
-          }),
-        ),
-      ),
-    );
-    expect(exit).toEqual(Exit.succeed({ title: "Example Domain" }));
-    expect(events).toContainEqual({ name: "capture.finish_gap", details: { phase: "finish" } });
-  });
-});
-
 describe("Kernel script", () => {
   const script = defineOperation(
     {
@@ -144,7 +102,7 @@ return { title: await page.title() };`,
         makeEffectJournalWith({ settledCommits: ["save-address", "confirm-terms"] }),
       );
       const outcome = await run(
-        executeKernelOperation(write(step), {}, { kernel: kernel.client, sessionId: "s" }),
+        runKernelOperation(write(step), {}, { kernel: kernel.client, sessionId: "s" }),
         Deadline.after(60_000),
         Effect.succeed(journal),
       );
@@ -195,18 +153,10 @@ return { title: await page.title() };`,
           return "saved";
         },
       );
-    const effect = async (calls: "mark" | "mark_then_call" | "none", offline = false) => {
+    const effect = async (calls: "mark" | "mark_then_call" | "none") => {
       const kernel = fakeKernel(() => ({ success: true, result: null }));
       const { exit, websiteEffect } = await run(
-        executeKernelOperation(
-          write(calls),
-          {},
-          {
-            kernel: kernel.client,
-            sessionId: "session-1",
-            ...(offline ? { offline: true } : {}),
-          },
-        ),
+        runKernelOperation(write(calls), {}, { kernel: kernel.client, sessionId: "session-1" }),
       );
       expect(exit).toEqual(Exit.succeed("saved"));
       return websiteEffect;
@@ -215,15 +165,13 @@ return { title: await page.title() };`,
     expect(await effect("none")).toBe("may_have_dispatched");
     // A call after the mark may have written again.
     expect(await effect("mark_then_call")).toBe("may_have_dispatched");
-    // An offline run cannot reach a site, so its mark changes nothing.
-    expect(await effect("mark", true)).toBe("not_started");
   });
 
   it("reports a failed call as the script's typed failure", async () => {
     const stderr = "Error: locator not found\n    at call (kernel-call.js:2:7)";
     const kernel = fakeKernel(() => ({ success: false, error: "locator not found", stderr }));
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         { query: "x" },
         {
@@ -256,7 +204,7 @@ return { title: await page.title() };`,
       result: { cleared: false, waitedMs: 30_004 },
     }));
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         waiting,
         {},
         {
@@ -316,7 +264,7 @@ return { title: await page.title() };`,
       },
     };
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         defineOperation(published, async () => "account page"),
         {},
         {
@@ -331,39 +279,6 @@ return { title: await page.title() };`,
     expect(seen).toEqual([]);
   });
 
-  it("runs an offline script without a browser, and a call it makes fails unsent", async () => {
-    const parser = defineOperation(
-      { input: Schema.Struct({ text: Schema.String }), output: Schema.Number },
-      async ({ input }) => input.text.length,
-    );
-    const parsed = await run(
-      executeKernelOperation(
-        parser,
-        { text: "abc" },
-        {
-          kernel: offlineKernel,
-          sessionId: "offline",
-          offline: true,
-        },
-      ),
-    );
-    expect(parsed).toEqual({ exit: Exit.succeed(3), websiteEffect: "not_started" });
-    const calling = await run(
-      executeKernelOperation(
-        script,
-        { query: "x" },
-        {
-          kernel: offlineKernel,
-          sessionId: "offline",
-          offline: true,
-        },
-      ),
-    );
-    expect(failureOf(calling.exit)).toMatchObject(
-      Option.some({ _tag: "OperationFailure", dispatch: "not_sent" }),
-    );
-  });
-
   it("sends the SDK a whole-millisecond request timeout when little time is left", async () => {
     const waiting = defineOperation(
       { input: Schema.Struct({}), output: Schema.Null },
@@ -374,7 +289,7 @@ return { title: await page.title() };`,
     );
     const kernel = fakeKernel(() => ({ success: true, result: { cleared: true, waitedMs: 5 } }));
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         waiting,
         {},
         {
@@ -408,7 +323,7 @@ it.each([
       },
     );
     const { exit } = await run(
-      executeKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
+      runKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
     );
     expect(failureOf(exit)).toMatchObject({ _tag: "Some", value: { _tag: tag } });
   },
@@ -428,7 +343,7 @@ it("does not retain a handled Kernel timeout after a later successful call", asy
     },
   );
   const { exit } = await run(
-    executeKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
+    runKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
   );
   expect(failureOf(exit)).toMatchObject({ _tag: "Some", value: { _tag: "OperationFailure" } });
 });
@@ -465,7 +380,7 @@ it.each([
       },
     );
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         operation,
         {},
         {
@@ -491,7 +406,7 @@ it("retains a provider exception as the marker inspection failure's cause", asyn
   );
   const cause = new Error("synthetic provider disconnected");
   const { exit } = await run(
-    executeKernelOperation(
+    runKernelOperation(
       operation,
       {},
       {
@@ -634,7 +549,7 @@ return await shown;`),
         return { choice: "accept" as const };
       });
     const exit = await runAsking(
-      executeKernelOperation(script, {}, { kernel: kernel.client, sessionId: "session-1", dialogs }),
+      runKernelOperation(script, {}, { kernel: kernel.client, sessionId: "session-1", dialogs }),
       Deadline.after(60_000),
       () =>
         Effect.sync(() => {
@@ -667,7 +582,7 @@ return await shown;`),
         return answer;
       });
     const exit = await runAsking(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {

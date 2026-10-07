@@ -107,6 +107,11 @@
       "import": "./dist/typescript/src/destinations/autofill-page.js",
       "default": "./dist/typescript/src/destinations/autofill-page.js"
     },
+    "./core/destinations/autofill-page-code": {
+      "types": "./dist/typescript/src/destinations/autofill-page-code.d.ts",
+      "import": "./dist/typescript/src/destinations/autofill-page-code.js",
+      "default": "./dist/typescript/src/destinations/autofill-page-code.js"
+    },
     "./core/destinations/autofill-refusal": {
       "types": "./dist/typescript/src/destinations/autofill-refusal.d.ts",
       "import": "./dist/typescript/src/destinations/autofill-refusal.js",
@@ -411,6 +416,11 @@
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
       "import": "./dist/typescript/src/runtime/kernel-operation.js",
       "default": "./dist/typescript/src/runtime/kernel-operation.js"
+    },
+    "./core/runtime/kernel-operation-validation": {
+      "types": "./dist/typescript/src/runtime/kernel-operation-validation.d.ts",
+      "import": "./dist/typescript/src/runtime/kernel-operation-validation.js",
+      "default": "./dist/typescript/src/runtime/kernel-operation-validation.js"
     },
     "./core/runtime/operation": {
       "types": "./dist/typescript/src/runtime/operation.d.ts",
