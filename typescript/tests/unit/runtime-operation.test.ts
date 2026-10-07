@@ -9,6 +9,7 @@ import {
 } from "../../src/runtime/errors.js";
 import { defineOperation, executeOperation } from "../../src/runtime/operation.js";
 import { leftOf } from "../support/expect-failure.js";
+import type { ConditionObservation, ConditionState } from "../../src/browser/index.js";
 
 const makeContext = (lifecycle: string[] = []) =>
   Effect.gen(function* () {
@@ -263,5 +264,29 @@ describe("input issues", () => {
     const long = "a".repeat(maximumInputIssuePath);
     const [issue] = (await issuesFor(Schema.Struct({ [long]: Schema.String }), {})) ?? [];
     expect(issue?.path.length).toBe(maximumInputIssuePath);
+  });
+});
+
+// Saved integrations import the authored runtime (`../runtime/index.js`, which re-exports
+// `browser/index.js`) from the installed package on every run, so its error classes stay.
+describe("authored runtime errors", () => {
+  it.each([
+    "TargetPageMismatch",
+    "TargetNotFound",
+    "TargetAmbiguous",
+    "TargetGuardMismatch",
+    "TargetGuardUnavailable",
+    "ConditionTimeout",
+  ])("exports %s with its tag to authored operations", async (name) => {
+    const runtime: Record<string, unknown> = await import("../../src/browser/index.js");
+    const ErrorClass = runtime[name];
+    if (typeof ErrorClass !== "function") throw new Error(`${name} is not exported`);
+    expect(Reflect.construct(ErrorClass, [{}])).toMatchObject({ _tag: name });
+  });
+
+  it("exports the condition types a timeout reports", () => {
+    const observation: ConditionObservation = { name: "ready", state: "unknown" };
+    const state: ConditionState = observation.state;
+    expect(state).toBe("unknown");
   });
 });

@@ -17,7 +17,6 @@ The package now holds only code the local host runs, plus the hook interfaces an
   - `pomerado/core/browser/promise`, with `browserPromise`. The local host never ran it.
   - `pomerado/core/destinations/cdp-contracts`, with `kernelPlaywrightUtilityWorld` and its DevTools message schemas.
   - `pomerado/core/privacy/common-values`, with `isCommonSecretValue`, `isDiscoveredWebFlag` and `isOpaqueCredentialValue`. Nothing in the package called them once the unused `pomerado/core/privacy/secret-keys` exports went.
-  - `TargetPageMismatch`, `TargetNotFound`, `TargetAmbiguous`, `TargetGuardMismatch`, `TargetGuardUnavailable`, `ConditionTimeout`, `ConditionObservation` and `ConditionState` from `pomerado/runtime` and `pomerado/core/runtime/errors`. Nothing in the package raised them.
   - `DialogDecision`, `DialogScope`, `PendingDialog`, `DialogFacts`, `ResolvedDialog` and `KnownDialog` from `pomerado/core/browser/dialogs/contracts`. `ExpectedConfirm` stays.
   - `finalHostFailures`, `BuildCallerResult` and `MintDependencies.prepareWriteUpgrade` from `pomerado/core/mint/contracts`
   - `savedProfileSetAsideNotice` and `signInPendingNotice` from `pomerado/core/mint/sign-in-failure`

@@ -30,16 +30,22 @@ export type {
 export {
   BrowserFailure,
   CaptureUnavailable,
+  ConditionTimeout,
   DeadlineExceeded,
   EventUnavailable,
   FixtureUnavailable,
   InvalidInput,
   InvalidOutput,
   OfflineTrafficDenied,
+  TargetAmbiguous,
+  TargetGuardMismatch,
+  TargetGuardUnavailable,
+  TargetNotFound,
+  TargetPageMismatch,
   WriteConfirmationRefused,
   CommitAlreadySent,
 } from "../runtime/errors.js";
-export type { Dispatch } from "../runtime/errors.js";
+export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/errors.js";
 export { CalendarDate, formControlsCode } from "./form-controls.js";
 export type { FormControlShape } from "./form-controls.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";

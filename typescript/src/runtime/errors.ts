@@ -178,6 +178,37 @@ export class BrowserFailure extends Data.TaggedError("BrowserFailure")<{
   readonly cause?: unknown;
 }> {}
 
+export class TargetPageMismatch extends Data.TaggedError("TargetPageMismatch")<{}> {}
+
+export class TargetNotFound extends Data.TaggedError("TargetNotFound")<{}> {}
+
+export class TargetAmbiguous extends Data.TaggedError("TargetAmbiguous")<{
+  readonly count: number;
+}> {}
+
+export class TargetGuardMismatch extends Data.TaggedError("TargetGuardMismatch")<{
+  readonly guard: string;
+}> {}
+
+export class TargetGuardUnavailable extends Data.TaggedError("TargetGuardUnavailable")<{
+  readonly guard: string;
+}> {}
+
+export type ConditionState = "passed" | "failed" | "unknown";
+
+export interface ConditionObservation {
+  readonly name: string;
+  readonly state: ConditionState;
+}
+
+export class ConditionTimeout extends Data.TaggedError("ConditionTimeout")<{
+  readonly phase: "ready" | "guard" | "complete";
+  readonly dispatch: Dispatch;
+  readonly conditions: readonly ConditionObservation[];
+  readonly configuredMs: number;
+  readonly effectiveMs: number;
+}> {}
+
 export class FixtureUnavailable extends Data.TaggedError("FixtureUnavailable")<{
   readonly reason: "missing_body" | "invalid_json" | "unsupported_encoding";
   /** The decode or parse error, as `Error.cause`. */
