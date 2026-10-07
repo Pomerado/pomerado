@@ -30,6 +30,8 @@
   - Migrate a host that decodes its own page code's answer with `SignedInPage` by returning `challengeFormVisible`, `false` when it checks no challenge.
 - `InsertionRefusal` in `pomerado/core/destinations/credential-keyboard` adds `"question_changed"`: a private answer's question no longer reads as the host inspected it. The fill reports it under the `change` check, and `HostRefusal` in `pomerado/core/destinations/autofill-refusal` takes an optional `cause`, `"question_changed"`, for it.
   - Migrate by handling `"question_changed"` in any exhaustive check on a native insertion's answer.
+- `HostRefusal.cause` in `pomerado/core/destinations/autofill-refusal` is now any `InsertionRefusal` from `pomerado/core/destinations/credential-keyboard`, not only `"question_changed"`. `typingRefusal` sets it to the finite cause of a native insertion that inserted nothing, under the `typing_refused` check. `sameHostRefusal` compares it, so refusals with different causes no longer count as one repeated refusal. The minter's sign-in notice explains each group of causes with its own next step: the focus left the field, the field or page was replaced or navigated, the bound field could not be found, or the browser rejected the inserted text. No notice names a binding, a selector or a value.
+  - Migrate by handling every `InsertionRefusal` in any exhaustive check on `HostRefusal.cause`.
 
 The package now holds the code the local host runs, the hook interfaces another host implements, and the signed-in marker checks behind `MintDependencies.checkSignedInMarker`. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
 
