@@ -31,8 +31,18 @@ const requestInput: ModelResponse = {
   ],
 };
 
+/** The part of a tool's JSON schema this test walks. */
+interface JsonSchema {
+  readonly anyOf?: readonly JsonSchema[];
+  readonly items?: JsonSchema;
+  readonly properties?: Readonly<Record<string, JsonSchema>>;
+  readonly enum?: readonly string[];
+}
+
 // With autofill on for the site, execute's signInStep (a union with
 // optional fields) made the SDK refuse the tool before the first model call.
+// Its secret field offers the private_answer slot and its questionSelector to every host's minter:
+// no dependency turns them on.
 it("offers execute with signInStep to the model on an autofill site", async () => {
   const workspace = await portableJobSession({ "src/tool.ts": "export {};" });
   cleanups.push(async () => {
@@ -80,4 +90,12 @@ it("offers execute with signInStep to the model on an autofill site", async () =
   expect(requests).toHaveLength(1);
   const execute = requests[0]?.tools.find((tool) => tool.name === "execute");
   expect(JSON.stringify(execute ?? null)).toContain("signInStep");
+  const signInStep = (execute as { readonly parameters?: JsonSchema } | undefined)?.parameters
+    ?.properties?.signInStep;
+  const secretFields = (signInStep?.anyOf ?? [])
+    .flatMap((step) => step.properties?.fields?.items?.anyOf ?? [])
+    .filter((field) => field.properties?.slot !== undefined);
+  expect(secretFields).toHaveLength(1);
+  expect(secretFields[0]?.properties?.slot?.enum).toContain("private_answer");
+  expect(Object.keys(secretFields[0]?.properties ?? {})).toContain("questionSelector");
 });

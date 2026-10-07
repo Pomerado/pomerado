@@ -33,6 +33,8 @@ export const InsertionRefusal = Schema.Literal(
   "focus_moved",
   /** The document itself does not hold the browser's focus. */
   "document_unfocused",
+  /** A private answer's observed question no longer reads as it did when the host inspected it. */
+  "question_changed",
   /** The browser's native insertion inserted nothing. */
   "insertion_rejected",
 );
@@ -149,6 +151,8 @@ const atomicInsert = `function(key, origin, text) {
   if (frame.origin !== origin) return "origin_changed";
   if (document.activeElement !== field) return "focus_moved";
   if (!document.hasFocus()) return "document_unfocused";
+  if (binding.questionRequired &&
+      (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return "question_changed";
   return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
 }`;
 

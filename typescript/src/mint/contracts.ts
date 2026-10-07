@@ -394,7 +394,13 @@ export const SignInStep = Schema.Union(
           selector: SignInSelector,
           slot: SecretSlots,
           format: Schema.optional(DateOfBirthFormat),
-        }),
+          questionSelector: Schema.optional(SignInSelector),
+        }).pipe(
+          Schema.filter(
+            (field) => field.questionSelector === undefined || field.slot === "private_answer",
+            { message: () => "only a private answer names a question selector" },
+          ),
+        ),
       ),
     ).pipe(Schema.maxItems(maximumStepFields)),
     submit: Schema.optional(SignInSelector),

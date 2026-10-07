@@ -77,6 +77,15 @@ Call `execute` with purpose `authenticate`, target `liveBrowser` and a `signInSt
 front of you. Pass the stable route you clicked as `loginUrl` on the first one (above), never the
 page it redirected to; runs open that route to replay your screens.
 
+Security questions can change between screens and visits. Inspect the current question and its
+answer control each time, then record the observed field through the same `signInStep` mechanism.
+Never assume a fixed challenge stage or put question text or an answer into a recipe.
+
+Use `slot: "private_answer"` for each observed security-question answer field. When the actual
+question has one visible match in that field's frame, supply its stable `questionSelector`, never
+its text. The host rereads the question before privately filling the answer. No answer reaches
+you, Guardian, generated code or the recipe. One-time and recovery codes keep their own slots.
+
 <!-- pomerado:section auth.step-fields -->
 
 A screen may record `rejectedMarkers`, each with a field slot and an observed, value-free
@@ -84,6 +93,20 @@ rejection selector. The slots are `username`, `email`, `phone`, `account_number`
 `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
+`private_answer` has no recorded rejection marker or automatic correction: when the site rejects
+an answer, inspect the question screen and stop rather than resending the same answer. A host
+refusal with cause `question_changed` is not the site's rejection: nothing was typed, so read the
+screen again and send its step, and the owner is asked the question it shows now.
+Do not mark sign-in complete while a recorded answer or verification field is still visible,
+including one inside a provider frame. Account search, support and security-settings forms are
+not sign-in evidence. Inspect and record each new authentication screen before checking completion.
+The host checks the challenge fields recorded since the last check that showed the site signed in.
+One counts only while the same control shows and takes typing, on the site or a configured sign-in
+origin: the label, accessible name and placeholder it had when you recorded it name it again, with
+the same name and id where it had them. Another control your selector also matches, such as a
+gift-card or promo code box, does not count. It does not classify unrecorded forms by their names or
+page route. A successful host check does not replace inspecting the current screen and verifying
+authenticated access.
 
 <!-- pomerado:section auth.code-rejection -->
 
@@ -235,7 +258,7 @@ A direct sign-in request signs in with one host-filled HTTP request instead of a
 
 Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
 
-Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
+Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. A private answer is prompted from the current `questionSelector` text when it has one visible match in the answer field's frame. When a recorded question could not be read, the prompt says so; with no `questionSelector`, it uses the field label. The answer is discarded after this fill. Supply the observed question selector when the question is adjacent to a generic answer label. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
 
 Inspect each subsequent screen and send its observed step. After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`, where the host saved the next screen's controls: role, name or label, input type, and whether each is required, visible and enabled, never a value. Read it first to see what the screen asks for, then probe read-only only for what it lacks, such as a selector or form destination. A failed step's result shows the last saved controls inline, at most 30, and the file holds the rest. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
 

@@ -33,25 +33,31 @@ const within = (ms, work) => {
   return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
 };`;
 
-/** How long the host waits, in all, before it reads a signed-out page, and for what. */
+/** The longest the host waits before it reads a signed-out page, and the quiet it waits for. */
 const settle = { totalMs: 3000, quietMs: 1500 };
 
 /**
- * Browser code that returns the primary tab's address and serialized document, with its scripts'
- * and styles' text left out: the match never reads them, and they would take most of the 1 MiB a
- * host call may return. It returns null for a page that cannot show the site signed out, which a
- * selector would find nothing on whatever the marker:
+ * Browser code that returns the primary tab's address, its serialized document, with its scripts'
+ * and styles' text left out, and whether the page settled before the host read it (`settled`).
+ * The match never reads scripts or styles, and they would take most of the 1 MiB a host call may
+ * return. It returns null for a page that cannot show the site signed out, which a selector would
+ * find nothing on whatever the marker:
  * - a page off the site's origin, such as a sign-in site's or a browser error page;
  * - a page that shows nothing, no text, form control or image in its body, such as the blank page
  *   a reset leaves when the root fails to load, or a client-rendered page's empty shell.
  *
- * Before it reads the page, the host waits up to 3 seconds in all: for its load, then for its
- * network to go quiet, then for its document to go 1.5 seconds without a change. A
+ * Before it reads the page, the host waits for its load, then for its network to go quiet, then
+ * for its document to go 1.5 seconds without a change. A page that then shows something settled,
+ * and is read at once: about 2 seconds after its load, for a page that loads fast. A
  * client-rendered page whose script renders its header within about 1.5 seconds of its network
- * going quiet is read rendered, past a splash screen such as "Loading…". A page that renders
- * later, or keeps changing, is read as it is when the 3 seconds end, and one that still shows
- * nothing is skipped. A wait runs only while time is left, since Playwright reads a timeout of 0
- * as no limit, and each page call is bounded, so the host call ends inside its 15 seconds.
+ * going quiet is read rendered, past a splash screen such as "Loading…". The host waits 3 seconds
+ * at most in all, so a page whose load, network or document is still busy then is read as it is,
+ * and one that showed nothing when its document went quiet is read once it shows something, if
+ * it does before the 3 seconds end. Neither settled. One that still shows nothing is skipped.
+ * The host never sees what a page renders after it read it: a settled page whose script renders
+ * its header more than 1.5 seconds after its last change is read without it. A wait runs only
+ * while time is left, since Playwright reads a timeout of 0 as no limit, and each page call is
+ * bounded, so the host call ends inside its 15 seconds.
  */
 const signedOutPageCode = (targetId: string, siteOrigin: string) => `${primaryPageCode(targetId)}
 ${withinCode}
@@ -60,11 +66,12 @@ if (!onSite()) return null;
 const deadline = Date.now() + ${settle.totalMs};
 const wait = async (start) => {
   const ms = Math.floor(deadline - Date.now());
-  if (ms > 0) await start(ms).catch(() => undefined);
+  return ms > 0 ? await start(ms).catch(() => undefined) : undefined;
 };
 await wait((timeout) => primary.waitForLoadState("load", { timeout }));
 await wait((timeout) => primary.waitForLoadState("networkidle", { timeout }));
-await wait((timeout) =>
+// True when the document went quiet, false when time ran out first.
+const quietEnded = await wait((timeout) =>
   within(
     timeout,
     primary.evaluate(
@@ -72,15 +79,15 @@ await wait((timeout) =>
         new Promise((resolve) => {
           let still;
           let cap;
-          const done = () => {
+          const done = (wentQuiet) => {
             observer.disconnect();
             clearTimeout(still);
             clearTimeout(cap);
-            resolve();
+            resolve(wentQuiet);
           };
           const observer = new MutationObserver(() => {
             clearTimeout(still);
-            still = setTimeout(done, quiet);
+            still = setTimeout(done, quiet, true);
           });
           observer.observe(document, {
             subtree: true,
@@ -88,8 +95,8 @@ await wait((timeout) =>
             attributes: true,
             characterData: true,
           });
-          still = setTimeout(done, quiet);
-          cap = setTimeout(done, limit);
+          still = setTimeout(done, quiet, true);
+          cap = setTimeout(done, limit, false);
         }),
       [${settle.quietMs}, timeout],
     ),
@@ -112,6 +119,7 @@ const shows = () =>
     () => false,
   );
 let rendered = await shows();
+const settled = quietEnded === true && rendered;
 while (!rendered && deadline - Date.now() > 0) {
   await new Promise((resolve) => setTimeout(resolve, 250));
   rendered = await shows();
@@ -126,8 +134,13 @@ const dom = await within(
   }),
 ).catch(() => late);
 if (dom === late || !onSite()) return null;
-return { url: primary.url(), dom };`;
-const SignedOutPage = Schema.NullOr(Schema.Struct({ url: Schema.String, dom: Schema.String }));
+return { url: primary.url(), dom, settled };`;
+const SignedOutRead = Schema.Struct({
+  url: Schema.String,
+  dom: Schema.String,
+  settled: Schema.Boolean,
+});
+const SignedOutPage = Schema.NullOr(SignedOutRead);
 
 /**
  * The pages a build saw signed out, for its marker checks: the page a sign-in screen is on before
@@ -135,10 +148,12 @@ const SignedOutPage = Schema.NullOr(Schema.Struct({ url: Schema.String, dom: Sch
  * for the build, and are never written or shown to a model. A page that cannot show the site
  * (see `signedOutPageCode`) is skipped, and so is one the host cannot read, such as one whose
  * document is still over 1 MiB: a later check has fewer pages to compare, and with none it reports
- * the signed-out page unchecked. The step that took it does not fail.
+ * the signed-out page unchecked. The step that took it does not fail. A page that did not settle
+ * may have shown more after the host read it, so it counts where it shows a marker, or leaves it
+ * uncertain, and never shows a marker absent.
  */
 const makeSignedOutPages = (page: AutofillPage, siteOrigin: string) => {
-  const pages: SignedOutSnapshot[] = [];
+  const pages: (typeof SignedOutRead.Type)[] = [];
   return {
     /** Keeps the page the primary tab shows now. Returns whether it kept it. */
     take: page.execute(signedOutPageCode(page.targetId, siteOrigin), 15).pipe(
@@ -151,9 +166,15 @@ const makeSignedOutPages = (page: AutofillPage, siteOrigin: string) => {
       }),
       Effect.orElseSucceed(() => false),
     ),
+    /** Every page kept: what each showed, it showed signed out. */
     get pages(): readonly SignedOutSnapshot[] {
       return [...pages];
     },
+    /** The pages a check of `marker` compares: each settled one, and any other that may show it. */
+    comparedWith: (marker: AutofillSignedIn): readonly SignedOutSnapshot[] =>
+      pages.filter(
+        (read) => read.settled || matchSignedOutSnapshots(marker, [read]) !== "absent",
+      ),
   };
 };
 
@@ -345,7 +366,7 @@ export const makeMarkerChecks = (input: {
           });
         return evaluateSignedInMarker({
           marker: indicator,
-          signedOutSnapshots: signedOut.pages,
+          signedOutSnapshots: signedOut.comparedWith(indicator),
           signedInNow,
           freshLoad,
           secondPage,

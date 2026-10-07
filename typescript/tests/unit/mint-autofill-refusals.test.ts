@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { MintFailure, type MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
-import { autofillRefusalFailure } from "../../src/mint/sign-in-failure.js";
+import { autofillRefusalFailure, signInFailureFeedback } from "../../src/mint/sign-in-failure.js";
 import { makeLiveAuthentication } from "../../src/standalone/authentication.js";
 import { mintError } from "../../src/standalone/errors.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
@@ -327,3 +327,26 @@ it("tells the agent a submit stayed disabled after the fields were filled, as no
   expect(executed.length).toBeGreaterThan(3);
   expect(JSON.stringify(report)).not.toContain("synthetic-password");
 }, 15_000);
+
+// A private answer's question that changed before the host typed is no field the page moved: the
+// agent hears that the question changed, so it sends the screen again for the owner to answer.
+it("tells the agent a changed security question, not a moved field, refused a private answer", () => {
+  const feedback = (cause?: "question_changed") =>
+    JSON.stringify(
+      signInFailureFeedback({
+        phase: "credential_submit",
+        code: "AutofillRefused",
+        nothingSubmitted: true,
+        hostRefusal: {
+          check: "change",
+          field: 0,
+          slot: "private_answer",
+          screen: { fields: ["#answer"] },
+          ...(cause === undefined ? {} : { cause }),
+        },
+      }),
+    );
+  expect(feedback("question_changed")).toContain("security question");
+  expect(feedback("question_changed")).not.toContain("moved the field");
+  expect(feedback()).toContain("moved the field");
+});

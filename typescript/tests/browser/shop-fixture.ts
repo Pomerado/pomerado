@@ -42,9 +42,11 @@ interface ShopState {
    * The root page: `broken` drops its connection, so it never loads, and `hang` shows an image
    * whose request never answers, so its load never ends. `late` is an empty shell whose script
    * renders a header with an "Account" link, signed out too, `homeRenderMs` after it runs, and
-   * `splash` is the same shell showing "Loading…" until then.
+   * `splash` is the same shell showing "Loading…" until then. `ticking` is the splash with a
+   * counter beside it that changes every 200 ms and never stops, so the root never goes 1.5
+   * seconds without a change.
    */
-  home: "ok" | "broken" | "hang" | "late" | "splash";
+  home: "ok" | "broken" | "hang" | "late" | "splash" | "ticking";
   homeRenderMs: number;
   /**
    * Whether the one-screen sign-in asks for `shopCode` on a code screen, `/two-factor`, before it
@@ -124,14 +126,16 @@ const shopRoutes = (
   // A page load keeps a signed-in session; a signed-out browser gets a fresh one.
   const cookiesFor = (request: IncomingMessage) =>
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
-  const lateHome = (shell: string) => `<title>Shop</title><div id="app">${shell}</div>
-<script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},${state.homeRenderMs})</script>`;
+  const lateHome = (shell: string, ticking: boolean) => `<title>Shop</title><div id="app">${shell}</div>${ticking ? `<p id="tick">0</p>` : ""}
+<script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},${state.homeRenderMs})${ticking ? `;let ticks=0;setInterval(()=>{document.querySelector('#tick').textContent=String(++ticks)},200)` : ""}</script>`;
   const home: Route = (request, response) => {
     if (state.home === "broken") return void response.destroy();
-    if (state.home === "late" || state.home === "splash")
-      return html(response, lateHome(state.home === "splash" ? "<p>Loading…</p>" : ""), {
-        "set-cookie": cookiesFor(request),
-      });
+    if (state.home === "late" || state.home === "splash" || state.home === "ticking")
+      return html(
+        response,
+        lateHome(state.home === "late" ? "" : "<p>Loading…</p>", state.home === "ticking"),
+        { "set-cookie": cookiesFor(request) },
+      );
     return html(
       response,
       `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>

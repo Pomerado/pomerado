@@ -882,6 +882,8 @@ for (const [home, renderMs, shell] of [
   ["late", 300, "an empty shell"],
   ["splash", 300, "a splash screen that shows Loading…"],
   ["splash", 1500, "a splash screen that shows Loading… for 1.5 seconds"],
+  // It never goes 1.5 seconds without a change, so the host reads it when its wait ends.
+  ["ticking", 1000, "a splash screen beside a counter that never stops"],
 ] as const)
   test(`a client-rendered root counts as signed out once it renders past ${shell}`, async () => {
     test.info().annotations.push({
@@ -918,6 +920,70 @@ for (const [home, renderMs, shell] of [
         freshLoad: true,
         refusals: ["marker_matches_signed_out_page"],
       });
+    });
+  });
+
+for (const [home, renderMs, root, selector] of [
+  ["ticking", 5000, "keeps changing and renders its header after the wait", "#account"],
+  ["hang", 0, "never ends its load", "#account"],
+  // Read as soon as it shows its header, a root may still show more, such as the account page's
+  // own element.
+  ["late", 2500, "shows nothing until its document went quiet", "p#account"],
+] as const)
+  test(`a root that ${root} proves no marker absent`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description:
+        "Original SDKs, Chromium and two scripted builds with host sign-ins in one session",
+    });
+    test.setTimeout(90_000);
+    await withShop(async (shop, endpoint) => {
+      shop.state.home = home;
+      shop.state.homeRenderMs = renderMs;
+      const [, later] = await markerSession(endpoint, [
+        // This build types the login, so the next keeps no sign-in screen's page.
+        {
+          url: `${shop.origin}/login`,
+          steps: [
+            [signInFields()],
+            [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+          ],
+        },
+        {
+          url: `${shop.origin}/login`,
+          steps: [
+            [
+              ...markerFiles,
+              create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+            ],
+            // The test's reset signs the browser out and loads the root: the build's only
+            // signed-out page.
+            [testWhere],
+            [
+              execute(
+                "explore",
+                { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+                "explore_login",
+              ),
+            ],
+            [signInFields()],
+            [checkMarker({ selector, openPath: "/account" }, "account")],
+          ],
+        },
+      ]);
+      if (later === undefined) throw new Error("No later build");
+      expect(objects(toolResult(later, "test_where"))).toContainEqual({ where: "/" });
+      // The host never saw the root settle, and it lacked the marker when read, so it proves
+      // nothing absent and the marker passes unchecked.
+      expect(markerResult(later, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "passed_unchecked",
+        signedOutSnapshot: "unchecked",
+        signedInNow: true,
+        freshLoad: true,
+        warnings: ["signed_out_page_unchecked"],
+      });
+      expect(shop.state.loginPosts).toBe(2);
     });
   });
 
