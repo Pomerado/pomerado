@@ -310,52 +310,80 @@ test("a local build asks for its login once and publishes its sign-in without a 
   });
 });
 
-test("a login URL that holds the login's email is refused at publication, naming the login URL and never the email", async () => {
+test("a login URL that holds the login's email is refused at publication, naming the login URL and never the email, and a new sign-in from a URL without it publishes", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "Original SDKs, Chromium and a scripted build with a host sign-in",
+    description: "Original SDKs, Chromium and a scripted build with two host sign-ins",
   });
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await withShop(async (shop, endpoint) => {
     const mintRequests: ModelRequest[] = [];
-    const loginUrl = `${shop.origin}/login?email=${encodeURIComponent(shopAccount.username)}`;
+    const asked: InputRequest[] = [];
+    const authenticate = (loginUrl: string, callId: string) =>
+      execute(
+        "authenticate",
+        {
+          signInStep: {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+          loginUrl,
+        },
+        callId,
+      );
+    let executionId: unknown;
+    const finish = (request: ModelRequest, callId: string): Output => {
+      executionId ??= objects(request.input)
+        .filter((item) => typeof item["executionId"] === "string")
+        .at(-1)?.["executionId"];
+      if (executionId === undefined) throw new Error("No execution receipt to finish with");
+      return [
+        call(
+          "finish_build",
+          {
+            intent: "Return the account reader",
+            entrypoint: "src/tool.mjs",
+            executionId,
+            metadata: { name: "read_account", description: "Read whether the account shows" },
+            coverage: "One live example, signed in",
+          },
+          callId,
+        ),
+      ];
+    };
     const minter = provider((request, index) => {
-      const steps: Output[] = [
-        patch,
+      const steps: (Output | ((request: ModelRequest) => Output))[] = [
+        [...patch, create("explore/login.mjs", openPage("open_login", "/login"), "patch_login")],
         [
-          execute(
-            "authenticate",
-            {
-              signInStep: {
-                fields: [
-                  { selector: "input[name=username]", accepts: ["username"] },
-                  { selector: "input[name=password]", slot: "password" },
-                ],
-                submit: "button",
-              },
-              loginUrl,
-            },
+          authenticate(
+            `${shop.origin}/login?email=${encodeURIComponent(shopAccount.username)}`,
             "sign_in",
           ),
         ],
         [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
         [execute("example", {}, "example")],
+        (current) => finish(current, "finish_refused"),
+        // As the refusal says: a new sign-in from a login URL without the email.
+        [
+          execute(
+            "explore",
+            { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+            "explore_login",
+          ),
+        ],
+        [authenticate(`${shop.origin}/login`, "sign_in_again")],
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in_again")],
+        (current) => finish(current, "finish_published"),
       ];
-      if (index < steps.length) return steps[index] ?? [];
-      if (index > steps.length) return [message("Stopped.")];
-      const receipt = objects(request.input)
-        .filter((item) => typeof item["executionId"] === "string")
-        .at(-1);
-      if (receipt === undefined) throw new Error("No execution receipt to finish with");
-      return [
-        call("finish_build", {
-          intent: "Return the account reader",
-          entrypoint: "src/tool.mjs",
-          executionId: receipt["executionId"],
-          metadata: { name: "read_account", description: "Read whether the account shows" },
-          coverage: "One live example, signed in",
-        }),
-      ];
+      const step = steps[index];
+      return step === undefined
+        ? [message("Built.")]
+        : typeof step === "function"
+          ? step(request)
+          : step;
     }, mintRequests);
     const built = await Effect.runPromise(
       Effect.scoped(
@@ -364,7 +392,7 @@ test("a login URL that holds the login's email is refused at publication, naming
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
-            ask: answers([]),
+            ask: answers(asked),
             timeoutMs: 30_000,
           });
           return yield* service.mint({
@@ -376,21 +404,24 @@ test("a login URL that holds the login's email is refused at publication, naming
         }),
       ),
     );
-    // The sign-in itself went through; only its publication was refused.
-    expect(shop.state.loginPosts).toBe(1);
-    const result = toolResult(mintRequests, "finish_build");
+    const result = toolResult(mintRequests, "finish_refused");
     const refused = objects(result).find((item) => item["status"] === "not_published");
     expect(refused).toMatchObject({
       reason: "login_url_contains_credential",
       parts: [{ part: "loginUrl", credentialKinds: ["credential"] }],
     });
     expect(String(refused?.["instruction"])).toContain("For loginUrl, run authenticate again");
-    // Nothing is published, and the refusal never holds the email.
-    expect(built.build).not.toBe("published");
-    expect(built.artifact).toBeUndefined();
-    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+    // The refusal never holds the email.
     expect(JSON.stringify(result)).not.toContain(shopAccount.username);
     expect(JSON.stringify(result)).not.toContain(encodeURIComponent(shopAccount.username));
+    // The second sign-in publishes, entered from the URL without the email, with one login asked.
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.signIn?.entryUrl).toBe(`${shop.origin}/login`);
+    expect(JSON.stringify(built.artifact)).not.toContain(shopAccount.username);
+    expect(JSON.stringify(built.artifact)).not.toContain(encodeURIComponent(shopAccount.username));
+    expect(shop.state.loginPosts).toBe(2);
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
   });
 });
 

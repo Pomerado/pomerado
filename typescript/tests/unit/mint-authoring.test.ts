@@ -357,6 +357,10 @@ it("tells the local minter how its sign-in values are asked and what it records"
     "The host collects credentials through the caller's input callback or the terminal, which hides a password, code or other secret and shows an identifier as it is typed, and inserts them through the guarded credential channel.",
   );
   expect(instructions).not.toContain("masked terminal");
+  // A verified sign-in fixes its login URL, so only a new sign-in from another URL changes it.
+  expect(instructions).toContain(
+    "The login URL of the build's verified sign-in publishes with the tool, so it never holds a value of the account, such as its email. If `finish_build` refuses it with `login_url_contains_credential`, sign in again from a login URL without one: send each sign-in screen's `signInStep` with that `loginUrl`, then `signedIn`, and call `finish_build` again with the same `executionId`. A signed-in check alone does not change it.",
+  );
 });
 
 // A write committed values the page never showed matching the input; a page's own recent-search
@@ -401,7 +405,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
     ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
     ["73561b4bf299dfbcc6ca9c043898d59d226fa3cee5ea5532e03c96de96ff628f", "publication"],
-    ["01484e136c1e00f76309ada3cf93c0095c0a4322e544d08a3068342c492b071c", "workspace/AGENTS.md"],
+    ["e6535a5e10931c9d04b7f6d407c6e8a48f918ccd2d2b5a088767a8cf55ddf1ac", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });
