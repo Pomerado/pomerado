@@ -101,8 +101,10 @@ const executeAuthentication = (
     if ("fields" in signIn) {
       start.signIn();
       markers.signInStep();
-      yield* markers.beforeFirstScreen;
-      const report = yield* auth.step(signIn, beforeDispatch);
+      const report = yield* auth.step(
+        signIn,
+        Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
+      );
       start.sent(report, signIn.fields);
       result = yield* afterSubmit(report);
     } else if ("signedIn" in signIn) {

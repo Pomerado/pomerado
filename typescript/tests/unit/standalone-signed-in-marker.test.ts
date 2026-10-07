@@ -12,6 +12,7 @@ const origin = "https://www.shop.test";
 const modeledTab = (options: { readonly at: string; readonly shows: readonly string[] }) => {
   let current = new URL(options.at, origin).href;
   const loads: string[] = [];
+  let snapshots = 0;
   const open = (url: string) => {
     current = url;
     const loaded = new URL(url);
@@ -26,8 +27,10 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
           open(JSON.parse(goto) as string);
           return current;
         }
-        if (code.includes("outerHTML"))
-          return { url: current, dom: "<!doctype html><html></html>" };
+        if (code.includes("outerHTML")) {
+          snapshots += 1;
+          return { url: current, dom: "<!doctype html><html><body><p>Shop</p></body></html>" };
+        }
         throw new Error("Unexpected host call");
       }),
   };
@@ -43,6 +46,9 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
     page,
     check,
     loads,
+    get snapshots() {
+      return snapshots;
+    },
     get where() {
       const url = new URL(current);
       return `${url.pathname}${url.search}`;
@@ -50,16 +56,20 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
   };
 };
 
-/** The marker checks on `tab`, with the build's login sent unless `loginSent` says otherwise. */
+/**
+ * The marker checks on `tab`, with the build's login sent unless `state` says otherwise, and
+ * nothing typed in the session unless `typing` says otherwise.
+ */
 const markerChecks = (
   tab: ReturnType<typeof modeledTab>,
   state: { loginSent: boolean } = { loginSent: true },
+  typing = { typed: false },
 ) =>
   makeMarkerChecks({
     page: tab.page,
     siteOrigin: origin,
     check: tab.check,
-    signedIn: () => false,
+    typing,
     loginSent: () => state.loginSent,
   });
 
@@ -119,5 +129,27 @@ describe("makeMarkerChecks", () => {
     markers.visited(`${origin}/orders`);
     await Effect.runPromise(markers.check(accountMarker));
     expect(tab.loads).toEqual(["/account", "/search", "/orders"]);
+  });
+
+  it("keeps the page before typing only while the host typed no sign-in value in the session", async () => {
+    const fresh = modeledTab({ at: "/login", shows: ["/account"] });
+    const first = markerChecks(fresh);
+    await Effect.runPromise(first.beforeTyping);
+    // Only the build's first sign-in screen's page is kept.
+    await Effect.runPromise(first.beforeTyping);
+    expect(fresh.snapshots).toBe(1);
+    expect(await Effect.runPromise(first.check(accountMarker))).toHaveProperty(
+      "signedOutSnapshot",
+      "absent",
+    );
+    // An earlier build typed into this session's browser, so its page may be signed in.
+    const typed = modeledTab({ at: "/login", shows: ["/account"] });
+    const later = markerChecks(typed, { loginSent: true }, { typed: true });
+    await Effect.runPromise(later.beforeTyping);
+    expect(typed.snapshots).toBe(0);
+    expect(await Effect.runPromise(later.check(accountMarker))).toHaveProperty(
+      "signedOutSnapshot",
+      "unchecked",
+    );
   });
 });

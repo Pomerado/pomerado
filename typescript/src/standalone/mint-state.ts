@@ -212,7 +212,7 @@ export const mintState = (
       page: browser,
       siteOrigin: context.siteOrigin,
       check: auth.signedIn,
-      signedIn: () => context.signedIn,
+      typing: session.signInTyping,
       loginSent: () => start.submitted || context.signedIn,
     });
     const start = makeBuildStart(

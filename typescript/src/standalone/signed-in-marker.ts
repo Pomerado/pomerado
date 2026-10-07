@@ -13,6 +13,7 @@ import {
 import { MintFailure, type SignedInMarkerCheckRequest } from "../mint/contracts.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { primaryPageCode } from "../runtime/host-execute.js";
+import type { SessionTyping } from "./authentication.js";
 
 /** The most signed-out pages a build keeps, newest last. */
 const keptPages = 4;
@@ -34,7 +35,7 @@ return {
 const SignedOutPage = Schema.Struct({ url: Schema.String, dom: Schema.String });
 
 /**
- * The pages a build saw signed out, for its marker checks: a sign-in's first screen before
+ * The pages a build saw signed out, for its marker checks: the page a sign-in screen is on before
  * anything was typed, and a page a reset cleared of cookies and site storage. They stay in memory
  * for the build, and are never written or shown to a model. A page the host cannot read, such as
  * one whose document is still over 1 MiB, is skipped: a later check has fewer pages to compare, and
@@ -43,16 +44,15 @@ const SignedOutPage = Schema.Struct({ url: Schema.String, dom: Schema.String });
 const makeSignedOutPages = (page: AutofillPage) => {
   const pages: SignedOutSnapshot[] = [];
   return {
-    /** Keeps the page the primary tab shows now. */
+    /** Keeps the page the primary tab shows now. Returns whether it kept it. */
     take: page.execute(signedOutPageCode(page.targetId), 15).pipe(
       Effect.flatMap(Schema.decodeUnknown(SignedOutPage)),
-      Effect.tap((read) =>
-        Effect.sync(() => {
-          pages.push(read);
-          if (pages.length > keptPages) pages.shift();
-        }),
-      ),
-      Effect.ignore,
+      Effect.map((read) => {
+        pages.push(read);
+        if (pages.length > keptPages) pages.shift();
+        return true;
+      }),
+      Effect.orElseSucceed(() => false),
     ),
     get pages(): readonly SignedOutSnapshot[] {
       return [...pages];
@@ -83,8 +83,12 @@ export const makeMarkerChecks = (input: {
   readonly siteOrigin: string;
   /** The live check, on the current page or on `openPath` once the host opened it. */
   readonly check: (indicator: AutofillSignedIn) => Effect.Effect<AutofillSignedInCheck>;
-  /** Whether a sign-in of the build is verified. */
-  readonly signedIn: () => boolean;
+  /**
+   * Whether the host typed a sign-in value into this session's browser, in this build or an
+   * earlier one. Builds in a session share the browser's cookies, so after that a page may show
+   * the site signed in, even before this build's own sign-in.
+   */
+  readonly typing: SessionTyping;
   /** Whether the build's current sign-in sent the login, or a sign-in of the build is verified. */
   readonly loginSent: () => boolean;
 }) => {
@@ -105,16 +109,22 @@ export const makeMarkerChecks = (input: {
     });
   return {
     /** Keeps the page a reset cleared of cookies and site storage. */
-    afterClear: signedOut.take,
+    afterClear: Effect.asVoid(signedOut.take),
     /**
-     * Keeps the page before the build's first sign-in screen, when no sign-in of the build is
-     * verified: nothing was typed on it yet, so it shows the site signed out.
+     * Keeps the page a sign-in screen is on, once the host found the screen's fields there and
+     * Guardian allowed the step, before the host types: the build's first such page, while the
+     * host has typed no sign-in value in this session. Nothing was typed on it, so it shows the
+     * site signed out.
      */
-    beforeFirstScreen: Effect.suspend(() => {
-      if (!firstScreen || input.signedIn()) return Effect.void;
-      firstScreen = false;
-      return signedOut.take;
-    }),
+    beforeTyping: Effect.suspend(() =>
+      !firstScreen || input.typing.typed
+        ? Effect.void
+        : signedOut.take.pipe(
+            Effect.map((kept) => {
+              if (kept) firstScreen = false;
+            }),
+          ),
+    ),
     /**
      * A sign-in screen, a rejected value, an approval or a code an exploration typed: the pages
      * visited before it may be screens of the sign-in under way, such as a code's, so none of them
