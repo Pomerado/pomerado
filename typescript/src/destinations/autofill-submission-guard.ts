@@ -183,6 +183,7 @@ const guardKey = `__pomerado_submission_${randomUUID()}`;
 const secretMatch: Partial<Record<AutofillSlot, "within" | "token">> = {
   password: "within",
   recovery_code: "within",
+  private_answer: "within",
   code: "token",
 };
 

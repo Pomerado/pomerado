@@ -70,6 +70,47 @@ describe("makeRunSecrets", () => {
     expect(registered("   ").redact("a b")).toBe("a b");
   });
 
+  const absent = (secrets: ReturnType<typeof registered>, text: string) =>
+    Either.isRight(Effect.runSync(Effect.either(secrets.assertAbsent(text))));
+
+  // Redaction feeds everything a model sees, so it masks every form wherever it appears: a short
+  // code that page code glued to letters, in a field's value or a URL path, is masked too, even
+  // at the cost of masking a short answer inside longer words.
+  it("redacts a short secret wherever it appears, glued to other text included", () => {
+    const code = registered("123456");
+    expect(code.redact('textbox "Code" value="A123456"')).toBe('textbox "Code" value="A[private]"');
+    expect(code.redact("/verify/otp123456/next")).toBe("/verify/otp[private]/next");
+    expect(registered("red").redact("required credit")).toBe("requi[private] c[private]it");
+    expect(registered("red").redactCut("from her")).toBe("from he");
+  });
+
+  // Source a model wrote, or host-redacted captures, holds a short secret only by chance, so the
+  // source-read check counts one only as a whole token, as the submission guard finds a code: an
+  // all-digit form where no digit adjoins it, any other where no letter, mark or digit does.
+  it("refuses source with a short secret only where it stands as a token", () => {
+    const answer = registered("red");
+    expect(absent(answer, "required ordered shared credit Ordered")).toBe(true);
+    for (const shown of [
+      "my answer is red",
+      "red",
+      '{"answer":"red"}',
+      "/login?answer=red&next=1",
+      'textbox "Answer": red',
+    ])
+      expect(absent(answer, shown)).toBe(false);
+    const code = registered("482913");
+    expect(absent(code, "ts=1759482913123")).toBe(true);
+    expect(absent(code, "otp=482913;")).toBe(false);
+    expect(absent(code, "const id = 'A482913';")).toBe(false);
+    expect(absent(code, "/verify/otp482913/next")).toBe(false);
+  });
+
+  it("still refuses source with a longer secret inside other text", () => {
+    const secrets = registered("hunter22");
+    expect(secrets.redact("xhunter22y")).toBe("x[private]y");
+    expect(absent(secrets, "xhunter22y")).toBe(false);
+  });
+
   it("drops the prefix of a secret that a cut split at the end of the text", () => {
     const secrets = registered("fixture-private-value");
     expect(secrets.redactCut("page text fixture-priv")).toBe("page text ");

@@ -11,6 +11,7 @@ import type {
   AutofillField,
   AutofillInspection,
   AutofillPage,
+  AutofillScreens,
   AutofillSignedIn,
   AutofillSlot,
   AutofillStep,
@@ -22,13 +23,47 @@ import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-
 import type { InputAsker, Question } from "../runtime/input-request.js";
 import { autofillRefusalFailure } from "../mint/sign-in-failure.js";
 
-const credentialQuestion = (slot: AutofillSlot, siteOrigin: string): Question => ({
+const credentialQuestion = (slot: AutofillSlot, siteOrigin: string, prompt?: string): Question => ({
   id: slot,
   type: "secret",
   secretKind: slot === "code" ? "one_time_code" : "private_text",
-  prompt: `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
+  prompt:
+    prompt ??
+    `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
   maxLength: ["username", "email", "phone", "account_number"].includes(slot) ? 1024 : 16_384,
 });
+
+/** The longest prompt a question may have, as the input request allows. */
+const promptLimit = 2_000;
+
+/**
+ * What the owner is asked for a private answer: the question the page shows, cut to leave room
+ * for the site's origin; else that the recorded question could not be read; else the field's label.
+ */
+const answerPrompt = (
+  siteOrigin: string,
+  field:
+    | {
+        readonly questionText?: string | undefined;
+        readonly questionUnread?: true | undefined;
+        readonly label: string | null;
+      }
+    | undefined,
+) => {
+  const label = field?.label ?? null;
+  if (field?.questionText !== undefined) {
+    const suffix = ` (${siteOrigin})`;
+    const room = promptLimit - suffix.length;
+    const question =
+      field.questionText.length <= room
+        ? field.questionText
+        : `${field.questionText.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
+    return `${question}${suffix}`;
+  }
+  if (field?.questionUnread === true)
+    return `Enter your security answer for ${siteOrigin}. The question it answers could not be read from the page.${label === null ? "" : ` The answer field reads "${label}".`}`;
+  return label === null ? undefined : `${label} (${siteOrigin})`;
+};
 
 /**
  * Whether the host typed a sign-in value into the session browser's page. It lasts for the
@@ -43,7 +78,8 @@ export interface SessionTyping {
  * that refused a field of the screen fails as a sign-in the host refused (`autofillRefusalFailure`).
  * Once the host typed into the page, each later screen is judged as typed into (`rememberTyping`).
  * `typing` carries that across every authentication on the same browser; without it, this one
- * keeps its own.
+ * keeps its own. A check that shows the site signed in ends the sign-in, so a later check counts
+ * only the challenge fields of screens filled after it.
  */
 export const makeLiveAuthentication = (options: {
   readonly page: AutofillPage;
@@ -83,7 +119,10 @@ export const makeLiveAuthentication = (options: {
     typed: typing.typed,
   });
   const values: Partial<Record<AutofillSlot, string>> = {};
-  const screens: AutofillStep[] = [];
+  /** Each filled screen, each field with what named its control at inspection. */
+  const screens: AutofillScreens[number][] = [];
+  /** Where the current sign-in's screens start in `screens`. */
+  let signInStart = 0;
   /** Whether a screen's fill may have sent anything to the site. */
   let sent = false;
   const field = (input: AutofillStepRequest["fields"][number]): AutofillField => {
@@ -98,8 +137,9 @@ export const makeLiveAuthentication = (options: {
   const step = (
     request: AutofillStepRequest,
     beforeFill: Effect.Effect<void, Error> = Effect.void,
-  ) =>
-    Effect.gen(function* () {
+  ) => {
+    const privateAnswers: string[] = [];
+    return Effect.gen(function* () {
       const selected: AutofillStep = yield* Effect.try({
         try: () => ({ ...request, fields: request.fields.map(field) }),
         catch: (cause) => new Error("Invalid sign-in field", { cause }),
@@ -109,7 +149,9 @@ export const makeLiveAuthentication = (options: {
       yield* options.review(selected, inspected);
       yield* beforeFill;
       const missing = [...new Set(selected.fields.map((item) => item.slot))].filter(
-        (slot) => values[slot] === undefined || slot === "code" || slot === "recovery_code",
+        (slot) =>
+          slot !== "private_answer" &&
+          (values[slot] === undefined || slot === "code" || slot === "recovery_code"),
       );
       if (missing.length > 0) {
         const answered = yield* options
@@ -135,12 +177,56 @@ export const makeLiveAuthentication = (options: {
             for (const layout of wholeDateLayouts(value)) options.registerSecret(layout);
         }
       }
+      for (const [index, item] of selected.fields.entries()) {
+        if (item.slot !== "private_answer") continue;
+        const answered = yield* options
+          .ask({
+            id: randomUUID(),
+            source: "system",
+            questions: [
+              credentialQuestion(
+                "private_answer",
+                options.siteOrigin,
+                answerPrompt(options.siteOrigin, inspected.screen.fields[index]),
+              ),
+            ],
+          })
+          .pipe(
+            Effect.mapError((cause) => new Error("Sign-in input was not completed", { cause })),
+          );
+        const answer = answered.private_answer;
+        if (answer?.type !== "secret")
+          return yield* Effect.fail(new Error("Invalid sign-in answer"));
+        options.registerSecret(answer.value);
+        privateAnswers[index] = answer.value;
+      }
       const result = yield* browser.fill({
         step: selected,
         inspection: inspected,
-        values: selected.fields.map((item) => values[item.slot] ?? ""),
+        values: selected.fields.map((item, index) =>
+          item.slot === "private_answer" ? (privateAnswers[index] ?? "") : (values[item.slot] ?? ""),
+        ),
       });
-      screens.push(selected);
+      screens.push({
+        ...selected,
+        fields: selected.fields.map((item, index) => {
+          const named = inspected.screen.fields[index];
+          return named === undefined
+            ? item
+            : {
+                ...item,
+                identity: {
+                  label: named.label,
+                  ariaLabel: named.ariaLabel,
+                  placeholder: named.placeholder,
+                  type: named.type,
+                  autocomplete: named.autocomplete,
+                  name: named.name,
+                  id: named.id,
+                },
+              };
+        }),
+      });
       delete values.code;
       delete values.recovery_code;
       if (maySend(result)) sent = true;
@@ -148,7 +234,14 @@ export const makeLiveAuthentication = (options: {
       if (refusal !== undefined)
         return yield* Effect.fail(autofillRefusalFailure(refusal, { nothingSubmitted: !sent }));
       return result;
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          privateAnswers.fill("");
+        }),
+      ),
+    );
+  };
   return {
     step,
     rejected: (slot: AutofillSlot) => {
@@ -159,7 +252,15 @@ export const makeLiveAuthentication = (options: {
         indicator,
         page: options.page,
         siteOrigin: options.siteOrigin,
+        authenticationOrigins: options.authenticationOrigins,
         screens,
-      }),
+        challengeScreens: screens.slice(signInStart),
+      }).pipe(
+        Effect.tap((checked) =>
+          Effect.sync(() => {
+            if (checked.signedIn) signInStart = screens.length;
+          }),
+        ),
+      ),
   };
 };

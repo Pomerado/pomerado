@@ -4,7 +4,12 @@ import { failureDetail } from "../runtime/failure-detail.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 import { frameCrossing, unsupportedSelector } from "./autofill-locate-code.js";
-import { autofillSignedInCode, autofillStepCode, SignedInPage } from "./autofill-page-code.js";
+import {
+  autofillSignedInCode,
+  autofillStepCode,
+  type ControlIdentity,
+  SignedInPage,
+} from "./autofill-page-code.js";
 import { openAutofillLogin } from "./autofill-page.js";
 import {
   foundEvidence,
@@ -44,7 +49,7 @@ export const identifierPreference: readonly IdentifierKind[] = [
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
  * or one of its recovery codes. It proves the account and never picks it.
  */
-export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code";
+export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code" | "private_answer";
 /** A secret field's slot: the password, a one-time code or an extra secret. */
 export type SecretSlot = "password" | "code" | ExtraSecretSlot;
 /** The kind of value a sign-in field takes; the host fills it from the login of that kind. */
@@ -59,6 +64,8 @@ export type AutofillSlot = IdentifierKind | SecretSlot;
 export interface AutofillField {
   readonly selector: string;
   readonly slot: AutofillSlot;
+  /** Observed question in the answer field's frame; supported only for private_answer. */
+  readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
   /** How a `date_of_birth` field takes the date, or the one part of it a dropdown takes. */
   readonly format?: DateOfBirthFormat | undefined;
@@ -82,6 +89,7 @@ export interface AutofillStepRequest {
     | {
         readonly selector: string;
         readonly slot: SecretSlot;
+        readonly questionSelector?: string | undefined;
         readonly format?: DateOfBirthFormat | undefined;
         readonly control?: DateControl | undefined;
       }
@@ -153,6 +161,13 @@ const Described = Schema.Struct({
   placeholder: Text,
   ariaLabel: Text,
   text: Text,
+  /** Current visible question; inspection-only, never a recipe value. */
+  questionText: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2_000))),
+  /**
+   * A recorded question the host could not read: in another frame, with no one visible match, or
+   * with no text it reads. Inspection-only.
+   */
+  questionUnread: Schema.optional(Schema.Literal(true)),
 });
 
 /** A control a step call could not find, or found moved to where the host refuses it. */
@@ -166,6 +181,8 @@ export const LocatedError = Schema.Struct({
     "popup_ambiguous",
   ),
   target: Schema.Union(Schema.Number, Schema.Literal("submit", "popup")),
+  /** A private answer's question no longer reads as the host inspected it. */
+  question: Schema.optional(Schema.Literal("changed")),
   /** The primary page then, which a fill call reports once it typed. */
   url: Schema.optional(Schema.String),
   searched: Schema.optional(Searched),
@@ -315,6 +332,7 @@ export type AutofillSignedInCheck =
         | "indicator_not_visible"
         | "path_mismatch"
         | "password_field_visible"
+        | "challenge_form_visible"
         | "selector_unsupported"
         | "off_site"
         | "page_unavailable";
@@ -475,24 +493,49 @@ const openAccountPage = (openPath: string | undefined, page: AutofillPage, siteO
     };
   });
 
-/** A sign-in's screens as the signed-in check reads them: the selectors of their fields. */
+/**
+ * A sign-in's recorded fields: selectors and, when present, slots of one-use challenges, with the
+ * words, type, autocomplete, name and id that named each control when the host inspected it
+ * (`identity`).
+ */
 export type AutofillScreens = readonly {
   readonly popup?: AutofillPopup | undefined;
-  readonly fields: readonly { readonly selector: string }[];
+  readonly fields: readonly {
+    readonly selector: string;
+    readonly slot?: AutofillSlot;
+    readonly identity?: ControlIdentity | undefined;
+  }[];
 }[];
 
 /**
  * Checks the minter's signed-in indicator on the live page: the selector is visible and the path
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
- * visible one. It still fails when the site shows the recorded login form again. Another form's
- * password field on the page does not count unless a recorded selector matches in it. Screens with no field leave any visible password field failing it, as before.
+ * visible one. It also refuses an explicitly recorded challenge field of the current sign-in's
+ * `challengeScreens` (`screens` unless given) while the same control still shows and takes
+ * typing, on the site or one of `authenticationOrigins`, a provider frame included. The same
+ * control is one the same words name as named the field at inspection (its label, `aria-label`
+ * and placeholder), with its type, autocomplete, name and id where recorded. A field recorded with
+ * no such words counts for nothing, since the host cannot tell it from another control its
+ * selector matches. A challenge the page renders again under other naming counts as another
+ * control and stops counting: a label that now holds the site's error text, or an id or name the
+ * page generates on each render, such as `:r3:` or `mat-input-3`. The check then fails open, and
+ * the indicator still decides. A read-only or disabled control, an unconfigured off-site frame, a
+ * frame inside a hidden one, and a control or frame the host cannot read in time, such as one that
+ * detaches during the check, do not count. It does not classify unrecorded controls or infer a
+ * challenge from the page route. Callers must inspect and record each authentication screen
+ * before checking completion. Another form's password field does not count unless a recorded
+ * selector matches in it. Screens with no field leave any visible password field failing it.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly screens: AutofillScreens;
+  /** The current sign-in's screens, whose recorded challenges count; `screens` by default. */
+  readonly challengeScreens?: AutofillScreens | undefined;
+  /** The configured sign-in origins off the site, where a recorded challenge also counts. */
+  readonly authenticationOrigins?: readonly string[] | undefined;
 }): Effect.Effect<AutofillSignedInCheck> =>
   Effect.gen(function* () {
     const { indicator, page } = input;
@@ -505,6 +548,17 @@ export const checkAutofillSignedIn = (input: {
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields.map((field) => field.selector))
       .filter((selector) => !frameCrossing(selector));
+    const challengeFields = (input.challengeScreens ?? input.screens)
+      .filter((screen) => screen.popup === undefined)
+      .flatMap((screen) => screen.fields)
+      .flatMap((field) =>
+        (field.slot === "private_answer" || field.slot === "code" || field.slot === "recovery_code") &&
+        !frameCrossing(field.selector) &&
+        field.identity !== undefined &&
+        (field.identity.label ?? field.identity.ariaLabel ?? field.identity.placeholder) !== null
+          ? [{ selector: field.selector, identity: field.identity }]
+          : [],
+      );
     const read = yield* page
       .execute(
         autofillSignedInCode(
@@ -513,6 +567,8 @@ export const checkAutofillSignedIn = (input: {
           siteHost(input.siteOrigin),
           signInFields,
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
+          challengeFields,
+          input.authenticationOrigins ?? [],
         ),
         15,
       )
@@ -526,7 +582,7 @@ export const checkAutofillSignedIn = (input: {
           error: read.left,
         }),
       };
-    const { url, indicator: visible, passwordVisible } = read.right;
+    const { url, indicator: visible, passwordVisible, challengeFormVisible } = read.right;
     const parsed = URL.parse(url);
     if (parsed === null || !sameSite(input.siteOrigin, parsed))
       return { signedIn: false as const, failed: "off_site" as const, url };
@@ -536,6 +592,8 @@ export const checkAutofillSignedIn = (input: {
       return { signedIn: false as const, failed: "path_mismatch" as const, url };
     if (passwordVisible)
       return { signedIn: false as const, failed: "password_field_visible" as const, url };
+    if (challengeFormVisible)
+      return { signedIn: false as const, failed: "challenge_form_visible" as const, url };
     return { signedIn: true as const, url };
   });
 

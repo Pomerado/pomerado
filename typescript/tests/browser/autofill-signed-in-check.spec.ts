@@ -22,31 +22,104 @@ const screens = [
   { fields: [{ selector: "#password" }] },
 ];
 
-/** Serves the signed-in page, and `frame` at any other path, then runs the host's check on it. */
+/**
+ * A recorded challenge field: its selector and slot, and the words that named the control when the
+ * host inspected it, with its name and id where given, which a control must share to count as that
+ * field still asking.
+ */
+const recorded = (
+  selector: string,
+  slot: "code" | "private_answer",
+  naming: {
+    readonly label?: string;
+    readonly ariaLabel?: string;
+    readonly name?: string;
+    readonly id?: string;
+  },
+) => ({
+  fields: [
+    {
+      selector,
+      slot,
+      identity: {
+        label: naming.label ?? null,
+        ariaLabel: naming.ariaLabel ?? null,
+        placeholder: null,
+        type: null,
+        autocomplete: null,
+        name: naming.name ?? null,
+        id: naming.id ?? null,
+      },
+    },
+  ],
+});
+
+/**
+ * Serves the signed-in page, each of `options.frames` at its path, and `frame` at any other path,
+ * then runs the host's check on it.
+ */
 const checkPage = async (
   page: Page,
   body: string,
   frame: string | null,
   signIn: AutofillScreens,
+  path = "/account",
+  options: {
+    readonly authenticationOrigins?: readonly string[];
+    readonly challengeScreens?: AutofillScreens;
+    readonly frames?: Readonly<Record<string, string>>;
+  } = {},
 ) => {
-  await page.route(/^https:\/\//u, (route) =>
-    route.fulfill({
+  await page.route(/^https:\/\//u, (route) => {
+    const at = new URL(route.request().url()).pathname;
+    return route.fulfill({
       contentType: "text/html",
-      body: new URL(route.request().url()).pathname === "/account" ? body : (frame ?? ""),
-    }),
-  );
-  await page.goto(`${site}/account`);
+      body: at === path ? body : (options.frames?.[at] ?? frame ?? ""),
+    });
+  });
+  await page.goto(`${site}${path}`);
   return Effect.runPromise(
     checkAutofillSignedIn({
       indicator: { selector: "#identity" },
       page: await hostPage(page),
       siteOrigin: site,
       screens: signIn,
+      ...(options.authenticationOrigins === undefined
+        ? {}
+        : { authenticationOrigins: options.authenticationOrigins }),
+      ...(options.challengeScreens === undefined ? {} : { challengeScreens: options.challengeScreens }),
     }),
   );
 };
 
-for (const [name, body, frame, failed] of [
+for (const [name, body, frame, failed, signIn] of [
+  [
+    "the identity marker inside an unfinished security-answer form",
+    `<form><p id="identity">Signed in</p><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
+    null,
+    "challenge_form_visible",
+    [...screens, recorded("input[name=securityAnswer]", "private_answer", { label: "Security answer" })],
+  ],
+  [
+    "a header marker outside an unfinished security-answer form",
+    `${marker}<form><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`,
+    null,
+    "challenge_form_visible",
+    [...screens, recorded("input[name=securityAnswer]", "private_answer", { label: "Security answer" })],
+  ],
+  [
+    "a header marker outside an unfinished verification-code form",
+    `${marker}<form><label>Verification code<input name="verificationCode" required></label><button>Verify</button></form>`,
+    null,
+    "challenge_form_visible",
+    [...screens, recorded("input[name=verificationCode]", "code", { label: "Verification code" })],
+  ],
+  [
+    "an account search form that shares the page path",
+    `${marker}<form method="get"><label>Search<input name="search"></label><button>Search</button></form>`,
+    null,
+    undefined,
+  ],
   [
     "another form's password field, such as a change-password form",
     `${marker}<form action="/account/password" method="post"><label>Current password<input type="password" name="current"></label><label>New password<input type="password" name="new"></label><button>Change password</button></form>`,
@@ -91,7 +164,7 @@ for (const [name, body, frame, failed] of [
   ],
 ] as const)
   test(`the signed-in check with ${name}`, async ({ page }) => {
-    expect(await checkPage(page, body, frame, screens)).toEqual(
+    expect(await checkPage(page, body, frame, signIn ?? screens)).toEqual(
       failed === undefined
         ? { signedIn: true, url: `${site}/account` }
         : { signedIn: false, failed, url: `${site}/account` },
@@ -108,3 +181,181 @@ test("the signed-in check with no sign-in field to go by counts any password fie
     url: `${site}/account`,
   });
 });
+
+test("an account search form containing the signed-in marker does not look like unfinished authentication", async ({ page }) => {
+  const account = '<form action="/account/search"><p id="identity">Signed in</p><label>Search<input name="search"></label><button>Search</button></form>';
+  expect(await checkPage(page, account, null, screens)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("an unrelated support question on the account page does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<form action="/support"><label>Support question<textarea name="question" required></textarea></label><button>Send</button></form>`;
+  expect(await checkPage(page, account, null, screens)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("an unrelated security settings form on the account page does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<form action="/account/security"><label>Security answer<input name="securityAnswer" required></label><button>Update</button></form>`;
+  expect(await checkPage(page, account, null, screens)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("an account page below an auth URL prefix still accepts an unrelated security form", async ({ page }) => {
+  const account = `${marker}<form action="/auth/account/security"><label>Security answer<input name="securityAnswer" required></label><button>Update</button></form>`;
+  expect(await checkPage(page, account, null, screens, "/auth/account")).toEqual({
+    signedIn: true,
+    url: `${site}/auth/account`,
+  });
+});
+
+test("an auth-named route does not classify an unrecorded account form as a challenge", async ({ page }) => {
+  const challenge = `${marker}<form><label>Security answer<input name="securityAnswer" required></label><button>Continue</button></form>`;
+  expect(await checkPage(page, challenge, null, screens, "/security-question")).toEqual({
+    signedIn: true,
+    url: `${site}/security-question`,
+  });
+});
+
+test("a visible contenteditable security answer remains an unfinished challenge", async ({ page }) => {
+  const account = `${marker}<form><div contenteditable="true" aria-label="Security answer"></div><button>Continue</button></form>`;
+  expect(await checkPage(page, account, null, [...screens, recorded('[contenteditable="true"]', "private_answer", { ariaLabel: "Security answer" })])).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+});
+
+test("a recorded challenge field associated with its form by form attribute remains unfinished", async ({ page }) => {
+  const account = `${marker}<form id="challenge"><button>Continue</button></form><label>Security answer<input id="answer" name="securityAnswer" form="challenge" required></label>`;
+  expect(await checkPage(page, account, null, [...screens, recorded("#answer", "private_answer", { label: "Security answer" })])).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+});
+
+test("a recorded challenge field in a visible frame of a configured sign-in origin remains unfinished", async ({ page }) => {
+  const account = `${marker}<iframe src="${widget}/security-question"></iframe>`;
+  const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
+  expect(await checkPage(page, account, challenge, [...screens, recorded("#challenge-answer", "private_answer", { label: "Security answer" })], "/account", { authenticationOrigins: [widget] })).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+});
+
+// Even the recorded control itself counts as the challenge still asking only while it takes
+// typing, on the site or a configured sign-in origin, in a frame that shows with every frame above.
+const codeScreen = [...screens, recorded('input[name="code"]', "code", { label: "Verification code" })];
+test("a recorded code field in an unconfigured off-site frame does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe src="${widget}/verify"></iframe>`;
+  const codeForm = '<form><label>Verification code<input name="code"></label><button>Verify</button></form>';
+  expect(await checkPage(page, account, codeForm, codeScreen)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("a read-only or disabled recorded code field does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<label>Verification code<input name="code" readonly></label><label>Verification code<input name="code" disabled></label>`;
+  expect(await checkPage(page, account, null, codeScreen)).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("a recorded challenge field in a frame inside a hidden frame does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe style="visibility:hidden" src="/outer"></iframe>`;
+  const frames = {
+    "/outer": '<iframe src="/inner"></iframe>',
+    "/inner": '<form><label>Verification code<input name="code"></label><button>Verify</button></form>',
+  };
+  expect(await checkPage(page, account, null, codeScreen, "/account", { frames })).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+test("a challenge field in a hidden provider iframe does not block signed-in proof", async ({ page }) => {
+  const account = `${marker}<iframe style="display:none" src="${widget}/security-question"></iframe>`;
+  const challenge = '<form><label>Security answer<input id="challenge-answer" name="securityAnswer" required></label><button>Continue</button></form>';
+  expect(await checkPage(page, account, challenge, [...screens, recorded("#challenge-answer", "private_answer", { label: "Security answer" })])).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+// A host that records no identity, as a recipe's screens record none, gets the check without the
+// challenge part: a recorded code field still on the page does not count, and the sign-in's own
+// password field still does.
+test("a recorded code field with no inspected identity leaves the check as without one", async ({ page }) => {
+  const code = { fields: [{ selector: "input[name=verificationCode]", slot: "code" as const }] };
+  const form = '<form><label>Verification code<input name="verificationCode" required></label><button>Verify</button></form>';
+  expect(await checkPage(page, `${marker}${form}`, null, [...screens, code])).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+  expect(
+    await checkPage(page, `${marker}${form}<label>Password<input id="password" type="password"></label>`, null, [...screens, code]),
+  ).toEqual({ signedIn: false, failed: "password_field_visible", url: `${site}/account` });
+});
+
+// `challengeScreens` names the current sign-in's screens, whose recorded challenges count. Left
+// out, it is `screens`, so every recorded screen's challenges count.
+test("the signed-in check counts the recorded challenges of `challengeScreens`, and of `screens` without it", async ({ page }) => {
+  const account = `${marker}<form><label>Verification code<input name="code"></label><button>Verify</button></form>`;
+  expect(await checkPage(page, account, null, codeScreen)).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+  expect(await checkPage(page, account, null, codeScreen, "/account", { challengeScreens: screens })).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+});
+
+// A redeem box can share a code field's generic label. The name and id inspection recorded tell
+// them apart, and the code form itself, with the same name and id, still asks.
+for (const [name, control, failed] of [
+  ["another name and id", '<input name="redeem" id="redeem">', undefined],
+  ["the same name and another id", '<input name="code" id="redeem">', undefined],
+  ["the same name and id", '<input name="code" id="otp">', "challenge_form_visible"],
+] as const)
+  test(`the signed-in check with a control labelled as the recorded code field, with ${name}`, async ({ page }) => {
+    const code = recorded('role=textbox[name="Code"]', "code", { label: "Code", name: "code", id: "otp" });
+    expect(
+      await checkPage(page, `${marker}<form><label>Code${control}</label><button>Apply</button></form>`, null, [...screens, code]),
+    ).toEqual(
+      failed === undefined
+        ? { signedIn: true, url: `${site}/account` }
+        : { signedIn: false, failed, url: `${site}/account` },
+    );
+  });
+
+// A recorded control that detaches while the host reads it, or that the host cannot read in time,
+// shows nothing: the check does not fail on what it cannot tell, and the marker still decides.
+for (const [name, script] of [
+  [
+    "detaches as the host reads it",
+    "new MutationObserver(() => document.querySelector('input[name=code]')?.remove()).observe(document.body, { attributes: true, subtree: true });",
+  ],
+  [
+    "keeps the page busy past the host's limit as the host reads it",
+    "new MutationObserver(() => { const end = Date.now() + 4000; while (Date.now() < end); }).observe(document.body, { attributes: true, subtree: true });",
+  ],
+] as const)
+  test(`the signed-in check with a recorded code field that ${name}`, async ({ page }) => {
+    const code = recorded("input[name=code]", "code", { label: "Code" });
+    const body = `${marker}<form><label>Code<input name="code"></label><button>Verify</button></form><script>${script}</script>`;
+    expect(await checkPage(page, body, null, [...screens, code])).toEqual({
+      signedIn: true,
+      url: `${site}/account`,
+    });
+  });

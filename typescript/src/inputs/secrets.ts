@@ -53,9 +53,31 @@ const percentEncoded = (form: string, encoded: string) =>
 const lowercaseHex = (encoded: string) =>
   encoded.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase());
 
+/**
+ * Under this many characters, a form of a secret counts in source only as a whole token, as the
+ * submission guard finds a code: an all-digit form where no digit adjoins it, any other where no
+ * letter, mark or digit adjoins it on a side whose own edge is one. A short value, such as a
+ * favorite color or a six-digit code, turns up inside a longer word or a timestamp by chance.
+ * Redaction, which feeds what a model sees, still masks every form wherever it appears.
+ */
+const shortForm = 8;
+const wordClass = "[\\p{L}\\p{M}\\p{N}]";
+/** Every place `form` stands as a whole token. */
+const tokenPattern = (form: string) => {
+  const adjoining = /^[0-9]+$/u.test(form) ? "[0-9]" : wordClass;
+  const starts = new RegExp(`^${adjoining}`, "u").test(form);
+  const ends = new RegExp(`${adjoining}$`, "u").test(form);
+  const escaped = form.replace(/[\\^$.*+?()[\]{}|/]/gu, "\\$&");
+  return new RegExp(
+    `${starts ? `(?<!${adjoining})` : ""}${escaped}${ends ? `(?!${adjoining})` : ""}`,
+    "u",
+  );
+};
+
 /** Explicit caller secrets live only for this run. This does not detect or classify page data. */
 export const makeRunSecrets = () => {
-  const values = new Set<string>();
+  /** Each registered form, with the pattern source screening counts it by when it is short. */
+  const values = new Map<string, RegExp | undefined>();
   /**
    * Each form a page or URL can show the value in. The value as given, trimmed, and with its
    * whitespace collapsed as an accessibility snapshot shows it; each of them as written,
@@ -63,6 +85,7 @@ export const makeRunSecrets = () => {
    * quoted key holds a name; and percent-encoded as `encodeURIComponent` and a form write it, and
    * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A
    * value that cannot be encoded, such as one holding a lone surrogate, keeps every other form.
+   * In source, each form counts by the length of the shown value it came from (`shortForm`).
    */
   const register = (value: string) => {
     const shown = [
@@ -93,15 +116,18 @@ export const makeRunSecrets = () => {
         ];
         forms.push(...percent, ...percent.map(lowercaseHex));
       }
-      for (const shownForm of forms) values.add(shownForm);
+      const short = form.length < shortForm;
+      for (const shownForm of forms)
+        if (!short) values.set(shownForm, undefined);
+        else if (!values.has(shownForm)) values.set(shownForm, tokenPattern(shownForm));
     }
   };
-  const ordered = () => [...values].sort((left, right) => right.length - left.length);
+  const ordered = () => [...values].sort(([left], [right]) => right.length - left.length);
   const redact = (text: string) =>
-    ordered().reduce((result, secret) => result.split(secret).join("[private]"), text);
+    ordered().reduce((result, [secret]) => result.split(secret).join("[private]"), text);
   /** The longest proper prefix of a registered form that `text` ends with, as a length. */
   const splitPrefix = (text: string) =>
-    ordered().reduce((longest, secret) => {
+    ordered().reduce((longest, [secret]) => {
       for (let length = Math.min(secret.length - 1, text.length); length > longest; length--)
         if (text.endsWith(secret.slice(0, length))) return length;
       return longest;
@@ -113,7 +139,9 @@ export const makeRunSecrets = () => {
   };
   const assertAbsent = (text: string) =>
     Effect.suspend(() =>
-      ordered().some((secret) => text.includes(secret))
+      ordered().some(([secret, token]) =>
+        token === undefined ? text.includes(secret) : token.test(text),
+      )
         ? Effect.fail(new Error("Source contains a caller-supplied secret"))
         : Effect.void,
     );
