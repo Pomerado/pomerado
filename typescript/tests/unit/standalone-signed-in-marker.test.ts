@@ -7,15 +7,17 @@ const origin = "https://www.shop.test";
 
 /**
  * A primary tab on a modeled site: `shows` lists the paths whose page shows the marker, and
- * `formAnswer` says the page it starts on answered a form directly. It records each address the
- * host loaded, by the live check's `openPath` or a host call's goto, which fails once `failGoto`
- * is set.
+ * `formAnswer` says the page it starts on answered a form directly. Its signed-out pages settle
+ * before the host reads them, unless `settled` is false. It records each address the host
+ * loaded, by the live check's `openPath` or a host call's goto, which fails once `failGoto` is
+ * set.
  */
 const modeledTab = (options: {
   readonly at: string;
   readonly shows: readonly string[];
   readonly formAnswer?: boolean;
   readonly failGoto?: boolean;
+  readonly settled?: boolean;
 }) => {
   let current = new URL(options.at, origin).href;
   const loads: string[] = [];
@@ -41,7 +43,11 @@ const modeledTab = (options: {
           if (code.includes("getNavigationHistory")) return options.formAnswer === true;
           if (code.includes("outerHTML")) {
             snapshots += 1;
-            return { url: current, dom: "<!doctype html><html><body><p>Shop</p></body></html>" };
+            return {
+              url: current,
+              dom: "<!doctype html><html><body><p>Shop</p></body></html>",
+              settled: options.settled ?? true,
+            };
           }
           throw new Error("Unexpected host call");
         });
@@ -171,6 +177,25 @@ describe("makeMarkerChecks", () => {
     expect(await Effect.runPromise(later.check(accountMarker))).toHaveProperty(
       "signedOutSnapshot",
       "unchecked",
+    );
+  });
+
+  it("counts a signed-out page the host never saw settle only when it shows the marker", async () => {
+    const tab = modeledTab({ at: "/", shows: ["/account"], settled: false });
+    const markers = markerChecks(tab);
+    await Effect.runPromise(markers.afterClear);
+    expect(tab.snapshots).toBe(1);
+    // The page may have shown more after the host read it, so it proves no marker absent.
+    expect(await Effect.runPromise(markers.check(accountMarker))).toHaveProperty(
+      "signedOutSnapshot",
+      "unchecked",
+    );
+    // What it showed, it showed signed out.
+    const shown = { selector: "p", openPath: "/account" };
+    expect(markers.signedOutShows(shown)).toBe(true);
+    expect(await Effect.runPromise(markers.check(shown))).toHaveProperty(
+      "signedOutSnapshot",
+      "matches",
     );
   });
 
