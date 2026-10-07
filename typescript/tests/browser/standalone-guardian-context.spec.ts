@@ -332,6 +332,47 @@ async ({ ask }) => ({ note: await ask("note") }));`,
   }
 });
 
+test("a question a step asks after its page reset never shows Guardian the page the last step left", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((request, response) =>
+    html(response, `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: `${site.origin}/entry`,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            "explore/deeper.mjs": probe(
+              "await page.goto(new URL('/deep', page.url()).href); return page.url();",
+            ),
+            "src/tool.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/deeper.mjs"), "deeper")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+      ],
+    });
+    expect(toolResult(last, "deeper")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "example")).toMatchObject({ status: "completed" });
+    // The example reset the page before it asked, so the explore's page at /deep is gone.
+    const question = guardian.reviews.find((review) => review.kind === "question");
+    expect(historyOf(question)).toContainEqual(
+      expect.objectContaining({ purpose: "example", status: "running" }),
+    );
+    expect(contextOf(question!)?.["browser"]).toBe("active");
+    expect(contextOf(question!)).not.toHaveProperty("currentPage");
+  } finally {
+    await site.close();
+  }
+});
+
 test("a read build runs two live tests on inputs it chose and its example on the input it read", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
