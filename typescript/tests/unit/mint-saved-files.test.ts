@@ -80,6 +80,12 @@ describe("the files a local build saves", () => {
     ).toEqual(["explore/helper", "explore/other.js", "src/query.mjs", "src/tool.mjs"]);
   });
 
+  it("keeps every candidate file when an extensionless file is not JavaScript", () => {
+    expect(saved({ ...workspace, "src/NOTES": "Read the reports page first." })).toEqual(
+      [...everyCandidate, "src/NOTES"].sort(),
+    );
+  });
+
   it("does not follow an import of the host's runtime or a file outside the four folders", () => {
     expect(
       saved({

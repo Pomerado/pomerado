@@ -165,10 +165,10 @@ const savedSourcePath = /^(src|explore|test|scratch)\//u;
 
 /**
  * The files a local build saves for `entrypoint`: every file under src/, whatever its extension,
- * the entrypoint, and the files under explore/, test/ or scratch/ that they import, transitively.
- * An import of another path, such as the host's runtime, is not followed. A saved module that
- * could load a file its imports do not name (see `moduleRequests`), or a workspace package
- * manifest, keeps every file under those four folders.
+ * the entrypoint, and the files under explore/, test/ or scratch/ that they import, transitively,
+ * an extensionless file read as JavaScript. An import of another path, such as the host's
+ * runtime, is not followed. A saved module that could load a file its imports do not name (see
+ * `moduleRequests`), or a workspace package manifest, keeps every file under those four folders.
  */
 export const savedOperationFiles = (
   workspace: ReadonlyMap<string, string>,
@@ -183,7 +183,9 @@ export const savedOperationFiles = (
     const source = candidates.get(path);
     if (included.has(path) || source === undefined) continue;
     included.set(path, source);
-    if (sourceSyntax(path) === undefined) continue;
+    // Node loads an extensionless file in a module scope as ESM, so it is read as JavaScript;
+    // one that does not parse keeps every candidate.
+    if (sourceSyntax(path) === undefined && posix.extname(path) !== "") continue;
     const requests = moduleRequests(source, path, true);
     if (requests === undefined) return candidates;
     for (const request of requests.filter(plainRelative))
