@@ -68,6 +68,20 @@ describe("the files a local build saves", () => {
     ]);
   });
 
+  it("does not follow an import of the host's runtime or a file outside the four folders", () => {
+    expect(
+      saved({
+        ...workspace,
+        "src/tool.mjs": [
+          'import { defineOperation } from "../runtime/index.js";',
+          'import { note } from "../skills/note.mjs";',
+          "export default defineOperation(note);",
+        ].join("\n"),
+        "skills/note.mjs": "export const note = 1;",
+      }),
+    ).toEqual(["src/query.mjs", "src/tool.mjs"]);
+  });
+
   it("keeps an entrypoint outside src/ with the files it imports", () => {
     expect(
       saved(
@@ -91,7 +105,6 @@ describe("the files a local build saves", () => {
       "imports a computed path",
       'const name = "look";\nexport default await import(`../explore/${name}.mjs`);',
     ],
-    ["imports a path the workspace lacks", 'export { query } from "./query";'],
   ])("keeps every candidate file when a saved module %s", (_case, source) => {
     expect(saved({ ...workspace, "src/tool.mjs": source })).toEqual(everyCandidate);
   });

@@ -1,7 +1,7 @@
 import { Effect, Either } from "effect";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
-import { operationSourceFiles } from "../mint/operation-source.js";
+import { savedOperationFiles } from "../mint/operation-source.js";
 import {
   exampleOutputEvidence,
   exampleOutputPath,
@@ -71,10 +71,8 @@ export const mintPublication =
       // when the caller sent none, as the first act step that passed one fixed it, even when the
       // named step ran before it; else the caller's own.
       const input = write ? (writeSession.input ?? sample.input) : sample.input;
-      // Only what the operation can load ships: src/, the entrypoint and the probes it imports.
-      const files = operationSourceFiles(new Map(yield* workspace.snapshot), [
-        publication.entrypoint,
-      ]);
+      // What the operation can load ships: all of src/, the entrypoint and the probes it imports.
+      const files = savedOperationFiles(new Map(yield* workspace.snapshot), publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
       if (publishedHandlePath(files, [publication.entrypoint]) !== undefined)
@@ -138,7 +136,7 @@ export const mintPublication =
             intentDerivedInput: writeSession.input,
           }
         : yield* Effect.gen(function* () {
-            const baseline = operationSourceFiles(new Map(sample.sources), [sample.entrypoint]);
+            const baseline = savedOperationFiles(new Map(sample.sources), sample.entrypoint);
             const output = yield* outputEvidence(state, sample, {
               executionId: evidence.executionId,
               executedEntrypoint: `executed/${sample.entrypoint}`,

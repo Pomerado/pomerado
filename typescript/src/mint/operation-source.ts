@@ -160,6 +160,38 @@ export const operationSourceFiles = (
   return included;
 };
 
+/** The folders a local build saves files from: its operation source and its probes. */
+const savedSourcePath = /^(src|explore|test|scratch)\//u;
+
+/**
+ * The files a local build saves for `entrypoint`: every file under src/, whatever its extension,
+ * the entrypoint, and the files under explore/, test/ or scratch/ that they import, transitively.
+ * An import of another path, such as the host's runtime, is not followed. A saved module that
+ * could load a file its imports do not name (see `moduleRequests`), or a workspace package
+ * manifest, keeps every file under those four folders.
+ */
+export const savedOperationFiles = (
+  workspace: ReadonlyMap<string, string>,
+  entrypoint: string,
+): Map<string, string> => {
+  const candidates = new Map([...workspace].filter(([path]) => savedSourcePath.test(path)));
+  const included = new Map<string, string>();
+  if ([...workspace.keys()].some((path) => posix.basename(path) === "package.json"))
+    return candidates;
+  const pending = [...[...candidates.keys()].filter((path) => path.startsWith("src/")), entrypoint];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const source = candidates.get(path);
+    if (included.has(path) || source === undefined) continue;
+    included.set(path, source);
+    if (sourceSyntax(path) === undefined) continue;
+    const requests = moduleRequests(source, path, true);
+    if (requests === undefined) return candidates;
+    for (const request of requests.filter(plainRelative))
+      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+  }
+  return included;
+};
+
 /**
  * One entrypoint and the workspace modules it imports, transitively; unlike the published bundle
  * it leaves out unrelated `src/` files. A module whose imports cannot be resolved statically keeps
