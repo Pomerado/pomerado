@@ -59,51 +59,50 @@ const identify = (context: BrowserContext, page: Page) =>
   });
 
 /**
- * A watched value's index and the URLs of the frame a completed typing call entered it in, when
- * the call started and once it completed.
+ * A watched value's index and the URLs of the frames a completed typing call may have entered it
+ * in, when the call started and once it completed.
  */
 type Delivery = readonly [index: number, urls: readonly string[]];
 
-/** How a frame locator's selector enters the frame its next part matches in. */
-const enterFrame = " >> internal:control=enter-frame >> ";
-
 /**
- * The frame a frame's `fill` or `type` with `selector` types in: the frame itself, or the content
- * of the last frame element the selector enters, found the way Playwright finds it. Undefined when
- * that element isn't there, or the selector enters a frame in a way this can't follow.
+ * The frame the element `selector` names from `frame` is in, by Playwright's own lookup, the one
+ * its actions use: frame locators, any-frame selectors and aria snapshot references included.
+ * Undefined while there is no such element.
  */
-const selectorFrame = async (frame: Frame, selector: string) => {
-  const at = selector.lastIndexOf(enterFrame);
-  if (selector.slice(at < 0 ? 0 : at + enterFrame.length).includes("enter-frame")) return undefined;
-  if (at < 0) return frame;
-  const owner = await frame.$(selector.slice(0, at));
-  const content = owner === null ? null : await owner.contentFrame();
-  await owner?.dispose();
-  return content ?? undefined;
+const selectorFrames = async (frame: Frame, selector: string, strict: unknown) => {
+  const element = await frame.$(selector, strict === true ? { strict } : undefined);
+  if (element === null) return undefined;
+  const owner = await element.ownerFrame();
+  await element.dispose();
+  return owner === null ? undefined : [owner];
 };
 
 /**
- * The frame of `page` whose document holds the focused element, by the browser's own `:focus`
- * match, which Playwright runs apart from the page's scripts: only the focused frame matches it.
+ * The frames of `page` the keyboard types in: the one whose document holds the focused element, by
+ * the browser's own `:focus` match, which Playwright runs apart from the page's scripts and only
+ * the focused frame matches. With nothing focused, keys go to whichever document has the focus,
+ * so every frame of the page.
  */
-const focusedFrame = async (page: Page) => {
+const focusedFrames = async (page: Page) => {
   for (const frame of page.frames()) {
     const focused = await frame.$(":focus").catch(() => null);
     if (focused === null) continue;
     await focused.dispose();
-    return frame;
+    return [frame];
   }
-  return undefined;
+  return page.frames();
 };
 
 /**
  * Wraps, for one script, the calls a handle may type through: a frame's `fill` and `type`, which a
  * page's and a locator's `fill`, `type` and `pressSequentially` go through, and the keyboard's
- * `type`. Before a call with a watched value as its text, it finds the frame the call types in:
- * the selector's frame for a frame's call, the focused frame for the keyboard's. Once the call
- * completed, it adds the value to `typed` with that frame's URL then and now, read without
- * waiting for any page the typing started to load. A call that throws adds nothing. The methods
- * are shared by every page, so the returned restore puts the originals back once the script ends.
+ * `type`. Before a call with a watched value as its text, it finds the frames the call types in:
+ * the frame of the element its selector names for a frame's call, looked up again once the call
+ * completed when there was none yet, and the focused frames for the keyboard's. Once the call
+ * completed, it adds the value to `typed` with those frames' URLs then and now, read without
+ * waiting for any page the typing started to load, unless one of them left the page meanwhile,
+ * as a frame the page swapped out does. A call that throws adds nothing. The methods are shared
+ * by every page, so the returned restore puts the originals back once the script ends.
  */
 const watchTypingCalls = (
   page: Page,
@@ -111,23 +110,26 @@ const watchTypingCalls = (
   values: readonly string[],
   typed: Delivery[],
 ) => {
-  const keyboardFrame = (keyboard: unknown) => {
+  const keyboardFrames = (keyboard: unknown) => {
     const owner = browser
       .contexts()
       .flatMap((context) => context.pages())
       .find((candidate) => candidate.keyboard === keyboard);
-    return owner === undefined ? Promise.resolve(undefined) : focusedFrame(owner);
+    return owner === undefined ? Promise.resolve(undefined) : focusedFrames(owner);
   };
-  // A frame element that wasn't there yet may be once the call found its field.
-  const frameOf = (frame: unknown, args: readonly unknown[]) =>
-    selectorFrame(frame as Frame, String(args[0]));
+  const elementFrames = (frame: unknown, args: readonly unknown[]) =>
+    selectorFrames(
+      frame as Frame,
+      String(args[0]),
+      args[2] !== null && typeof args[2] === "object" ? Reflect.get(args[2], "strict") : undefined,
+    );
   const framePrototype = Object.getPrototypeOf(page.mainFrame()) as object;
   const sinks = [
-    [framePrototype, "fill", 1, frameOf, true],
-    [framePrototype, "type", 1, frameOf, true],
-    [Object.getPrototypeOf(page.keyboard) as object, "type", 0, keyboardFrame, false],
+    [framePrototype, "fill", 1, elementFrames, true],
+    [framePrototype, "type", 1, elementFrames, true],
+    [Object.getPrototypeOf(page.keyboard) as object, "type", 0, keyboardFrames, false],
   ] as const;
-  const restores = sinks.map(([prototype, method, index, target, again]) => {
+  const restores = sinks.map(([prototype, method, index, targets, again]) => {
     const own = Object.getOwnPropertyDescriptor(prototype, method);
     const original: unknown = Reflect.get(prototype, method);
     if (typeof original !== "function") return () => undefined;
@@ -138,13 +140,14 @@ const watchTypingCalls = (
         const text = args[index];
         const at = typeof text === "string" ? values.indexOf(text) : -1;
         if (at < 0) return (await Reflect.apply(original, this, args)) as unknown;
-        const before = await target(this, args).catch(() => undefined);
-        const started = before?.url();
+        const before = await targets(this, args).catch(() => undefined);
+        const started = before?.map((frame) => frame.url()) ?? [];
         const result: unknown = await Reflect.apply(original, this, args);
-        const frame =
-          before ?? (again ? await target(this, args).catch(() => undefined) : undefined);
-        if (frame !== undefined)
-          typed.push([at, [...new Set([started ?? frame.url(), frame.url()])]]);
+        const frames =
+          before ?? (again ? await targets(this, args).catch(() => undefined) : undefined);
+        const stayed = frames !== undefined && !frames.some((frame) => frame.isDetached());
+        if (stayed && frames.length > 0)
+          typed.push([at, [...new Set([...started, ...frames.map((frame) => frame.url())])]]);
         return result;
       },
     });

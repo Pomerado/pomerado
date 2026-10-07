@@ -103,17 +103,21 @@ test("generated calls retain their selected page and full success or failure res
 /** How long the page after a code screen takes to answer: far longer than typing takes. */
 const nextPageDelayMs = 8_000;
 /**
- * Two local origins serving the same page: a code field in a form, a frame from each origin, a
- * frame of the page's own making and another origin's frame in a closed shadow root. With `how`,
- * typing the sixth character leaves the page at once (`submit`, `href`), after a request (`fetch`)
- * or a task (`timeout`), or moves the focus into the other origin's frame (`captcha`). A frame that
- * gets six characters tells the page, which moves the focus back to its own field.
+ * Two local origins serving the same pages. `/` has a code field in a form, a frame from each
+ * origin, a site frame inside a site frame, a frame of the page's own making, fields in an open and
+ * a closed shadow root, and another origin's frame in a closed shadow root. With `how`, typing the
+ * sixth character leaves the page at once (`submit`, `href`), after a request (`fetch`) or a task
+ * (`timeout`), or moves the focus into the other origin's frame (`captcha`). A frame that gets six
+ * characters tells the page, which moves the focus back to its own field. `/two` has only the code
+ * field and a frame from each origin, `/plain` no field and no frame, and `/swap` a site frame
+ * that another origin's frame replaces after half a second, with a disabled field or none.
  */
 const typingSites = async () => {
   const origins: string[] = [];
-  const servers = [0, 1].map(() =>
+  const servers = ["site", "other"].map((which) =>
     createServer((request, response) => {
-      const path = new URL(request.url ?? "/", "http://fixture").pathname;
+      const url = new URL(request.url ?? "/", "http://fixture");
+      const path = url.pathname;
       if (path === "/next") {
         setTimeout(() => response.end("<p>Next</p>"), nextPageDelayMs);
         return;
@@ -122,12 +126,28 @@ const typingSites = async () => {
       if (path === "/api") return response.end("{}");
       if (path === "/frame")
         return response.end(
-          `<input id="inner"><script>document.getElementById('inner').addEventListener('input', (event) => { if (event.target.value.length >= 6) parent.postMessage('typed', '*'); });</script>`,
+          `<input id="inner" class="${which}" aria-label="${which === "site" ? "Site" : "Other"} field"><script>document.getElementById('inner').addEventListener('input', (event) => { if (event.target.value.length >= 6) parent.postMessage('typed', '*'); });</script>`,
+        );
+      if (path === "/nest") return response.end('<iframe id="deeper" src="/frame"></iframe>');
+      if (path === "/plain") return response.end("<p>Enter the code</p>");
+      if (path === "/two")
+        return response.end(
+          `<label>Code<input id="code"></label><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe>`,
+        );
+      if (path === "/empty")
+        return response.end(url.searchParams.has("field") ? '<input id="inner" disabled>' : "<p>Loading</p>");
+      if (path === "/swap")
+        return response.end(
+          `<iframe id="f" src="/empty${url.search}"></iframe><script>setTimeout(() => { const next = document.createElement('iframe'); next.id = 'f'; next.src = '${origins[1] ?? ""}/frame'; document.getElementById('f').replaceWith(next); }, 500);</script>`,
         );
       response.end(
-        `<form id="form" action="/next"><label>Code<input id="code" name="code"></label></form><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe><iframe id="srcdoc" srcdoc="<input id=inner>"></iframe><div id="closed"></div>
+        `<form id="form" action="/next"><label>Code<input id="code" name="code"></label></form><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe><iframe id="nest" src="/nest"></iframe><iframe id="srcdoc" srcdoc="<input id=inner>"></iframe><div id="closed"></div><div id="open-field"></div><div id="closed-field"></div>
 <script>
 document.getElementById('closed').attachShadow({ mode: 'closed' }).innerHTML = '<iframe src="${origins[1] ?? ""}/frame?closed"></iframe>';
+document.getElementById('open-field').attachShadow({ mode: 'open' }).innerHTML = '<input>';
+const closedField = document.getElementById('closed-field').attachShadow({ mode: 'closed' });
+closedField.innerHTML = '<input>';
+window.focusClosedField = () => closedField.querySelector('input').focus();
 addEventListener('message', () => document.getElementById('code').focus());
 const how = new URLSearchParams(location.search).get('how');
 document.getElementById('code').addEventListener('input', (event) => {
@@ -195,6 +215,16 @@ test("a typing watch marks a value typed only by a typing call on the site that 
         ["await page.fill('#code', '111111');"],
         ["await page.mainFrame().type('#code', '111111');"],
         ["await page.frameLocator('#same').locator('#inner').fill('111111');"],
+        ["await page.getByRole('textbox', { name: 'Code' }).fill('111111');"],
+        ["await page.frameLocator('#same').getByRole('textbox', { name: 'Site field' }).fill('111111');"],
+        ["await page.locator('#same').contentFrame().locator('#inner').fill('111111');"],
+        ["await page.frameLocator('#nest').frameLocator('#deeper').locator('#inner').fill('111111');"],
+        ["await page.locator('#open-field input').focus(); await page.keyboard.type('111111');"],
+        ["await page.evaluate(() => window.focusClosedField()); await page.keyboard.type('111111');"],
+        ["await page.keyboard.type('111111');", `${site}/plain`],
+        [
+          `const tab = await context.newPage(); await tab.goto('${site}/'); await tab.fill('#code', '111111'); await tab.close();`,
+        ],
         [
           `await page.frames().find((frame) => frame.url() === '${site}/frame').fill('#inner', '111111');`,
         ],
@@ -230,8 +260,23 @@ test("a typing watch marks a value typed only by a typing call on the site that 
         `const tab = await context.newPage(); await tab.goto('${other}/'); await tab.fill('#code', '111111'); await tab.close();`,
         `const tab = await context.newPage(); await tab.goto('${other}/'); await tab.locator('#code').focus(); await tab.keyboard.type('111111'); await tab.close();`,
         "await page.evaluate(() => Object.defineProperty(Document.prototype, 'activeElement', { configurable: true, get() { return document.getElementById('code'); } })); await page.frameLocator('#other').locator('#inner').focus(); await page.keyboard.type('111111');",
+        // Keys with nothing focused, on a page with another origin's frame.
+        "await page.keyboard.type('111111');",
       ])
         expect(await typed(code), code).toEqual({ success: true, typed: [] });
+      // Selectors that reach another origin's frame however Playwright lets them: any frame, an
+      // aria snapshot's reference, and a frame the page swaps in while the call waits.
+      for (const [code, url] of [
+        ["await page.frameLocator().locator('.other').fill('111111');", `${site}/two`],
+        ["await page.fill('internal:control=any-frame >> .other', '111111');", `${site}/two`],
+        [
+          "const snapshot = await page.ariaSnapshot({ mode: 'ai' }); const line = snapshot.split('\\n').find((text) => text.includes('Other field')); await page.locator(`aria-ref=${/ref=(f\\d+e\\d+)/.exec(line)[1]}`).fill('111111');",
+          `${site}/two`,
+        ],
+        ["await page.frameLocator('#f').locator('#inner').fill('111111');", `${site}/swap`],
+        ["await page.frameLocator('#f').locator('#inner').fill('111111');", `${site}/swap?field`],
+      ] as const)
+        expect(await run(url, code), code).toEqual({ success: true, typed: [] });
       // A call that failed, a value no typing call entered and code that stopped first type nothing.
       expect(
         await typed(
