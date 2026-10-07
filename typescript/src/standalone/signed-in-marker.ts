@@ -51,7 +51,7 @@ const settle = { totalMs: 3000, quietMs: 1500 };
  * going quiet is read rendered, past a splash screen such as "Loading…". A page that renders
  * later, or keeps changing, is read as it is when the 3 seconds end, and one that still shows
  * nothing is skipped. A wait runs only while time is left, since Playwright reads a timeout of 0
- * as no limit, and each page call is bounded, so the host call ends well inside its 15 seconds.
+ * as no limit, and each page call is bounded, so the host call ends inside its 15 seconds.
  */
 const signedOutPageCode = (targetId: string, siteOrigin: string) => `${primaryPageCode(targetId)}
 ${withinCode}
