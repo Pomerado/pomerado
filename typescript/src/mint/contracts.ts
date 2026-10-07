@@ -1053,7 +1053,8 @@ export interface MintHarnessSnapshot {
   readonly publicationDenial?: PublicationDenial;
   /**
    * The last completed publication review returned input feedback: its categories and screened
-   * rationale, which a build without a fallback ends with. Optional for the same reason.
+   * rationale, kept only for a build with no fallback, which ends with them. Optional for the
+   * same reason.
    */
   readonly inputFeedbackReview?: InputFeedbackReview;
 }
