@@ -2237,7 +2237,7 @@ test("a next screen whose first hundred controls are hidden still saves its visi
   );
 });
 
-test("finish_build runs a contract review, then one publication review, and saves only what the operation loads", async () => {
+test("finish_build runs a contract review, then one publication review, and saves what the operation can load", async () => {
   test.setTimeout(60_000);
   const site = await startSite((_request, response) =>
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
@@ -2255,6 +2255,8 @@ test("finish_build runs a contract review, then one publication review, and save
             "src/heading.mjs":
               'import { trim } from "../explore/trim.mjs";\nexport const heading = (value) => trim(String(value));',
             "explore/trim.mjs": "export const trim = (value) => value.trim();",
+            "src/query.graphql": "query { heading }",
+            "src/labels.cjs": "module.exports = { heading: 'Heading' };",
             "explore/look.mjs": probe(),
             "scratch/notes.mjs": "export const notes = 1;",
           }),
@@ -2281,10 +2283,13 @@ test("finish_build runs a contract review, then one publication review, and save
     expect(guardian.reviews.filter((review) => "trusted_publication" in review.input)).toEqual([
       after[1],
     ]);
-    // Only src/, the entrypoint and the files it imports are saved; other probes are not.
+    // Every src/ file is saved, whatever its extension, with the entrypoint and the files it
+    // imports; other probes are not.
     expect(built.artifact?.files.map((file) => file.path).sort()).toEqual([
       "explore/trim.mjs",
       "src/heading.mjs",
+      "src/labels.cjs",
+      "src/query.graphql",
       "src/tool.mjs",
     ]);
     // The builder is offered no publication skill.
