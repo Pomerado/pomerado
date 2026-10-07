@@ -27,7 +27,7 @@ const keptPages = 4;
  * - a page off the site's origin, such as a sign-in site's or a browser error page;
  * - a page that shows nothing, no text, form control or image in its body, such as the blank page
  *   a reset leaves when the root fails to load, or a client-rendered page's empty shell. It gets
- *   up to 3 seconds, its load and a quiet network included, to render first.
+ *   up to 3 seconds to render first: its load, then, while it shows nothing, a quiet network.
  */
 const signedOutPageCode = (targetId: string, siteOrigin: string) => `${primaryPageCode(targetId)}
 const onSite = () => URL.parse(primary.url())?.origin === ${JSON.stringify(siteOrigin)};
@@ -35,7 +35,6 @@ if (!onSite()) return null;
 const deadline = Date.now() + 3000;
 const left = () => Math.max(0, deadline - Date.now());
 await primary.waitForLoadState("load", { timeout: left() }).catch(() => undefined);
-await primary.waitForLoadState("networkidle", { timeout: left() }).catch(() => undefined);
 const shows = () =>
   primary
     .evaluate(() => {
@@ -49,6 +48,11 @@ const shows = () =>
     })
     .catch(() => false);
 let rendered = await shows();
+// Only a page that shows nothing yet waits for its network to go quiet.
+if (!rendered) {
+  await primary.waitForLoadState("networkidle", { timeout: left() }).catch(() => undefined);
+  rendered = await shows();
+}
 while (!rendered && left() > 0) {
   await new Promise((resolve) => setTimeout(resolve, Math.min(250, left())));
   rendered = await shows();
