@@ -21,9 +21,38 @@ const keptPages = 4;
 /**
  * Browser code that returns the primary tab's address and serialized document, with its scripts'
  * and styles' text left out: the match never reads them, and they would take most of the 1 MiB a
- * host call may return.
+ * host call may return. It returns null for a page that cannot show the site signed out, which a
+ * selector would find nothing on whatever the marker:
+ * - a page off the site's origin, such as a sign-in site's or a browser error page;
+ * - a page that shows nothing, no text, form control or image in its body, such as the blank page
+ *   a reset leaves when the root fails to load, or a client-rendered page's empty shell. It gets
+ *   up to 3 seconds, its load and a quiet network included, to render first.
  */
-const signedOutPageCode = (targetId: string) => `${primaryPageCode(targetId)}
+const signedOutPageCode = (targetId: string, siteOrigin: string) => `${primaryPageCode(targetId)}
+const onSite = () => URL.parse(primary.url())?.origin === ${JSON.stringify(siteOrigin)};
+if (!onSite()) return null;
+const deadline = Date.now() + 3000;
+const left = () => Math.max(0, deadline - Date.now());
+await primary.waitForLoadState("load", { timeout: left() }).catch(() => undefined);
+await primary.waitForLoadState("networkidle", { timeout: left() }).catch(() => undefined);
+const shows = () =>
+  primary
+    .evaluate(() => {
+      const body = document.body;
+      if (body === null) return false;
+      if (body.innerText.trim() !== "") return true;
+      const shown = body.querySelectorAll(
+        "input:not([type=hidden]), select, textarea, button, img, svg, canvas, video",
+      );
+      return [...shown].some((element) => element.checkVisibility());
+    })
+    .catch(() => false);
+let rendered = await shows();
+while (!rendered && left() > 0) {
+  await new Promise((resolve) => setTimeout(resolve, Math.min(250, left())));
+  rendered = await shows();
+}
+if (!rendered || !onSite()) return null;
 return {
   url: primary.url(),
   dom: await primary.evaluate(() => {
@@ -32,22 +61,24 @@ return {
     return "<!doctype html>" + root.outerHTML;
   }),
 };`;
-const SignedOutPage = Schema.Struct({ url: Schema.String, dom: Schema.String });
+const SignedOutPage = Schema.NullOr(Schema.Struct({ url: Schema.String, dom: Schema.String }));
 
 /**
  * The pages a build saw signed out, for its marker checks: the page a sign-in screen is on before
  * anything was typed, and a page a reset cleared of cookies and site storage. They stay in memory
- * for the build, and are never written or shown to a model. A page the host cannot read, such as
- * one whose document is still over 1 MiB, is skipped: a later check has fewer pages to compare, and
- * the step that took it does not fail.
+ * for the build, and are never written or shown to a model. A page that cannot show the site
+ * (see `signedOutPageCode`) is skipped, and so is one the host cannot read, such as one whose
+ * document is still over 1 MiB: a later check has fewer pages to compare, and with none it reports
+ * the signed-out page unchecked. The step that took it does not fail.
  */
-const makeSignedOutPages = (page: AutofillPage) => {
+const makeSignedOutPages = (page: AutofillPage, siteOrigin: string) => {
   const pages: SignedOutSnapshot[] = [];
   return {
     /** Keeps the page the primary tab shows now. Returns whether it kept it. */
-    take: page.execute(signedOutPageCode(page.targetId), 15).pipe(
+    take: page.execute(signedOutPageCode(page.targetId, siteOrigin), 15).pipe(
       Effect.flatMap(Schema.decodeUnknown(SignedOutPage)),
       Effect.map((read) => {
+        if (read === null) return false;
         pages.push(read);
         if (pages.length > keptPages) pages.shift();
         return true;
@@ -95,7 +126,7 @@ export const makeMarkerChecks = (input: {
   /** Whether the build's write session started: its act steps continue the page as it is. */
   readonly writeSessionStarted: () => boolean;
 }) => {
-  const signedOut = makeSignedOutPages(input.page);
+  const signedOut = makeSignedOutPages(input.page, input.siteOrigin);
   /** Pages the build explored once its sign-in sent the login, as paths, oldest first. */
   const exploredPaths: string[] = [];
   let firstScreen = true;
