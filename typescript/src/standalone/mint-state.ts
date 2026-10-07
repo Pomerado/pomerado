@@ -194,8 +194,8 @@ export const mintState = (
     });
     /**
      * The build's one write session: whether its first act step dispatched, the agent's
-     * `exampleInput` it runs when the caller sent none, and its act steps in order for the
-     * blind-repeat guard.
+     * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
+     * one), and its act steps in order for the blind-repeat guard.
      */
     const writeSession: {
       started: boolean;
