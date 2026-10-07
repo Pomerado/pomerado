@@ -9,6 +9,7 @@ import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
+import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { createLocalProcess, type LocalProcess, type LocalProcessResult } from "./local-process.js";
 import { localError, localOutputLimit } from "./local-path.js";
 import { LocalOperationMessage, type LocalOperationResult } from "./local-operation-protocol.js";
@@ -50,7 +51,12 @@ export class LocalOperationFailure extends Error {
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
   readonly output: unknown;
-  readonly schemas: { readonly input: unknown; readonly output: unknown };
+  /** The declared schemas, and in contract mode the declared questions. */
+  readonly schemas: {
+    readonly input: unknown;
+    readonly output: unknown;
+    readonly questions?: ScriptQuestionDeclarations;
+  };
   readonly stdout: string;
   readonly stderr: string;
   readonly write?: WriteDeclaration;
@@ -267,7 +273,11 @@ const operationOutput = (
 ): LocalOperationOutput => {
   return {
     output: result.output,
-    schemas: { input: result.inputSchema, output: result.outputSchema },
+    schemas: {
+      input: result.inputSchema,
+      output: result.outputSchema,
+      ...(result.questions === undefined ? {} : { questions: result.questions }),
+    },
     stdout: output.stdout,
     stderr: output.stderr,
     ...operationJournal(result),

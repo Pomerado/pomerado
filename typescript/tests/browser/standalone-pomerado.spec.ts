@@ -27,6 +27,19 @@ import { makeMcpJobs } from "../../src/standalone/mcp-jobs.js";
 import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/page-controls.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
+import {
+  call as fixtureCall,
+  currentOf,
+  execution as fixtureExecution,
+  executionIdOf,
+  headingOperation,
+  html,
+  patch as patchFiles,
+  probe,
+  recordingGuardian,
+  startSite,
+} from "./guardian-context-fixture.js";
+import { mint as mintWith } from "./standalone-mint-fixture.js";
 import { loadStandaloneAuthoring } from "../../src/mint/skills.js";
 import { getAuthoringDirectory } from "../../src/assets.js";
 import {
@@ -2222,4 +2235,66 @@ test("a next screen whose first hundred controls are hidden still saves its visi
   expect(file.controls[0]).toEqual(
     expect.objectContaining({ type: "password", required: true, visible: true, enabled: true }),
   );
+});
+
+test("finish_build runs a contract review, then one publication review, and saves what the operation can load", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { built, requests } = await mintWith({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patchFiles({
+            "src/tool.mjs": headingOperation,
+            "src/heading.mjs":
+              'import { trim } from "../explore/trim.mjs";\nexport const heading = (value) => trim(String(value));',
+            "explore/trim.mjs": "export const trim = (value) => value.trim();",
+            "src/query.graphql": "query { heading }",
+            "src/labels.cjs": "module.exports = { heading: 'Heading' };",
+            "explore/look.mjs": probe(),
+            "scratch/notes.mjs": "export const notes = 1;",
+          }),
+        () => [fixtureCall("execute", fixtureExecution("example", "src/tool.mjs"), "example")],
+        (request) => [
+          fixtureCall("finish_build", {
+            intent: "Return the fixture integration",
+            entrypoint: "src/tool.mjs",
+            executionId: executionIdOf(request, "example"),
+            metadata: { name: "read_fixture", description: "Read the fixture heading" },
+            coverage: "One live example",
+          }),
+        ],
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    // After its example, the build's reviews are the offline contract run's, then publication's.
+    const example = guardian.reviews.findIndex(
+      (review) => currentOf(review)?.["purpose"] === "example",
+    );
+    const after = guardian.reviews.slice(example + 1);
+    expect(after.map((review) => review.kind)).toEqual(["execution", "publication"]);
+    expect(currentOf(after[0]!)?.["purpose"]).toBe("contract");
+    expect(guardian.reviews.filter((review) => "trusted_publication" in review.input)).toEqual([
+      after[1],
+    ]);
+    // Every src/ file is saved, whatever its extension, with the entrypoint and the files it
+    // imports; other probes are not.
+    expect(built.artifact?.files.map((file) => file.path).sort()).toEqual([
+      "explore/trim.mjs",
+      "src/heading.mjs",
+      "src/labels.cjs",
+      "src/query.graphql",
+      "src/tool.mjs",
+    ]);
+    // The builder is offered no publication skill.
+    expect(JSON.stringify(requests)).not.toContain("publication/SKILL.md");
+  } finally {
+    await site.close();
+  }
 });

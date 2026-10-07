@@ -98,9 +98,20 @@ export const executionIdOf = (request: ModelRequest | undefined, callId: string)
 /** One Guardian review as the reviewer model received it, and what it read. */
 export interface RecordedReview {
   readonly input: Readonly<Record<string, unknown>>;
-  readonly kind: "question" | "execution";
+  readonly kind: "question" | "execution" | "publication";
   readonly reads: Readonly<Record<string, unknown>>[];
 }
+/** A publication review's file index. */
+export const publicationOf = (review: RecordedReview) =>
+  (
+    review.input["trusted_publication"] as
+      { readonly files: readonly Readonly<Record<string, unknown>>[] } | undefined
+  )?.files;
+/** The text a review read of `path`, from its first chunk. */
+export const readOf = (review: RecordedReview | undefined, path: string) => {
+  const read = review?.reads.find((value) => value["path"] === path);
+  return typeof read?.["source"] === "string" ? read["source"] : undefined;
+};
 export const contextOf = (review: RecordedReview) =>
   review.input["trusted_execution_context"] as Readonly<Record<string, unknown>> | undefined;
 export const currentOf = (review: RecordedReview) =>
@@ -110,13 +121,16 @@ export const authorityOf = (review: RecordedReview) =>
 
 /**
  * A scripted Guardian that records each review's input. An execution review reads its entrypoint
- * (and the whole current page's capture when `readPage` is set) before deciding; a question is
- * allowed.
+ * (and the whole current page's capture when `readPage` is set) before deciding; a publication
+ * review reads the first chunk of every file it indexes; a question is allowed. `decide` returns
+ * an outcome, or a publication review's whole decision.
  * `fail` makes a call throw, as a provider outage would.
  */
 export const recordingGuardian = (
   options: {
-    readonly decide?: (review: RecordedReview) => "allow" | "deny";
+    readonly decide?: (
+      review: RecordedReview,
+    ) => "allow" | "deny" | Readonly<Record<string, unknown>>;
     readonly readPage?: boolean;
     readonly fail?: (call: number) => Error | undefined;
   } = {},
@@ -136,8 +150,13 @@ export const recordingGuardian = (
       (value) => value["type"] === "function_call_result",
     );
     const question = "question_review" in input;
+    const publication = "trusted_publication" in input;
     if (results.length === 0)
-      reviews.push({ input, kind: question ? "question" : "execution", reads: [] });
+      reviews.push({
+        input,
+        kind: question ? "question" : publication ? "publication" : "execution",
+        reads: [],
+      });
     const review = reviews.at(-1);
     if (review === undefined) throw new Error("No review recorded");
     if (question)
@@ -153,10 +172,15 @@ export const recordingGuardian = (
     const page = (contextOf(review)?.["currentPage"] as Readonly<Record<string, unknown>>)?.[
       "capture"
     ];
+    if (publication && results.length === 0)
+      return (publicationOf(review) ?? []).map((file, index) =>
+        call("read_source", { path: file["path"], offset: 0 }, `read_${calls}_${index}`),
+      );
     // The entrypoint first, then with `readPage` the whole capture, one chunk after another.
     const last = review.reads.at(-1);
-    const next =
-      results.length === 0
+    const next = publication
+      ? undefined
+      : results.length === 0
         ? { path: String(submitted["entrypoint"]), offset: 0 }
         : options.readPage !== true || typeof page !== "string" || last === undefined
           ? undefined
@@ -168,12 +192,14 @@ export const recordingGuardian = (
               ? { path: page, offset: Number(last["nextOffset"]) }
               : undefined;
     if (next !== undefined) return [call("read_source", next, `read_${calls}_${results.length}`)];
+    const decided = options.decide?.(review) ?? "allow";
     return [
       message(
-        JSON.stringify({
-          outcome: options.decide?.(review) ?? "allow",
-          rationale: "Recorded fixture review",
-        }),
+        JSON.stringify(
+          typeof decided === "string"
+            ? { outcome: decided, rationale: "Recorded fixture review" }
+            : decided,
+        ),
       ),
     ];
   });

@@ -17,6 +17,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
   - Once a write session started, the check loads no page and reports itself unavailable.
   - The `signedIn` step refuses a marker that one of those signed-out pages shows.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
+- The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Other probes there aren't saved, unless a saved module reads or loads files another way, such as through `fs`, `createRequire` or a `#` import. Then every file under those four folders is saved.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
@@ -49,6 +50,16 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
   - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
   - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
+
+### Publication review
+
+- `finish_build` runs one publication review after its own checks. Guardian reads the files that would ship, the public definition the host writes from the build's name, description and schemas, and the evidence they are judged against.
+  - For a read, the evidence is the example's output, with the build's secrets masked and cut at 96 KiB, and the source the example ran, under `executed/`.
+  - For a write, it is each act step's source under `publication/session/`, in order, and the output of the step the build names.
+- `trusted_publication` indexes those files: whether each ships, whether it is current and who wrote it, the host or the minter. A publication review gets 32 turns.
+- Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
+- Any other denial goes back to the minter with Guardian's reason and findings.
+- A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
 
 ## The runtime
 
