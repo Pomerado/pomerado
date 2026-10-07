@@ -77,7 +77,7 @@ a question.
 
 `references/caller-choice.ts` books a seat on the caller's chosen flight: it asks for a
 seat and a saved traveler once the flight's seat map is shown, then books once and calls
-`verified({ confirmation: "message" })` after reading the confirmation back.
+`verified()` after reading the confirmation back.
 `references/caller-code.ts` asks for the code the site sends to confirm an address
 change and enters it on the same page.
 <!-- pomerado:section caller-input.protected-answers:start

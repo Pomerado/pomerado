@@ -38,8 +38,8 @@ export default defineOperation(
       seat: { type: "choice", prompt: "Which seat on the selected flight?" },
       traveler: { type: "choice", prompt: "Which of your saved travelers is flying?" },
     },
-    // The booking reference the site shows for this click confirms the write.
-    write: { confirmation: "message", commits: ["book-seat"] },
+    // The booking reference the site shows for this click, read back, confirms the write.
+    write: { confirmation: "readback", commits: ["book-seat"] },
   },
   async ({
     kernel,
@@ -132,7 +132,7 @@ export default defineOperation(
         dispatch: result.failure === "choice_gone" ? "not_sent" : "sent",
       });
     // The confirmation with its reference, read after this click, shows the booking landed.
-    verified({ confirmation: "message" });
+    verified();
     return { reference: result.reference, seat: answer.seat };
   },
 );

@@ -16,10 +16,10 @@ import type { KernelOperation, KernelOperationContext } from "./kernel-operation
 
 /**
  * How a write operation proves its effect: it reads the confirmation the site shows, or reads back
- * the saved state, and records it: a Kernel script with `verified()` or
- * `verified({ confirmation: "message" })`, an HTTP implementation with `journal.confirmed`.
- * `unverifiable` is for a site that offers neither; its runs report the write as possibly
- * completed.
+ * the saved state, and records it: a Kernel script with `verified()` and no argument, declaring
+ * `readback`, an HTTP implementation with `journal.confirmed`. `message` stays accepted for
+ * revisions published before Kernel scripts stopped declaring it. `unverifiable` is for a site
+ * that offers neither; its runs report the write as possibly completed.
  *
  * `commits` names the write's commit steps in order, such as `["save-address", "place-order"]`:
  * every step that can change the site (an autosave, a saved form step, the final submit). Each is
