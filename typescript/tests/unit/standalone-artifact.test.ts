@@ -118,8 +118,8 @@ it("refuses an entry address with a fragment or credentials", () =>
 
 it("writes auth-fill.json in the bytes another host writes for the same recipe", () =>
   scratch(async (directory) => {
-    // A version 2 sign-in with a rejection marker, a popup, a method choice and an approval,
-    // recorded in the order a host holds each screen.
+    // A version 2 sign-in with rejection markers, one beside a popup, a method choice and an
+    // approval, recorded in the order a host holds each screen.
     const steps: RecordedSignInStep[] = [
       {
         page: "https://site.test/login",
@@ -133,6 +133,7 @@ it("writes auth-fill.json in the bytes another host writes for the same recipe",
       },
       {
         page: "https://auth.site.test/x",
+        rejectedMarkers: [{ slot: "date_of_birth", selector: ".dob-error" }],
         popup: { opener: "primary", origin: "https://auth.site.test" },
         fields: [{ selector: "#dob", slot: "date_of_birth", format: "MM/DD/YYYY", control: "text" }],
         submit: "#n",
@@ -159,6 +160,7 @@ it("writes auth-fill.json in the bytes another host writes for the same recipe",
         {
           page: "https://auth.site.test/x",
           popup: { opener: "primary", origin: "https://auth.site.test" },
+          rejectedMarkers: [{ slot: "date_of_birth", selector: ".dob-error" }],
           fields: [{ selector: "#dob", slot: "date_of_birth", format: "MM/DD/YYYY", control: "text" }],
           submit: "#n",
           methods: [{ method: "sms", selector: "#n" }],
