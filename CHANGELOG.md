@@ -38,6 +38,10 @@
 - While the host restores an operation's sign-in, through `ensureSignedIn()` or the runtime's own call before the script runs, every other browser call the operation makes waits until the host's `signIn` hook returns: execute calls, `waitPastChallenge`, `rejectedSignIn` and `decideDialog`, including ones a timer or an un-awaited promise starts. They then go in the order they were made, and a held call's own timeout starts only when it is sent. A failed sign-in releases them too, and the `ensureSignedIn` caller gets the failure. A second `ensureSignedIn()` while one is under way joins it instead of signing in again. This keeps a script from acting on the page mid sign-in; it is not a security boundary.
 - A local build remembers, for its whole session, whether the host typed a sign-in value into the page. Once it has, every later sign-in screen, in the same build or a later build in that session, is judged as typed into. Its submit guard trusts a typed secret in a form destination only inside the site's own or a configured sign-in origin, never in a path or query the page chose, and a refusal names only origins judged before the typing. Before, each screen was judged as if nothing had been typed. `makeLiveAuthentication` takes an optional `typing` record to share this across authentications on one browser. Without it, each authentication keeps its own.
 
+### Fixes
+
+- A private review that fails now forwards its final timing record to the host's model trace observer, as a successful one does. The record carries only the timing, never the error or other detail.
+
 ## 0.3.0
 
 This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.

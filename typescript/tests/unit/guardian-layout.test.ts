@@ -5,7 +5,8 @@
 // is not marked as already read; session reviews drop their model diagnostics and token counts;
 // a host-defined private kind's exchange reaches later readable records, also through a later
 // review's failed run; a private kind's rejected label, its configured labels or its model error
-// text reach a readable failure record, its retry included.
+// text reach a readable failure record, its retry included; a failed private review drops its
+// final timing.
 import { createHash } from "node:crypto";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
@@ -705,6 +706,69 @@ it.each([
     expect(readable).not.toContain("synthetic-private-label-marker");
   },
 );
+
+it("forwards a failed private host kind's final timing without its error or detail", async () => {
+  setDefaultModelProvider({
+    getModel: () => ({
+      getResponse: async () => {
+        throw new Error("Synthetic provider error: synthetic-error-marker");
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  });
+  const at = (phase: ModelDiagnosticTiming["phase"], sequence: number): ModelDiagnosticTiming => ({
+    phase,
+    sequence,
+    occurredAtUtc: "2026-01-01T00:00:00.000Z",
+    occurredMonotonicMs: sequence * 25,
+    queueMs: 0,
+  });
+  const final = at("terminal", 2);
+  const observerFactory: ModelObserverFactory = (persist) => {
+    const persisted: Promise<void>[] = [];
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => undefined,
+      failed: (error) => {
+        persisted.push(persist({ error: String(error) }, at("failed", 1)));
+      },
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({
+        phase: "terminal",
+        timing: final,
+        value: { note: "synthetic-terminal-detail-marker" },
+      }),
+      flush: async () => {
+        await Promise.all(persisted);
+      },
+    };
+  };
+  const { diagnostics, events, transcripts } = recording();
+  const result = await Effect.runPromise(
+    Effect.either(
+      makeGuardian(
+        makeOpenAIReviewer("{{ tenant_policy_config }}", false, { observerFactory }),
+        diagnostics,
+      ).reviewHostKind(pending, listing({})),
+    ),
+  );
+  expect(result).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
+  const observed = events
+    .filter((event) => event.name === "observed:guardian.model")
+    .map((event) => (event.details as { timing: ModelDiagnosticTiming }).timing);
+  expect(observed).toContainEqual(final);
+  const readable = JSON.stringify({ events, transcripts });
+  expect(readable).not.toContain("synthetic-error-marker");
+  expect(readable).not.toContain("synthetic-terminal-detail-marker");
+});
 
 it("keeps an earlier private host kind's exchange out of a later review's failed run", async () => {
   scripted([
