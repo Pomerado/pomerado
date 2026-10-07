@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import { fillAutofillStep } from "../destinations/autofill-fill.js";
+import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
 import {
   checkAutofillSignedIn,
   identifierPreference,
@@ -18,6 +19,7 @@ import type {
 import type { CredentialKeyboard } from "../destinations/credential-keyboard.js";
 import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { InputAsker, Question } from "../runtime/input-request.js";
+import { autofillRefusalFailure } from "../mint/sign-in-failure.js";
 
 const credentialQuestion = (
   slot: AutofillSlot,
@@ -34,7 +36,10 @@ const credentialQuestion = (
   maxLength: ["username", "email", "phone", "account_number"].includes(slot) ? 1024 : 16_384,
 });
 
-/** Local values feed the original inspected-field fill without a credential store or portal. */
+/**
+ * Local values feed the original inspected-field fill without a credential store or portal. A fill
+ * that refused a field of the screen fails as a sign-in the host refused (`autofillRefusalFailure`).
+ */
 export const makeLiveAuthentication = (options: {
   readonly page: AutofillPage;
   readonly keyboard: CredentialKeyboard;
@@ -49,6 +54,8 @@ export const makeLiveAuthentication = (options: {
 }) => {
   const values: Partial<Record<AutofillSlot, string>> = {};
   const screens: AutofillStep[] = [];
+  /** Whether a screen's fill may have sent anything to the site. */
+  let sent = false;
   const field = (input: AutofillStepRequest["fields"][number]): AutofillField => {
     if ("slot" in input) return input;
     const held = identifierPreference.find(
@@ -142,6 +149,10 @@ export const makeLiveAuthentication = (options: {
       screens.push(selected);
       delete values.code;
       delete values.recovery_code;
+      if (maySend(result)) sent = true;
+      const refusal = typingRefusal(selected, result);
+      if (refusal !== undefined)
+        return yield* Effect.fail(autofillRefusalFailure(refusal, { nothingSubmitted: !sent }));
       return result;
     }).pipe(
       Effect.ensuring(

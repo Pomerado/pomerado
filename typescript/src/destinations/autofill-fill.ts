@@ -29,7 +29,12 @@ import {
   Targets,
   untrustedTarget,
 } from "./autofill-step.js";
-import { type CredentialKeyboard, type CredentialTypingMode } from "./credential-keyboard.js";
+import {
+  type CredentialKeyboard,
+  type CredentialTypingMode,
+  type InsertionRefusal,
+} from "./credential-keyboard.js";
+import { PageControls } from "./page-controls.js";
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -49,8 +54,10 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({ dated: Schema.Boolean, url: Schema.String }),
   Schema.Struct({
-    submit: Schema.Literal("clicked", "failed", "none"),
+    /** `disabled`: the submit was disabled, so the call clicked nothing. */
+    submit: Schema.Literal("clicked", "failed", "disabled", "none"),
     url: Schema.String,
+    controls: Schema.optional(PageControls),
   }),
   GuardRefusal,
 );
@@ -80,11 +87,15 @@ const controls = (before: typeof Targets.Type, after: typeof Targets.Type) => [
   ...after.fields.map((now, index) => ({ at: index, was: before.fields[index], now })),
   { at: "submit" as const, was: before.submit, now: after.submit },
 ];
-/** Which properties of which controls differ between two judgments, by name only. */
+/**
+ * Which properties of which controls differ between two judgments, by name only. The submit's
+ * `editable` only follows whether it is disabled, which no call judges as a change.
+ */
 const changedProperties = (before: typeof Targets.Type, after: typeof Targets.Type) =>
   controls(before, after)
     .flatMap(({ at, was, now }) =>
       properties
+        .filter((key) => !(at === "submit" && key === "editable"))
         .filter((key) => JSON.stringify(was?.[key]) !== JSON.stringify(now?.[key]))
         .map((key) => `${at}.${key}`),
     )
@@ -132,7 +143,7 @@ interface FillProgress {
 const filledReport = (
   step: AutofillStep,
   progress: FillProgress,
-  submit: "clicked" | "failed" | "not_attempted" | "refused" | "none",
+  submit: "clicked" | "failed" | "not_attempted" | "refused" | "stayed_disabled" | "none",
   url: string,
   refusal?: AutofillRefusal,
   clicked?: true,
@@ -232,15 +243,15 @@ interface FillInput {
 /**
  * The host's judgment of the controls a call found changed, by inspection's rule, where only a
  * field still to be typed must take typing: a refusal, or undefined to call again. A form that
- * changed how or where it submits, beyond an action's query or hash, and a page still changing
- * them on the third call are refused.
+ * changed how or where it submits, beyond an action's query or hash, and a page that changed them
+ * a third time (`changes`, counted across every call the host makes again for it) are refused.
  */
 const rejudge = (
   input: FillInput,
   progress: FillProgress,
   changed: typeof Targets.Type,
   call: AutofillFillCall,
-  calls: number,
+  changes: number,
 ) => {
   const target = call.kind === "submit" ? "submit" : call.index;
   const from = call.kind === "submit" ? input.step.fields.length : call.index;
@@ -249,7 +260,7 @@ const rejudge = (
   return (
     untrustedTarget(changed, input.step, input.inspection, from, named) ??
     resubmitted(judged, changed, named) ??
-    (calls === 3
+    (changes >= 3
       ? withCheck(
           refused("credential_target_refused", target),
           "change",
@@ -263,13 +274,14 @@ const rejudge = (
  * One Kernel call of the fill, which first checks the field the host typed last. A call that finds
  * a control changed since the host last judged it does nothing, and the host judges the controls
  * it found again (`rejudge`), then calls again against that judgment, which the page kept as that
- * call found it: no call's code holds an address the page supplied.
+ * call found it: no call's code holds an address the page supplied. `changes` counts the changes
+ * found, shared by every call the host makes again for the same action.
  */
 const fillCall =
-  (input: FillInput, progress: FillProgress) =>
+  (input: FillInput, progress: FillProgress, changes = { count: 0 }) =>
   (call: AutofillFillCall): Effect.Effect<Either.Either<CallAnswer, Error>> =>
     Effect.gen(function* () {
-      for (let calls = 1; ; calls++) {
+      for (;;) {
         const observed = randomUUID();
         const answered = yield* input.page
           .execute(
@@ -294,7 +306,8 @@ const fillCall =
           });
         if (!("changed" in answer)) return Either.right(answer);
         const changed = changedProperties(progress.judged, answer.changed);
-        const untrusted = rejudge(input, progress, answer.changed, call, calls);
+        changes.count++;
+        const untrusted = rejudge(input, progress, answer.changed, call, changes.count);
         if (untrusted !== undefined)
           return Either.right<Stop>({
             refusal: withEvidence(untrusted, {
@@ -311,6 +324,36 @@ const fillCall =
         progress.judgment = observed;
       }
     });
+
+/**
+ * How long the host waits for the page to enable a disabled submit once the fields are filled: the
+ * 5 s each of its control actions (focus, fill, click) may take. Many sign-in forms enable their
+ * submit only on input, some after a short check of what was typed.
+ */
+const submitEnableMs = 5_000;
+/** How often the host calls the submit again while the page keeps it disabled. */
+const submitEnablePollMs = 250;
+
+/** A submit call that clicked nothing because the submit was disabled. */
+const disabledSubmit = (answered: Either.Either<CallAnswer, Error>) =>
+  Either.isRight(answered) && "submit" in answered.right && answered.right.submit === "disabled";
+
+/**
+ * The step's submit call, made again while the page keeps the submit disabled, for up to
+ * `submitEnableMs`. Each call judges every control again before it clicks, and none clicks a
+ * disabled submit. The changes they find count across the whole wait, so a page that keeps
+ * changing a control is refused however the changes fall between the calls.
+ */
+const submitWhenEnabled = (input: FillInput, progress: FillProgress, call: AutofillFillCall) =>
+  Effect.gen(function* () {
+    const until = Date.now() + submitEnableMs;
+    const changes = { count: 0 };
+    for (;;) {
+      const answered = yield* fillCall(input, progress, changes)(call);
+      if (!disabledSubmit(answered) || Date.now() >= until) return answered;
+      yield* Effect.sleep(submitEnablePollMs);
+    }
+  });
 
 /**
  * One field: a date's call fills it; any other field's call focuses it and binds its original node/document/frame; the host inserts its
@@ -346,18 +389,23 @@ const fillField = (
     return yield* afterFieldCall(input, progress, index, answer, bindingKey);
   });
 
-/** A field that did not take the focus, or whose typing did not land in it, and why. */
+/**
+ * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
+ * cause), and why.
+ */
 const untypedRefusal = (
   input: FillInput,
   progress: FillProgress,
   index: number,
   answer: Extract<CallAnswer, { readonly focused: boolean }>,
+  insertion: InsertionRefusal | undefined,
 ) =>
   withCheck(
     refused("credential_target_refused", index),
-    answer.focused ? "typing_refused" : "not_focused",
+    insertion === undefined ? "not_focused" : "typing_refused",
     {
       ...answer.unfocused,
+      ...(insertion === undefined ? {} : { insertion }),
       ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     },
@@ -381,6 +429,7 @@ const afterFieldCall = (
         : filledReport(input.step, progress, "not_attempted", answer.url);
     }
     if (!("focused" in answer)) return refused("page_unavailable");
+    let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
       const typing = yield* Effect.either(
@@ -395,14 +444,15 @@ const afterFieldCall = (
       );
       if (typing._tag === "Left")
         return failedCall(progress, typing.left, { heldValue: true, mayMutate: true });
-      if (typing.right) {
+      if (typing.right === "inserted") {
         progress.typed = true;
         progress.statuses.push("filled");
         progress.check = index;
         return undefined;
       }
+      insertion = typing.right;
     }
-    const refusal = untypedRefusal(input, progress, index, answer);
+    const refusal = untypedRefusal(input, progress, index, answer, insertion);
     if (!progress.typed) return refusal;
     progress.statuses.push("failed");
     return filledReport(input.step, progress, "not_attempted", answer.url, refusal);
@@ -418,7 +468,9 @@ const afterFieldCall = (
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
  * the submit. That click ran, though, so the report says so (`clicked`): the page's own handlers
- * ran on it, and what the step filled may have gone out.
+ * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
+ * clicked: the host waits for the page to enable it once the fields are filled, and when it stays
+ * disabled the report says so (`stayed_disabled`).
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
@@ -440,10 +492,9 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       if (ended !== undefined) return ended;
     }
     // A re-judge never changes a method, so the submission's method is the one judged now.
-    const clicked = yield* fillCall(
+    const clicked = yield* submitWhenEnabled(
       input,
       progress,
-    )(
       guardedSubmit(step, progress.judged, {
         settleMs: input.settleMs ?? 5_000,
         inspection: input.inspection.judgment,
@@ -473,5 +524,17 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         true,
       );
     if (!("submit" in answer)) return refused("page_unavailable");
-    return filledReport(step, progress, answer.submit, answer.url);
+    if (answer.submit === "disabled")
+      return filledReport(
+        step,
+        progress,
+        "stayed_disabled",
+        answer.url,
+        withCheck(refused("not_editable", "submit"), "submit_disabled", {
+          waitedMs: submitEnableMs,
+          ...foundEvidence(answer.url, undefined, evidenceOrigins(input, progress)),
+        }),
+      );
+    const report = filledReport(step, progress, answer.submit, answer.url);
+    return answer.controls === undefined ? report : { ...report, controls: answer.controls };
   });

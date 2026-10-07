@@ -51,29 +51,46 @@ const executeCommand = (
       observations: yield* projection.json(result),
     };
   });
+/** A page check before this sign-in's steps sent the login proves nothing about this build. */
+const credentialsNotSubmitted = {
+  signedIn: false,
+  failed: "credentials_not_submitted",
+  nextStep:
+    "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
+} as const;
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { navigate, auth, mintAsk, context } = state;
+    const { start, auth, afterSubmit, mintAsk, context } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
-    yield* navigate;
+    yield* start.enter;
 
     let result: unknown;
     let authenticated = false;
-    if ("fields" in signIn) result = yield* auth.step(signIn, beforeDispatch);
-    else if ("signedIn" in signIn) {
-      const checked = yield* auth.signedIn(signIn.signedIn);
-      authenticated = checked.signedIn;
-      result = checked;
+    if ("fields" in signIn) {
+      start.signIn();
+      const report = yield* auth.step(signIn, beforeDispatch);
+      start.sent(report, signIn.fields);
+      result = yield* afterSubmit(report);
+    } else if ("signedIn" in signIn) {
+      // A check is a sign-in step too: after a verified sign-in it starts a new one.
+      start.signIn();
+      if (start.submitted) {
+        const checked = yield* auth.signedIn(signIn.signedIn);
+        authenticated = checked.signedIn && start.verified();
+        result = checked;
+      } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
+      start.signIn();
       auth.rejected(signIn.rejected.slot);
       result = { outcome: "correction_requested" };
-    } else
+    } else {
+      start.signIn();
       result = yield* mintAsk(
         noticeRequest(
           randomUUID(),
@@ -81,6 +98,8 @@ const executeAuthentication = (
           `Complete the ${signIn.approval.replaceAll("_", " ")} sign-in for ${context.siteOrigin}, then confirm.`,
         ),
       );
+      start.approved();
+    }
     return {
       executionId: id,
       status: "completed" as const,
@@ -261,7 +280,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, navigate, mintAsk } = state;
+    const { workspace, context, request, handles, start, mintAsk } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -284,8 +303,17 @@ const authoredExecution = (
       handles.misplaced(new Map(sources), context.siteOrigin) !== undefined
     )
       return yield* Effect.fail(new MintFailure({ code: "ScopeDenied" }));
+    // A code the site sent for the sign-in under way, which an explore typed into the page,
+    // finished that sign-in: it counts as the proof, as a code the host fills does. Only a typing
+    // call that delivered the code's value and completed counts, never the source text.
+    const known = new Map(handles.snapshot());
+    const codes =
+      execution.purpose === "explore" && execution.target === "liveBrowser"
+        ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
+        : [];
+    const watch = codes.length === 0 ? undefined : browser.watchTyping(codes);
     yield* beforeDispatch ?? Effect.void;
-    if (execution.target === "liveBrowser") yield* navigate;
+    yield* start.before(execution);
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
     const executed = yield* Effect.either(
@@ -294,7 +322,10 @@ const authoredExecution = (
         entrypoint: execution.entrypoint,
         sources: [...handles.fill(new Map(sources), context.siteOrigin)],
         input,
-        browser,
+        browser:
+          watch === undefined
+            ? browser
+            : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
         siteOrigin: context.siteOrigin,
         ...(siteDomain(context.siteOrigin) === undefined
           ? {}
@@ -306,6 +337,7 @@ const authoredExecution = (
         decideDialog: makeDialogDecider(mintAsk, secrets.redact),
       }),
     );
+    if (watch !== undefined && watch.typed().size > 0) start.typedCode();
     const receipt = { state, execution, id, sources, input, reviewed, journal };
     return yield* executed._tag === "Left"
       ? failedReceipt(receipt, executed.left, questions)

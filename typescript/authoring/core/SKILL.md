@@ -43,11 +43,20 @@ pomerado:section core.secret-answers:end -->
 **The input schema.** Every caller sees the tool's input schema, so build it from the
 request and the flow, never from one caller's account or example.
 
+A value the request's text supplies, such as a code, a quantity or a choice, is the build's to
+use even when the caller's structured input is empty: pass the request's values as
+`exampleInput` where the host takes one (a read's example, or each write act step that needs
+it), never as a build-time question. Decide from the request and the site which inputs are
+required. An optional input plus a declared question the tool asks before any effect is only for
+a value the request genuinely leaves open; never make a required field optional with nothing
+that asks.
+
 <!-- pomerado:section core.schema-coverage -->
 
 Typed output, where the site makes it easy:
 - Prefer numbers for prices, amounts and counts, with the currency or unit in its own field.
-- Prefer ISO 8601 for dates and times, and minutes for durations.
+- Prefer ISO 8601 for dates and times, and minutes for durations. Type a date-only value as
+  the runtime's `CalendarDate` (forms skill).
 - Keep one field per fact. Split a combined line into separate fields.
 - If a value does not parse cleanly, returning the site's own text is fine.
 
@@ -141,7 +150,8 @@ See the compiling `references/variants.ts` example.
 A signed-in operation needs no login or identity hooks. The host signs in before the
 script runs, through an explicit direct HTTP request or host autofill, and the
 script starts signed in. Each enters private values through the trusted host. The
-script never receives a password.
+script never receives a password. After a full page load mid-script, call
+`ensureSignedIn()`, as the auth skill describes.
 
 When inspection establishes a login entry, pass `loginUrl` directly to `execute` with
 purpose `authenticate`. The host uses it exactly as given and grants it no authority:
@@ -166,9 +176,11 @@ is bounded; never describe a truncated list as complete.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code
-never request or enter a sign-in code, or sign in themselves. A code the site sends during the
-action, such as a two-factor or confirmation code, is different: declare it as a `secret`
-question and ask it with `ask`, as the caller-input skill's `caller-code.ts` shows. A missing ordinary page
+never request or enter a sign-in code, or sign in themselves: an SMS, email or authenticator code
+that is part of signing in is a `code` field of the `authenticate` step (auth skill), never asked
+separately. A code the site sends later, to confirm a protected action after sign-in, is different:
+declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
+`caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
 current page state within the existing deadline. When a few distinct attempts have
 not found the way, ask the caller for directions with `request_input` before
@@ -188,6 +200,8 @@ GET, HEAD or OPTIONS the page sent since the last execution result, by `method`,
 `origin`, `path` and `resourceType`, with a `count` (`omitted` counts routes past
 the list). Nothing refused them; the list exists so you can catch writes you did not
 intend. Telemetry, analytics and bot-sensor POSTs are normal and need no change.
+So is an anonymous recent-search, prefill or search-state save the site fires when
+you submit a search.
 
 For a read tool, look for a write your own action caused, such as adding an item to
 a cart, submitting a form, saving a preference or starting a checkout. If you find

@@ -69,26 +69,50 @@ const Options = Schema.Array(InputOption).pipe(
 );
 
 const base = { id: QuestionId, prompt: Prompt };
-export const ChoiceQuestion = Schema.Struct({
-  ...base,
-  type: Schema.Literal("choice"),
-  options: Options,
-  /** The caller may answer with their own text instead of an offered option. */
-  allowOther: Schema.optional(Schema.Boolean),
-});
-export const MultiChoiceQuestion = Schema.Struct({
+const choiceFields = { ...base, type: Schema.Literal("choice"), options: Options };
+const multiChoiceFields = {
   ...base,
   type: Schema.Literal("multi_choice"),
   options: Options,
   minSelections: Schema.Int.pipe(Schema.between(0, maximumOptions)),
   maxSelections: Schema.Int.pipe(Schema.between(1, maximumOptions)),
-}).pipe(
-  Schema.filter(
-    (question) =>
-      question.minSelections <= question.maxSelections &&
-      question.maxSelections <= question.options.length,
-    { message: () => "selection bounds must fit the options" },
-  ),
+};
+const selectionsFitOptions = (question: {
+  readonly minSelections: number;
+  readonly maxSelections: number;
+  readonly options: readonly InputOption[];
+}) =>
+  question.minSelections <= question.maxSelections &&
+  question.maxSelections <= question.options.length;
+const selectionsMessage = { message: () => "selection bounds must fit the options" };
+/**
+ * What the caller may write in their own words on a choice or a multiple choice. Every question
+ * the minting agent asks allows both (`withOwnWords`); a script's choice allows its own text only
+ * when it declares it, and a host question allows neither.
+ */
+const ownWords = {
+  /**
+   * The caller may answer with their own text: a choice's `{ other }` instead of an offered
+   * option, a multiple choice's `other` as an option of their own beside or instead of the picks.
+   * A multiple choice's `other` counts toward `minSelections`, never `maxSelections`, and stays
+   * the caller's text even when it repeats an option.
+   */
+  allowOther: Schema.optional(Schema.Boolean),
+  /** The caller may add `note`, their own clarification, beside the options they pick. */
+  allowNote: Schema.optional(Schema.Boolean),
+};
+export const ChoiceQuestion = Schema.Struct({ ...choiceFields, ...ownWords });
+export const MultiChoiceQuestion = Schema.Struct({ ...multiChoiceFields, ...ownWords }).pipe(
+  Schema.filter(selectionsFitOptions, selectionsMessage),
+);
+/**
+ * A choice as the minting agent proposes it: whether the caller may answer in their own words is
+ * the host's to say, never the agent's.
+ */
+export const ProposedChoiceQuestion = Schema.Struct(choiceFields);
+/** A multiple choice as the minting agent proposes it (see `ProposedChoiceQuestion`). */
+export const ProposedMultiChoiceQuestion = Schema.Struct(multiChoiceFields).pipe(
+  Schema.filter(selectionsFitOptions, selectionsMessage),
 );
 export const TextQuestion = Schema.Struct({
   ...base,
@@ -244,8 +268,19 @@ export const noticeRequest = (id: string, source: InputSource, message: string):
 });
 
 const Text = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(maximumAnswerLength));
-const ChoiceAnswer = Schema.Union(OptionId, Schema.Struct({ other: Text }));
-const MultiChoiceAnswer = Schema.Array(OptionId);
+const ChoiceAnswer = Schema.Union(
+  OptionId,
+  Schema.Struct({ other: Text }),
+  Schema.Struct({ option: OptionId, note: Schema.optional(Text) }),
+);
+const MultiChoiceAnswer = Schema.Union(
+  Schema.Array(OptionId),
+  Schema.Struct({
+    options: Schema.Array(OptionId),
+    other: Schema.optional(Text),
+    note: Schema.optional(Text),
+  }),
+);
 const ConfirmAnswer = Schema.Struct({
   confirmed: Schema.Boolean,
   text: Schema.optional(Schema.String.pipe(Schema.maxLength(maximumAnswerLength))),
@@ -266,10 +301,32 @@ export type CredentialAnswer = typeof CredentialAnswer.Type;
 export const InputAnswers = Schema.Record({ key: QuestionId, value: Schema.Unknown });
 export type InputAnswers = Readonly<Record<string, unknown>>;
 
+/**
+ * A choice's validated answer: an offered option's id, the caller's own text instead of one, or
+ * an option with the caller's note.
+ */
+export type ChoiceValue =
+  string | { readonly other: string } | { readonly option: string; readonly note: string };
+/**
+ * A multiple choice's validated answer: the picked options' ids, or with the caller's own option
+ * (`other`) or note beside them.
+ */
+export type MultiChoiceValue =
+  | readonly string[]
+  | {
+      readonly options: readonly string[];
+      readonly other?: string;
+      readonly note?: string;
+    };
+
+/** The offered option a choice's answer picks, if it picks one rather than giving own text. */
+export const pickedOption = (value: ChoiceValue): string | undefined =>
+  typeof value === "string" ? value : "option" in value ? value.option : undefined;
+
 /** A validated answer, typed by its question. */
 export type ValidAnswer =
-  | { readonly type: "choice"; readonly value: typeof ChoiceAnswer.Type }
-  | { readonly type: "multi_choice"; readonly value: readonly string[] }
+  | { readonly type: "choice"; readonly value: ChoiceValue }
+  | { readonly type: "multi_choice"; readonly value: MultiChoiceValue }
   | { readonly type: "text"; readonly value: string }
   | { readonly type: "confirm"; readonly value: typeof ConfirmAnswer.Type }
   | { readonly type: "secret"; readonly value: string }
@@ -284,6 +341,7 @@ export class InvalidAnswer extends Data.TaggedError("InvalidAnswer")<{
     | "malformed"
     | "unoffered_option"
     | "other_not_allowed"
+    | "note_not_allowed"
     | "selection_bounds"
     | "too_long"
     | "username_not_allowed"
@@ -307,27 +365,52 @@ const validateOne = (
     case "choice": {
       const decoded = decodeAs(ChoiceAnswer, value);
       if (Either.isLeft(decoded)) return invalid("malformed");
-      if (typeof decoded.right === "string")
-        return offered(decoded.right)
-          ? Either.right({ type: "choice", value: decoded.right })
-          : invalid("unoffered_option");
+      const answer = decoded.right;
+      if (typeof answer === "string" || "option" in answer) {
+        const option = typeof answer === "string" ? answer : answer.option;
+        const note = typeof answer === "string" ? undefined : answer.note;
+        if (!offered(option)) return invalid("unoffered_option");
+        if (note !== undefined && question.allowNote !== true) return invalid("note_not_allowed");
+        return Either.right({
+          type: "choice",
+          value: note === undefined ? option : { option, note },
+        });
+      }
       if (question.allowOther !== true) return invalid("other_not_allowed");
       // Own text that repeats exactly one offered option picks it.
-      const [repeated, ...more] = optionsRepeatedBy(question.options, decoded.right.other);
+      const [repeated, ...more] = optionsRepeatedBy(question.options, answer.other);
       return Either.right({
         type: "choice",
-        value: repeated !== undefined && more.length === 0 ? repeated.id : decoded.right,
+        value: repeated !== undefined && more.length === 0 ? repeated.id : { other: answer.other },
       });
     }
     case "multi_choice": {
       const decoded = decodeAs(MultiChoiceAnswer, value);
       if (Either.isLeft(decoded)) return invalid("malformed");
-      const selected = decoded.right;
+      const {
+        options: selected,
+        other,
+        note,
+      } = "options" in decoded.right ? decoded.right : { options: decoded.right };
       if (new Set(selected).size !== selected.length) return invalid("malformed");
       if (!selected.every(offered)) return invalid("unoffered_option");
-      if (selected.length < question.minSelections || selected.length > question.maxSelections)
+      if (other !== undefined && question.allowOther !== true) return invalid("other_not_allowed");
+      if (note !== undefined && question.allowNote !== true) return invalid("note_not_allowed");
+      // An option of the caller's own counts toward the least they must choose.
+      const chosen = selected.length + (other === undefined ? 0 : 1);
+      if (chosen < question.minSelections || selected.length > question.maxSelections)
         return invalid("selection_bounds");
-      return Either.right({ type: "multi_choice", value: selected });
+      return Either.right({
+        type: "multi_choice",
+        value:
+          other === undefined && note === undefined
+            ? selected
+            : {
+                options: selected,
+                ...(other === undefined ? {} : { other }),
+                ...(note === undefined ? {} : { note }),
+              },
+      });
     }
     case "text":
     case "secret": {

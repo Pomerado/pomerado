@@ -18,7 +18,8 @@ cannot become a write. The host writes the two answers' labels. Guardian reviews
 A `write` answer makes this a write build in place: every later step is reviewed under
 write authority and the rules below, what you explored stays valid evidence, and the first
 `act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
-can do, or end and say the task needs a write build.
+can do, or end and say the task needs a write build. An answer in the owner's own words approves
+no write either: follow what they said, and ask again if they asked for the change.
 
 ## Before the session
 
@@ -48,6 +49,10 @@ During the session:
   discover whether one exists.
 - Make the commit step check that no option the input does not settle is selected,
   and fail before clicking commit if one is.
+- Before committing, read back from the page what you are about to submit and check
+  each value against the caller's input, in the session and on every branch of the
+  composed script. Fail before the commit if one does not match. Never read back a
+  field filled with a secret handle.
 - If a step meets an option the input does not settle, stop that step before choosing
   it and ask. A `request_input` question during the session waits in place; a choice
   that exists only on the page mid-flow, such as a seat on the flight just chosen, is
@@ -77,6 +82,12 @@ declines one the input leaves open, and fails before the commit instead. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
 public schema (core's input schema rules).
+
+The composed script publishes without ever running end to end, so it ends with a check that
+tells whether its action succeeded: the site's confirmation for this submission, or a read-back
+of the saved state matched to the input, unless the site offers neither; then declare it
+`unverifiable`. Compose it from the steps that worked, also when a commit step returned an
+uncertain result and a later read-back showed the write landed.
 
 <!-- pomerado:section writes.alternate-version -->
 

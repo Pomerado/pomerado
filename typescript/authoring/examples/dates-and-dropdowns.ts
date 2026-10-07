@@ -1,7 +1,6 @@
 import { Schema } from "effect";
-import { defineOperation, formControlsCode } from "../../src/browser/index.js";
+import { CalendarDate, defineOperation, formControlsCode } from "../../src/browser/index.js";
 
-const DateOnly = Schema.String.pipe(Schema.pattern(/^\d{4}-\d{2}-\d{2}$/));
 const Cabin = Schema.Literal("economy", "business");
 /** Each cabin's observed labels: the option is found by what it says, never by its position. */
 const cabinLabels = { economy: ["Economy"], business: ["Business", "Business class"] } as const;
@@ -23,14 +22,16 @@ export default defineOperation(
   {
     name: "set_departure",
     input: Schema.Struct({
-      date: DateOnly.annotations({
+      date: CalendarDate.annotations({
         description: "Departure date, YYYY-MM-DD",
         examples: ["2026-11-14"],
       }),
       cabin: Cabin.annotations({ description: "Cabin class to search", examples: ["economy"] }),
     }),
     output: Schema.Struct({
-      date: DateOnly.annotations({ description: "Departure date the form now holds, YYYY-MM-DD" }),
+      date: CalendarDate.annotations({
+        description: "Departure date the form now holds, YYYY-MM-DD",
+      }),
       cabin: Cabin.annotations({ description: "Cabin class the form now holds" }),
     }),
   },

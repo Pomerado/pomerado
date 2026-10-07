@@ -1,10 +1,12 @@
 import type { MintDiagnostics, MintReporting } from "./diagnostics.js";
 import type { MintProjection } from "./projection.js";
 import { CredentialRejectedField } from "../runtime/authentication.js";
+import type { SessionLoss } from "../runtime/authentication.js";
 import type { BrowserRecoverySummary } from "../runtime/provider-metadata.js";
 import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
+import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { DestinationReason } from "./destination-reason.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
@@ -47,9 +49,9 @@ import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import type { QuestionDecision } from "../guardian/question.js";
 import {
-  ChoiceQuestion,
   ConfirmQuestion,
-  MultiChoiceQuestion,
+  ProposedChoiceQuestion,
+  ProposedMultiChoiceQuestion,
   SecretQuestion,
   TextQuestion,
 } from "../runtime/input-request.js";
@@ -80,10 +82,20 @@ export interface RunnerChannels {
 }
 
 /**
- * What spent an attempt's sign-ins: its one sign-in again on the same browser, or the sign-ins
- * it allows on a recovery's new profile.
+ * What spent an attempt's sign-ins: its one sign-in again on the same browser, the sign-ins it
+ * allows on a recovery's new profile, or the host's identical refusals in a row while typing into
+ * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
  */
-export type SpentSignIn = "relogin_spent" | "fresh_profile_sign_ins_spent";
+export type SpentSignIn =
+  "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
+
+export type { SessionLoss };
+
+/**
+ * Why the host signed a page in again by itself, as it records each automatic sign-in: the page
+ * was signed out when the operation started, or became signed out while it ran.
+ */
+export type AutomaticSignInCause = "signed_out_at_start" | "signed_out_mid_operation";
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
@@ -122,6 +134,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly modelOutage?: "unavailable" | "quota_exhausted";
   /** The session's `decideDialog` step names a `confirm_action_unmatched` refusal names. */
   readonly confirmActionIds?: readonly string[];
+  /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
+  readonly inputIssues?: readonly InputIssue[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
   readonly destinationEvidenceGap?:
     | "no_route_evidence"
@@ -134,6 +148,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    * was refused, once the attempt's sign-ins are spent: the build ends `sign_in_unavailable`.
    */
   readonly spentSignIn?: SpentSignIn;
+  /**
+   * Set by the host when the site lost its signed-in session, as on a page load, and the host
+   * could not sign in again: the build ends `sign_in_unavailable` with this cause.
+   */
+  readonly sessionLoss?: SessionLoss;
   /** The build's owner left a request unanswered; the build ends as `no_response`. */
   readonly noResponse?: { readonly possibleCommit: boolean };
   /**
@@ -455,8 +474,10 @@ export const ExecutionRequest = Schema.Struct({
   /** Only on authenticate, and only where the host offers autofill sign-in. */
   signInStep: Schema.optional(SignInStep),
   /**
-   * Only on a read build's example when the caller's input is empty (`{}`): the tool's input as
-   * JSON text, which the agent writes from the request and the owner's answers. The example runs it.
+   * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
+   * act step: the tool's input as JSON text, which the agent writes from the request and the
+   * owner's answers. The example, or each act step that passes it, runs it. A host that keeps a
+   * write session's input also runs it on the session's later act steps.
    */
   exampleInput: Schema.optional(Schema.String),
 });
@@ -500,6 +521,16 @@ export interface ExecutionEvidence {
   readonly effect: "not_sent" | "possible" | "verified";
   /** The confirmation a write session step recorded; it closes the session. */
   readonly confirmation?: "message" | "readback";
+  /**
+   * The confirmation a write session step read when the host did not accept its result, such as
+   * one that returned a credential. It leaves the session open, so a later step that only reads
+   * the confirmation back can confirm it. The step publishes only when publication says no
+   * read-back is possible (`readBackUnavailable`). The write went out, so a host that sets it
+   * must treat the commit marks this step entered as settled for every later act step (pass them
+   * as `settledCommits` to `makeEffectJournalWith`), so entering one again fails with
+   * `CommitAlreadySent`. Ignored when `confirmation` is set.
+   */
+  readonly withheldConfirmation?: "message" | "readback";
   /** Screened, finite supporting observation; never a replacement execution failure. */
   readonly siteAccess?: SiteAccessDiagnostic;
   /** Trusted host marker from a failed live runner result after cleanup and retention. */
@@ -546,6 +577,9 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   status: Schema.Literal("completed", "failed", "unsupported", "needs_input"),
   effect: Schema.Literal("not_sent", "possible", "verified"),
   confirmation: Schema.optionalWith(Schema.Literal("message", "readback"), { exact: true }),
+  withheldConfirmation: Schema.optionalWith(Schema.Literal("message", "readback"), {
+    exact: true,
+  }),
   siteAccess: Schema.optionalWith(
     Schema.Union(
       Schema.Struct({
@@ -615,6 +649,16 @@ export const PublicationRequest = Schema.Struct({
     ),
   }),
   coverage: Schema.String,
+  /**
+   * Why no step can read a write's confirmation back, when the step named here read it but the
+   * host did not accept its result. Only then does that step publish, with no output kept.
+   */
+  readBackUnavailable: Schema.optional(
+    Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
+      description:
+        "Only for a write step whose result the host did not accept after it read the confirmation: why no act step can read that confirmation or the saved state back, such as the site showing neither again",
+    }),
+  ),
   /**
    * Site defaults the build took instead of asking: only non-credential, non-write, reversible
    * choices. The host keeps each one that passes privacy screening unchanged.
@@ -756,12 +800,14 @@ export interface BuildAssumption {
 /**
  * What the agent may ask with request_input: typed questions of every kind but a login, which
  * only the host raises. The request's own checks (unique ids, bounds) run when the host asks it.
+ * The caller may answer any choice in their own words, so the agent never decides it
+ * (`withOwnWords`).
  */
 export const AgentRequest = Schema.Struct({
   questions: Schema.Array(
     Schema.Union(
-      ChoiceQuestion,
-      MultiChoiceQuestion,
+      ProposedChoiceQuestion,
+      ProposedMultiChoiceQuestion,
       TextQuestion,
       ConfirmQuestion,
       SecretQuestion,
@@ -785,6 +831,16 @@ export const AgentRequest = Schema.Struct({
 export type AgentInputRequest = Pick<InputRequest, "notice" | "questions">;
 
 /**
+ * A question as the host asks it for the minting agent: the caller may answer every choice and
+ * multiple choice in their own words, with their own text instead of an option (or beside a
+ * multiple choice's picks) or a note beside the options they pick, whatever the agent proposed.
+ */
+export const withOwnWords = <Q extends { readonly type: string }>(question: Q): Q =>
+  question.type === "choice" || question.type === "multi_choice"
+    ? { ...question, allowOther: true, allowNote: true }
+    : question;
+
+/**
  * One choice question whose only options are `read` and `write`, with no notice: the shape of
  * the effect question and of a write upgrade.
  */
@@ -794,7 +850,6 @@ export const isReadOrWriteChoice = (submitted: AgentInputRequest): boolean => {
     only?.type === "choice" &&
     submitted.questions.length === 1 &&
     submitted.notice === undefined &&
-    only.allowOther !== true &&
     only.options
       .map((option) => option.id)
       .sort()
@@ -1218,11 +1273,6 @@ export interface MintDependencies {
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */
   readonly initialExample?: ExecutionEvidence;
   readonly priorReadExecutions?: readonly ExecutionEvidence[];
-  /**
-   * An earlier attempt of this write build ended after steps that may have changed the website,
-   * and this attempt starts over. The agent's first input tells it to read back before any write.
-   */
-  readonly priorAttemptMayHaveChanged?: boolean;
   /** Host-owned state, independent of model prose and publication. */
   readonly currentInvocation?: () => CurrentInvocation | undefined;
   readonly canPublishRepair?: (executionId: string) => boolean;

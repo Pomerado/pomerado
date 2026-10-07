@@ -187,7 +187,7 @@ Your agent then calls `get_job`. Each call waits up to 30 seconds and returns th
 To use the integration, follow the steps in the README's [Use your integration](../README.md#use-your-integration).
 
 1. Open `example_reader/README.md` and run the add command for your client.
-2. Give the new server `OPENAI_API_KEY` the same way as Pomerado.
+2. Skip the key setup. Running an integration makes no model request, so only minting needs `OPENAI_API_KEY`.
 3. Reload your client and ask your agent to use `example_reader`.
 
 The call returns JSON that matches the output schema in `example_reader/pomerado.json`.
@@ -212,6 +212,7 @@ When a job needs something from you, `get_job` returns `"status": "input_require
 
 - Your agent asks you and sends your answers through `provide_input`, keyed by question ID.
 - Questions can be a choice, several choices, text, a confirmation, a secret or a login.
+- You can answer any choice the build asks in your own words. A choice takes an option ID, `{"other": "…"}` for your own answer, or `{"option": "…", "note": "…"}` for an option with a note. Several choices take an array of option IDs, or `{"options": […], "other": "…", "note": "…"}` with your own option or a note, each optional. A question offers these when it has `allowOther` or `allowNote`.
 - A question expires after 10 minutes. After that, `provide_input` refuses answers to it.
 - For a login, Pomerado finds the sign-in form, asks for the username and password, and types them into the page.
 - For a one-time code, Pomerado asks you for the code. It reads no SMS or authenticator app for you.
@@ -235,7 +236,7 @@ Pomerado owns its browser context on an attached server. Closing a job closes th
 - An error says "Model provider authentication failed". OpenAI rejected the key the server sent. Check that the key is current.
 - A mint ends with a summary saying the account's model quota is spent. Add credit or raise the limit on your OpenAI account, then mint again.
 - A job fails with "Model provider quota or rate limit was reached". Your OpenAI account hit a rate limit or quota. Wait, or check its limits, then try again.
-- A job fails at once with "Operation failed. Check the local model, browser and integration configuration." One cause is a missing Chromium. Run `npx -y -p pomerado playwright install chromium`.
+- A mint fails at once with "Operation failed. Check the local model, browser and integration configuration." An integration call fails the same way with "Operation failed. Check the local browser and integration configuration." One cause is a missing Chromium. Run `npx -y -p pomerado playwright install chromium`.
 - The client reports a closed connection or a startup timeout. Check `node --version`, run `npx -y -p pomerado pomerado-mcp --help` once to fill npm's cache, and raise the client's startup timeout.
 - `pomerado-mcp` exits at once with no output. Versions 0.1.2 and earlier don't start through `npx` or a global install. Use `pomerado@latest` in the `-p` argument.
 - A call fails with "The server is busy". The server runs one job at a time. Wait for the job or cancel it with `cancel_job`.

@@ -48,12 +48,25 @@ const requestErrors = {
   stale_input: "This input request is no longer pending.",
   invalid_answers: "Answers do not match the pending questions.",
 };
-export const mcpFailureMessage = (cause: Cause.Cause<unknown>): string => {
+/** What a server's jobs do. A run makes no model request, so its messages never mention one. */
+export type McpJobKind = "mint" | "run";
+export const mcpFailureMessage = (
+  cause: Cause.Cause<unknown>,
+  kind: McpJobKind = "mint",
+): string => {
   const error = Cause.squash(cause);
   if (error instanceof McpJobFailure) return requestErrors[error.code];
   if (error instanceof ReviewFailure) return `Guardian review failed (${error.code}).`;
   if (error instanceof MintFailure) return `Mint failed (${error.code}).`;
   if (error instanceof InputRequestFailure) return `Input could not be completed (${error.code}).`;
+  // The tool's own InvalidInput says which value the task or site refuses, for the caller to fix.
+  // A schema decode failure carries only its name, which the generic message below covers.
+  if (
+    error instanceof LocalOperationFailure &&
+    error.code === "InvalidInput" &&
+    error.message !== "InvalidInput"
+  )
+    return `Operation failed (InvalidInput): ${error.message}`;
   if (
     error instanceof LocalOperationFailure &&
     ["InvalidInput", "InvalidOutput", "NoResponse"].includes(error.code ?? "")
@@ -63,7 +76,9 @@ export const mcpFailureMessage = (cause: Cause.Cause<unknown>): string => {
   if (metadata.httpStatus === 401 || metadata.code === "invalid_api_key")
     return "Model provider authentication failed. Check the server's model configuration.";
   if (metadata.httpStatus === 429) return "Model provider quota or rate limit was reached.";
-  return "Operation failed. Check the local model, browser and integration configuration.";
+  return kind === "run"
+    ? "Operation failed. Check the local browser and integration configuration."
+    : "Operation failed. Check the local model, browser and integration configuration.";
 };
 const signalChange = (job: Job) =>
   Effect.gen(function* () {
@@ -134,13 +149,13 @@ const jobAsker =
         sourceEndsAt: expiresAt,
       });
     });
-const settle = (job: Job, work: Effect.Effect<unknown, Error, Scope.Scope>) =>
+const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, Scope.Scope>) =>
   Effect.scoped(work).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) =>
         Effect.gen(function* () {
           job.status = Cause.isInterruptedOnly(cause) ? "cancelled" : "failed";
-          job.error = mcpFailureMessage(cause);
+          job.error = mcpFailureMessage(cause, kind);
           job.finishedAt = yield* Clock.currentTimeMillis;
           yield* signalChange(job);
         }),
@@ -154,7 +169,7 @@ const settle = (job: Job, work: Effect.Effect<unknown, Error, Scope.Scope>) =>
     }),
   );
 /** Jobs survive individual tool calls, but never their owning stdio server scope. */
-export const makeMcpJobs = (maxJobs = 1) =>
+export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint") =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const jobs = new Map<string, Job>();
@@ -188,6 +203,7 @@ export const makeMcpJobs = (maxJobs = 1) =>
         job.fiber = yield* Effect.forkIn(
           settle(
             job,
+            kind,
             Effect.suspend(() => work(jobAsker(job))),
           ).pipe(Effect.interruptible),
           scope,

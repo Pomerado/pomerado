@@ -4,6 +4,7 @@ import type { AutofillPopup, DateOfBirthFormat } from "./autofill-contracts.js";
 import { locateCode, questionTextCode } from "./autofill-locate-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
+import { pageControlsCode } from "./page-controls.js";
 
 /**
  * Page code: the step's controls and visible native and ARIA actions, for the host and Guardian.
@@ -45,8 +46,10 @@ return {
  * - `submit`: guards the submission as it fires (`submissionGuardCode`, under the host's
  *   `guardKey` and armed for `guardCall`, with every form action and link destination as the
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
- *   as judged, and how each field's secret is found by value, if it is one), clicks the submit and
- *   waits for the page to settle.
+ *   as judged, and how each field's secret is found by value, if it is one), clicks the submit,
+ *   waits for the page to settle and reads its controls (`pageControlsCode`). A disabled submit it
+ *   never clicks: it says so and does nothing, and the host calls again while the page may still
+ *   enable it.
  */
 export type AutofillFillCall =
   | {
@@ -81,8 +84,9 @@ export type AutofillFillCall =
     };
 
 /**
- * Page code: when any control differs from the one the host last judged, which the page kept under
- * `judged`, or the page lost it, does nothing, keeps every control as found under `observed` and
+ * Page code: when any control differs from the one the host last judged (the submit's `editable`
+ * aside, which only follows whether it is disabled, as a submit input's does), which the page kept
+ * under `judged`, or the page lost it, does nothing, keeps every control as found under `observed` and
  * hands them back, for the host to judge again by inspection's rule (page code may move a form off
  * the site once values are typed, so each call finds and judges every control again). Otherwise
  * checks the field the host just typed, then runs the call.
@@ -99,12 +103,12 @@ for (let index = 0; index < questionSelectors.length; index++) {
       (judgment === null || questions[index] !== judgment.questions?.[index]))
     return { error: "target_changed", target: index, url: primary.url() };
 }
-const same = (found, expected) =>
+const same = (found, expected, editable = true) =>
   found === null || expected === null
     ? found === expected
     : found.ownerUrl === expected.ownerUrl &&
       found.documentOrigin === expected.documentOrigin &&
-      found.editable === expected.editable &&
+      (!editable || found.editable === expected.editable) &&
       found.control === expected.control &&
       JSON.stringify(found.actions) === JSON.stringify(expected.actions) &&
       JSON.stringify(found.methods) === JSON.stringify(expected.methods) &&
@@ -113,7 +117,8 @@ const found = { fields: fields.map(({ target }) => target), submit: submit === n
 if (
   judged === null ||
   found.fields.some((target, index) => !same(target, judged.fields[index] ?? null)) ||
-  !same(found.submit, judged.submit)
+  // A submit the page enables is no change: the submit call reads whether it is disabled itself.
+  !same(found.submit, judged.submit, false)
 ) {
   await keep(observed, { targets: found, questions });
   return { changed: found, located, url: primary.url() };
@@ -180,6 +185,8 @@ try {
   return { dated: false, url: primary.url() };
 }`;
   return `if (submit === null) return { submit: "none", url: primary.url() };
+// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer.
+if (await submit.locator.isDisabled({ timeout: 5000 })) return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
@@ -232,7 +239,11 @@ let submission = await refusedSubmission();
 if (submission === null && (await navigated))
   await primary.waitForLoadState("domcontentloaded", { timeout: ${call.settleMs} }).catch(() => undefined);
 submission ??= await refusedSubmission();
-return submission === null ? { submit: "clicked", url: primary.url() } : { submission, url: primary.url() };`;
+if (submission !== null) return { submission, url: primary.url() };
+${pageControlsCode}
+// What the page shows once the submit settled, never a value, for the minter's next step.
+const controls = await pageControls().catch(() => null);
+return { submit: "clicked", url: primary.url(), ...(controls === null ? {} : { controls }) };`;
 };
 
 /** Resolves only a real child of the stable primary opener, on the recorded origin. */
@@ -301,7 +312,9 @@ for (let index = 0; index < selectors.length; index++) {
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submit = submitSelector === null ? null : await locate(submitSelector);
 if (submit !== null && "error" in submit) return { ...submit, target: "submit", url: primary.url() };
-if (submit !== null && submit.disabled)
+// An inert submit takes no interaction at all, so nothing is typed for it. A disabled one may be
+// enabled once the fields hold input; the submit call never clicks it while it is disabled.
+if (submit !== null && submit.inert)
   return { error: "not_editable", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check)}`;

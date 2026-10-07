@@ -59,6 +59,12 @@ export interface WebsiteCredentials {
 }
 
 /**
+ * Why an operation could not stay signed in: `session_not_kept` when the site lost its signed-in
+ * session, as on a page load, and the host could not sign in again.
+ */
+export type SessionLoss = "session_not_kept";
+
+/**
  * An operation that finds the site signed out. The host signs in before the operation runs and
  * checks no identity, so only the operation can report that the session is gone.
  */

@@ -10,8 +10,18 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
 - a choice whose options exist only once the run reaches them: the open seats of the
   flight the caller just chose, the delivery slots for the cart the run just filled, or
   which of the account's saved travelers or addresses to use;
-- a code the site sends during the action, such as a confirmation code by text or email;
+- a code the site sends to confirm a protected action after sign-in, such as a confirmation code
+  by text or email. A code that is part of signing in is the host's: a `code` field of the
+  `authenticate` step, never a question;
 - a fact only the caller has that the site now asks for.
+
+Never ask for a value the request, the input or an earlier answer already supplied, a private
+one included: use that value. In the tool, take it from its input, or a private one, such as
+part of an identity number, through a declared `secret` question, never a plain-text field.
+When question review finds a question redundant, remove the ask and use the supplied value; a
+reworded question still asks for it again. A placeholder that stands in for a redacted value,
+such as "[redacted value]", supplies nothing. A supplied value the site rejects, or two that
+conflict, can still need a question, one that names the actual problem.
 
 <!-- pomerado:section caller-input.published-input -->
 

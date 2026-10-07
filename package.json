@@ -1,6 +1,6 @@
 {
   "name": "pomerado",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Pomerado's integration minter and Guardian with local compute and native Playwright",
   "type": "module",
   "license": "MIT",
@@ -487,6 +487,11 @@
       "import": "./dist/typescript/tests/browser/autofill-date-fixture.js",
       "default": "./dist/typescript/tests/browser/autofill-date-fixture.js"
     },
+    "./core/runtime/start-state": {
+      "types": "./dist/typescript/src/runtime/start-state.d.ts",
+      "import": "./dist/typescript/src/runtime/start-state.js",
+      "default": "./dist/typescript/src/runtime/start-state.js"
+    },
     "./core/runtime/variants": {
       "types": "./dist/typescript/src/runtime/variants.d.ts",
       "import": "./dist/typescript/src/runtime/variants.js",
@@ -611,14 +616,14 @@
     "prepack": "corepack pnpm build"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.1.0",
+    "@modelcontextprotocol/server": "2.2.0",
     "openai": "7.23.0",
     "oxc-parser": "0.151.0",
     "playwright": "1.63.0",
     "tldts": "7.4.15"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/client": "2.2.0",
     "@playwright/test": "1.63.0",
     "@types/node": "24.13.4",
     "typescript": "7.0.2",

@@ -21,6 +21,7 @@ import {
   withEvidence,
 } from "./autofill-refusal.js";
 import { sameSite, siteDomain } from "../runtime/same-site.js";
+import type { PageControls } from "./page-controls.js";
 import type {
   AutofillPopup,
   DateControl,
@@ -177,7 +178,7 @@ export const LocatedError = Schema.Struct({
   /** The primary page then, which a fill call reports once it typed. */
   url: Schema.optional(Schema.String),
   searched: Schema.optional(Searched),
-  /** A disabled submit: where it was found. */
+  /** An inert submit: where it was found. */
   located: Schema.optional(FoundIn),
 });
 const Located = Schema.Union(
@@ -241,6 +242,12 @@ export interface AutofillInspection {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly screen: {
+    /**
+     * The origin of the frame the host found the step's controls in, its submit's or, when it
+     * names no submit, its first field's, as the browser reports it: page code may redefine what
+     * the document itself says its origin is.
+     */
+    readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: AutofillSlot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
@@ -269,8 +276,18 @@ export type AutofillStepReport =
         readonly slot: AutofillSlot;
         readonly status: AutofillFieldStatus;
       }[];
-      /** `refused`: after the fill the host refused a control where it then sat or submitted. */
-      readonly submit: "clicked" | "failed" | "not_attempted" | "refused" | "none";
+      /**
+       * `refused`: after the fill the host refused a control where it then sat or submitted.
+       * `stayed_disabled`: the submit stayed disabled after the fields were filled, through the
+       * host's wait for the page to enable it, so the host never clicked it.
+       */
+      readonly submit:
+        | "clicked"
+        | "failed"
+        | "not_attempted"
+        | "refused"
+        | "stayed_disabled"
+        | "none";
       /**
        * The host clicked a submit that is `refused`: its guard stopped the submission as it fired,
        * after the page's own handlers ran on the click, so what the step filled may have gone out.
@@ -282,6 +299,12 @@ export type AutofillStepReport =
       readonly failureDetail?: FailureDetail;
       /** Host-only: a value reached the page, even one a field no longer holds. */
       readonly typed?: true;
+      /**
+       * Host-only: the page's controls once a clicked submit settled, never a value, with names as
+       * the page has them. The host screens them, shortens them (`presentControls`) and saves them
+       * to a workspace file for the minter (`afterSubmitPath`) rather than showing them inline.
+       */
+      readonly controls?: PageControls;
     }
   | {
       readonly outcome: "uncertain";
@@ -425,6 +448,7 @@ export const inspectAutofillStep = (input: {
         foundEvidence(found.url, foundFor(found.located, untrusted.target), named),
       );
     const at = URL.parse(found.url);
+    const frame = (found.submit ?? found.fields[0])?.target.ownerUrl;
     return {
       url: found.url,
       page: at === null ? "" : `${at.origin}${at.pathname}`,
@@ -435,6 +459,7 @@ export const inspectAutofillStep = (input: {
       siteOrigin,
       authenticationOrigins,
       screen: {
+        origin: frame ? urlOrigin(frame) : "",
         fields: found.fields.map(({ described }, index) => {
           const field = step.fields[index];
           return {

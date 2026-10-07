@@ -100,6 +100,45 @@ test("generated calls retain their selected page and full success or failure res
   });
 });
 
+test("a typing watch marks a value typed only by a typing call that completed", async () => {
+  await native(async (executor) => {
+    const page = `await page.setContent('<label>Code<input id="code"></label><iframe srcdoc="<input id=inner>"></iframe>');`;
+    const typed = async (code: string) => {
+      const watch = executor.watchTyping(["111111", "222222"]);
+      const response = await Effect.runPromise(watch.executeResponse(`${page} ${code}`, 5));
+      return { success: response.success, typed: [...watch.typed()].sort() };
+    };
+    // Each call a handle may type through, on a locator, the page, a frame and the keyboard.
+    for (const code of [
+      "await page.locator('#code').fill('111111');",
+      "await page.locator('#code').pressSequentially('111111');",
+      "await page.getByLabel('Code').type('111111');",
+      "await page.fill('#code', '111111');",
+      "await page.frames()[1].fill('#inner', '111111');",
+      "await page.locator('#code').focus(); await page.keyboard.type('111111');",
+    ])
+      expect(await typed(code)).toEqual({ success: true, typed: [0] });
+    // A call that failed, a value that no typing call entered and code that stopped first type nothing.
+    expect(
+      await typed(
+        "try { await page.locator('#missing').fill('222222', { timeout: 500 }); } catch {} return '222222';",
+      ),
+    ).toEqual({ success: true, typed: [] });
+    expect(
+      await typed("throw new Error('stopped'); await page.locator('#code').fill('111111');"),
+    ).toEqual({ success: false, typed: [] });
+    // Unwatched calls report nothing, and a later watch starts empty.
+    const plain = await Effect.runPromise(
+      executor.executeResponse(`${page} await page.locator('#code').fill('111111');`, 5),
+    );
+    expect(plain).toEqual({ success: true, stdout: "", stderr: "" });
+    expect(await typed("await page.locator('#code').fill('222222');")).toEqual({
+      success: true,
+      typed: [1],
+    });
+  });
+});
+
 test("unsupported and oversized results fail without invalidating the browser", async () => {
   await native(async (executor) => {
     const kernel = client(executor);
@@ -366,6 +405,121 @@ test("native autofill preserves an approved cross-site frame binding", async () 
   }
 });
 
+// Under native Playwright the host's element reads run in the page's own world, where page code
+// can redefine what they return. What Guardian and the submit wait act on comes from the browser.
+const signInPage = (
+  site: string,
+  script: string,
+  button = '<button id="continue">Sign in</button>',
+) =>
+  `await context.route('${site}/**', route => {
+    if (route.request().method() === 'POST') context.signInPosts = (context.signInPosts ?? 0) + 1;
+    return route.fulfill({contentType:'text/html', body: new URL(route.request().url()).pathname === '/session' ? '<p>Signed in</p>' : '<form action="/session" method="post"><label>Password<input id="password" name="password" type="password"></label>${button}</form><script>${script}</script>'});
+  });
+  await page.goto('${site}/login');`;
+const passwordAndSubmit = {
+  fields: [{ selector: "#password", slot: "password" as const }],
+  submit: "#continue",
+};
+/** Fakes `:disabled` for the submit: true when `disabled`, else false. */
+const fakeDisabled = (disabled: boolean) =>
+  `const matches = Element.prototype.matches; Element.prototype.matches = function (selector) { return this.id === "continue" && selector === ":disabled" ? ${String(disabled)} : matches.call(this, selector); };`;
+/** Fakes that no inert region holds the submit. */
+const fakeNotInert =
+  'const closest = Element.prototype.closest; Element.prototype.closest = function (selector) { return this.id === "continue" && selector === "[inert]" ? null : closest.call(this, selector); };';
+/** Makes the password field read-only for 400 ms once typed into, then enables the submit 400 ms later. */
+const enabledAfterReadOnly =
+  'const field = document.getElementById("password"); field.addEventListener("input", () => { field.readOnly = true; setTimeout(() => { field.readOnly = false; setTimeout(() => { document.getElementById("continue").disabled = false; }, 400); }, 400); }, { once: true });';
+
+test("native inspection reports the frame's own origin, not one page code claims", async () => {
+  await native(async (executor) => {
+    const site = "https://www.signin.test";
+    await Effect.runPromise(
+      executor.execute(
+        signInPage(
+          site,
+          'Object.defineProperty(window,"origin",{get:()=>"https://accounts.signin.test",configurable:true})',
+        ),
+      ),
+    );
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({
+        step: passwordAndSubmit,
+        page: { targetId: executor.targetId, execute: executor.execute },
+        siteOrigin: site,
+        authenticationOrigins: [],
+      }),
+    );
+    if ("outcome" in inspection) throw new Error(`Fixture refused: ${inspection.reason}`);
+    expect(inspection.screen.origin).toBe(site);
+  });
+});
+
+for (const [name, button, script, expected] of [
+  [
+    "a submit page code fakes as disabled is clicked at once",
+    '<button id="continue">Sign in</button>',
+    fakeDisabled(true),
+    { submit: "clicked", posts: 1 },
+  ],
+  [
+    "a disabled submit page code fakes as enabled is never clicked and reported as staying disabled",
+    '<button id="continue" disabled>Sign in</button>',
+    fakeDisabled(false),
+    { submit: "stayed_disabled", posts: 0 },
+  ],
+  // Inert stays a page read: faked away, the step goes on, yet Playwright's click never lands.
+  [
+    "an inert submit page code fakes as not inert is never clicked",
+    '<div inert><button id="continue">Sign in</button></div>',
+    fakeNotInert,
+    { submit: "failed", posts: 0 },
+  ],
+  // The submit enabling is no change to the controls the host judges, whatever element it is.
+  [
+    "a submit input enabled after a field's brief read-only spell is clicked once",
+    '<input id="continue" type="submit" value="Sign in" disabled>',
+    enabledAfterReadOnly,
+    { submit: "clicked", posts: 1 },
+  ],
+  [
+    "a submit button enabled after a field's brief read-only spell is clicked once",
+    '<button id="continue" disabled>Sign in</button>',
+    enabledAfterReadOnly,
+    { submit: "clicked", posts: 1 },
+  ],
+] as const)
+  test(`native sign-in: ${name}`, async () => {
+    await native(async (executor) => {
+      const site = "https://www.signin.test";
+      await Effect.runPromise(executor.execute(signInPage(site, script, button)));
+      const host = { targetId: executor.targetId, execute: executor.execute };
+      const inspection = await Effect.runPromise(
+        inspectAutofillStep({
+          step: passwordAndSubmit,
+          page: host,
+          siteOrigin: site,
+          authenticationOrigins: [],
+        }),
+      );
+      if ("outcome" in inspection) throw new Error(`Fixture refused: ${inspection.reason}`);
+      const report = await Effect.runPromise(
+        fillAutofillStep({
+          step: passwordAndSubmit,
+          values: ["synthetic-native-secret"],
+          inspection,
+          page: host,
+          keyboard: executor.keyboard,
+          settleMs: 500,
+        }),
+      );
+      expect(report).toMatchObject({ outcome: "filled", submit: expected.submit });
+      expect(
+        await Effect.runPromise(executor.execute("return context.signInPosts ?? 0;")),
+      ).toBe(expected.posts);
+    });
+  });
+
 test("unchanged authored operations run through schema validation and native execution", async () => {
   await native(async (executor) => {
     const site = "https://example.test";
@@ -513,7 +667,7 @@ test("credential queued behind cancelled browser work is never inserted", async 
               "native-control",
             ),
           ),
-        ).toBe(true);
+        ).toBe("inserted");
         await expect.poll(fixture.credentialRequests).toBe(1);
         await Effect.runPromise(
           executor.execute(`

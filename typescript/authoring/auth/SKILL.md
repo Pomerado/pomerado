@@ -10,6 +10,12 @@ screen's fields and its submit control, and the host fills them from the private
 the submit. You never see, type, request or read back a credential. Start with a `signInStep` for
 the first screen. If a step fails, inspect the site and correct the steps in this browser.
 
+A code the site sends as part of signing in, by text message, email or an authenticator app, is
+part of the sign-in: map its screen as a `signInStep` with a `code` field and let `authenticate`
+get the code. Never ask for it separately with `request_input`. A `request_input` secret question
+for a code is only for a later protected action after sign-in, when the site asks for another code
+to confirm it.
+
 Sign in only when the task needs it (the request asks, the task is about the caller's own account,
 or the data sits behind a login wall). Try a public task signed out first.
 
@@ -59,10 +65,11 @@ ask with `request_input` right away. A preselected option says nothing about the
 
 <!-- pomerado:section auth.signed-out-flow -->
 
-Record a field or submit only after observing its unique visible enabled match in the intended
-frame and form. Validate the complete live login and a fresh signed-out replay from the stable
-login URL. A saved DOM supports locator matching and extraction; it cannot prove live controls
-are actionable, their event handlers work or authentication succeeds.
+Record a field only after observing its unique visible enabled match in the intended frame and
+form, and a submit after observing its unique visible match there, even one the page enables only
+once the fields hold input. Validate the complete live login and a fresh signed-out replay from
+the stable login URL. A saved DOM supports locator matching and extraction; it cannot prove live
+controls are actionable, their event handlers work or authentication succeeds.
 
 <!-- pomerado:section auth.partial-flow -->
 
@@ -159,6 +166,10 @@ browser. A failed host check leaves this browser available for another evidenced
 that sign-in could not be verified when the site or the remaining allowance prevents recovery.
 Never send a visibly rejected value again. There is no provider-login fallback.
 
+When the host refuses to type into a field (`AutofillRefused`), its answer names the field, the
+check that refused it and why. Fix that cause before sending the step again: the same refusal of
+the same field on the same screen three times in a row ends sign-in in this build.
+
 <!-- pomerado:section auth.after-recovery -->
 
 # Every sign-in ends with its check
@@ -175,6 +186,22 @@ An operation may find a field-specific refusal after the host's sign-in setup. U
 
 The caller receives `credentials_rejected` and `rejected_field`; this requests no repair. Preserve every named commit mark. A write whose commit may have been sent still returns `outcome_unknown` with `possible_commit`; read back its outcome before any retry. A refusal before any declared commit step was entered stays rejected without a possible commit.
 
+## Staying signed in during an operation
+
+Some sites keep their session only in the page, so a full page load signs them out. The runtime
+calls `ensureSignedIn()` once before your operation code runs, so every signed-in operation starts
+signed in. After that, call `const { signedInAgain } = await ensureSignedIn()` after each full page
+load in the middle of the script: a `page.goto`, a reload, or a click or submit that loads a new
+document. In-page navigation in a single-page app needs no call. The host checks the signed-in
+marker on the current page without moving it and signs in again only when the page is signed out.
+When `signedInAgain` is true, the sign-in left the page somewhere else: open the page you were on
+again before you go on. The operation's deadline pauses while the host signs in.
+
+Never call it between a write's commit and its read-back: read the outcome back first. Let its
+failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
+could not sign in again, and the run reports that the site did not keep its session. Never catch it
+to go on signed out, and never sign in from the script yourself.
+
 # A direct sign-in request
 
 A direct sign-in request signs in with one host-filled HTTP request instead of an autofill form submission. Runs are faster with it, so the host prefers it once a mint proves it.
@@ -183,10 +210,10 @@ A direct sign-in request signs in with one host-filled HTTP request instead of a
 
 ## Standalone live authentication
 
-Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and enabled submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
+Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
 
 Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. A private answer is prompted from the current `questionSelector` text when it has one visible match in the answer field's frame, otherwise from the field label, and discarded after this fill. Supply the observed question selector when the question is adjacent to a generic answer label. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
 
-Inspect each subsequent screen and send its observed step. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
+Inspect each subsequent screen and send its observed step. After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`, where the host saved the next screen's controls: role, name or label, input type, and whether each is required, visible and enabled, never a value. Read it first to see what the screen asks for, then probe read-only only for what it lacks, such as a selector or form destination. A failed step's result shows the last saved controls inline, at most 30, and the file holds the rest. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
 
 pomerado:section auth.direct-request:end -->

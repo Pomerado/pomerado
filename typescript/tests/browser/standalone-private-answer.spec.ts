@@ -176,7 +176,19 @@ test(`does not fill an answer when its observed question changes during ${change
       return { private_answer: "synthetic-first-pet" };
     })), registerSecret: () => undefined, review: () => Effect.void,
   });
-  await Effect.runPromise(auth.step({ fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }] }));
+  // A refused field fails the step as a host refusal that submitted nothing.
+  const failure = await Effect.runPromise(Effect.flip(auth.step({ fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }] })));
+  expect(failure).toMatchObject({
+    authentication: {
+      code: "AutofillRefused",
+      hostRefusal: {
+        check: changeAt === "protected prompting" ? "change" : "typing_refused",
+        field: 0,
+        slot: "private_answer",
+      },
+      nothingSubmitted: true,
+    },
+  });
   expect(await page.locator("#answer").inputValue()).toBe("");
   expectNotCarried(browser.calls, "synthetic-first-pet");
 });

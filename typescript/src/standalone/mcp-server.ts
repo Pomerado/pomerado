@@ -11,7 +11,13 @@ import { InputAnswers } from "../runtime/input-request.js";
 import { createPomerado } from "./pomerado.js";
 import { type MintArtifact, type PomeradoOptions, type PomeradoRequest } from "./contracts.js";
 import { Deployment, validateArtifact } from "./artifact-files.js";
-import { makeMcpJobs, mcpFailureMessage, type McpJobs, type McpJobView } from "./mcp-jobs.js";
+import {
+  makeMcpJobs,
+  mcpFailureMessage,
+  type McpJobKind,
+  type McpJobs,
+  type McpJobView,
+} from "./mcp-jobs.js";
 
 interface ServerOptions {
   readonly pomerado?: Omit<PomeradoOptions, "ask">;
@@ -56,7 +62,11 @@ const completedResult = (output: unknown): CallToolResult => ({
       : { result: output },
 });
 const jobResult = (view: McpJobView) => completedResult(view);
-const toolResponse = (effect: Effect.Effect<CallToolResult, Error>, signal: AbortSignal) =>
+const toolResponse = (
+  effect: Effect.Effect<CallToolResult, Error>,
+  signal: AbortSignal,
+  kind: McpJobKind,
+) =>
   Effect.runPromise(
     effect.pipe(
       Effect.catchAllCause((cause) =>
@@ -65,7 +75,7 @@ const toolResponse = (effect: Effect.Effect<CallToolResult, Error>, signal: Abor
           content: [
             {
               type: "text" as const,
-              text: `${mcpFailureMessage(cause)} Check the existing job status; do not repeat a possible website write.`,
+              text: `${mcpFailureMessage(cause, kind)} Check the existing job status; do not repeat a possible website write.`,
             },
           ],
         }),
@@ -73,7 +83,7 @@ const toolResponse = (effect: Effect.Effect<CallToolResult, Error>, signal: Abor
     ),
     { signal },
   );
-const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number) => {
+const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number, kind: McpJobKind) => {
   server.registerTool(
     "get_job",
     {
@@ -88,19 +98,21 @@ const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number) => {
           .get(input.job_id, input.wait_seconds === undefined ? waitMs : input.wait_seconds * 1000)
           .pipe(Effect.map(jobResult)),
         context.mcpReq.signal,
+        kind,
       ),
   );
   server.registerTool(
     "provide_input",
     {
       description:
-        "Answer the current job questions using its request_id and answers keyed by question ID. Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.",
+        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
       inputSchema: standard(ProvideInput),
     },
     (input, context) =>
       toolResponse(
         jobs.provide(input.job_id, input.request_id, input.answers).pipe(Effect.map(jobResult)),
         context.mcpReq.signal,
+        kind,
       ),
   );
   server.registerTool(
@@ -111,10 +123,14 @@ const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number) => {
       inputSchema: standard(JobId),
     },
     (input, context) =>
-      toolResponse(jobs.cancel(input.job_id).pipe(Effect.map(jobResult)), context.mcpReq.signal),
+      toolResponse(
+        jobs.cancel(input.job_id).pipe(Effect.map(jobResult)),
+        context.mcpReq.signal,
+        kind,
+      ),
   );
 };
-const makeServer = (name: string, options: ServerOptions) =>
+const makeServer = (name: string, options: ServerOptions, kind: McpJobKind) =>
   Effect.gen(function* () {
     const maxJobs = options.maxJobs ?? 1;
     const waitMs = options.waitMs ?? 20_000;
@@ -127,16 +143,16 @@ const makeServer = (name: string, options: ServerOptions) =>
       waitMs > 30_000
     )
       return yield* Effect.fail(new Error("Invalid MCP job limits."));
-    const jobs = yield* makeMcpJobs(maxJobs);
+    const jobs = yield* makeMcpJobs(maxJobs, kind);
     const server = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } });
     yield* Effect.addFinalizer(() => Effect.promise(() => server.close()));
-    helperTools(server, jobs, waitMs);
+    helperTools(server, jobs, waitMs, kind);
     return { server, jobs, waitMs };
   });
 /** Discovery registers tools without creating Chromium or invoking a model. */
 export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
   Effect.gen(function* () {
-    const { server, jobs } = yield* makeServer("pomerado", options);
+    const { server, jobs } = yield* makeServer("pomerado", options, "mint");
     server.registerTool(
       "mint",
       {
@@ -161,6 +177,7 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
             )
             .pipe(Effect.map(jobResult)),
           context.mcpReq.signal,
+          "mint",
         ),
     );
     return server;
@@ -192,9 +209,18 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
             jsonSchema: { input: () => json, output: () => json },
             validate: (value) => {
               const result = validate(value);
+              // Ajv names each failing path and the schema rule it breaks, never the value.
               return result.valid
                 ? { value: result.data }
-                : { issues: [{ message: "Input does not match the operation schema." }] };
+                : {
+                    issues: [
+                      {
+                        message: `Input does not match the operation schema: ${
+                          result.errorMessage ?? "unknown error"
+                        }.`,
+                      },
+                    ],
+                  };
             },
           },
         };
@@ -209,7 +235,7 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
       Effect.mapError((cause) => new Error("Invalid integration deployment.", { cause })),
     );
     const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema);
-    const { server, jobs, waitMs } = yield* makeServer(deployment.name, options);
+    const { server, jobs, waitMs } = yield* makeServer(deployment.name, options, "run");
     if (helperNames.includes(deployment.name))
       return yield* Effect.fail(
         new Error("The integration tool name conflicts with a job helper."),
@@ -239,6 +265,7 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
             return view.status === "completed" ? completedResult(view.output) : jobResult(view);
           }),
           context.mcpReq.signal,
+          "run",
         ),
     );
     return server;

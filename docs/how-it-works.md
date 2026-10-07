@@ -1,11 +1,15 @@
 # How it works
 
-Pomerado has three parts. The minter builds an integration, Guardian reviews what the minter and the integration do, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
+Pomerado has three parts. The minter builds an integration, Guardian reviews the minter's work while it builds, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
 
 ## The minter
 
 - The minter is a model agent with a local workspace and a real Chromium browser, driven through native Playwright.
 - It reads the site, writes operation modules under `src/`, and runs them against the live site to check them.
+- A live example, a live test and a write's first step start over at the site's root, after other tabs close. A build that hasn't signed in starts without the cookies and site storage exploration left. A signed-in build starts from the session saved right after sign-in.
+- Its first live step opens the URL you gave, unless that step is one of those resets. Explorations then continue on whatever page the last step left.
+- A build counts as signed in only after its own sign-in steps typed the login's identifier and a password or code, or you completed an approval, and the page then shows the account. A code the site sent for that sign-in counts too once the agent asked you for it and an explore actually typed it in the page: a `fill`, `type` or `pressSequentially` call that entered it and completed. A page that already showed an account proves nothing. Every sign-in step drops the saved session, a check included, and a check after a confirmed sign-in starts a new sign-in.
+- A signed-in build saves its session before its first live step after sign-in, other than another sign-in step. The save passes through the page-code worker, which caps a result at 1 MiB. A larger session, usually from a big IndexedDB, fails the save. Every later live step except a sign-in step then fails too, since each tries the save first. Signing in again hits the same cap.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
@@ -14,15 +18,38 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews wha
 ## Guardian
 
 - Guardian is a second model that reviews the minter's work before it takes effect.
-- It reviews each browser call before it runs, each question before it reaches you, and the finished source before Pomerado saves it.
+- While minting, it reviews each browser call before it runs, each question before it reaches you, and the finished source before Pomerado saves it.
 - A denied call never reaches the website.
-- A generated integration keeps Guardian. Each run is reviewed, so a running integration needs a model key too.
+- Guardian doesn't review a saved integration's runs. It approved the source while minting, so running an integration makes no model request and needs no model key.
 - Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
+
+### Review requests
+
+Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+
+- **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
+- **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
+  - The `request` gives the kind's name, its policy (sent as `trusted_review.policy`), its evidence (sent as `host_review`) and the subset of the shared outcomes it may return.
+  - It can also give the `labels` its decision may carry and a `private` flag.
+  - It returns `{ outcome, rationale, label? }`. The host refuses any other outcome or label.
+  - A private kind's evidence, transcript and rationale reach no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder, including after a compaction.
+- **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
+  - If the host's read fails, the source is left out and Guardian reads it itself.
+  - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.
+  - An allow counts only while the entrypoint is in view, so after a compaction during the review, Guardian must read it again. `./x` and `x` name the same file.
+  - If an allow still lacks the read after two follow-up rounds in the same review, the review fails with `EntrypointNotRead`. That failure is a verdict, so it is never retried.
+- **Incremental review.** Before an execution review, the host compares each executed source Guardian already read in this conversation since its last compaction with the current bytes. It lists the identical ones in `trusted_review.unchangedSources`, and Guardian needn't read them again. The entrypoint is still always included.
+- **Diagnostics.** Each review emits `guardian.usage` with its model calls and its input, cached, cache-write, output and reasoning token counts. Model diagnostics are reported with or without a session. The wait for a session is emitted as the `guardian.session_wait` interval, and waits between outage retries happen outside the session.
+  - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
+  - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
+  - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
 
 ## The runtime
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+- Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
+- `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
@@ -110,7 +137,7 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas and browser call contract |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract and the page each live step starts from |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
