@@ -145,13 +145,15 @@ const answers = (asked: InputRequest[]) =>
     }),
   );
 
-/** A shop and a browser that resolves its host, closed after `use`. */
+/** Another host the shop's server answers for, as a sign-in site on its own origin. */
+const signInHost = "login.shop.test";
+/** A shop and a browser that resolves its hosts, closed after `use`. */
 const withShop = async (use: (shop: Shop, endpoint: string) => Promise<void>) => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-"));
   const shop = await startShop(directory);
   const browser = await chromium.launchServer({
     args: [
-      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1, MAP ${signInHost} 127.0.0.1`,
       "--no-proxy-server",
       "--ignore-certificate-errors",
     ],
@@ -731,5 +733,88 @@ test("the local minter's marker check loads no page once the write session start
     expect(objects(toolResult(build, "account"))).toContainEqual(
       expect.objectContaining({ status: "tool_failed", code: "Unavailable" }),
     );
+  });
+});
+
+/** A live test of where the page is, which resets the browser and loads the site's root first. */
+const testWhere = execute(
+  "test",
+  { entrypoint: "explore/where.mjs", intent: "Read where a live test starts" },
+  "test_where",
+);
+
+test("a sign-in screen on another origin and a root that failed to load are no signed-out pages", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    shop.state.home = "broken";
+    const signInSite = `https://${signInHost}:${shop.port}/login`;
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [
+        ...markerFiles,
+        create("explore/sign-in-site.mjs", openPage("open_sign_in", signInSite), "patch_sign_in"),
+      ],
+      // The test's reset loads the root, which fails and leaves a blank page.
+      [testWhere],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/sign-in-site.mjs", intent: "Open the sign-in site" },
+          "explore_sign_in",
+        ),
+      ],
+      [signInFields()],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+    ]);
+    expect(objects(toolResult(mintRequests, "sign_in"))).toContainEqual(
+      expect.objectContaining({ outcome: "filled", submit: "clicked" }),
+    );
+    // Neither page could show the shop's own pages signed out, so the check has none.
+    expect(markerResult(mintRequests, "account")).toEqual(
+      expect.objectContaining({
+        signedOutSnapshot: "unchecked",
+        warnings: ["signed_out_page_unchecked"],
+      }),
+    );
+  });
+});
+
+test("a client-rendered root counts as signed out once it renders", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    shop.state.home = "late";
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [
+        ...markerFiles,
+        create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+      ],
+      // The test's reset loads the root, an empty shell until its script renders the header.
+      [testWhere],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+          "explore_login",
+        ),
+      ],
+      [signInFields()],
+      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+    ]);
+    // The rendered root shows its Account link signed out too.
+    expect(markerResult(mintRequests, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "refused",
+      signedOutSnapshot: "matches",
+      signedInNow: true,
+      freshLoad: true,
+      refusals: ["marker_matches_signed_out_page"],
+    });
   });
 });

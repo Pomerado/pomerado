@@ -34,6 +34,11 @@ interface ShopState {
   curl: "ok" | "refuse";
   /** `after_input` keeps the sign-in button disabled until both fields hold input. */
   loginSubmit: "enabled" | "after_input";
+  /**
+   * The root page: `broken` drops its connection, so it never loads, and `late` is an empty shell
+   * whose script renders a header with an "Account" link, signed out too, 300 ms after it loads.
+   */
+  home: "ok" | "broken" | "late";
 }
 
 export interface Shop {
@@ -101,14 +106,20 @@ const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string,
   // A page load keeps a signed-in session; a signed-out browser gets a fresh one.
   const cookiesFor = (request: IncomingMessage) =>
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
-  const home: Route = (request, response) =>
-    html(
+  const lateHome = `<title>Shop</title><div id="app"></div>
+<script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},300)</script>`;
+  const home: Route = (request, response) => {
+    if (state.home === "broken") return void response.destroy();
+    if (state.home === "late")
+      return html(response, lateHome, { "set-cookie": cookiesFor(request) });
+    return html(
       response,
       `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
 <button id="add">Add to cart</button><p id="added"></p>
 <script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>`,
       { "set-cookie": cookiesFor(request) },
     );
+  };
   const search: Route = (request, response) => {
     state.searchPageLoads += 1;
     html(
@@ -276,6 +287,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     api: "ok",
     curl: "ok",
     loginSubmit: "enabled",
+    home: "ok",
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;
