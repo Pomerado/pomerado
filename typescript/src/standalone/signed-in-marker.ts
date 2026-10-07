@@ -7,6 +7,7 @@ import {
 } from "../destinations/autofill-step.js";
 import {
   evaluateSignedInMarker,
+  matchSignedOutSnapshots,
   type SignedInMarkerCheck,
   type SignedOutSnapshot,
 } from "../destinations/signed-in-marker.js";
@@ -205,6 +206,9 @@ export const makeMarkerChecks = (input: {
       exploredPaths.push(path);
       if (exploredPaths.length > keptPaths) exploredPaths.shift();
     },
+    /** Whether a page the build kept as signed out shows `marker`, as the check matches it. */
+    signedOutShows: (marker: AutofillSignedIn) =>
+      matchSignedOutSnapshots(marker, signedOut.pages) === "matches",
     check: (marker: SignedInMarkerCheckRequest): Effect.Effect<SignedInMarkerCheck, MintFailure> =>
       Effect.gen(function* () {
         // The write session's next act step continues the page as it is, so no load may move it.

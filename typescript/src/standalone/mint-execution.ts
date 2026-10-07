@@ -84,6 +84,13 @@ const credentialsNotSubmitted = {
   nextStep:
     "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
 } as const;
+/** A marker that a page the build saw signed out shows cannot tell signed in from signed out. */
+const markerOnSignedOutPage = {
+  signedIn: false,
+  failed: "marker_matches_signed_out_page",
+  nextStep:
+    "A page this build saw signed out shows this marker too, so it cannot tell the site signed in from signed out. The sign-in is still open. Choose an element only a signed-in user sees, test it with check_signed_in_marker, then check again.",
+} as const;
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
@@ -112,8 +119,12 @@ const executeAuthentication = (
       start.signIn();
       if (start.submitted) {
         const checked = yield* auth.signedIn(signIn.signedIn);
-        authenticated = checked.signedIn && start.verified();
-        result = checked;
+        if (checked.signedIn && markers.signedOutShows(signIn.signedIn))
+          result = markerOnSignedOutPage;
+        else {
+          authenticated = checked.signedIn && start.verified();
+          result = checked;
+        }
       } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
       start.signIn();
