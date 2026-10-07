@@ -77,6 +77,11 @@ The package now holds the code the local host runs, the hook interfaces another 
   - The loads move the tab. The host opens the agent's address again only when that page showed the marker and isn't the direct answer to a form. Otherwise the tab stays where the loads left it. An address that doesn't open again fails the check as unavailable.
   - Once the write session started, the check loads no page and fails as unavailable, since the next act step continues the page as it is.
 - A local build's `signedIn` step refuses a marker that one of the build's signed-out pages shows, with `marker_matches_signed_out_page`, and the sign-in stays open.
+- A local sign-in no longer stops on a screen that shows a value the caller gave, such as a password screen that shows the typed email in its text, label or placeholder. Guardian's review of the step used to carry the screen as it was, so the check that keeps caller values out of reviewed source refused it with `SourceUnavailable` and the screen never ran. The screen now reaches Guardian through `screenMintText`, with each such value masked, and that check still refuses any value left. The review also tells Guardian that the host fills the login's values, which never appear in the review.
+
+### Fixes
+
+- A private review that fails now forwards its final timing record to the host's model trace observer, as a successful one does. The record carries only the timing, never the error or other detail.
 
 ## 0.3.0
 
