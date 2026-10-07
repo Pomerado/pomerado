@@ -2,6 +2,7 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
+import type { InsertionRefusal } from "../../src/destinations/credential-keyboard.js";
 import { MintFailure, type MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure, signInFailureFeedback } from "../../src/mint/sign-in-failure.js";
@@ -53,23 +54,37 @@ const inspected = {
 };
 /** How the field answers the host's focus: it takes the focus, or an overlay keeps it. */
 const focusAnswers = {
-  typing_refused: { focused: true, url: login },
+  focused: { focused: true, url: login },
   not_focused: { focused: false, unfocused: { activeTag: "DIV" }, url: login },
 } as const;
+/** A refusal the screen gives: the field never takes the focus, or its native insertion's cause. */
+type ScreenRefusal = "not_focused" | Exclude<InsertionRefusal, "question_changed">;
 
 /**
  * A synthetic password screen behind the standalone host's sign-in: each authenticate inspects
- * it, then focuses the field. The page's own code swallows the inserted text, so the typing never
- * lands, or, for `not_focused`, an overlay keeps the focus.
+ * it, then focuses the field. The field takes the focus and the host's native insertion refuses
+ * with the given cause, or, for `not_focused`, an overlay keeps the focus. `bindingKeys` holds
+ * each binding the host placed on the field.
  */
-const passwordScreen = (refusals: readonly (keyof typeof focusAnswers)[]) => {
-  const answers = refusals.flatMap((refusal) => [inspected, focusAnswers[refusal]]);
+const passwordScreen = (refusals: readonly ScreenRefusal[]) => {
+  const answers = refusals.flatMap((refusal) => [
+    inspected,
+    refusal === "not_focused" ? focusAnswers.not_focused : focusAnswers.focused,
+  ]);
+  const insertions = refusals.filter((refusal) => refusal !== "not_focused");
+  const bindingKeys: string[] = [];
   const auth = makeLiveAuthentication({
     page: {
       targetId: "primary",
       execute: () => Effect.sync(() => answers.shift() ?? { error: "not_found", target: 0 }),
     },
-    keyboard: { insertText: () => Effect.succeed("insertion_rejected" as const) },
+    keyboard: {
+      insertText: (target) =>
+        Effect.sync(() => {
+          bindingKeys.push(target.bindingKey);
+          return insertions.shift() ?? "insertion_rejected";
+        }),
+    },
     siteOrigin: site,
     authenticationOrigins: [],
     ask: (request) =>
@@ -87,6 +102,7 @@ const passwordScreen = (refusals: readonly (keyof typeof focusAnswers)[]) => {
   let executions = 0;
   return {
     executions: () => executions,
+    bindingKeys,
     reviewAndExecute: ((execution, beforeDispatch = Effect.void) =>
       Effect.gen(function* () {
         executions++;
@@ -162,7 +178,7 @@ const continuation = (request: ModelRequest | undefined) =>
   JSON.stringify(Array.isArray(request?.input) ? request.input.at(-1) : undefined);
 
 it("routes a typing refusal on the password field to the unresolved sign-in, saying what was refused and why", async () => {
-  const screen = passwordScreen(["typing_refused"]);
+  const screen = passwordScreen(["insertion_rejected"]);
   const run = await fixture(
     (_request, index) => (index === 0 ? authenticate("sign_in_1") : finalAnswer),
     { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
@@ -192,7 +208,7 @@ it("routes a typing refusal on the password field to the unresolved sign-in, say
 });
 
 it("ends sign-in as unavailable after three identical refusals in a row", async () => {
-  const screen = passwordScreen(["typing_refused", "typing_refused", "typing_refused"]);
+  const screen = passwordScreen(["insertion_rejected", "insertion_rejected", "insertion_rejected"]);
   const run = await fixture(
     (_request, index) => (index < 3 ? authenticate(`sign_in_${index + 1}`) : finalAnswer),
     { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
@@ -210,7 +226,7 @@ it("ends sign-in as unavailable after three identical refusals in a row", async 
 });
 
 it("starts the count again when a different refusal breaks the run", async () => {
-  const screen = passwordScreen(["typing_refused", "typing_refused", "not_focused"]);
+  const screen = passwordScreen(["insertion_rejected", "insertion_rejected", "not_focused"]);
   const run = await fixture(
     (_request, index) => (index < 3 ? authenticate(`sign_in_${index + 1}`) : finalAnswer),
     { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
@@ -225,6 +241,57 @@ it("starts the count again when a different refusal breaks the run", async () =>
   });
   expect(third).not.toHaveProperty("buildOutcome");
   expect(third["notice"]).toContain("did not take the focus");
+  expect(outcome.recoveryReason).not.toBe("sign_in_unavailable");
+});
+
+// A native insertion that inserted nothing says why: the focus moved, the field or page was
+// replaced, the binding did not resolve, or the browser rejected the text. The agent hears the
+// cause and a next step for it, never the binding, the selector or the value.
+it("tells the agent why the host's insertion inserted nothing, by its cause", async () => {
+  const causes = ["focus_moved", "document_changed", "binding_not_found", "insertion_rejected"] as const;
+  const notices: string[] = [];
+  for (const cause of causes) {
+    const screen = passwordScreen([cause]);
+    const run = await fixture(
+      (_request, index) => (index === 0 ? authenticate("sign_in_1") : finalAnswer),
+      { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
+      { effect: "read", siteOrigin: site },
+    );
+    await run.run();
+    const answer = answerTo(run.requests[1], "sign_in_1");
+    expect(answer).toMatchObject({
+      code: "AutofillRefused",
+      nextStep: "authenticate",
+      credentialSent: false,
+      authentication: { hostRefusal: { check: "typing_refused", field: 0, cause } },
+    });
+    const notice = String(answer["notice"]);
+    expect(screen.bindingKeys).toHaveLength(1);
+    for (const bindingKey of screen.bindingKeys)
+      expect(JSON.stringify(answer)).not.toContain(bindingKey);
+    expect(JSON.stringify(answer)).not.toContain("synthetic-password");
+    expect(notice).not.toContain(signInStep.fields[0]?.selector);
+    notices.push(notice);
+  }
+  // Each kind of cause points the agent its own way.
+  expect(new Set(notices).size).toBe(causes.length);
+});
+
+it("does not count refusals with different insertion causes as one repeated refusal", async () => {
+  const screen = passwordScreen(["focus_moved", "focus_moved", "insertion_rejected"]);
+  const run = await fixture(
+    (_request, index) => (index < 3 ? authenticate(`sign_in_${index + 1}`) : finalAnswer),
+    { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
+    { effect: "read", siteOrigin: site },
+  );
+  const outcome = await run.run();
+  expect(screen.executions()).toBe(3);
+  const third = answerTo(run.requests[3], "sign_in_3");
+  expect(third).toMatchObject({
+    nextStep: "authenticate",
+    authentication: { hostRefusal: { check: "typing_refused", cause: "insertion_rejected" } },
+  });
+  expect(third).not.toHaveProperty("buildOutcome");
   expect(outcome.recoveryReason).not.toBe("sign_in_unavailable");
 });
 
@@ -284,7 +351,7 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
 // A submit the page keeps disabled after the fields were filled is no refusal of a field: the host
 // typed the password and never clicked, and the agent reads that the submit stayed disabled.
 it("tells the agent a submit stayed disabled after the fields were filled, as no field refusal", async () => {
-  const answers: unknown[] = [inspected, focusAnswers.typing_refused];
+  const answers: unknown[] = [inspected, focusAnswers.focused];
   const executed: string[] = [];
   const auth = makeLiveAuthentication({
     page: {

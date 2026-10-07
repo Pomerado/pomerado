@@ -7,6 +7,7 @@ import type {
   LocatedError,
   Targets,
 } from "./autofill-step.js";
+import { InsertionRefusal } from "./credential-keyboard.js";
 
 /** Where a step call found a control's one visible match: that frame's URL, and how many it searched. */
 export const FoundIn = Schema.Struct({ frameUrl: Schema.String, frames: Schema.Number });
@@ -213,7 +214,7 @@ export const maySend = (stepReport: AutofillStepReport) =>
 
 /**
  * A host refusal while typing into an autofill sign-in screen, value-free. Two are identical
- * when every field is: the same check, field and screen.
+ * when every field is: the same check, cause, field and screen.
  */
 export interface HostRefusal {
   /**
@@ -225,10 +226,12 @@ export interface HostRefusal {
   /** The field's index in the step. */
   readonly field: number;
   /**
-   * What the check found, when it says more than the check does: `question_changed`, a private
-   * answer's question that no longer reads as the host inspected it, under the `change` check.
+   * What the check found, when it says more than the check does: the finite cause of a native
+   * insertion that inserted nothing, under the `typing_refused` check, or `question_changed`, a
+   * private answer's question that no longer reads as the host inspected it, under the `change`
+   * check. Never a binding key, a selector or a value.
    */
-  readonly cause?: "question_changed";
+  readonly cause?: InsertionRefusal;
   /** What the field takes: its slot, or the identifier kinds it accepts joined by ` or `. */
   readonly slot: string;
   /** The screen as the step names it: its fields' selectors, its submit and its popup's origin. */
@@ -239,11 +242,12 @@ export interface HostRefusal {
   };
 }
 
-/** Whether two host refusals are identical: the same check, field and screen. */
+/** Whether two host refusals are identical: the same check, cause, field and screen. */
 export const sameHostRefusal = (one: HostRefusal, other: HostRefusal) => {
   const key = (refusal: HostRefusal) =>
     JSON.stringify([
       refusal.check,
+      refusal.cause ?? null,
       refusal.field,
       refusal.slot,
       refusal.screen.fields,
@@ -264,11 +268,14 @@ interface NamedScreen {
   readonly submit?: string | undefined;
 }
 
+const isInsertionRefusal = Schema.is(InsertionRefusal);
+
 /**
  * The fill's refusal of a field of `step`, if its report is one: a check refused to type into the
  * field, or to keep typing once an earlier field was typed, so the host submitted nothing of the
  * screen. Only a fill's report counts; an inspection's refusal comes before any typing. A refused
- * submit, a failed call and a lost answer are not refusals of a field.
+ * submit, a failed call and a lost answer are not refusals of a field. A refused native insertion
+ * keeps its finite cause, as does a private answer's question that changed.
  */
 export const typingRefusal = (
   step: NamedScreen,
@@ -286,12 +293,12 @@ export const typingRefusal = (
   const named = typeof field === "number" ? step.fields[field] : undefined;
   if (typeof check !== "string" || typeof field !== "number" || named === undefined)
     return undefined;
+  const evidence = report.failureDetail.context;
+  const cause = [evidence?.["insertion"], evidence?.["cause"]].find(isInsertionRefusal);
   return {
     check,
     field,
-    ...(report.failureDetail.context?.["cause"] === "question_changed"
-      ? { cause: "question_changed" as const }
-      : {}),
+    ...(cause === undefined ? {} : { cause }),
     slot: named.slot ?? named.accepts?.join(" or ") ?? "identifier",
     screen: {
       fields: step.fields.map((each) => each.selector),
