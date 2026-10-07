@@ -352,6 +352,16 @@ it("tells the local minter how its sign-in values are asked, what it records and
   );
   expect(auth).not.toContain("masked terminal");
   expect(auth).not.toContain("don't replay");
+  const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+  const instructions = guide.instructions.replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "The host collects credentials through the caller's input callback or the terminal, which hides a password, code or other secret and shows an identifier as it is typed, and inserts them through the guarded credential channel.",
+  );
+  expect(instructions).not.toContain("masked terminal");
+  // A verified sign-in fixes its login URL, so only a new sign-in from another URL changes it.
+  expect(instructions).toContain(
+    "The login URL of the build's verified sign-in publishes with the tool, so it never holds a value of the account, such as its email. If `finish_build` refuses it with `login_url_contains_credential`, sign in again from a login URL without one: send each sign-in screen's `signInStep` with that `loginUrl`, then `signedIn`, and call `finish_build` again with the same `executionId`. A signed-in check alone does not change it.",
+  );
 });
 
 // A write committed values the page never showed matching the input; a page's own recent-search
@@ -396,7 +406,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
     ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
     ["73561b4bf299dfbcc6ca9c043898d59d226fa3cee5ea5532e03c96de96ff628f", "publication"],
-    ["7393cc5de00ce49cc05d78ecab6d4c8f05b1c681a7f1abc7e5b44a5d85ab9f23", "workspace/AGENTS.md"],
+    ["e6535a5e10931c9d04b7f6d407c6e8a48f918ccd2d2b5a088767a8cf55ddf1ac", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });
