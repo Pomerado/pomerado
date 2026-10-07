@@ -123,9 +123,9 @@ const pathOf = (url: URL) => `${url.pathname}${url.search}`;
 /**
  * The local host's `MintDependencies.checkSignedInMarker`, and the pages it compares. It tests the
  * marker against the build's signed-out pages, on the live page as it is, after the host loads
- * the marker's page (`openPath`, else the site's root) again, and on the newest
- * other page the build explored once its sign-in sent the login. It signs nothing in and sends no
- * value. The loads move the primary tab. When the agent's page showed the marker and is not the
+ * the marker's page (`openPath`, else the site's root) again, and on the newest other page the
+ * build explored once its sign-in sent the login. It signs nothing in and sends no value. The
+ * loads move the primary tab. When the agent's page showed the marker and is not the
  * direct answer to a form, the host then opens its address again, and what that page held only in
  * memory, such as a half-filled form, is gone; otherwise the tab stays where the loads left it, as
  * the tool's text allows. Either way the host reads the page again for the next review. A current
