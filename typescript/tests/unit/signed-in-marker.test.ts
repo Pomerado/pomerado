@@ -105,6 +105,22 @@ describe("role names on the signed-out page", () => {
       expect(match(selector, body), body).toBe("matches");
   });
 
+  it("reads a title only when nothing else names the element", () => {
+    for (const [selector, body] of [
+      ['role=link[name="Account"s]', '<a href="/sign-in" title="Sign in here">Account</a>'],
+      ['role=button[name="Account"s]', '<button title="Open menu">Account</button>'],
+      [
+        'role=button[name="Open menu"s]',
+        '<button title="Open menu"><span class="icon"></span></button>',
+      ],
+      ['role=navigation[name="Account"s]', '<nav title="Account"><a href="/a">Home</a></nav>'],
+    ] as const)
+      expect(match(selector, body), body).toBe("matches");
+    expect(
+      match('role=navigation[name="Account"]', '<nav aria-label="Main" title="Account"></nav>'),
+    ).toBe("absent");
+  });
+
   it("leaves out content the page hides from the name", () => {
     expect(
       match(
@@ -133,6 +149,8 @@ describe("role names on the signed-out page", () => {
       ["role=article", "<article>Account</article>"],
       ["role=group", "<fieldset><legend>Account</legend></fieldset>"],
       ['role=textbox[name="Account"]', "<label>Account <input></label>"],
+      ["role=textbox", '<input type="password" name="password">'],
+      ["role=textbox", '<input type="date" name="when">'],
       [
         'role=button[name="Account"]',
         "<button>Account <select><option>A</option></select></button>",

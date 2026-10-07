@@ -14,13 +14,14 @@
  *   `role` engines. Anything else, such as XPath or `:hover`, leaves the page unchecked, as does
  *   a frame-crossing selector (`>>`, `internal:`), which the live check refuses too.
  * - A role selector is checked only for the roles whose implicit elements this match knows
- *   (`coveredRoles`); any other leaves the page unchecked.
+ *   (`coveredRoles`); any other leaves the page unchecked, as does an input whose type it does
+ *   not map with certainty, such as `password` or `date`. What it cannot decide is never absent.
  * - A role's name follows the accessible-name rules in part: `aria-labelledby` first, then
- *   `aria-label`, a native attribute (`alt`, a button's value, an svg's `<title>`, a table's
- *   caption) or `title`, and, for roles named from their content, the content, built from each
- *   child's own text alternative and leaving out what the page hides. A name it cannot compute,
- *   such as a form field's `<label>` or content holding a form control or embedded content,
- *   leaves the page unchecked. CSS-generated text (`::before`, `::after`) is not seen.
+ *   `aria-label` or a native attribute (`alt`, a button's value, an svg's `<title>`, a table's
+ *   caption), then, for roles named from their content, the content, built from each child's own
+ *   text alternative and leaving out what the page hides, and `title` last. A name it cannot
+ *   compute, such as a form field's `<label>` or content holding a form control or embedded
+ *   content, leaves the page unchecked. CSS-generated text (`::before`, `::after`) is not seen.
  * - The snapshot is the main document alone: a shadow root's content and frames are not in it.
  * - Visibility is estimated without layout or stylesheets: an element counts as hidden only
  *   under a `hidden` attribute, an inline `display: none` or `visibility: hidden`, a closed
@@ -567,7 +568,7 @@ const implicitRole = (element: SnapshotElement): string | undefined => {
     case "aside":
       return "complementary";
     case "form":
-      return authorName(element) === "" ? undefined : "form";
+      return authorName(element) === "" && !element.attributes.get("title") ? undefined : "form";
     case "dialog":
       return "dialog";
     case "ul":
@@ -718,14 +719,14 @@ const ownLabel = (element: SnapshotElement): string | undefined => {
   return undefined;
 };
 
-/** The name its author gave: `aria-labelledby`, `aria-label`, a native attribute, or `title`. */
+/** The name its author gave: `aria-labelledby`, `aria-label` or a native attribute, never `title`. */
 const authorName = (element: SnapshotElement): Name => {
   const referenced = labelledBy(element);
   if (referenced.length > 0) {
     const name = joinNames(referenced.map((node) => ownLabel(node) ?? contentName(node)));
     if (name === unknownName || name.trim() !== "") return name;
   }
-  return ownLabel(element) ?? element.attributes.get("title") ?? "";
+  return ownLabel(element) ?? "";
 };
 
 /**
@@ -764,9 +765,22 @@ const nameOf = (element: SnapshotElement, role: string): Name => {
   const authored =
     labelledBy(element).length > 0 || (element.attributes.get("aria-label") ?? "").trim() !== "";
   if (!authored && labelledFields.has(role)) return unknownName;
-  if (author.trim() !== "" || !nameFromContent.has(role)) return author;
-  return contentName(element);
+  if (author.trim() !== "") return author;
+  // `title` is the last resort: after the content for roles named from it, else after the author.
+  const content = nameFromContent.has(role) ? contentName(element) : "";
+  if (content === unknownName || content.trim() !== "") return content;
+  return element.attributes.get("title") ?? "";
 };
+
+/** Input types whose implicit role `implicitRole` gives with certainty. */
+const mappedInputTypes = new Set(
+  "button submit reset image checkbox radio search range text email tel url hidden".split(" "),
+);
+/** An input without its own role whose type `implicitRole` does not map: its role is unknown. */
+const uncertainRole = (element: SnapshotElement) =>
+  element.tag === "input" &&
+  !element.attributes.get("role")?.trim() &&
+  !mappedInputTypes.has((element.attributes.get("type") ?? "text").trim().toLowerCase());
 
 /** Whether the element or an ancestor hides it from the accessibility tree with `aria-hidden`. */
 const hiddenFromRoles = (element: SnapshotElement) => {
@@ -811,7 +825,9 @@ const roleStep = (body: string): Step => {
   return {
     kind: "role",
     test: (element) => {
-      if (roleOf(element) !== role || (!includeHidden && hiddenFromRoles(element))) return false;
+      if (!includeHidden && hiddenFromRoles(element)) return false;
+      if (uncertainRole(element)) return "unknown";
+      if (roleOf(element) !== role) return false;
       let answer: boolean | "unknown" = true;
       for (const test of tests) {
         const result = test(element);
