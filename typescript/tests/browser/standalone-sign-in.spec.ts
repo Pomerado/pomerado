@@ -872,42 +872,46 @@ test("a sign-in screen on another origin and a root that failed to load are no s
   });
 });
 
-test("a client-rendered root counts as signed out once it renders", async () => {
-  test.info().annotations.push({
-    type: "slow",
-    description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
-  });
-  test.setTimeout(60_000);
-  await withShop(async (shop, endpoint) => {
-    shop.state.home = "late";
-    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
-      [
-        ...markerFiles,
-        create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
-      ],
-      // The test's reset loads the root, an empty shell until its script renders the header.
-      [testWhere],
-      [
-        execute(
-          "explore",
-          { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
-          "explore_login",
-        ),
-      ],
-      [signInFields()],
-      [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
-    ]);
-    // The rendered root shows its Account link signed out too.
-    expect(markerResult(mintRequests, "account")).toEqual({
-      kind: "host_signed_in_marker",
-      status: "refused",
-      signedOutSnapshot: "matches",
-      signedInNow: true,
-      freshLoad: true,
-      refusals: ["marker_matches_signed_out_page"],
+for (const [home, shell] of [
+  ["late", "an empty shell"],
+  ["splash", "a splash screen that shows Loading…"],
+] as const)
+  test(`a client-rendered root counts as signed out once it renders past ${shell}`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a live test, a host sign-in and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      shop.state.home = home;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        [
+          ...markerFiles,
+          create("explore/login.mjs", openPage("open_login", "/login"), "patch_login"),
+        ],
+        // The test's reset loads the root, which renders its header only after it loads.
+        [testWhere],
+        [
+          execute(
+            "explore",
+            { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+            "explore_login",
+          ),
+        ],
+        [signInFields()],
+        [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+      ]);
+      // The rendered root shows its Account link signed out too.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "refused",
+        signedOutSnapshot: "matches",
+        signedInNow: true,
+        freshLoad: true,
+        refusals: ["marker_matches_signed_out_page"],
+      });
     });
   });
-});
 
 /** An exploration that posts an empty form to the shop's search page, as a search form may. */
 const postSearch = `import { Schema } from "effect";

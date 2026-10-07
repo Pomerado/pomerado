@@ -35,10 +35,11 @@ interface ShopState {
   /** `after_input` keeps the sign-in button disabled until both fields hold input. */
   loginSubmit: "enabled" | "after_input";
   /**
-   * The root page: `broken` drops its connection, so it never loads, and `late` is an empty shell
-   * whose script renders a header with an "Account" link, signed out too, 300 ms after it loads.
+   * The root page: `broken` drops its connection, so it never loads. `late` is an empty shell
+   * whose script renders a header with an "Account" link, signed out too, 300 ms after it loads,
+   * and `splash` is the same shell showing "Loading…" until then.
    */
-  home: "ok" | "broken" | "late";
+  home: "ok" | "broken" | "late" | "splash";
 }
 
 export interface Shop {
@@ -106,12 +107,14 @@ const shopRoutes = (state: ShopState, secrets: ShopSecrets): ReadonlyMap<string,
   // A page load keeps a signed-in session; a signed-out browser gets a fresh one.
   const cookiesFor = (request: IncomingMessage) =>
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
-  const lateHome = `<title>Shop</title><div id="app"></div>
+  const lateHome = (shell: string) => `<title>Shop</title><div id="app">${shell}</div>
 <script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},300)</script>`;
   const home: Route = (request, response) => {
     if (state.home === "broken") return void response.destroy();
-    if (state.home === "late")
-      return html(response, lateHome, { "set-cookie": cookiesFor(request) });
+    if (state.home === "late" || state.home === "splash")
+      return html(response, lateHome(state.home === "splash" ? "<p>Loading…</p>" : ""), {
+        "set-cookie": cookiesFor(request),
+      });
     return html(
       response,
       `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
