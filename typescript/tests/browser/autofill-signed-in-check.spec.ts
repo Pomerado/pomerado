@@ -280,3 +280,18 @@ test("a challenge field in a hidden provider iframe does not block signed-in pro
     url: `${site}/account`,
   });
 });
+
+// A host that records no identity, as a recipe's screens record none, gets the check without the
+// challenge part: a recorded code field still on the page does not count, and the sign-in's own
+// password field still does.
+test("a recorded code field with no inspected identity leaves the check as without one", async ({ page }) => {
+  const code = { fields: [{ selector: "input[name=verificationCode]", slot: "code" as const }] };
+  const form = '<form><label>Verification code<input name="verificationCode" required></label><button>Verify</button></form>';
+  expect(await checkPage(page, `${marker}${form}`, null, [...screens, code])).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
+  expect(
+    await checkPage(page, `${marker}${form}<label>Password<input id="password" type="password"></label>`, null, [...screens, code]),
+  ).toEqual({ signedIn: false, failed: "password_field_visible", url: `${site}/account` });
+});
