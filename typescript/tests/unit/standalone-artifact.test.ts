@@ -83,17 +83,23 @@ it("reads an artifact written without a sign-in as it always was", () =>
   }));
 
 it.each([
-  [{ ...signIn.recipe, version: 4 }, "version this host does not know"],
-  [{ ...signIn.recipe, version: 2 }, "not one this host can read"],
-  ["not json", "not one this host can read"],
-])("refuses an artifact whose recipe it cannot read (%#)", (recipe, refusal) =>
+  [{ ...signIn.recipe, version: 4 }, "unknown_version"],
+  [{ ...signIn.recipe, version: 2 }, "invalid"],
+  ["not json", "invalid"],
+  [undefined, "missing"],
+])("refuses an artifact whose recipe it cannot read (%#)", (recipe, reason) =>
   scratch(async (directory) => {
     await run(writeArtifact(directory, { ...source, signIn }));
-    await writeFile(
-      join(directory, "auth-fill.json"),
-      typeof recipe === "string" ? recipe : JSON.stringify(recipe),
-    );
-    await expect(run(readArtifact(directory))).rejects.toThrow(refusal);
+    if (recipe === undefined) await rm(join(directory, "auth-fill.json"));
+    else
+      await writeFile(
+        join(directory, "auth-fill.json"),
+        typeof recipe === "string" ? recipe : JSON.stringify(recipe),
+      );
+    // The run fails before signing in or running anything, rather than running signed out.
+    const failure = await run(Effect.flip(readArtifact(directory)));
+    expect(failure).toMatchObject({ _tag: "SignInRunFailed", code: "MissingRecipe", reason });
+    expect(failure.message).toContain("doesn't run signed out");
   }));
 
 it("refuses a version 2 recipe that names a question selector before writing it", () =>

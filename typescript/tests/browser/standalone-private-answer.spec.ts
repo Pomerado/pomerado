@@ -13,6 +13,7 @@ import type { SignInRequest } from "../../src/destinations/sign-in-recipe.js";
 import type { SignInStep } from "../../src/mint/contracts.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import type { InputAsker } from "../../src/runtime/input-request.js";
+import { signInForRun } from "../../src/runtime/sign-in-replay.js";
 import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
@@ -466,4 +467,77 @@ test("records a sign-in through a security question as a version 3 recipe withou
   const text = JSON.stringify(published);
   for (const held of ["First pet", "synthetic-first-pet", login.username, login.password, "Security answer"])
     expect(text).not.toContain(held);
+});
+
+// A run replays that recipe: it asks for the login and the private answer on each run, from the
+// question the screen shows then, and keeps neither once the run's sign-in is done.
+test("a run's replay asks the private answer on every run, from the question its screen shows then", async ({ page }) => {
+  test.slow();
+  const site = "https://bank.example.test";
+  const shown = { question: "First pet?" };
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<form method="post" action="/session"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>' }));
+  await page.route(`${site}/session`, (route) => route.fulfill({ contentType: "text/html", body:
+    `<form method="post" action="/answer"><p id="question">${shown.question}</p><label>Security answer<input id="answer" name="answer"></label><button id="continue">Continue</button></form>` }));
+  await page.route(`${site}/answer`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="identity">Signed in</p>' }));
+  const recipe = {
+    version: 3,
+    steps: [
+      {
+        page: `${site}/login`,
+        fields: [{ selector: "#email", accepts: ["email"] }, { selector: "#password", slot: "password" }],
+        submit: "#sign-in",
+        submittedBy: "host",
+      },
+      {
+        page: `${site}/session`,
+        fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
+        submit: "#continue",
+        submittedBy: "host",
+      },
+    ],
+    signedIn: { selector: "#identity" },
+  } as const;
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const prompts: string[] = [];
+  const answers = ["synthetic-first-pet", "synthetic-first-school"];
+  /** One run's sign-in, with its own owner and masked values, as each run has. */
+  const run = () => {
+    const secrets = makeRunSecrets();
+    const ask = makeInputAsker((request) =>
+      Effect.sync(() => {
+        const question = request.questions[0];
+        prompts.push(question?.type === "credential" ? "login" : (question?.prompt ?? ""));
+        return question?.type === "credential"
+          ? { login: { ...login, saveLogin: false } }
+          : { private_answer: answers[prompts.filter((prompt) => prompt !== "login").length - 1] };
+      }),
+    );
+    return Effect.runPromise(
+      signInForRun({
+        recipe,
+        entryUrl: `${site}/login`,
+        browser: makeSignInBrowser({
+          page: browser,
+          keyboard,
+          siteOrigin: site,
+          authenticationOrigins: [],
+          onRequest: pageRequests(page),
+          typing: { typed: false },
+        }),
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+        values: askingValueHooks({ ask, register: secrets.register, site: "bank.example.test", siteOrigin: site }),
+        carries: secrets.carries,
+        site: "bank.example.test",
+        siteOrigin: site,
+      }),
+    );
+  };
+  expect(await run()).toEqual({ alreadySignedIn: false });
+  shown.question = "First school?";
+  expect(await run()).toEqual({ alreadySignedIn: false });
+  expect(prompts).toEqual(["login", `First pet? (${site})`, "login", `First school? (${site})`]);
+  for (const value of [...answers, login.password]) expectNotCarried(browser.calls, value);
 });

@@ -1,5 +1,6 @@
 import { Cause, Effect } from "effect";
 import { expect, it } from "vitest";
+import { SignInRunFailed } from "../../src/runtime/sign-in-replay.js";
 import { makeMcpJobs, mcpFailureMessage } from "../../src/standalone/mcp-jobs.js";
 
 const mintFallback =
@@ -35,4 +36,23 @@ it("reports a failed run job with the run message", async () => {
     status: "failed",
     error: `${runFallback} A dispatched website action may have taken effect; this job will not be replayed.`,
   });
+});
+
+it("says why a run's sign-in failed and what to do, naming the field and never a value", () => {
+  expect(
+    mcpFailureMessage(
+      Cause.fail(new SignInRunFailed({ code: "CredentialsRejected", reason: "password" })),
+      "run",
+    ),
+  ).toBe(
+    "Sign-in failed (CredentialsRejected): The website rejected the password given for this sign-in, and the run sends it no more. Run the tool again with the right value.",
+  );
+  expect(
+    mcpFailureMessage(
+      Cause.fail(new SignInRunFailed({ code: "MissingRecipe", reason: "unknown_version" })),
+      "run",
+    ),
+  ).toBe(
+    "Sign-in failed (MissingRecipe): The tool's saved sign-in can't be read (unknown version), so the tool doesn't run signed out. Build the tool again.",
+  );
 });
