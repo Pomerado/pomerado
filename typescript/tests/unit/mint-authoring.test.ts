@@ -120,6 +120,124 @@ it("reads every skill and guide file through a host's render, with its key", asy
   }
 });
 
+/*
+ * Guidance about the operation SDK, schemas, page readiness, sign-in, caller questions, forms,
+ * pagination and writes is shared text, so a host that composes its own text into the named
+ * sections keeps it, and the local host reads it too. One line from each shared place, with its
+ * whitespace collapsed.
+ */
+const sharedGuidance: readonly (readonly [string, string])[] = [
+  [
+    "core",
+    "A `secret` answer comes back as a handle such as `{{secret.s1}}`, never the value, which you never see.",
+  ],
+  [
+    "core",
+    "An operation is `defineOperation({ name, input, output }, async ({ kernel, sessionId, siteOrigin, siteDomain, input, decideDialog, ask, waitPastChallenge, verified, remainingMs, errors }) => ...)`.",
+  ],
+  ["core", "- Make one execute call per operation."],
+  ["core", "- The code works for every value the schema accepts."],
+  ["core", "Take the site origin from the context's `siteOrigin`."],
+  ["core", "The tools and the files you may edit are in `AGENTS.md`."],
+  ["core", "Read their bodies only when useful."],
+  [
+    "core",
+    "Inspect login markup using reviewed read-only `explore` without private credential injection.",
+  ],
+  ["core", "Only the host requests website credentials, and only during `authenticate`."],
+  ["auth", "Sign-in pages are often slow, and the next screen can take a while to show."],
+  [
+    "auth",
+    "After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json` (`nextScreen`)",
+  ],
+  [
+    "caller-input",
+    "Use a published input instead whenever the value is stable and the caller can supply it up front",
+  ],
+  ["caller-input", "One ask takes up to eight questions, with up to 50 options per choice."],
+  [
+    "caller-input",
+    "A read build's example run, or a write build's `act` step, asks the build's owner through the same request",
+  ],
+  [
+    "forms",
+    "Derive `getByRole` names from a scoped `locator.ariaSnapshot()` or a retained ARIA snapshot.",
+  ],
+  ["forms", "Preserve add/replace and single/multiple intent."],
+  ["forms", "- Walk every step for real, in the session, with the caller's values."],
+  ["pagination", "1. Validate cursor/query/account scope before browser effects."],
+  ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
+  ["writes", "A write build changes something real on the caller's account"],
+  [
+    "writes",
+    "Write `src/tool.mjs`, the `playwright` version: a Kernel script running the whole flow",
+  ],
+  [
+    "writes",
+    "Call `finish_build` with entrypoint `src/tool.mjs` and the confirming step's `executionId`",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "This file is the workspace `AGENTS.md`: the host loads it as your instructions on every turn",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "**Load large content progressively.** Know a file's size before reading it:",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "Follow these stages in order: 1. Discover the public login entry using execute purpose `explore` with `liveBrowser`.",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "- When the execute receipt explicitly has `retryable:true` and `reviewDispatch:not_sent`, resubmit that same execution",
+  ],
+  [
+    "workspace/AGENTS.md",
+    "Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller",
+  ],
+  ["workspace/AGENTS.md", "Do not manufacture success from model prose."],
+];
+
+const renderedTexts = async (directory: string, render?: (text: string) => string) => {
+  const skills = await Effect.runPromise(loadAuthoringSkills(directory, render));
+  const guide = await Effect.runPromise(loadWorkspaceGuide(directory, render));
+  const texts = new Map(skills.map((skill, index) => [skill.name, contents(skills)[index] ?? ""]));
+  for (const [path, text] of guide.files) texts.set(`workspace/${path}`, text);
+  return texts;
+};
+
+it("gives the local host and a composing host the same shared guidance", async () => {
+  // A host that composes empty text into every section keeps only what is shared.
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    const hosts = [
+      await renderedTexts("typescript/authoring"),
+      await renderedTexts(root, (text) => {
+        if (text.includes("pomerado:")) throw new Error("Uncomposed section");
+        return text;
+      }),
+    ];
+    for (const texts of hosts)
+      expect(
+        sharedGuidance.filter(
+          ([name, line]) => !(texts.get(name) ?? "").replace(/\s+/g, " ").includes(line),
+        ),
+      ).toStrictEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("leaves no heading, list or skill header of the local host's authoring empty", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const core = texts.get("core") ?? "";
+  const kernelScripts = core.slice(core.indexOf("## Kernel scripts"), core.indexOf("**The input"));
+  expect(kernelScripts.replace("## Kernel scripts", "").trim()).not.toBe("");
+  expect(texts.get("workspace/AGENTS.md")).toContain("Follow these stages in order:\n\n1. ");
+  expect(texts.get("writes")).toMatch(/^---\nname: writes\ndescription: \S/u);
+});
+
 // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
 // it. The minter records such a submit as it observes it, disabled or not.
 it("lets the minter record a sign-in submit the page has not enabled yet", async () => {
@@ -166,13 +284,13 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["1a81de9fed55fd426a8bcf05214d0550de8c3a2535b1845a87161828486e9c55", "core"],
-    ["68d408553b1ce9608d4e4b945d46593fca31ea666700fcc571434203e50e2d69", "auth"],
-    ["d994e365240de6503f2173214e0d9e541a31acc8bed4b91c6342f503abb75008", "pagination"],
-    ["97287c44e1b4629efa00f066d65ba0859cb4a4625d44b97faea7784b0a084afd", "forms"],
-    ["4b99ef8281a9e202be17a353f7a7b25e7c4da7bc00afc84088e2077be6d0683f", "writes"],
-    ["0165582715e55dbd54605afeadc426a1f5b5a3add7dee73a1d556866ef267419", "caller-input"],
-    ["a512d0e5ea0a6a7a34ce5b8635a6580b376afeddf223d7c63de64e9ac4674755", "workspace/AGENTS.md"],
+    ["c258929762fee9e3a62a458dcef5283e2fe3a0c0432037e156bb1007b7b5521e", "core"],
+    ["83f753f94df69c889a3c5b0946027b5ce31f663b68ad8cd5bc596ff360dd8fdc", "auth"],
+    ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
+    ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
+    ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
+    ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
+    ["87803f3cff6aab719f0ecbc528747b306c2e4dad9d6a0f9cb69435a4cb869f58", "workspace/AGENTS.md"],
     ["f0ecedee023825939be935b5444aadc0ad57421c1a047127caae2d4a564186d1", "workspace/README.md"],
   ]);
 });

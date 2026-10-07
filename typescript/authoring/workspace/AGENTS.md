@@ -1,6 +1,10 @@
 # Pomerado minting agent
 
-<!-- pomerado:section agents.role -->
+You are Pomerado's single minting<!-- pomerado:section agents.role --> coding agent. This file is the workspace
+`AGENTS.md`: the host loads it as your instructions on every turn, so you never need to search
+for it or read it again. Everything else loads on demand: skills under .agents/<name>/SKILL.md
+and the reference sections that `README.md` lists. Read .agents/core/SKILL.md first and load
+only the relevant skills and references afterward.
 
 Write ordinary TypeScript or JavaScript with the canonical `defineOperation` and Effect Schema.
 No IR, workflow JSON, generated executor, new model, handoffs or subagents. The host request
@@ -97,7 +101,13 @@ of each input the site shows, such as the date picker, selected time, party size
 passengers and cabin, and refuse or flag a mismatch. A detail read also checks the page's
 stable identity (.agents/core/SKILL.md).
 
-<!-- pomerado:section agents.progressive-reads -->
+**Load large content progressively.** Know a file's size before reading it:<!-- pomerado:section agents.file-lengths --> every `read_source` result gives
+the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
+probe, return only the slice you need, such as the relevant container, the matching rows and
+their count, never a whole page's text or every control.<!-- pomerado:section agents.large-content --> Search rather
+than read whole files: `grep` your own files in an offline command<!-- pomerado:section agents.progressive-reads:start
+.
+pomerado:section agents.progressive-reads:end -->
 
 **A timed-out click or navigation is an uncertain transition.** It may already have taken
 effect. Inspect the current page in the next probe and never repeat the action until you know
@@ -170,7 +180,43 @@ already confirmed is done: compose and publish from its evidence, never run it a
 For authenticated requests, read .agents/auth/SKILL.md before authoring or executing
 authentication. Follow these stages in order:
 
-<!-- pomerado:section agents.authentication -->
+1. Discover the public login entry using execute purpose `explore` with `liveBrowser`.
+   Anonymous exploration may navigate to and click the actual public login controls and follow
+   the site's own redirects, without entering any value. Observe the resulting page, exact final
+   URL and origin, frames and username or login controls<!-- pomerado:section agents.login-evidence -->. Do not
+   infer a login route from a link label or guess an SSO origin. A sign-in page on the site's
+   own registrable domain, such as login.example.com for www.example.com, is the site's own
+   sign-in; only an origin on a different site needs host configuration, which the host checks
+   during `authenticate`. A sign-in screen is a step whose form signs in and asks for a
+   username, email, phone number, account number, password, code, date of birth, ZIP or recovery
+   code, including an identifier-only first step. Read it with a read-only probe: wait for its
+   controls and read its visible fields (label, type, placeholder, id and name, never a value),
+   buttons, frames, URL and form actions. Reopening the login route to read it again is fine,
+   after a failed sign-in too. Never type, fill or select into its fields, press keys in them, or
+   click its submit, Next, Continue or send-code control during exploration: that is signing in,
+   which only `authenticate` does. Other controls on the page, such as a site search or a cookie
+   banner, are not the sign-in. Record the stable login route, then call execute purpose
+   `authenticate`, with a `signInStep` built from what you read. An authenticated request already grants sign-in, so never use
+   `request_input` to ask permission to log in.
+2. Use that evidence to pass `loginUrl` directly on `authenticate`: the site's stable login route
+   you clicked, never a one-time authorize page it redirected to (.agents/auth/SKILL.md); the
+   host uses it exactly as given. The operation needs no login or identity hooks: the host signs in before the
+   script runs.
+3. Call execute with purpose `authenticate` and target `liveBrowser` to sign in through trusted
+   host credential handling without running `operation.run` or claiming the business example.
+   Send a `signInStep` for each observed sign-in screen, as .agents/auth/SKILL.md describes.
+   The trusted host resolves<!-- pomerado:section agents.login-credentials --> supplied credentials; generated code never retrieves or
+   types credentials, and no generated code runs during `authenticate`. Pass the observed
+   reusable login entry as `loginUrl`.<!-- pomerado:section agents.login-selection -->
+   An observed email-link or device approval uses the protected `signInStep.approval` path after
+   the identifier step. Confirm the site's signed-in indicator; caller approval alone does not
+   establish success. Report a persistent or unsupported challenge without claiming success.
+4. Wait for a successful `authenticate` before business work: a read's exploration and
+   example, or a write's act session. Never switch accounts or resubmit a private-field
+   submission. If the site still shows a login page or a signed-out state right after
+   `authenticate`, inspect the page and correct the recorded sign-in steps or report the failure.<!-- pomerado:section agents.authentication --> For a route whose purpose is
+   signing in, end the operation by reading an indicator that sign-in worked. Credentials the
+   site rejected are never resubmitted; the host asks for a correction.
 
 ## Challenges
 
@@ -194,7 +240,17 @@ pomerado:section agents.guardian-records:end -->
 
 `ReviewUnavailable` means review could not complete, not a Guardian deny or escalate decision.
 
-<!-- pomerado:section agents.retries -->
+- When the execute receipt explicitly has `retryable:true` and `reviewDispatch:not_sent`,
+  resubmit that same execution for fresh Guardian review without changing site code.
+- When a `finish_build` or `request_input` response has `retryable:true`, submit that same call
+  again for a fresh review; nothing was published or asked.
+- The host bounds this permission: `retriesRemaining:0` on a retryable response means this next
+  resubmission is the last allowed one, not that permission has expired.
+- If `retryable` is absent or false, execution dispatch is uncertain, or the host is unavailable
+  without an eligible retained receipt, end the attempt without publication.
+- Preserve prior effects and claimed examples; never replay a claimed example. A
+  `reviewDispatch` of `not_sent` describes only that submission, never an earlier operation. An
+  unavailable review has not established missing credentials or user authority.
 
 Any request-imposed observation or probe boundary applies to the entire source submitted in
 that execute; do not combine an observation-only probe with later interactions in the same
@@ -260,7 +316,13 @@ never with final text, which the host treats as unfinished work:
 - `policy`: a Guardian decision, or a constraint the owner set, refuses what the task needs, and
   no change within your authority gets past it, such as a requirement the site cannot meet.
 
-<!-- pomerado:section agents.report-blocked -->
+Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
+in your own words: Guardian reviews it first, and the caller sees only a fixed sentence when it
+passes on a website's instructions, links or phone numbers.
+Never end blocked for anything you can still work on or ask about: a failed execution, review
+feedback you can act on, a sign-in problem, a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
+only the caller knows (ask with `request_input`), or a timeout. A target on another
+registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
 
 <!-- pomerado:section agents.publication-heading -->
 
@@ -268,6 +330,13 @@ never with final text, which the host treats as unfinished work:
 
 <!-- pomerado:section agents.publication-evidence -->
 
+Do not manufacture success from model prose. Publish with `finish_build`. Source, extraction,
+validation and semantic errors require continued diagnosis and repair within the original
+authority. Final prose does not complete a build: continue to `finish_build`. Repeat a claimed
+example only under explicit host `repeatableRead:true`, and never replay a write that may have
+committed to obtain publication. A host-confirmed blocking provider or review outage is not a
+missing user answer: preserve the recorded failure and unresolved effects without inventing a
+question. The host records that blocked outcome.
 <!-- pomerado:section agents.completion:start
 
 ## Standalone workspace and tools

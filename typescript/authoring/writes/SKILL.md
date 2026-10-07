@@ -1,8 +1,26 @@
-<!-- pomerado:section writes.frontmatter -->
+---
+name: writes
+description: Do a write build's requested task once as a live act session, confirm it, then compose and publish its script without running it again.
+---
 
 # Do the task once, then compose its script
 
-<!-- pomerado:section writes.task -->
+A write build changes something real on the caller's account: an order, a booking,
+a submitted form, a saved profile. There is no practice run. The write is the whole
+task the request asks for, done once, live, with the caller's values, as a series
+of `act` steps. When the caller's input is empty (`{}`), pass the request's values and
+the owner's answers as `exampleInput` (JSON text) on each act step that needs them. The
+first act step that passes it fixes it: later steps repeat it unchanged or omit it, and
+every step from then on runs that one input. Decide from the
+request and the site which inputs are required, and keep them required. An optional
+input plus a declared question the tool asks before any effect is only for a value the
+request genuinely leaves open; never make a value the request states optional with
+nothing that asks. It may take several write steps: filling in and advancing a
+multi-step form, choosing options, saving, then submitting. Drafts, autosaves and the
+saves a site makes at each step along the way are part of that one task. You never
+redo the whole task, and never redo a step that finished; run a step again only when
+a fresh read of the page shows it did not finish, or the task cannot complete without it. Then you compose the
+published script from what those steps did and publish it. Nothing runs again.
 
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
@@ -71,7 +89,26 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
 
 ## Compose and publish
 
-<!-- pomerado:section writes.compose -->
+Write `src/tool.mjs`, the `playwright` version: a Kernel script running the whole
+flow from the site origin page and the caller's input, with the same calls, the commit
+exactly once, and the same confirmation or read-back the session recorded. The call
+that reads it, the commit call or a read-only call after it as in the session, reads
+only what the session's confirming step read and returns it; the script matches those
+values to the input and calls `verified()`, as the references do. Nothing runs live
+before publishing, so a read the session never made, added to that call, can fail
+after the write has landed, and a run that hits it reports a successful write as
+possibly completed. Declare the script's contract, `defineOperation({ name,
+input, output, write: { confirmation: "message", commits: ["place-order"] } }, run)`
+(or `"readback"`, or `"unverifiable"` when the site offers neither), marking the
+same commit steps as the session. A script declared `unverifiable` cannot call
+`verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
+and one that declares a mark no `act` step of the session entered is refused as
+`commit_marks_unentered`. If the declaration names the wrong marks, correct it to
+match the marks the session actually entered. If the completed session entered no
+marks, it cannot publish: changing its source or entering a mark in a later read
+cannot show that the earlier commit was marked. End the build and explain that
+the task completed but its commit steps were not marked; never repeat the write
+to add them.
 
 Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required when the site requires a choice, optional
@@ -91,7 +128,21 @@ uncertain result and a later read-back showed the write landed.
 
 <!-- pomerado:section writes.alternate-version -->
 
-<!-- pomerado:section writes.finish -->
+Call `finish_build` with entrypoint `src/tool.mjs` and the confirming step's
+`executionId` (for an `unverifiable` write, the step that committed). The host reads
+the script's contract offline, checks that the input the session ran (the caller's own,
+or the `exampleInput` the first act step to pass one fixed) decodes against it and that
+the named step recorded the declared confirmation, then publishes. A
+`not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
+`contract_input_mismatch` means correct the source and call `finish_build` again;
+never run the write again.<!-- pomerado:section writes.finish --> `write_not_submitted` means no
+`act` step recorded a confirmation, sent a non-read request or entered a commit mark;
+an unmarked GET or websocket commit is invisible to that check. Read back first. If
+the write happened, publish with `readback`. If the read-back shows it did not, do the
+write once, marking its commit step, and read its confirmation. If no read-back can tell,
+never submit again: publish it as `unverifiable`. Filling a form or an offline example
+is not the write. An unreadable step output never justifies a run either: the write
+publishes with its output recorded as unavailable.
 
 After a `not_published`, live `act` steps are open again while the write session is still
 open (a commit that recorded its confirmation stays done), on a fresh browser on a new,
