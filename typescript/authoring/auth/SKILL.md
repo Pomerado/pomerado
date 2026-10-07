@@ -193,6 +193,22 @@ An operation may find a field-specific refusal after the host's sign-in setup. U
 
 The caller receives `credentials_rejected` and `rejected_field`; this requests no repair. Preserve every named commit mark. A write whose commit may have been sent still returns `outcome_unknown` with `possible_commit`; read back its outcome before any retry. A refusal before any declared commit step was entered stays rejected without a possible commit.
 
+## Staying signed in during an operation
+
+Some sites keep their session only in the page, so a full page load signs them out. The runtime
+calls `ensureSignedIn()` once before your operation code runs, so every signed-in operation starts
+signed in. After that, call `const { signedInAgain } = await ensureSignedIn()` after each full page
+load in the middle of the script: a `page.goto`, a reload, or a click or submit that loads a new
+document. In-page navigation in a single-page app needs no call. The host checks the signed-in
+marker on the current page without moving it and signs in again only when the page is signed out.
+When `signedInAgain` is true, the sign-in left the page somewhere else: open the page you were on
+again before you go on. The operation's deadline pauses while the host signs in.
+
+Never call it between a write's commit and its read-back: read the outcome back first. Let its
+failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
+could not sign in again, and the run reports that the site did not keep its session. Never catch it
+to go on signed out, and never sign in from the script yourself.
+
 # A direct sign-in request
 
 A direct sign-in request signs in with one host-filled HTTP request instead of an autofill form submission. Runs are faster with it, so the host prefers it once a mint proves it.
