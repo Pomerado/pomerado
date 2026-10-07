@@ -20,28 +20,85 @@ import type { SessionTyping } from "./authentication.js";
 const keptPages = 4;
 
 /**
+ * Browser code that defines `within(ms, work)`: what `work` gives, or `late` once `ms` passed. A
+ * page call such as `evaluate` has no time limit of its own, and a host call that outlasts its
+ * limit stops the browser for the rest of the build, so the host bounds each one.
+ */
+const withinCode = `const late = Symbol("late");
+const within = (ms, work) => {
+  let timer;
+  const expiry = new Promise((resolve) => {
+    timer = setTimeout(resolve, ms, late);
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+};`;
+
+/** How long the host waits, in all, before it reads a signed-out page, and for what. */
+const settle = { totalMs: 3000, quietMs: 1500 };
+
+/**
  * Browser code that returns the primary tab's address and serialized document, with its scripts'
  * and styles' text left out: the match never reads them, and they would take most of the 1 MiB a
  * host call may return. It returns null for a page that cannot show the site signed out, which a
  * selector would find nothing on whatever the marker:
  * - a page off the site's origin, such as a sign-in site's or a browser error page;
  * - a page that shows nothing, no text, form control or image in its body, such as the blank page
- *   a reset leaves when the root fails to load, or a client-rendered page's empty shell. It gets
- *   up to 3 seconds to render first, its load and a quiet network included, so a client-rendered
- *   page is read once it renders past a splash screen such as "Loading…".
+ *   a reset leaves when the root fails to load, or a client-rendered page's empty shell.
+ *
+ * Before it reads the page, the host waits up to 3 seconds in all: for its load, then for its
+ * network to go quiet, then for its document to go 1.5 seconds without a change. A
+ * client-rendered page whose script renders its header within about 1.5 seconds of its network
+ * going quiet is read rendered, past a splash screen such as "Loading…". A page that renders
+ * later, or keeps changing, is read as it is when the 3 seconds end, and one that still shows
+ * nothing is skipped. A wait runs only while time is left, since Playwright reads a timeout of 0
+ * as no limit, and each page call is bounded, so the host call ends well inside its 15 seconds.
  */
 const signedOutPageCode = (targetId: string, siteOrigin: string) => `${primaryPageCode(targetId)}
+${withinCode}
 const onSite = () => URL.parse(primary.url())?.origin === ${JSON.stringify(siteOrigin)};
 if (!onSite()) return null;
-const deadline = Date.now() + 3000;
-const left = () => Math.max(0, deadline - Date.now());
-await primary.waitForLoadState("load", { timeout: left() }).catch(() => undefined);
-// A splash screen already shows something at load, so every page waits for a quiet network,
-// by when a client-rendered header has usually rendered.
-await primary.waitForLoadState("networkidle", { timeout: left() }).catch(() => undefined);
+const deadline = Date.now() + ${settle.totalMs};
+const wait = async (start) => {
+  const ms = Math.floor(deadline - Date.now());
+  if (ms > 0) await start(ms).catch(() => undefined);
+};
+await wait((timeout) => primary.waitForLoadState("load", { timeout }));
+await wait((timeout) => primary.waitForLoadState("networkidle", { timeout }));
+await wait((timeout) =>
+  within(
+    timeout,
+    primary.evaluate(
+      ([quiet, limit]) =>
+        new Promise((resolve) => {
+          let still;
+          let cap;
+          const done = () => {
+            observer.disconnect();
+            clearTimeout(still);
+            clearTimeout(cap);
+            resolve();
+          };
+          const observer = new MutationObserver(() => {
+            clearTimeout(still);
+            still = setTimeout(done, quiet);
+          });
+          observer.observe(document, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            characterData: true,
+          });
+          still = setTimeout(done, quiet);
+          cap = setTimeout(done, limit);
+        }),
+      [${settle.quietMs}, timeout],
+    ),
+  ),
+);
 const shows = () =>
-  primary
-    .evaluate(() => {
+  within(
+    1000,
+    primary.evaluate(() => {
       const body = document.body;
       if (body === null) return false;
       if (body.innerText.trim() !== "") return true;
@@ -49,22 +106,27 @@ const shows = () =>
         "input:not([type=hidden]), select, textarea, button, img, svg, canvas, video",
       );
       return [...shown].some((element) => element.checkVisibility());
-    })
-    .catch(() => false);
+    }),
+  ).then(
+    (shown) => shown === true,
+    () => false,
+  );
 let rendered = await shows();
-while (!rendered && left() > 0) {
-  await new Promise((resolve) => setTimeout(resolve, Math.min(250, left())));
+while (!rendered && deadline - Date.now() > 0) {
+  await new Promise((resolve) => setTimeout(resolve, 250));
   rendered = await shows();
 }
 if (!rendered || !onSite()) return null;
-return {
-  url: primary.url(),
-  dom: await primary.evaluate(() => {
+const dom = await within(
+  5000,
+  primary.evaluate(() => {
     const root = document.documentElement.cloneNode(true);
     for (const element of root.querySelectorAll("script, style")) element.textContent = "";
     return "<!doctype html>" + root.outerHTML;
   }),
-};`;
+).catch(() => late);
+if (dom === late || !onSite()) return null;
+return { url: primary.url(), dom };`;
 const SignedOutPage = Schema.NullOr(Schema.Struct({ url: Schema.String, dom: Schema.String }));
 
 /**
@@ -98,21 +160,25 @@ const makeSignedOutPages = (page: AutofillPage, siteOrigin: string) => {
 /**
  * Browser code that says whether the primary tab shows the direct answer to a form it submitted,
  * with no redirect after it. Opening that address again would send a GET in place of what the
- * form sent, such as a POST, so it may load another page. A history it cannot read counts too.
+ * form sent, such as a POST, so it may load another page. A history or page that does not answer
+ * within 2 seconds counts too.
  */
 const formAnswerCode = (targetId: string) => `${primaryPageCode(targetId)}
+${withinCode}
 const history = await context.newCDPSession(primary);
 let submitted = true;
 try {
-  const { currentIndex, entries } = await history.send("Page.getNavigationHistory");
-  submitted = entries[currentIndex]?.transitionType === "form_submit";
+  const read = await within(2000, history.send("Page.getNavigationHistory"));
+  if (read !== late) submitted = read.entries[read.currentIndex]?.transitionType === "form_submit";
 } finally {
   await history.detach().catch(() => undefined);
 }
 if (!submitted) return false;
-return await primary.evaluate(
-  () => (performance.getEntriesByType("navigation")[0]?.redirectCount ?? 0) === 0,
-);`;
+const redirects = await within(
+  2000,
+  primary.evaluate(() => performance.getEntriesByType("navigation")[0]?.redirectCount ?? 0),
+).catch(() => late);
+return redirects === late || redirects === 0;`;
 
 /** How long a loaded page may take to show the marker, as checks one interval apart. */
 const markerSettle = { checks: 6, interval: Duration.millis(500) };
