@@ -73,6 +73,10 @@ The package now holds the code the local host runs, the hook interfaces another 
 - A local build remembers, for its whole session, whether the host typed a sign-in value into the page. Once it has, every later sign-in screen, in the same build or a later build in that session, is judged as typed into. Its submit guard trusts a typed secret in a form destination only inside the site's own or a configured sign-in origin, never in a path or query the page chose, and a refusal names only origins judged before the typing. Before, each screen was judged as if nothing had been typed. `makeLiveAuthentication` takes an optional `typing` record to share this across authentications on one browser. Without it, each authentication keeps its own.
 - A local sign-in no longer stops on a screen that shows a value the caller gave, such as a password screen that shows the typed email in its text, label or placeholder. Guardian's review of the step used to carry the screen as it was, so the check that keeps caller values out of reviewed source refused it with `SourceUnavailable` and the screen never ran. The screen now reaches Guardian through `screenMintText`, with each such value masked, and that check still refuses any value left. The review also tells Guardian that the host fills the login's values, which never appear in the review.
 
+### Fixes
+
+- A private review that fails now forwards its final timing record to the host's model trace observer, as a successful one does. The record carries only the timing, never the error or other detail.
+
 ## 0.3.0
 
 This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.
