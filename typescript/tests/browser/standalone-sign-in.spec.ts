@@ -132,7 +132,7 @@ const toolResult = (requests: readonly ModelRequest[], callId: string) => {
   if (result === undefined) throw new Error(`No ${callId} result`);
   return result;
 };
-/** Answers each sign-in question with the shop account's value for its slot. */
+/** Answers each sign-in question with the shop account's value for it, and confirms a notice. */
 const answers = (asked: InputRequest[]) =>
   makeInputAsker((request) =>
     Effect.sync(() => {
@@ -140,11 +140,13 @@ const answers = (asked: InputRequest[]) =>
       return Object.fromEntries(
         request.questions.map((question) => [
           question.id,
-          question.id === "password"
-            ? shopAccount.password
-            : question.id === "code"
-              ? shopCode
-              : shopAccount.username,
+          question.type === "confirm"
+            ? { confirmed: true }
+            : question.id === "password"
+              ? shopAccount.password
+              : question.id === "code"
+                ? shopCode
+                : shopAccount.username,
         ]),
       );
     }),
@@ -1110,5 +1112,45 @@ for (const [entry, codeSteps] of codeEntries)
         expect.objectContaining({ signedIn: true }),
       );
       expect(JSON.stringify(mintRequests)).not.toContain(shopCode);
+    });
+  });
+
+for (const [entry, step] of [
+  ["a rejected value", { rejected: { slot: "password" } }],
+  ["an approval", { approval: "device" }],
+] as const)
+  test(`${entry} forgets the pages explored before it, so the marker check never loads them`, async () => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "Original SDKs, Chromium, a host sign-in, two explorations and a marker check",
+    });
+    test.setTimeout(60_000);
+    await withShop(async (shop, endpoint) => {
+      let searchLoads: number | undefined;
+      const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+        markerFiles,
+        [signInFields()],
+        [explore("search")],
+        // The sign-in goes on: the pages explored before this step may be screens of it.
+        [signInStep(step, "sign_in_step")],
+        [explore("account")],
+        () => {
+          searchLoads = shop.state.searchPageLoads;
+          return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+        },
+      ]);
+      expect(objects(toolResult(mintRequests, "sign_in_step"))).toContainEqual(
+        expect.objectContaining({ executionId: expect.any(String), status: "completed" }),
+      );
+      expect(searchLoads).toBe(1);
+      // The search page was explored before the step, so the check has no other page.
+      expect(markerResult(mintRequests, "account")).toEqual({
+        kind: "host_signed_in_marker",
+        status: "passed",
+        signedOutSnapshot: "absent",
+        signedInNow: true,
+        freshLoad: true,
+      });
+      expect(shop.state.searchPageLoads).toBe(1);
     });
   });
