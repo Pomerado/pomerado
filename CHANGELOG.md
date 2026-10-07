@@ -2,8 +2,18 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- A sign-in step's secret field may take the new `private_answer` slot, for the answer to a security question. `SecretSlots` in `pomerado/core/destinations/autofill-contracts` adds it, and so do `ExtraSecretSlot` and `AutofillSlot` in `pomerado/core/destinations/autofill-step`. `RejectedMarker` does not accept it.
+  - Migrate by handling `"private_answer"` in any exhaustive check on a slot.
+- A sign-in check (`signInStep.signedIn`) now returns `signedIn: false` with `failed: "challenge_form_visible"` while a field the build's sign-in steps recorded for a code, a recovery code or a private answer still shows, in the page or a visible frame. `AutofillSignedInCheck`'s `failed` adds `"challenge_form_visible"`, and each field of `AutofillScreens` takes an optional `slot`, which the check reads.
+  - Migrate by handling `"challenge_form_visible"` in any exhaustive check on `failed`, and by passing each field's `slot` in the screens you give `checkAutofillSignedIn`.
+- `InsertionRefusal` in `pomerado/core/destinations/credential-keyboard` adds `"question_changed"`: a private answer's question no longer reads as the host inspected it. The fill reports it under the `change` check.
+  - Migrate by handling `"question_changed"` in any exhaustive check on a native insertion's answer.
+
 ### Other changes
 
+- A sign-in screen can record a security-question answer field with `slot: "private_answer"` and, when the question has one visible match in that field's frame, the question's `questionSelector`. The local host asks for each answer on every step that has one, from the question it reads on the page or else the field's label, and never reuses or saves an answer. It reads the question again before it focuses the field and just before it types, and refuses the field if the question changed. No answer reaches the minting agent, Guardian, generated code or any saved file. A private answer has no rejection marker and no automatic correction. The auth skill describes the slot.
 - The core authoring skill has a write build whose caller sent an empty input pass the request's values as `exampleInput` on each act step that needs them, as a read does on its example. An optional input plus a declared question is only for a value the request leaves open, and a required field is never made optional with nothing that asks.
 - Guardian's question review counts only the host's own masks and `{{secret.<id>}}` handles as stand-ins for a supplied value. A placeholder written into the intent text in place of a value, such as `"[redacted value]"`, supplies nothing, so a question asking for that value is not redundant. The caller-input skill says the same.
 - Guardian's execution review applies its `intent_derived` input rule to a write's act step as well as a read's example.
