@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
+import type { AutofillPopup, RejectedMarker } from "../destinations/autofill-contracts.js";
 import {
   identifierPreference,
   type AutofillField,
@@ -12,10 +13,12 @@ import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-
 import {
   Unanswered,
   type PrivateQuestion,
+  type SignInLogin,
+  type SignInRecipeStep,
   type SignInValue,
   type SignInValueHooks,
 } from "../destinations/sign-in-recipe.js";
-import type { WebsiteCredentials } from "./authentication.js";
+import type { CredentialRejectedField, WebsiteCredentials } from "./authentication.js";
 import type { InputAsker, Question } from "./input-request.js";
 
 /** An identifier a site may ask for besides the username: it picks which account signs in. */
@@ -460,3 +463,141 @@ export const makeSignInValues = <E>(hooks: SignInValueHooks<E>, site: string) =>
     given: () => given,
   };
 };
+
+/**
+ * The login a run signs in with: none until its value-free check finds a screen that needs it,
+ * then read once for the whole run. A read that failed stays failed, so a replay that tries again
+ * never asks again, and a correction the owner gives replaces what the run holds.
+ */
+export const makeRunLogin = <E>(login: SignInLogin<E>) =>
+  Effect.gen(function* () {
+    let held = login.held();
+    const read = yield* Effect.cached(
+      login.values.pipe(
+        Effect.tap((values) =>
+          Effect.sync(() => {
+            held ??= values;
+          }),
+        ),
+      ),
+    );
+    return {
+      held: () => held,
+      values: Effect.suspend(() => (held === undefined ? read : Effect.succeed(held))),
+      hold: (values: WebsiteCredentials) => {
+        held = values;
+      },
+    };
+  });
+
+/**
+ * What a run's sign-in keeps across its replays, in memory only: the value each field last went
+ * out with, the values the site rejected, which are never filled again, the corrections asked so
+ * far, the codes asked and filled after a rejection, and the identifier field the login's username
+ * went into, which counts as the username.
+ */
+export interface ReplayRetryState {
+  readonly rejectedValues: Partial<Record<AutofillSlot, Set<string>>>;
+  readonly lastFilled: Partial<Record<AutofillSlot, string>>;
+  readonly correctionRequests: Partial<Record<AutofillSlot, number>>;
+  readonly codeRequests: { current: number };
+  readonly codeAttempts: { current: number };
+  readonly primary: { kind?: IdentifierKind };
+}
+
+export const makeReplayRetryState = (): ReplayRetryState => ({
+  rejectedValues: {},
+  lastFilled: {},
+  correctionRequests: {},
+  codeRequests: { current: 0 },
+  codeAttempts: { current: 0 },
+  primary: {},
+});
+
+/** A rejected field as corrections count it: the field the login's username went into is its username. */
+export const logicalRejectedField = (
+  slot: RejectedMarker["slot"] | AutofillSlot,
+  primaryKind?: IdentifierKind,
+) => (slot === primaryKind ? "username" : slot);
+
+/**
+ * The fields the recipe's recorded rejection markers show now, credentials before codes, each
+ * once; `unavailable` when any marker could not be read, so a partial reading never decides. A
+ * marker only says whether its selector shows, never what the page says.
+ */
+export const recordedRejections = <E>(
+  markerVisible: (
+    selector: string,
+    page: string,
+    popup?: AutofillPopup,
+  ) => Effect.Effect<boolean, E>,
+  steps: readonly SignInRecipeStep[],
+): Effect.Effect<readonly RejectedMarker["slot"][] | "unavailable"> =>
+  Effect.gen(function* () {
+    const markers = steps
+      .flatMap((step) =>
+        (step.rejectedMarkers ?? []).map((marker) => ({
+          marker,
+          page: step.page,
+          popup: step.popup,
+        })),
+      )
+      .sort(
+        (left, right) => Number(left.marker.slot === "code") - Number(right.marker.slot === "code"),
+      );
+    const rejected = new Set<RejectedMarker["slot"]>();
+    for (const { marker, page, popup } of markers) {
+      const visible = yield* Effect.exit(
+        Effect.suspend(() => markerVisible(marker.selector, page, popup)),
+      );
+      if (Exit.isFailure(visible)) {
+        if (Cause.isInterrupted(visible.cause)) return yield* Effect.interrupt;
+        return "unavailable" as const;
+      }
+      if (visible.value) rejected.add(marker.slot);
+    }
+    return [...rejected];
+  });
+
+/**
+ * The owner's correction of a login the site rejected (`fields`, the username or the password):
+ * both fields are asked together, at most twice per field in the run, and asked again while the
+ * answer repeats a value the site rejected, which is never sent. Once a field's corrections run
+ * out, the run fails with `reject` for it.
+ */
+export const correctRejectedLogin = <E, F>(input: {
+  readonly fields: readonly CredentialRejectedField[];
+  readonly retry: ReplayRetryState;
+  readonly ask: () => Effect.Effect<WebsiteCredentials, E>;
+  readonly reject: (field: CredentialRejectedField) => F;
+}): Effect.Effect<WebsiteCredentials, E | F> =>
+  Effect.gen(function* () {
+    const { retry } = input;
+    const logical = [
+      ...new Set(
+        input.fields
+          .map((slot) => logicalRejectedField(slot, retry.primary.kind))
+          .filter((slot) => slot === "username" || slot === "password"),
+      ),
+    ];
+    const rejectedUsernames = retry.rejectedValues.username ?? new Set<string>();
+    const rejectedPasswords = retry.rejectedValues.password ?? new Set<string>();
+    while (
+      logical.length > 0 &&
+      logical.every((field) => (retry.correctionRequests[field] ?? 0) < 2)
+    ) {
+      for (const field of logical)
+        retry.correctionRequests[field] = (retry.correctionRequests[field] ?? 0) + 1;
+      const answer = yield* input.ask();
+      if (
+        !rejectedUsernames.has(answer.username) &&
+        (answer.password === undefined || !rejectedPasswords.has(answer.password))
+      )
+        return answer;
+    }
+    const exhausted = input.fields.find(
+      (field) =>
+        (retry.correctionRequests[logicalRejectedField(field, retry.primary.kind)] ?? 0) >= 2,
+    );
+    return yield* Effect.fail(input.reject(exhausted ?? input.fields[0] ?? "password"));
+  });

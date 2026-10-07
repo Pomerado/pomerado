@@ -7,6 +7,8 @@ import { signInRecipe, type RecordedSignInStep } from "../../src/destinations/si
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
+import * as pomerado from "../../src/standalone/index.js";
+import { SignInRunFailed } from "../../src/runtime/sign-in-replay.js";
 import { screenedSignIn } from "../../src/standalone/mint-publication.js";
 
 /** A verified sign-in's recipe as a build publishes it: selectors and slots, never a value. */
@@ -86,17 +88,26 @@ it("reads an artifact written without a sign-in as it always was", () =>
   }));
 
 it.each([
-  [{ ...signIn.recipe, version: 4 }, "version this host does not know"],
-  [{ ...signIn.recipe, version: 2 }, "not one this host can read"],
-  ["not json", "not one this host can read"],
-])("refuses an artifact whose recipe it cannot read (%#)", (recipe, refusal) =>
+  [{ ...signIn.recipe, version: 4 }, "unknown_version"],
+  [{ ...signIn.recipe, version: 2 }, "invalid"],
+  ["not json", "invalid"],
+  [undefined, "missing"],
+])("refuses an artifact whose recipe it cannot read (%#)", (recipe, reason) =>
   scratch(async (directory) => {
     await run(writeArtifact(directory, { ...source, signIn }));
-    await writeFile(
-      join(directory, "auth-fill.json"),
-      typeof recipe === "string" ? recipe : JSON.stringify(recipe),
-    );
-    await expect(run(readArtifact(directory))).rejects.toThrow(refusal);
+    if (recipe === undefined) await rm(join(directory, "auth-fill.json"));
+    else
+      await writeFile(
+        join(directory, "auth-fill.json"),
+        typeof recipe === "string" ? recipe : JSON.stringify(recipe),
+      );
+    // The run fails before signing in or running anything, rather than running signed out.
+    const failure = await run(Effect.flip(readArtifact(directory)));
+    expect(failure).toMatchObject({ _tag: "SignInRunFailed", code: "MissingRecipe", reason });
+    // A library caller tells it apart with the class `pomerado` exports.
+    expect(failure).toBeInstanceOf(pomerado.SignInRunFailed);
+    expect(pomerado.SignInRunFailed).toBe(SignInRunFailed);
+    expect(failure.message).toContain("doesn't run signed out");
   }));
 
 it("refuses a version 2 recipe that names a question selector before writing it", () =>
@@ -359,10 +370,12 @@ it("packages a client-neutral MCP server entry that holds no key", async () => {
       "Each call starts at the site root of the URL in deployment.json and opens any deeper page itself.",
     );
     expect(readme).not.toContain("Each call opens the URL");
-    // A run uses only the URL and the authority's tool hints from deployment.json.
+    // A run uses the URL, the authority's tool hints and, to sign in, the sign-in origins from
+    // deployment.json.
     expect(readme.replaceAll(/\s+/gu, " ")).toContain(
-      "A run doesn't check authority, intent or sign-in origins, and edits to src/ or deployment.json aren't reviewed.",
+      "A run doesn't check authority or intent, and edits to src/ or deployment.json aren't reviewed. A run that signs in replays its sign-in only on the site and the sign-in origins in deployment.json.",
     );
+    expect(readme).not.toContain("intent or sign-in origins");
     expect(readme).not.toContain("pinned");
     expect(readme).not.toContain("codex-mcp.toml");
     expect(await readFile(launcher, "utf8")).not.toContain("Codex");

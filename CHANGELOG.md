@@ -41,7 +41,16 @@
   - `writeArtifact` writes `auth-fill.json` with each screen's keys in one fixed order, indented two spaces, with no final newline, so the same recipe gives the same bytes.
   - `auth-fill.json` is reserved, like `pomerado.json`: an artifact's source may not use the name.
   - `readArtifact` refuses an artifact whose recipe it cannot read or whose version it does not know. An artifact with no `signIn` reads as before.
-  - A run in a new session still starts signed out.
+- A run of an artifact with a published sign-in signs in with its recipe before the operation runs.
+  - It first replays the recipe without values, and asks nothing when the session already shows the signed-in check. Otherwise it asks for the login once, as one `credential` question that is never saved, and for each code, date of birth, ZIP code or missing identifier a screen needs, in the site's words. A security answer is asked on every run, from the question its screen shows then. Values stay in memory for the run.
+  - A rejected username or password is asked for again at most twice. A correction that repeats a value the site rejected is never sent, and counts as one of the two. A rejected code gets two fresh ones at most, as in a build.
+  - The entry page must be on the site or a configured sign-in origin, and each screen on the origin its build recorded.
+  - A run that can't sign in fails with `SignInRunFailed` before its operation runs. Its `code` is `CredentialsRejected`, `NeedsInput`, `RecipeFailed` or `MissingRecipe`, and its `reason` names a field or step, never a value. A security question that changed before its answer was typed is `NeedsInput` with `question_changed`, and an entry page that didn't load is `RecipeFailed` with `entry_page_unavailable`. A browser failure during the sign-in fails the run as it would during the operation.
+  - An MCP call reports it as `Sign-in failed (code)` with what to do next, and without the warning that a website action may have taken effect, since the operation never ran.
+  - `readArtifact` fails with `SignInRunFailed` and code `MissingRecipe` for a recipe that is missing, unreadable or of a version the host doesn't know, with `reason` `missing`, `invalid` or `unknown_version`.
+  - An artifact with no `signIn`, as 0.2.0 wrote it, runs as before.
+  - `pomerado` exports `SignInRunFailed`.
+  - Migrate a library caller that runs a signed-in artifact by answering the login question through its `ask`, and by handling `SignInRunFailed`.
 - `makeLiveAuthentication` is no longer exported from `pomerado`. `createPomerado` signs in itself.
 - `HostRefusal.cause` in `pomerado/core/destinations/autofill-refusal` is now any `InsertionRefusal` from `pomerado/core/destinations/credential-keyboard`, not only `"question_changed"`. `typingRefusal` sets it to the finite cause of a native insertion that inserted nothing, under the `typing_refused` check. `sameHostRefusal` compares it, so refusals with different causes no longer count as one repeated refusal. The minter's sign-in notice explains each group of causes with its own next step: the focus left the field, the field or page was replaced or navigated, the bound field could not be found, or the browser rejected the inserted text. No notice names a binding, a selector or a value.
   - Migrate by handling every `InsertionRefusal` in any exhaustive check on `HostRefusal.cause`.
