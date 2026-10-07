@@ -99,9 +99,10 @@ const fillCallCode = (
 const judged = judgment?.targets ?? null;
 const questions = fields.map(({ described }) => described.questionText ?? null);
 for (let index = 0; index < questionSelectors.length; index++) {
-  if (questionSelectors[index] !== null &&
-      (judgment === null || questions[index] !== judgment.questions?.[index]))
-    return { error: "target_changed", target: index, url: primary.url() };
+  if (questionSelectors[index] === null) continue;
+  if (judgment === null) return { error: "target_changed", target: index, url: primary.url() };
+  if (questions[index] !== judgment.questions?.[index])
+    return { error: "target_changed", target: index, question: "changed", url: primary.url() };
 }
 const same = (found, expected, editable = true) =>
   found === null || expected === null

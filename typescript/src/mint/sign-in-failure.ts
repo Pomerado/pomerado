@@ -41,6 +41,11 @@ const refusalNotices: Readonly<Record<string, { readonly why: string; readonly n
     next: "Read the screen again read-only and correct the selector so it matches the one visible field.",
   },
 };
+/** A `change` refusal whose cause is a private answer's question that changed. */
+const questionChanged = {
+  why: "the security question the field answers changed after the host read it, and the host never types an answer to a question the owner was not asked",
+  next: "Read the screen again read-only and send its signInStep again, so the owner is asked the question it shows now. No answer was typed.",
+};
 const otherRefusal = {
   why: "a host check refused the field",
   next: "Inspect the current browser read-only, then correct the screen's signInStep.",
@@ -189,7 +194,10 @@ const recoverableFailureFeedback = (failure: SignInDiagnostic) => {
  * check that refused it, and what may get past it.
  */
 const refusalFeedback = (failure: SignInDiagnostic, refusal: HostRefusal) => {
-  const notice = refusalNotices[refusal.check] ?? otherRefusal;
+  const notice =
+    refusal.cause === "question_changed"
+      ? questionChanged
+      : (refusalNotices[refusal.check] ?? otherRefusal);
   const field = refusedField(refusal);
   return {
     signInOutcome: "signed_out" as const,

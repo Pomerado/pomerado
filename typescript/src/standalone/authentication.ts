@@ -21,20 +21,47 @@ import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-
 import type { InputAsker, Question } from "../runtime/input-request.js";
 import { autofillRefusalFailure } from "../mint/sign-in-failure.js";
 
-const credentialQuestion = (
-  slot: AutofillSlot,
-  siteOrigin: string,
-  currentFieldLabel?: string,
-): Question => ({
+const credentialQuestion = (slot: AutofillSlot, siteOrigin: string, prompt?: string): Question => ({
   id: slot,
   type: "secret",
   secretKind: slot === "code" ? "one_time_code" : "private_text",
   prompt:
-    slot === "private_answer" && currentFieldLabel !== undefined
-      ? `${currentFieldLabel} (${siteOrigin})`
-      : `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
+    prompt ??
+    `Enter your ${slot.replaceAll("_", " ")}${slot === "date_of_birth" ? " (YYYY-MM-DD)" : ""} for ${siteOrigin}.`,
   maxLength: ["username", "email", "phone", "account_number"].includes(slot) ? 1024 : 16_384,
 });
+
+/** The longest prompt a question may have, as the input request allows. */
+const promptLimit = 2_000;
+
+/**
+ * What the owner is asked for a private answer: the question the page shows, cut to leave room
+ * for the site's origin; else that the recorded question could not be read; else the field's label.
+ */
+const answerPrompt = (
+  siteOrigin: string,
+  field:
+    | {
+        readonly questionText?: string | undefined;
+        readonly questionUnread?: true | undefined;
+        readonly label: string | null;
+      }
+    | undefined,
+) => {
+  const label = field?.label ?? null;
+  if (field?.questionText !== undefined) {
+    const suffix = ` (${siteOrigin})`;
+    const room = promptLimit - suffix.length;
+    const question =
+      field.questionText.length <= room
+        ? field.questionText
+        : `${field.questionText.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
+    return `${question}${suffix}`;
+  }
+  if (field?.questionUnread === true)
+    return `Enter your security answer for ${siteOrigin}. The question it answers could not be read from the page.${label === null ? "" : ` The answer field reads "${label}".`}`;
+  return label === null ? undefined : `${label} (${siteOrigin})`;
+};
 
 /**
  * Local values feed the original inspected-field fill without a credential store or portal. A fill
@@ -127,8 +154,7 @@ export const makeLiveAuthentication = (options: {
               credentialQuestion(
                 "private_answer",
                 options.siteOrigin,
-                inspected.screen.fields[index]?.questionText ??
-                  inspected.screen.fields[index]?.label ?? undefined,
+                answerPrompt(options.siteOrigin, inspected.screen.fields[index]),
               ),
             ],
           })

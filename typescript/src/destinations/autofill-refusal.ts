@@ -187,6 +187,7 @@ export const locatedRefusal = (answer: typeof LocatedError.Type, named?: Readonl
     answer.error === "target_changed" ? "change" : answer.error,
     {
       ...(answer.error === "target_changed" ? { changed: answer.target } : {}),
+      ...(answer.question === "changed" ? { cause: "question_changed" } : {}),
       ...foundEvidence(answer.url, answer.located, named),
       ...(answer.searched === undefined
         ? {}
@@ -236,6 +237,11 @@ export interface HostRefusal {
   readonly check: string;
   /** The field's index in the step. */
   readonly field: number;
+  /**
+   * What the check found, when it says more than the check does: `question_changed`, a private
+   * answer's question that no longer reads as the host inspected it, under the `change` check.
+   */
+  readonly cause?: "question_changed";
   /** What the field takes: its slot, or the identifier kinds it accepts joined by ` or `. */
   readonly slot: string;
   /** The screen as the step names it: its fields' selectors, its submit and its popup's origin. */
@@ -296,6 +302,9 @@ export const typingRefusal = (
   return {
     check,
     field,
+    ...(report.failureDetail.context?.["cause"] === "question_changed"
+      ? { cause: "question_changed" as const }
+      : {}),
     slot: named.slot ?? named.accepts?.join(" or ") ?? "identifier",
     screen: {
       fields: step.fields.map((each) => each.selector),

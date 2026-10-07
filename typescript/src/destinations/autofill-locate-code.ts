@@ -203,6 +203,8 @@ const locate = async (selector, questionSelector) => {
   const described = Object.fromEntries(Object.entries(found.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
   const question = await readQuestion(frame, questionSelector);
   if (question !== undefined) described.questionText = question.text;
+  // A recorded question with no one visible match, or none the host reads, is said so.
+  else if (questionSelector != null) described.questionUnread = true;
   const shape = await formControlShape(locator);
   const control =
     (found.disabled || found.inert) && (shape === "select" || shape === "combobox") ? "other" : shape;

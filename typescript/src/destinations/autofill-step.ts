@@ -157,6 +157,11 @@ const Described = Schema.Struct({
   text: Text,
   /** Current visible question; inspection-only, never a recipe value. */
   questionText: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2_000))),
+  /**
+   * A recorded question the host could not read: in another frame, with no one visible match, or
+   * with no text it reads. Inspection-only.
+   */
+  questionUnread: Schema.optional(Schema.Literal(true)),
 });
 
 /** A control a step call could not find, or found moved to where the host refuses it. */
@@ -170,6 +175,8 @@ export const LocatedError = Schema.Struct({
     "popup_ambiguous",
   ),
   target: Schema.Union(Schema.Number, Schema.Literal("submit", "popup")),
+  /** A private answer's question no longer reads as the host inspected it. */
+  question: Schema.optional(Schema.Literal("changed")),
   /** The primary page then, which a fill call reports once it typed. */
   url: Schema.optional(Schema.String),
   searched: Schema.optional(Searched),

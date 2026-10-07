@@ -411,6 +411,7 @@ const untypedRefusal = (
     {
       ...answer.unfocused,
       ...(insertion === undefined ? {} : { insertion }),
+      ...(insertion === "question_changed" ? { cause: "question_changed" } : {}),
       ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     },
