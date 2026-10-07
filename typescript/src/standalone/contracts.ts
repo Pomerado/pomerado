@@ -1,5 +1,6 @@
 import type { ModelProvider } from "@openai/agents";
 import { type Effect, Schema } from "effect";
+import { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
@@ -34,10 +35,27 @@ export interface Pomerado {
   ) => Effect.Effect<unknown, Error>;
 }
 
+/** A web page a run can open: an http or https URL with no credentials and no fragment. */
+export const PageUrl = Schema.String.pipe(
+  Schema.filter((value) => {
+    const url = URL.parse(value);
+    return (
+      url !== null &&
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !url.hash
+    );
+  }),
+);
 export const Artifact = Schema.Struct({
   files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
   entrypoint: Schema.String,
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
+  /** The verified sign-in a build recorded: its value-free recipe and where its runs start. */
+  signIn: Schema.optionalWith(Schema.Struct({ recipe: SignInRecipe, entryUrl: PageUrl }), {
+    exact: true,
+  }),
 });
 export type { MintArtifact, MintOutcome };

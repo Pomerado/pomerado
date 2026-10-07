@@ -1,10 +1,117 @@
-import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
+
+/** A verified sign-in's recipe as a build publishes it: selectors and slots, never a value. */
+const signIn = {
+  recipe: {
+    version: 3 as const,
+    steps: [
+      {
+        page: "https://example.test/login",
+        fields: [
+          { selector: "#user", accepts: ["username" as const] },
+          { selector: "#password", slot: "password" as const },
+        ],
+        submit: "#sign-in",
+        submittedBy: "host" as const,
+      },
+      {
+        page: "https://example.test/challenge",
+        fields: [
+          { selector: "#answer", slot: "private_answer" as const, questionSelector: "#question" },
+        ],
+        submit: "#continue",
+      },
+    ],
+    signedIn: { selector: "#account-menu" },
+  },
+  entryUrl: "https://example.test/login?next=%2Faccount",
+};
+const source = {
+  entrypoint: "src/main.mjs",
+  files: [{ path: "src/main.mjs", content: "export default {};" }],
+  inputSchema: { type: "object" },
+  outputSchema: { type: "object" },
+};
+const scratch = async (use: (directory: string) => Promise<void>) => {
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-artifact-"));
+  try {
+    await use(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+};
+const run = <A>(effect: Effect.Effect<A, unknown, import("effect").Scope.Scope>) =>
+  Effect.runPromise(Effect.scoped(effect));
+
+it("writes a sign-in as auth-fill.json beside pomerado.json and reads it back", () =>
+  scratch(async (directory) => {
+    const artifact = { ...source, signIn };
+    expect(await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory))))).toEqual(
+      artifact,
+    );
+    expect((await readdir(directory)).sort()).toEqual(["auth-fill.json", "pomerado.json", "src"]);
+    expect(JSON.parse(await readFile(join(directory, "auth-fill.json"), "utf8"))).toEqual(
+      signIn.recipe,
+    );
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toEqual({
+      entrypoint: "src/main.mjs",
+      files: ["src/main.mjs"],
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      signIn: { recipe: "auth-fill.json", entryUrl: signIn.entryUrl },
+    });
+  }));
+
+it("reads an artifact written without a sign-in as it always was", () =>
+  scratch(async (directory) => {
+    // pomerado.json as 0.2.0 wrote it: no signIn, and no recipe beside it.
+    await writeFile(
+      join(directory, "pomerado.json"),
+      `${JSON.stringify({ entrypoint: "src/main.mjs", files: ["src/main.mjs"], inputSchema: { type: "object" }, outputSchema: { type: "object" } }, null, 2)}\n`,
+    );
+    await mkdir(join(directory, "src"));
+    await writeFile(join(directory, "src/main.mjs"), "export default {};");
+    const restored = await run(readArtifact(directory));
+    expect(restored).toEqual(source);
+    expect("signIn" in restored).toBe(false);
+  }));
+
+it.each([
+  [{ ...signIn.recipe, version: 4 }, "version this host does not know"],
+  [{ ...signIn.recipe, version: 2 }, "not one this host can read"],
+  ["not json", "not one this host can read"],
+])("refuses an artifact whose recipe it cannot read (%#)", (recipe, refusal) =>
+  scratch(async (directory) => {
+    await run(writeArtifact(directory, { ...source, signIn }));
+    await writeFile(
+      join(directory, "auth-fill.json"),
+      typeof recipe === "string" ? recipe : JSON.stringify(recipe),
+    );
+    await expect(run(readArtifact(directory))).rejects.toThrow(refusal);
+  }));
+
+it("refuses a version 2 recipe that names a question selector before writing it", () =>
+  scratch(async (directory) => {
+    await expect(
+      run(writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 2 } } } as never)),
+    ).rejects.toThrow("sign-in recipe");
+    expect(await readdir(directory)).toEqual([]);
+  }));
+
+it("refuses an entry address with a fragment or credentials", () =>
+  scratch(async (directory) => {
+    for (const entryUrl of ["https://example.test/login#state", "https://user:secret@example.test/login"])
+      await expect(
+        run(writeArtifact(directory, { ...source, signIn: { ...signIn, entryUrl } })),
+      ).rejects.toThrow();
+    expect(await readdir(directory)).toEqual([]);
+  }));
 
 it("preserves an artifact roundtrip and refuses metadata collisions before writing source", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-artifact-"));
@@ -20,6 +127,9 @@ it("preserves an artifact roundtrip and refuses metadata collisions before writi
       "/workspace/pomerado.json",
       "Pomerado.JSON",
       "pomerado.json/data.txt",
+      "auth-fill.json",
+      "Auth-Fill.JSON",
+      "auth-fill.json/data.txt",
     ]) {
       await expect(
         Effect.runPromise(
@@ -45,6 +155,7 @@ it("preserves an artifact roundtrip and refuses metadata collisions before writi
 });
 
 it.each([
+  "Auth-Fill.json",
   "MCP.mjs",
   "Mcp.Json",
   "readme.md/main.mjs",

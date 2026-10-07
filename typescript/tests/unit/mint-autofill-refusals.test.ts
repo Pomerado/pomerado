@@ -1,11 +1,14 @@
 import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
 import { afterEach, expect, it } from "vitest";
+import type { AutofillPage } from "../../src/destinations/autofill-step.js";
 import { MintFailure, type MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure, signInFailureFeedback } from "../../src/mint/sign-in-failure.js";
-import { makeLiveAuthentication } from "../../src/standalone/authentication.js";
+import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
+import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
+import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { mintError } from "../../src/standalone/errors.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
@@ -57,6 +60,43 @@ const focusAnswers = {
   not_focused: { focused: false, unfocused: { activeTag: "DIV" }, url: login },
 } as const;
 
+/** The login the build already holds, so a password screen may come first. */
+const heldLogin = { username: "synthetic-owner", password: "synthetic-password" };
+/** The standalone host's sign-in recorder on `page`, open until the test ends. */
+const recorderOn = (page: AutofillPage, insertion: "inserted" | "insertion_rejected") => {
+  const scope = Effect.runSync(Scope.make());
+  cleanups.push(() => Effect.runPromise(Scope.close(scope, Exit.void)));
+  return Effect.runSync(
+    Scope.extend(
+      makeSignInRecorder<Error>({
+        browser: makeSignInBrowser({
+          page,
+          keyboard: { insertText: () => Effect.succeed(insertion) },
+          siteOrigin: site,
+          authenticationOrigins: [],
+          onRequest: () => () => {},
+          typing: { typed: false },
+        }),
+        login: {
+          held: () => heldLogin,
+          values: Effect.succeed(heldLogin),
+          correct: () => Effect.succeed(heldLogin),
+        },
+        values: askingValueHooks({
+          ask: () => Effect.dieMessage("The test asks the owner nothing"),
+          register: () => {},
+          site: "member.example.test",
+          siteOrigin: site,
+        }),
+        review: () => Effect.void,
+        site: "member.example.test",
+        carries: () => Effect.succeed(false),
+      }),
+      scope,
+    ),
+  );
+};
+
 /**
  * A synthetic password screen behind the standalone host's sign-in: each authenticate inspects
  * it, then focuses the field. The page's own code swallows the inserted text, so the typing never
@@ -64,26 +104,13 @@ const focusAnswers = {
  */
 const passwordScreen = (refusals: readonly (keyof typeof focusAnswers)[]) => {
   const answers = refusals.flatMap((refusal) => [inspected, focusAnswers[refusal]]);
-  const auth = makeLiveAuthentication({
-    page: {
+  const recorder = recorderOn(
+    {
       targetId: "primary",
       execute: () => Effect.sync(() => answers.shift() ?? { error: "not_found", target: 0 }),
     },
-    keyboard: { insertText: () => Effect.succeed("insertion_rejected" as const) },
-    siteOrigin: site,
-    authenticationOrigins: [],
-    ask: (request) =>
-      Effect.succeed(
-        Object.fromEntries(
-          request.questions.map((question) => [
-            question.id,
-            { type: "secret" as const, value: "synthetic-password" },
-          ]),
-        ),
-      ),
-    registerSecret: () => {},
-    review: () => Effect.void,
-  });
+    "insertion_rejected",
+  );
   let executions = 0;
   return {
     executions: () => executions,
@@ -93,12 +120,12 @@ const passwordScreen = (refusals: readonly (keyof typeof focusAnswers)[]) => {
         const signIn = "signInStep" in execution ? execution.signInStep : undefined;
         if (signIn === undefined || !("fields" in signIn))
           return yield* Effect.die("The test signs in by autofill only");
-        const report = yield* auth.step(signIn, beforeDispatch);
+        const step = yield* recorder.step(signIn, undefined, beforeDispatch);
         return {
           executionId: `sign_in_${executions}`,
           status: "completed" as const,
           effect: "possible" as const,
-          observations: report,
+          observations: { step: step.report, ...step.result },
         };
       }).pipe(Effect.mapError(mintError))) satisfies MintDependencies["reviewAndExecute"],
   };
@@ -286,8 +313,8 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
 it("tells the agent a submit stayed disabled after the fields were filled, as no field refusal", async () => {
   const answers: unknown[] = [inspected, focusAnswers.typing_refused];
   const executed: string[] = [];
-  const auth = makeLiveAuthentication({
-    page: {
+  const recorder = recorderOn(
+    {
       targetId: "primary",
       execute: (code) =>
         Effect.sync(() => {
@@ -295,24 +322,15 @@ it("tells the agent a submit stayed disabled after the fields were filled, as no
           return answers.shift() ?? { submit: "disabled", url: login };
         }),
     },
-    keyboard: { insertText: () => Effect.succeed("inserted" as const) },
-    siteOrigin: site,
-    authenticationOrigins: [],
-    ask: (request) =>
-      Effect.succeed(
-        Object.fromEntries(
-          request.questions.map((question) => [
-            question.id,
-            { type: "secret" as const, value: "synthetic-password" },
-          ]),
-        ),
-      ),
-    registerSecret: () => {},
-    review: () => Effect.void,
-  });
+    "inserted",
+  );
   const started = Date.now();
-  const report = await Effect.runPromise(
-    auth.step({ fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" }),
+  const { report } = await Effect.runPromise(
+    recorder.step(
+      { fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+      undefined,
+      Effect.void,
+    ),
   );
   expect(report).toEqual({
     outcome: "filled",

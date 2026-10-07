@@ -1,4 +1,5 @@
 import type { Effect } from "effect";
+import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { PublicationFinding } from "../guardian/review-contracts.js";
 import type { MintFailure, PublicationDiagnosticGap } from "./contracts.js";
 
@@ -104,6 +105,8 @@ export interface MintArtifact {
   readonly entrypoint: string;
   readonly inputSchema: unknown;
   readonly outputSchema: unknown;
+  /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
+  readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
 }
 
 /** Completion uses the same review/receipt loop in each composition. */

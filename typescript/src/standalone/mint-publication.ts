@@ -76,6 +76,13 @@ export const mintPublication =
       const files = savedOperationFiles(snapshot, publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
+      // The build's verified sign-in ships with it, value-free: its recipe and the address its
+      // runs start from, which a login URL may have given with a one-time value in it.
+      const signIn = state.recorder.published();
+      if (signIn !== undefined) {
+        yield* secrets.assertAbsent(signIn.entryUrl);
+        yield* secrets.assertAbsent(JSON.stringify(signIn.recipe));
+      }
       // Published code never holds a handle: no saved file the operation could run may hold one,
       // whatever its extension. That is every saved file when Node could load one its imports
       // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only
@@ -179,6 +186,7 @@ export const mintPublication =
           entrypoint: publication.entrypoint,
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
+          ...(signIn === undefined ? {} : { signIn }),
         },
         diagnostics: [],
       };

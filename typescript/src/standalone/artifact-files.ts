@@ -1,14 +1,22 @@
 import { Effect, Schema } from "effect";
+import { decodeSignInRecipe, signInRecipePath } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
-import { Artifact, type MintArtifact } from "./contracts.js";
+import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
 
 const Metadata = Schema.Struct({
   entrypoint: Schema.String,
   files: Schema.Array(Schema.String),
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
+  /** Where the build's sign-in recipe is (`auth-fill.json`) and where its runs start. */
+  signIn: Schema.optionalWith(
+    Schema.Struct({ recipe: Schema.Literal(signInRecipePath), entryUrl: PageUrl }),
+    { exact: true },
+  ),
 });
+/** The artifact's own files beside its source, which no source path may name. */
+const metadataFiles = new Set(["pomerado.json", signInRecipePath]);
 const HttpUrl = Schema.String.pipe(
   Schema.filter((value) => {
     if (!URL.canParse(value)) return false;
@@ -30,13 +38,27 @@ export const Deployment = Schema.Struct({
 });
 export type Deployment = typeof Deployment.Type;
 
+/**
+ * A sign-in recipe as given, decoded as a recipe file is: version 1 or 2 naming a question
+ * selector is refused rather than read without it.
+ */
+const givenRecipe = (value: unknown) => {
+  const signIn: unknown =
+    typeof value === "object" && value !== null ? Reflect.get(value, "signIn") : undefined;
+  return typeof signIn === "object" && signIn !== null
+    ? decodeSignInRecipe(JSON.stringify(Reflect.get(signIn, "recipe")) ?? "")
+    : undefined;
+};
+
 export const validateArtifact = (value: unknown) =>
   Schema.decodeUnknown(Artifact)(value).pipe(
     Effect.tap((artifact) =>
       Effect.try({
         try: () => {
+          if (artifact.signIn !== undefined && typeof givenRecipe(value) !== "object")
+            throw new Error("Artifact sign-in recipe is not one this host can read");
           const paths = artifact.files.map((file) => localRelativePath(file.path));
-          if (paths.some((path) => path.split("/")[0]?.toLowerCase() === "pomerado.json"))
+          if (paths.some((path) => metadataFiles.has(path.split("/")[0]?.toLowerCase() ?? "")))
             throw new Error("Artifact source collides with its metadata file");
           if (
             new Set(paths).size !== paths.length ||
@@ -62,7 +84,23 @@ export const readArtifact = (directory: string) =>
     const files = yield* Effect.forEach(metadata.files, (path) =>
       workspace.read(path).pipe(Effect.map((content) => ({ path, content }))),
     );
-    return yield* validateArtifact({ ...metadata, files });
+    const { signIn, ...source } = metadata;
+    if (signIn === undefined) return yield* validateArtifact({ ...source, files });
+    // A recipe this host cannot read fails the artifact: it never runs signed out instead.
+    const recipe = decodeSignInRecipe(yield* workspace.read(signIn.recipe));
+    if (recipe === "invalid" || recipe === "unknown_version")
+      return yield* Effect.fail(
+        new Error(
+          recipe === "invalid"
+            ? "The artifact's sign-in recipe is not one this host can read"
+            : "The artifact's sign-in recipe has a version this host does not know",
+        ),
+      );
+    return yield* validateArtifact({
+      ...source,
+      files,
+      signIn: { recipe, entryUrl: signIn.entryUrl },
+    });
   });
 
 export const writeArtifact = (directory: string, artifact: MintArtifact) =>
@@ -70,6 +108,11 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
     const checked = yield* validateArtifact(artifact);
     const workspace = yield* createLocalWorkspace({ root: directory });
     for (const file of checked.files) yield* workspace.write(file.path, file.content);
+    if (checked.signIn !== undefined)
+      yield* workspace.write(
+        signInRecipePath,
+        `${JSON.stringify(checked.signIn.recipe, null, 2)}\n`,
+      );
     yield* workspace.write(
       "pomerado.json",
       `${JSON.stringify(
@@ -78,6 +121,9 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           files: checked.files.map((file) => file.path),
           inputSchema: checked.inputSchema,
           outputSchema: checked.outputSchema,
+          ...(checked.signIn === undefined
+            ? {}
+            : { signIn: { recipe: signInRecipePath, entryUrl: checked.signIn.entryUrl } }),
         },
         null,
         2,

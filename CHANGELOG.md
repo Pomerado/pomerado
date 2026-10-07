@@ -28,6 +28,17 @@
   - Migrate a host that decodes its own page code's answer with `SignedInPage` by returning `challengeFormVisible`, `false` when it checks no challenge.
 - `InsertionRefusal` in `pomerado/core/destinations/credential-keyboard` adds `"question_changed"`: a private answer's question no longer reads as the host inspected it. The fill reports it under the `change` check, and `HostRefusal` in `pomerado/core/destinations/autofill-refusal` takes an optional `cause`, `"question_changed"`, for it.
   - Migrate by handling `"question_changed"` in any exhaustive check on a native insertion's answer.
+- A local build asks for the website login once, as one `credential` question for a username and password that is never saved, when its first sign-in screen needs it. It no longer asks a secret question for each field. After the site rejects the login, the correction is asked the same way, once. Codes, recovery codes, dates of birth, ZIP codes and identifiers the login lacks are asked on their own, in the site's words, and a security answer each time a screen shows its question. An approval is a yes-or-no confirmation.
+- A local build counts a sign-in value as sent only once a request the page sent carried it. Its browser reports the page's requests, with bodies up to 64 KiB held in memory, only while a sign-in is open (`onRequest` on the local Playwright executor). A signed-in check verifies the sign-in only when a request carried the login's identifier and the sign-in proved it: a request carried a password or code, the owner completed an approval, or an exploration typed a sign-in code.
+  - A screen that asks for a password before any identifier screen, while the build holds no login, is refused with `login_identifier_unobserved`. It asks and types nothing.
+  - A password or code is filled twice at most in one sign-in, and any other value once. A selector, page address or signed-in check that names the account's identity is refused before anything is typed.
+  - A rejected value is accepted only when this sign-in sent it. A rejected code gets two fresh ones. A rejected login gets one correction, and the build ends with `credentials_rejected` when the site rejects it again or the correction repeats it.
+  - A screen's result holds its report as `step`, with a `nextStep`.
+- A local build publishes its verified sign-in with the integration, with no value in it. `auth-fill.json`, beside `pomerado.json`, holds the sign-in recipe: each screen's page, field selectors and slots, submit, and the signed-in check. It is version 3 only when a security answer names its question, and version 1 or 2 otherwise. `pomerado.json` names it as `signIn: { recipe: "auth-fill.json", entryUrl }`, where the entry is the minter's `loginUrl`, else the first screen's address, without its fragment. `MintArtifact` and `Artifact` take the same optional `signIn`.
+  - `auth-fill.json` is reserved, like `pomerado.json`: an artifact's source may not use the name.
+  - `readArtifact` refuses an artifact whose recipe it cannot read or whose version it does not know. An artifact with no `signIn` reads as before.
+  - A run in a new session still starts signed out.
+- `makeLiveAuthentication` is no longer exported from `pomerado`. `createPomerado` signs in itself.
 
 The package now holds the code the local host runs, the hook interfaces another host implements, and the signed-in marker checks behind `MintDependencies.checkSignedInMarker`. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
 

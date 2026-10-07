@@ -6,6 +6,7 @@ import {
   CredentialInsertion,
   type CredentialKeyboard,
 } from "../destinations/credential-keyboard.js";
+import type { SignInRequest } from "../destinations/sign-in-recipe.js";
 import { BrowserExecuteResponse, type BrowserExecute } from "../runtime/browser-execution.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 
@@ -31,6 +32,24 @@ export const NativeWorkerRequest = Schema.Union(
     text: Schema.String,
   }),
 );
+/** Starts or stops the worker's report of each request the context sends (`onRequest`). */
+export const NativeWorkerListen = Schema.Struct({
+  kind: Schema.Literal("listen"),
+  on: Schema.Boolean,
+});
+/** The most of a request's body the worker reports; a longer one is reported unseen. */
+export const requestBodyLimit = 65_536;
+/** A request the browser context sent, as the worker reports it; see `SignInRequest`. */
+const PageRequest = Schema.Struct({
+  url: Schema.String,
+  method: Schema.String,
+  body: Schema.NullOr(Schema.String.pipe(Schema.maxLength(requestBodyLimit))),
+  bodyUnseen: Schema.optional(Schema.Literal(true)),
+  channel: Schema.Literal("navigation", "popup", "http"),
+  frame: Schema.optional(Schema.Literal("main", "sub")),
+  resourceType: Schema.String,
+  ownerTargetId: Schema.optional(Schema.String),
+});
 type WithoutId<A> = A extends { readonly id: string } ? Omit<A, "id"> : never;
 type NativePayload = WithoutId<typeof NativeWorkerRequest.Type>;
 
@@ -43,6 +62,8 @@ export const NativeWorkerReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("response"), id: Schema.String, value: Schema.Unknown }),
   Schema.Struct({ kind: Schema.Literal("failure"), id: Schema.String, error: Schema.String }),
 );
+/** A request the worker reports while the parent listens (`onRequest`). */
+const NativeWorkerHeard = Schema.Struct({ kind: Schema.Literal("request"), request: PageRequest });
 export const NativeWorkerOptions = Schema.Struct({
   endpoint: Schema.String,
   startupTimeoutMs: Schema.Number,
@@ -92,6 +113,12 @@ export interface PlaywrightExecutor {
   ) => TypingWatch;
   readonly execute: HostExecute;
   readonly keyboard: CredentialKeyboard;
+  /**
+   * Hears each request the browser context sends, every tab's, with its body up to
+   * `requestBodyLimit`, until the returned function stops it. The browser reports requests only
+   * while a listener is attached. Bodies stay in this process's memory; never log them.
+   */
+  readonly onRequest: (listener: (request: SignInRequest) => void) => () => void;
   readonly close: Effect.Effect<void, Error>;
 }
 
@@ -109,6 +136,8 @@ interface NativeOwnership {
   readonly remote: boolean;
   readonly cleanupTimeoutMs: number;
   readonly pending: Map<string, PendingResponse>;
+  /** Who hears the context's requests; see `onRequest`. */
+  readonly listeners: Set<(request: SignInRequest) => void>;
   server?: BrowserServer;
   supervisor?: Browser;
   worker?: Worker;
@@ -234,6 +263,23 @@ const bindNativeWorker = (
       startupTimeoutMs,
     );
     worker.on("message", (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        Reflect.get(message, "kind") === "request"
+      ) {
+        // A request's body may hold a value the page sent: it is matched in memory and never kept,
+        // logged or put in an error. One this process cannot read is not heard.
+        const heard = Schema.decodeUnknownOption(NativeWorkerHeard)(message);
+        if (heard._tag === "None" || owner.stopped) return;
+        for (const listener of [...owner.listeners])
+          try {
+            listener(heard.value.request);
+          } catch {
+            // A listener's failure leaves the request unheard by it, and the others still hear it.
+          }
+        return;
+      }
       const decoded = Schema.decodeUnknownEither(NativeWorkerReply)(message);
       if (decoded._tag === "Left") {
         fail(new Error("Malformed native worker response", { cause: decoded.left }));
@@ -339,6 +385,7 @@ export const makePlaywrightExecutor = (
       cleanupTimeoutMs,
       stopped: false,
       pending: new Map(),
+      listeners: new Set(),
     };
     const close = stopNative(owner, new Error("Native browser executor closed"));
     yield* Effect.addFinalizer(() => close.pipe(Effect.orDie));
@@ -413,6 +460,21 @@ export const makePlaywrightExecutor = (
           Effect.mapError(asError),
         ),
     };
+    const listen = (on: boolean) => {
+      if (owner.stopped) return;
+      try {
+        worker.postMessage({ kind: "listen", on } satisfies typeof NativeWorkerListen.Type);
+      } catch {
+        // A stopped worker hears nothing more; its executor is already invalidated.
+      }
+    };
+    const onRequest = (listener: (request: SignInRequest) => void) => {
+      owner.listeners.add(listener);
+      if (owner.listeners.size === 1) listen(true);
+      return () => {
+        if (owner.listeners.delete(listener) && owner.listeners.size === 0) listen(false);
+      };
+    };
     return {
       sessionId: randomUUID(),
       targetId: ready.targetId,
@@ -420,6 +482,7 @@ export const makePlaywrightExecutor = (
       watchTyping,
       execute,
       keyboard,
+      onRequest,
       close,
     };
   }).pipe(Effect.uninterruptible);
