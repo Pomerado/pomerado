@@ -53,9 +53,27 @@ const percentEncoded = (form: string, encoded: string) =>
 const lowercaseHex = (encoded: string) =>
   encoded.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase());
 
+/**
+ * Under this many characters, a form of a secret counts only as a whole token: where no letter,
+ * mark or digit adjoins it on a side whose own edge is one. A short value, such as a favorite
+ * color or a six-digit code, turns up inside a longer word or a timestamp by chance. A longer
+ * form counts anywhere.
+ */
+const shortForm = 8;
+const wordClass = "[\\p{L}\\p{M}\\p{N}]";
+const startsWithWord = (text: string) => new RegExp(`^${wordClass}`, "u").test(text);
+const endsWithWord = (text: string) => new RegExp(`${wordClass}$`, "u").test(text);
+/** Every place `form` stands as a whole token. */
+const tokenPattern = (form: string) =>
+  new RegExp(
+    `${startsWithWord(form) ? `(?<!${wordClass})` : ""}${form.replace(/[\\^$.*+?()[\]{}|/]/gu, "\\$&")}${endsWithWord(form) ? `(?!${wordClass})` : ""}`,
+    "gu",
+  );
+
 /** Explicit caller secrets live only for this run. This does not detect or classify page data. */
 export const makeRunSecrets = () => {
-  const values = new Set<string>();
+  /** Each registered form, with the pattern it counts by when it is short. */
+  const values = new Map<string, RegExp | undefined>();
   /**
    * Each form a page or URL can show the value in. The value as given, trimmed, and with its
    * whitespace collapsed as an accessibility snapshot shows it; each of them as written,
@@ -63,6 +81,7 @@ export const makeRunSecrets = () => {
    * quoted key holds a name; and percent-encoded as `encodeURIComponent` and a form write it, and
    * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A
    * value that cannot be encoded, such as one holding a lone surrogate, keeps every other form.
+   * Each form counts by the length of the shown value it came from (`shortForm`).
    */
   const register = (value: string) => {
     const shown = [
@@ -93,17 +112,35 @@ export const makeRunSecrets = () => {
         ];
         forms.push(...percent, ...percent.map(lowercaseHex));
       }
-      for (const shownForm of forms) values.add(shownForm);
+      const short = form.length < shortForm;
+      for (const shownForm of forms)
+        if (!short) values.set(shownForm, undefined);
+        else if (!values.has(shownForm)) values.set(shownForm, tokenPattern(shownForm));
     }
   };
-  const ordered = () => [...values].sort((left, right) => right.length - left.length);
+  const ordered = () => [...values].sort(([left], [right]) => right.length - left.length);
   const redact = (text: string) =>
-    ordered().reduce((result, secret) => result.split(secret).join("[private]"), text);
-  /** The longest proper prefix of a registered form that `text` ends with, as a length. */
+    ordered().reduce(
+      (result, [secret, token]) =>
+        token === undefined
+          ? result.split(secret).join("[private]")
+          : result.replace(token, "[private]"),
+      text,
+    );
+  /**
+   * The longest proper prefix of a registered form that `text` ends with, as a length. A short
+   * form's prefix counts only where it starts a token.
+   */
   const splitPrefix = (text: string) =>
-    ordered().reduce((longest, secret) => {
+    ordered().reduce((longest, [secret, token]) => {
       for (let length = Math.min(secret.length - 1, text.length); length > longest; length--)
-        if (text.endsWith(secret.slice(0, length))) return length;
+        if (
+          text.endsWith(secret.slice(0, length)) &&
+          (token === undefined ||
+            !startsWithWord(secret) ||
+            !endsWithWord(text.slice(0, text.length - length)))
+        )
+          return length;
       return longest;
     }, 0);
   /** Redacts text a cut ended, so a secret the cut split leaves no prefix at its end either. */
@@ -113,7 +150,9 @@ export const makeRunSecrets = () => {
   };
   const assertAbsent = (text: string) =>
     Effect.suspend(() =>
-      ordered().some((secret) => text.includes(secret))
+      ordered().some(([secret, token]) =>
+        token === undefined ? text.includes(secret) : text.search(token) !== -1,
+      )
         ? Effect.fail(new Error("Source contains a caller-supplied secret"))
         : Effect.void,
     );
