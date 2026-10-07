@@ -208,29 +208,36 @@ export type PullRequestCheck = (sha: string, number: number) => boolean;
 /** The first line of a merge commit made from a pull request's page. Group 1 is the number. */
 const githubMergeTitle = /^Merge pull request #(\d+) from [A-Za-z0-9][A-Za-z0-9-]*\/\S+$/du;
 
-/** The end of a squashed title, where GitHub appends the number in brackets. Group 1 is the number. */
-const githubSquashSuffix = / \(#(\d+)\)$/du;
+/**
+ * The end of a title made from the pull request's title, where GitHub appends the number in
+ * brackets. A squash gets it, and so does a merge commit titled after its pull request. Group 1 is
+ * the number.
+ */
+const githubTitleSuffix = / \(#(\d+)\)$/du;
 
 /** The committer email GitHub uses. Anyone can set it, so it only decides whether to ask GitHub. */
 const githubCommitterEmail = "noreply@github.com";
 
 /**
  * A commit message with the pull request number GitHub wrote in its first line blanked out, so
- * the rest of the message is still scanned. That covers a merge commit, with two parents and
- * GitHub's exact title, and a squash, with one parent and a title ending in the bracketed number.
- * Either needs GitHub's committer email, and GitHub must confirm that the commit merged that pull
- * request. Every other message comes back unchanged.
+ * the rest of the message is still scanned. That covers a merge commit, with two parents and either
+ * GitHub's exact merge title or the pull request's title ending in the bracketed number, and a
+ * squash, with one parent and a title ending in the bracketed number. Each needs GitHub's committer
+ * email, and GitHub must confirm that the commit merged that pull request. Every other message
+ * comes back unchanged.
  */
 export const maskGitHubMergeNumber = (commit: Commit, isPullRequestMerge: PullRequestCheck): string => {
   const { message } = commit;
   if (commit.committerEmail !== githubCommitterEmail) return message;
   const end = message.indexOf("\n");
   const title = end === -1 ? message : message.slice(0, end);
-  const pattern =
-    commit.parents === 2 ? githubMergeTitle : commit.parents === 1 ? githubSquashSuffix : undefined;
-  const match = pattern?.exec(title);
+  const patterns =
+    commit.parents === 2 ? [githubMergeTitle, githubTitleSuffix] : commit.parents === 1 ? [githubTitleSuffix] : [];
+  const match = patterns
+    .map((pattern) => pattern.exec(title))
+    .find((found): found is RegExpExecArray => found !== null);
   const digits = match?.indices?.[1];
-  if (match === undefined || match === null || digits === undefined) return message;
+  if (match === undefined || digits === undefined) return message;
   if (!isPullRequestMerge(commit.sha, Number(match[1]))) return message;
   // Blank the hash too, which sits just before the digits.
   const start = digits[0] - 1;
