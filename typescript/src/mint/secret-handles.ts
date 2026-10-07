@@ -21,7 +21,7 @@ const handleShape = /\{\{\s*secret\.[^{}]*\}\}/gu;
 const issuedShape = /^\{\{secret\.s[1-9]\d*\}\}$/u;
 
 /** Whether text holds a handle or anything shaped like one. */
-const holdsSecretHandle = (text: string) => /\{\{\s*secret\./u.test(text);
+export const holdsSecretHandle = (text: string) => /\{\{\s*secret\./u.test(text);
 
 /**
  * The first file that publishing these entrypoints would ship and that holds a handle. Published

@@ -14,6 +14,7 @@ import {
 } from "../guardian/question.js";
 import { makeSourceInspector } from "../guardian/source.js";
 import type { ExecutionEvidence } from "../mint/contracts.js";
+import { publicationScope, type PublicationReview } from "../mint/publication-review.js";
 import {
   allowedEffectsFor,
   currentDateObservations,
@@ -139,6 +140,8 @@ export interface ReviewStep {
   readonly startsOnFreshPage?: boolean;
   /** Host text Guardian reads after the build's observations. */
   readonly note?: string;
+  /** Files Guardian may read besides the step's own, by their full paths. */
+  readonly evidence?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -159,6 +162,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let approvedChange: string | undefined;
     let navigated = false;
     let observed: { readonly page: ObservedPage; readonly capture: PageCapture } | undefined;
+    /** The address of the page `observed` came from, unredacted, for the host's own loads. */
+    let observedUrl: string | undefined;
     let inputSchema: unknown;
     const executions: ExecutionEntry[] = [];
     const stepResults = makeStepResults();
@@ -220,7 +225,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           ...stepResults.forReview(step.currentExecution),
           mintContext,
         };
-        const readable = new Map(step.sources);
+        const readable = new Map([...step.sources, ...(step.evidence ?? [])]);
         // A capture is redacted on each read, for values the owner gave since it was taken.
         if (mintContext.currentPage !== undefined && observed !== undefined)
           readable.set(capturePath, readableCapture(observed.capture));
@@ -241,9 +246,45 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           return yield* reviewDenied(result.reviewId, { outcome, rationale });
         return result;
       });
+    /**
+     * Guardian's publication review: the bundle under `operation/`, the source a read example ran
+     * under `executed/`, and the publication files the host wrote, read against the caller's
+     * input. A denial carries Guardian's reason and findings.
+     */
+    const reviewPublication: PublicationReview = (publication) =>
+      Effect.gen(function* () {
+        const { turn, readSource } = yield* pending({
+          entrypoint: `operation/${publication.entrypoint}`,
+          sources: new Map(
+            [...publication.files].map(([path, text]) => [`operation/${path}`, text] as const),
+          ),
+          input: request.input ?? {},
+          note: publication.notes,
+          evidence: new Map([
+            ...[...(publication.baseline ?? [])].map(
+              ([path, text]) => [`executed/${path}`, text] as const,
+            ),
+            ...publication.evidence,
+          ]),
+        });
+        const result = yield* guardian
+          .review(
+            {
+              ...turn,
+              allowedEffects: publication.allowedEffects,
+              publication: publicationScope(publication.files, publication.evidence),
+            },
+            readSource,
+          )
+          .pipe(Effect.mapError((failure) => reviewFailureOf(failure)));
+        const { outcome } = result.decision;
+        if (outcome !== "allow")
+          return yield* reviewDenied(result.reviewId, { ...result.decision, outcome });
+        return result.reviewId;
+      });
     /** Guardian's review of a question the minter or a running script asks. */
     const reviewQuestion = (
-      step: Omit<ReviewStep, "currentExecution" | "startsOnFreshPage" | "note">,
+      step: Omit<ReviewStep, "currentExecution" | "startsOnFreshPage" | "note" | "evidence">,
       question: PendingQuestion,
     ) =>
       Effect.gen(function* () {
@@ -345,6 +386,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         Effect.flatMap((value) => Schema.decodeUnknown(PageSnapshot)(value)),
         Effect.option,
       );
+      observedUrl = Option.isSome(read) ? read.value.url : undefined;
       const location = Option.flatMap(read, ({ url: href }) =>
         Option.fromNullable(URL.canParse(href) ? pageLocation(new URL(href)) : undefined),
       );
@@ -381,6 +423,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       siteOrigin,
       observations,
       review,
+      reviewPublication,
       reviewQuestion,
       running,
       recorded,
@@ -396,6 +439,15 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       /** Drops the observed page: a step's start is resetting it, so no review reads it again. */
       leavePage: () => {
         observed = undefined;
+        observedUrl = undefined;
+      },
+      /** The address of the page the last live step left, as the browser reported it. */
+      get observedUrl() {
+        return observedUrl;
+      },
+      /** Whether a sign-in of this attempt is verified. */
+      get signedIn() {
+        return signedIn();
       },
       executions: () => executions,
       repeatableRead: host.repeatableRead,

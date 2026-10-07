@@ -125,6 +125,7 @@ const mintDependencies = (state: MintState) => {
           : { supported: false as const, reason: boundary };
       }),
     reviewAndExecute: mintExecution(state),
+    checkSignedInMarker: state.markers.check,
     publish: mintPublication(state),
   };
   return dependencies;
