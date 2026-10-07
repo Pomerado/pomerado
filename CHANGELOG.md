@@ -24,6 +24,9 @@
 - Guardian's review of a contract run carries the input that run decodes: the example's input, or the write session's.
 - A page with more than 10,000 elements is not captured for Guardian, which reads that the page was too large. A page that does not answer within the capture's time, as when its scripts keep it busy, is not captured either, and the browser keeps running. A capture is cut to 256 KiB in the browser, before it reaches the host.
 - A caller's secret is also redacted in the forms a page or URL shows it: trimmed, with its whitespace collapsed, with each `'` doubled or its control characters escaped as a page snapshot writes them, and percent-encoded as `encodeURIComponent` or a form writes it, or as Chromium writes it into a URL's query, path or fragment, in either hex case. A capture cut at 256 KiB keeps no prefix of a secret the cut split. A secret that cannot be percent-encoded no longer fails its registration.
+- The core authoring skill has a write build whose caller sent an empty input pass the request's values as `exampleInput` on each act step that needs them, as a read does on its example. An optional input plus a declared question is only for a value the request leaves open, and a required field is never made optional with nothing that asks.
+- Guardian's question review counts only the host's own masks and `{{secret.<id>}}` handles as stand-ins for a supplied value. A placeholder written into the intent text in place of a value, such as `"[redacted value]"`, supplies nothing, so a question asking for that value is not redundant. The caller-input skill says the same.
+- Guardian's execution review applies its `intent_derived` input rule to a write's act step as well as a read's example.
 
 ## 0.3.0
 

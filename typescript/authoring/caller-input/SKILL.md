@@ -19,7 +19,8 @@ Never ask for a value the request, the input or an earlier answer already suppli
 one included: use that value. In the tool, take it from its input, or a private one, such as
 part of an identity number, through a declared `secret` question, never a plain-text field.
 When question review finds a question redundant, remove the ask and use the supplied value; a
-reworded question still asks for it again. A supplied value the site rejects, or two that
+reworded question still asks for it again. A placeholder that stands in for a redacted value,
+such as "[redacted value]", supplies nothing. A supplied value the site rejects, or two that
 conflict, can still need a question, one that names the actual problem.
 
 <!-- pomerado:section caller-input.published-input -->
