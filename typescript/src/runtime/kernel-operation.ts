@@ -167,10 +167,11 @@ export interface KernelOperationContext<
    * lost the session. The host checks its signed-in marker on the current page without moving it,
    * and signs in again only when the page is signed out: `signedInAgain` says it did, so the script
    * opens the page it was on again. The runtime already calls it once before the script runs. The
-   * deadline pauses while the host works. A run with no sign-in, or an offline run, gets
-   * `{ signedInAgain: false }`. When the host cannot sign in again it throws `OperationFailure`
-   * with `sessionLoss: "session_not_kept"`; a value the site refused throws `CredentialsRejected`.
-   * Never call it between a write's commit and its read-back.
+   * deadline pauses while the host works, and every other browser call the script makes meanwhile
+   * waits until it is done; a call while one is under way joins it. A run with no sign-in, or an
+   * offline run, gets `{ signedInAgain: false }`. When the host cannot sign in again it throws
+   * `OperationFailure` with `sessionLoss: "session_not_kept"`; a value the site refused throws
+   * `CredentialsRejected`. Never call it between a write's commit and its read-back.
    */
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   readonly errors: typeof operationErrors;
@@ -401,37 +402,46 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
   Effect.suspend(() => {
     let actionTimeout: string | undefined;
     let calls = 0;
+    // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
+    // or an un-awaited promise too, waits for it and is only then sent, in order, so its own
+    // timeout starts then. A failed sign-in releases them as well.
+    let signingIn: Promise<{ readonly signedInAgain: boolean }> | undefined;
+    const afterSignIn = <A>(call: () => Promise<A>): Promise<A> =>
+      signingIn === undefined ? call() : signingIn.then(call, call);
     const kernel: KernelExecuteClient = {
       browsers: {
         playwright: {
-          execute: (sessionId, body, options) =>
-            settle(
-              Effect.sync(() => {
-                actionTimeout = undefined;
-                calls += 1;
-              }).pipe(
-                Effect.flatMap(() =>
-                  Effect.tryPromise({
-                    try: () => browser.kernel.browsers.playwright.execute(sessionId, body, options),
-                    catch: (error) =>
-                      error instanceof Error ? error : new Error(String(error), { cause: error }),
-                  }),
-                ),
-                Effect.tap((answer) =>
-                  Effect.sync(() => {
-                    actionTimeout = nativeActionTimeout(answer);
-                  }),
+          execute: (sessionId, body, options) => {
+            // Counted when made: a held call goes out later, even after the script ends.
+            calls += 1;
+            return afterSignIn(() =>
+              settle(
+                Effect.sync(() => {
+                  actionTimeout = undefined;
+                }).pipe(
+                  Effect.flatMap(() =>
+                    Effect.tryPromise({
+                      try: () =>
+                        browser.kernel.browsers.playwright.execute(sessionId, body, options),
+                      catch: (error) =>
+                        error instanceof Error ? error : new Error(String(error), { cause: error }),
+                    }),
+                  ),
+                  Effect.tap((answer) =>
+                    Effect.sync(() => {
+                      actionTimeout = nativeActionTimeout(answer);
+                    }),
+                  ),
                 ),
               ),
-            ),
+            );
+          },
         },
       },
     };
     // The host's sign-in, with the deadline paused. A refusal before the script's first call
     // sent nothing; after it, the script's own calls may have.
-    const ensureSignedIn = async () => {
-      const signIn = browser.signIn;
-      if (signIn === undefined || browser.offline === true) return { signedInAgain: false };
+    const signInOnce = async (signIn: NonNullable<ScriptBrowser["signIn"]>) => {
       const resume = browser.deadline.suspend();
       try {
         const { signedInAgain } = await signIn();
@@ -447,19 +457,30 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         resume();
       }
     };
+    // A call while one is under way joins it rather than signing in again.
+    const ensureSignedIn = async () => {
+      const signIn = browser.signIn;
+      if (signIn === undefined || browser.offline === true) return { signedInAgain: false };
+      signingIn ??= signInOnce(signIn).finally(() => {
+        signingIn = undefined;
+      });
+      return signingIn;
+    };
     return Effect.tryPromise({
       try: async () => {
         // A page that lost its session since the host signed in is signed in again first.
         await ensureSignedIn();
-        const output = await operation.run(
-          makeKernelOperationContext({
-            ...browser,
-            kernel,
-            input,
-            ensureSignedIn,
-            ...(operation.write === undefined ? {} : { write: operation.write }),
-          }),
-        );
+        const context = makeKernelOperationContext({
+          ...browser,
+          kernel,
+          input,
+          ensureSignedIn,
+          ...(operation.write === undefined ? {} : { write: operation.write }),
+        });
+        const output = await operation.run({
+          ...context,
+          decideDialog: (report) => afterSignIn(() => context.decideDialog(report)),
+        });
         // A returned Effect never ran, so only the script's own execute calls may have sent.
         if (Effect.isEffect(output))
           throw scriptFailure(output, browser.scriptError, calls === 0 ? "not_sent" : "unknown");

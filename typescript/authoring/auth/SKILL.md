@@ -202,7 +202,10 @@ load in the middle of the script: a `page.goto`, a reload, or a click or submit 
 document. In-page navigation in a single-page app needs no call. The host checks the signed-in
 marker on the current page without moving it and signs in again only when the page is signed out.
 When `signedInAgain` is true, the sign-in left the page somewhere else: open the page you were on
-again before you go on. The operation's deadline pauses while the host signs in.
+again before you go on. The host signs in on the same browser while your script waits in
+`ensureSignedIn`, and the operation's deadline pauses meanwhile. Any other browser call the script
+makes during that time, even from a timer or a promise it never awaited, is held until the host is
+done, then sent in order.
 
 Never call it between a write's commit and its read-back: read the outcome back first. Let its
 failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
