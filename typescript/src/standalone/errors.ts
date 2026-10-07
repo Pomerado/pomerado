@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { MintFailure } from "../mint/contracts.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
@@ -14,18 +13,6 @@ export const mintError = (cause: unknown) =>
           error: cause,
         }),
       });
-export const inputValue = (value: string | undefined, fallback: unknown) =>
-  Effect.try({
-    try: () => (value === undefined ? fallback : (JSON.parse(value) as unknown)),
-    catch: (cause) =>
-      new MintFailure({
-        code: "InvalidRequest",
-        failureDetail: failureDetail("mint_host_dependency_failed", {
-          operation: "standalone.inputValue",
-          error: cause,
-        }),
-      }),
-  });
 
 /** Contract extraction reports the original schema refusal to finish_build. */
 export const publicationError = (cause: unknown) => {

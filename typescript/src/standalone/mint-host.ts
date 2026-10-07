@@ -1,9 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import { questionForReview } from "../guardian/question.js";
-import { MintFailure, MintServices, type MintDependencies } from "../mint/contracts.js";
+import {
+  MintFailure,
+  MintServices,
+  type ExecutionRequest,
+  type MintDependencies,
+} from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
+import {
+  exampleInputRefusal,
+  preflightTestInput,
+  writeSessionBoundary,
+} from "../mint/step-checks.js";
 import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
@@ -11,6 +21,31 @@ import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
+/**
+ * Steps the local host refuses before review. It keeps no write maintenance, so it has no
+ * possible write to inspect or finish. And once a write session started, a sign-in runs only as
+ * a signInStep the host fills: an authenticate step without one would run the agent's own source
+ * on the site outside the session's act steps.
+ */
+const localStepRefusal = (
+  execution: ExecutionRequest,
+  writeSessionStarted: boolean,
+): { readonly supported: false; readonly reason: string } | undefined =>
+  execution.purpose === "inspect" || execution.purpose === "residual"
+    ? {
+        supported: false,
+        reason: `${execution.purpose} is for a write maintenance recovering a possible write; this build has none to recover.`,
+      }
+    : writeSessionStarted &&
+        execution.purpose === "authenticate" &&
+        execution.target === "liveBrowser" &&
+        execution.signInStep === undefined
+      ? {
+          supported: false,
+          reason:
+            "This write session already started, so it signs in only through a signInStep the host fills: an authenticate step without one would run your own source on the site outside the session's act steps. Nothing was executed.",
+        }
+      : undefined;
 const mintDependencies = (state: MintState) => {
   const { workspace, authoring, deadline, context, request, mintAsk, handles } = state;
   const { projection, options } = state.session;
@@ -30,10 +65,9 @@ const mintDependencies = (state: MintState) => {
           { credentialsAvailable: false, ...facts },
           projection.text,
         );
-        const result = yield* context.guardian.reviewQuestion(
-          context.pending("question", request.input ?? {}),
+        const result = yield* context.reviewQuestion(
+          { entrypoint: "question", sources: new Map(), input: request.input ?? {} },
           pendingQuestion,
-          context.readSources(new Map()),
         );
         return { ...result.decision, reviewId: result.reviewId };
       }).pipe(Effect.mapError(mintError)),
@@ -53,29 +87,43 @@ const mintDependencies = (state: MintState) => {
         Effect.tap((issued) => Effect.sync(() => context.askedByAgent(candidate, issued))),
         Effect.mapError(mintError),
       ),
-    recordBuildEffect: (effect) =>
-      Effect.sync(() => {
-        state.setBuildEffect(effect);
-        context.setEffect(effect);
-      }),
-    upgradeToWrite: () => Effect.sync(() => context.setEffect("write")),
+    recordBuildEffect: (effect) => Effect.sync(() => context.setBuildEffect(effect)),
+    upgradeToWrite: context.approveWrite,
+    repeatableRead: context.repeatableRead(),
+    // A repeatable read's example claims nothing, so it may run again.
     claimExample: Effect.suspend(() =>
-      state.claimed
-        ? Effect.fail(new MintFailure({ code: "ScopeDenied" }))
-        : Effect.sync(() => {
-            state.claim();
-          }),
+      context.repeatableRead()
+        ? Effect.void
+        : context.claimed
+          ? Effect.fail(new MintFailure({ code: "ScopeDenied" }))
+          : Effect.sync(context.claim),
     ),
     authorizeResidual: Effect.fail(new MintFailure({ code: "ScopeDenied" })),
     preflight: (execution) =>
-      Effect.succeed(
-        execution.target === "pureFiles" || execution.target === "liveBrowser"
+      Effect.sync(() => {
+        if (execution.target !== "pureFiles" && execution.target !== "liveBrowser")
+          return {
+            supported: false as const,
+            reason: "Standalone execution supports pureFiles and liveBrowser.",
+          };
+        const { buildEffect } = context;
+        const refusal =
+          localStepRefusal(execution, state.writeSession.started) ??
+          preflightTestInput(execution, { buildEffect, executionHistory: context.executions() }) ??
+          exampleInputRefusal(execution, {
+            buildEffect,
+            callerInput: request.input ?? {},
+            writeSession: state.writeSession,
+          });
+        if (refusal !== undefined) return refusal;
+        const boundary = writeSessionBoundary(execution, {
+          buildEffect,
+          writeSessionStarted: state.writeSession.started,
+        });
+        return boundary === undefined
           ? { supported: true as const }
-          : {
-              supported: false as const,
-              reason: "Standalone execution supports pureFiles and liveBrowser.",
-            },
-      ),
+          : { supported: false as const, reason: boundary };
+      }),
     reviewAndExecute: mintExecution(state),
     publish: mintPublication(state),
   };
@@ -88,22 +136,22 @@ export const mintRequest = (
 ) =>
   Effect.gen(function* () {
     const state = yield* mintState(session, context, request);
-    const dependencies = mintDependencies(state);
     const mintRequest = {
       mode: "mint",
       intent: request.intent,
       businessInput: request.input ?? {},
-      observations: {},
+      observations: context.observations,
       siteOrigin: context.siteOrigin,
       effect: request.effect ?? "ask",
     } as const;
-    if (state.buildEffect === undefined) {
+    // Each run reads the build's read/write state as it stands when the run starts.
+    if (context.buildEffect === undefined) {
       const asked = yield* runMint(mintRequest).pipe(
-        Effect.provideService(MintServices, dependencies),
+        Effect.provideService(MintServices, mintDependencies(state)),
       );
-      if (state.buildEffect === undefined) return asked;
+      if (context.buildEffect === undefined) return asked;
     }
-    return yield* runMint({ ...mintRequest, effect: state.buildEffect }).pipe(
-      Effect.provideService(MintServices, dependencies),
+    return yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
+      Effect.provideService(MintServices, mintDependencies(state)),
     );
   });

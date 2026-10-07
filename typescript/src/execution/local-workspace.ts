@@ -27,6 +27,8 @@ import {
   localSourceFileLimit,
 } from "./local-path.js";
 
+/** How long a workspace command may run unless the workspace sets its own limit. */
+export const localCommandTimeoutMs = 30_000;
 export interface LocalWorkspaceOptions {
   readonly root?: string;
   readonly environment?: Readonly<Record<string, string>>;
@@ -416,7 +418,7 @@ export const createLocalWorkspace = (
       root,
       environment,
       alive,
-      options.commandTimeoutMs ?? 30_000,
+      options.commandTimeoutMs ?? localCommandTimeoutMs,
       register,
     );
     const materialize = (path: string, entry: Entry) =>

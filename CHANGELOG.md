@@ -4,7 +4,19 @@
 
 ### Breaking changes
 
-The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change.
+- `misplacedHandleRule` is no longer exported from `pomerado/core/mint/secret-handles`.
+  - Migrate by calling `secretHandleRefusal`, which returns the whole refusal.
+- A local build follows these read and write rules:
+  - A read build may run its live example again. Its owner may approve turning it into a write build before it runs one.
+  - `testInput` runs only on a read build's live test, as JSON text, at most twice per attempt. Any other use is refused before review.
+  - `exampleInput` is a JSON object and runs only when the caller's input is empty: on a read build's example, or on a write build's act steps. The first act step Guardian allows fixes it for the session. Later act steps run it, and may repeat it unchanged or omit it. A different one, or one added after the session started without it, is refused before review. Guardian reviews these act steps under a stricter effect: every value in that input, and any add-on or optional purchase the step chooses, must come from the request or an answered question, while values the page supplies follow the general policy. Publication decodes the composed contract against that input.
+  - A write build refuses a live example or live test, and a live explore once its first act step ran. An unchanged act step right after one that may have changed the site is refused until another act step reads the result.
+  - Once a write session started, an `authenticate` step without `signInStep` is refused, since it would run the agent's own source outside the session's act steps. A `signInStep` the host fills still runs.
+  - `inspect` and `residual` are refused before review. A local build keeps no write maintenance, so it has no possible write to recover.
+  - A secret handle is refused before Guardian reviews the step, instead of failing after review, when this attempt never issued it, when it sits in the source an example publishes, or when it is misplaced. A misplaced handle's refusal names its file and line. An offline step runs handle text as written.
+  - A Guardian outage is retried for up to five minutes before the step reports the review as unavailable. A spent model quota ends the build with `model_quota_exhausted`.
+
+The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
 
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
   - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.
@@ -39,6 +51,12 @@ The package now holds only code the local host runs, plus the hook interfaces an
 
 ### Other changes
 
+- Each Guardian review of a local build carries that step's own context: the effects its kind of step may have, the files its entrypoint imports, the last six step results, the input schema of the latest example or contract run, the page the browser last showed with a redacted readable capture, a command's sandbox limits, steps still running and whether the browser has opened yet. A step that starts on a reset page, such as a live example, gets no page, nor does a question it asks while it runs. A question review gets no allowed effects. A read step's effects keep the limits the request states, such as a date range or filter, and tell Guardian that context the request gives, such as today's date, is no filter unless the request applies it.
+- The minter and Guardian read today's date and time in UTC from the build's observations. Guardian's review of a contract run says what that run does.
+- `pomerado/core/mint/review-context` and `pomerado/core/mint/step-checks` export these rules for other hosts, and `secretHandleRefusal` joins `pomerado/core/mint/secret-handles`.
+- Guardian's review of a contract run carries the input that run decodes: the example's input, or the write session's.
+- A page with more than 10,000 elements is not captured for Guardian, which reads that the page was too large. A page that does not answer within the capture's time, as when its scripts keep it busy, is not captured either, and the browser keeps running. A capture is cut to 256 KiB in the browser, before it reaches the host.
+- A caller's secret is also redacted in the forms a page or URL shows it: trimmed, with its whitespace collapsed, with each `'` doubled or its control characters escaped as a page snapshot writes them, and percent-encoded as `encodeURIComponent` or a form writes it, or as Chromium writes it into a URL's query, path or fragment, in either hex case. A capture cut at 256 KiB keeps no prefix of a secret the cut split. A secret that cannot be percent-encoded no longer fails its registration.
 - The core authoring skill has a write build whose caller sent an empty input pass the request's values as `exampleInput` on each act step that needs them, as a read does on its example. An optional input plus a declared question is only for a value the request leaves open, and a required field is never made optional with nothing that asks.
 - Guardian's question review counts only the host's own masks and `{{secret.<id>}}` handles as stand-ins for a supplied value. A placeholder written into the intent text in place of a value, such as `"[redacted value]"`, supplies nothing, so a question asking for that value is not redundant. The caller-input skill says the same.
 - Guardian's execution review applies its `intent_derived` input rule to a write's act step as well as a read's example.
