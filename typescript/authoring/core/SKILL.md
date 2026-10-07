@@ -95,6 +95,12 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- Never derive a format from one sample: not an input format, an element key, a selector or a
+  label. A key the page showed for the example's value says nothing about the next value, as
+  when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
+  the format off the page for the value you need, such as the day cell whose visible label or
+  accessible name is the caller's date, or a key the page itself lists, never a key rebuilt
+  from the one you saw.
 - Inputs are values a caller knows, such as codes, names, dates and counts, never a
   suggestion's full display text or an internal id the caller cannot know. A closed list
   of options stays an enum of the site's options, as above. When the options come from a
