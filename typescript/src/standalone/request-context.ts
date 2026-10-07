@@ -398,6 +398,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           }),
         ),
       ),
+      /** Drops the observed page: a step's start is resetting it, so no review reads it again. */
+      leavePage: () => {
+        observed = undefined;
+      },
       executions: () => executions,
       repeatableRead: host.repeatableRead,
       get buildEffect() {

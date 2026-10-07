@@ -40,11 +40,14 @@ const unavailable = (operation: string) => (error: unknown) =>
  * A live example, a live test and a write session's first step reset the page and load the site
  * root; see `startStateFor`. A new sign-in drops the session saved after the last one, and a
  * check counts the build signed in only once a sign-in step sent the login (see `sent`).
+ * `leavePage` runs before each reset, so the page the last step left is never taken for the
+ * reset step's page, even when the reset fails.
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
   siteOrigin: string,
   enterRequest: Effect.Effect<void, Error>,
+  leavePage: () => void,
 ) => {
   const tracker = makeStartTracker();
   const hooks = localStartHooks(browser.execute, browser.targetId);
@@ -113,6 +116,7 @@ export const makeBuildStart = (
         if (plan.start === "none") {
           if (live) yield* enter;
         } else {
+          leavePage();
           yield* startPage(
             browser.execute,
             browser.targetId,
@@ -196,7 +200,7 @@ export const mintState = (
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    const start = makeBuildStart(browser, context.siteOrigin, context.navigate);
+    const start = makeBuildStart(browser, context.siteOrigin, context.navigate, context.leavePage);
     return {
       session,
       context,

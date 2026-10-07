@@ -214,6 +214,8 @@ const modeledBuild = (
   const targetId = "primary-target";
   const calls: string[] = [];
   const resets: string[] = [];
+  /** How many calls the build had made each time it left the page. */
+  const left: number[] = [];
   let saveFailures = options.saveFailures ?? 0;
   let resetFailures = options.resetFailures ?? 0;
   const execute: HostExecute = (code) =>
@@ -251,6 +253,9 @@ const modeledBuild = (
     Effect.sync(() => {
       calls.push("entry");
     }),
+    () => {
+      left.push(calls.length);
+    },
   );
   const step = (purpose: StepPurpose, target: "liveBrowser" | "pureFiles" = "liveBrowser") =>
     Effect.runPromise(
@@ -277,7 +282,7 @@ const modeledBuild = (
     expect(start.verified()).toBe(true);
     return outcome;
   };
-  return { start, step, signIn, calls, resets };
+  return { start, step, signIn, calls, resets, left };
 };
 /** A sign-in step's requested fields, one per slot. */
 const asked = (...slots: readonly AutofillSlot[]): AutofillStepRequest["fields"] =>
@@ -379,6 +384,17 @@ describe("makeBuildStart", () => {
     const outcome = await build.step("example");
     expect(outcome).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
     expect(build.calls).toEqual(["reset:clear failed"]);
+  });
+
+  it("leaves the last page before each reset, one that fails included", async () => {
+    const build = modeledBuild({ resetFailures: 1 });
+    await build.step("explore");
+    await build.step("example");
+    await build.step("example");
+    await build.step("explore");
+    expect(build.calls).toEqual(["entry", "run", "reset:clear failed", "reset:clear", "root", "run", "run"]);
+    // Before each reset, never before an exploration that keeps its page.
+    expect(build.left).toEqual([2, 3]);
   });
 
   it("stops a root that fails to load and still runs the step", async () => {
