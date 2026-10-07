@@ -3,16 +3,17 @@ import { Effect, Either } from "effect";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { siteDomain } from "../../src/runtime/same-site.js";
-import { executeKernelOperation } from "../../src/runtime/kernel-operation.js";
 import type {
   DialogDecider,
   KernelExecuteClient,
   KernelOperation,
 } from "../../src/runtime/kernel-operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
+import { runKernelOperation } from "../support/kernel-run.js";
 
-// The authoring examples, run through the runtime on the saved-DOM stand-in for Kernel, which runs
-// each call's code as Kernel does, with `page` in scope, here on a local page. The site domain is
+// The authoring examples, run through the runtime as the local runner wires a run, on the saved-DOM
+// stand-in for Kernel, which runs each call's code as Kernel does, with `page` in scope, here on a
+// local page. The site domain is
 // the host's, computed from the site origin as the sandbox's browser binding carries it.
 export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
   page: Page,
@@ -41,7 +42,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
   const result = await Effect.runPromise(
     Effect.either(
       Effect.scoped(
-        executeKernelOperation(operation, input, {
+        runKernelOperation(operation, input, {
           kernel,
           sessionId: "session-1",
           ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),

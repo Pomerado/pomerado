@@ -2,23 +2,6 @@ import { posix } from "node:path";
 import { parseSync } from "oxc-parser";
 import { sourceSyntax } from "../runtime/source-syntax.js";
 
-/** Inert syntax only: no imports, dependency resolution or generated code execution. */
-export const mintSourceSyntaxFailure = (source: string, path: string): string | undefined => {
-  try {
-    const lang = sourceSyntax(path) === "typescript" ? "ts" : "js";
-    const error = parseSync(`operation.${lang}`, source, { lang, sourceType: "module" }).errors[0];
-    if (!error) return undefined;
-    // Parser excerpts may contain secrets. Retain only the position and a fixed reason.
-    const offset = error.labels[0]?.start ?? 0;
-    const prefix = source.slice(0, offset);
-    const line = prefix.split("\n").length;
-    const column = offset - prefix.lastIndexOf("\n");
-    return `Submitted entrypoint has invalid source syntax at line ${line}, column ${column}. Correct the source before execution. No code was executed.`;
-  } catch {
-    return "Submitted entrypoint source could not be parsed. Correct the source before execution. No code was executed.";
-  }
-};
-
 const publishableSourcePath = /^(src|explore|test|scratch)\/.+\.(?:m?js|ts|json)$/;
 /** A file the agent authors and an execution may import: operation source, never skills or captures. */
 export const isAuthoredSourcePath = (path: string) => publishableSourcePath.test(path);

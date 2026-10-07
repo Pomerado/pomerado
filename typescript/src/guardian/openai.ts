@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { guardianExecutionPolicy } from "./execution-policy.js";
+import type { GuardianExecutionEnvironment } from "./execution-policy.js";
 import {
   guardianFollowUpState,
   guardianReviewInput,
@@ -25,9 +26,15 @@ import type { ModelFailureMetadata } from "../models/model-failure.js";
 import type { AgentInputItem, ModelProvider, ModelRequest } from "@openai/agents";
 import type { Cause } from "effect";
 
+export { nativeExecutionEnvironment } from "./execution-policy.js";
+export type { GuardianExecutionEnvironment } from "./execution-policy.js";
+
 export interface GuardianModelOptions {
-  /** The host selects the execution facilities; generated source cannot set this. */
-  readonly executionEnvironment?: "hosted" | "native";
+  /**
+   * The host that runs reviewed code, as the execution policy describes it. The local host passes
+   * `nativeExecutionEnvironment`; generated source cannot set this.
+   */
+  readonly executionEnvironment: GuardianExecutionEnvironment;
   readonly modelProvider?: ModelProvider;
   readonly observerFactory?: ModelObserverFactory;
   readonly failureMetadata?: (error: unknown) => ModelFailureMetadata;
@@ -109,7 +116,7 @@ const reviewPolicy = (turn: ReviewTurn, options: GuardianModelOptions) => {
 const reviewInput = (turn: ReviewTurn, options: GuardianModelOptions) =>
   guardianReviewInput(turn, reviewPolicy(turn, options), {
     ...options.specialize?.(turn).input,
-    trusted_execution_environment: options.executionEnvironment ?? "hosted",
+    trusted_execution_environment: options.executionEnvironment.name,
   });
 
 /** The review's token counts over all its model calls. */
@@ -189,8 +196,8 @@ const withheldFromObserver = (
 
 const reviewerWithPolicy = (
   policy: string,
-  developmentPublicRead = false,
-  options: GuardianModelOptions = {},
+  developmentPublicRead: boolean,
+  options: GuardianModelOptions,
 ): Reviewer => ({
   run: (turn) =>
     Effect.suspend(() => {
@@ -494,14 +501,11 @@ const reviewerWithPolicy = (
 
 export const makeOpenAIReviewer = (
   upstreamPolicy: string,
-  developmentPublicRead = false,
-  options: GuardianModelOptions = {},
+  developmentPublicRead: boolean,
+  options: GuardianModelOptions,
 ): Reviewer =>
   reviewerWithPolicy(
-    withTenantPolicy(
-      upstreamPolicy,
-      guardianExecutionPolicy(options.executionEnvironment ?? "hosted"),
-    ),
+    withTenantPolicy(upstreamPolicy, guardianExecutionPolicy(options.executionEnvironment)),
     developmentPublicRead,
     options,
   );

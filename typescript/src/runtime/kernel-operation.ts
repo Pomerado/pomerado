@@ -1,10 +1,6 @@
-import {
-  decodeKernelOperationInput,
-  validateKernelOperationOutput,
-} from "./kernel-operation-validation.js";
 import { BrowserActionTimeout, nativeActionTimeout } from "./browser-action-timeout.js";
-import { Effect, Either, Option, Schema } from "effect";
-import type { Context, Scope } from "effect";
+import { Effect, Either, Schema } from "effect";
+import type { Context } from "effect";
 import { DialogChoice, DialogFailure, DialogType } from "./dialogs.js";
 import { ChallengeFailure, challengeSolverWaitMs } from "./challenge.js";
 import { ScriptInput, ScriptInputFailure } from "./script-input.js";
@@ -14,18 +10,9 @@ import type {
   ScriptAnswerOf,
   ScriptQuestionDeclarations,
 } from "./script-input.js";
-import { ExecutionContext, finishCaptureAsEvidence } from "./context.js";
 import type { EffectJournal, WriteConfirmation } from "./context.js";
 import type { Deadline } from "./deadline.js";
-import {
-  DeadlineExceeded,
-  WriteConfirmationRefused,
-  type Dispatch,
-  type InvalidInput,
-  type InvalidOutput,
-  type CaptureUnavailable,
-  type EventUnavailable,
-} from "./errors.js";
+import { WriteConfirmationRefused, type Dispatch } from "./errors.js";
 import type { WriteDeclaration } from "./operation.js";
 import { kernelTimeoutSec } from "./kernel-execute-client.js";
 import type { KernelExecuteClient } from "./kernel-execute-client.js";
@@ -189,18 +176,6 @@ export interface KernelOperation<Input, EncodedInput, Output, EncodedOutput> {
   readonly run: (context: KernelOperationContext<Input>) => Promise<Output>;
 }
 
-/** An offline run, such as a parser, has no browser: any call fails at once, having sent nothing. */
-export const offlineKernel: KernelExecuteClient = {
-  browsers: {
-    playwright: {
-      execute: () =>
-        Promise.reject(
-          new OperationFailure("An offline run has no browser", { dispatch: "not_sent" }),
-        ),
-    },
-  },
-};
-
 const WaitResult = Schema.Struct({ cleared: Schema.Boolean, waitedMs: Schema.Number });
 
 /** The solver wait as one call on Kernel's page, polling the script's own readiness check. */
@@ -214,35 +189,6 @@ while (true) {
   if (Date.now() - started >= ${limitMs}) return { cleared: false, waitedMs: Date.now() - started };
   await new Promise((resolve) => setTimeout(resolve, 250));
 }`;
-
-/** Kernel's client with each call marked as a possible dispatch, so no call follows `verified`. */
-const journaledKernel = (
-  kernel: KernelExecuteClient,
-  journal: EffectJournal,
-): KernelExecuteClient => ({
-  browsers: {
-    playwright: {
-      execute: (sessionId, body, options) => {
-        Effect.runSync(journal.enteringDispatch);
-        return kernel.browsers.playwright.execute(sessionId, body, options);
-      },
-    },
-  },
-});
-
-/**
- * A live run's browser: every call goes through the journal, so the effect after `verified` stays
- * verified only while no call follows it. An offline run's stays as it is.
- */
-const liveBrowser = <
-  Browser extends { readonly kernel: KernelExecuteClient; readonly offline?: boolean },
->(
-  browser: Browser,
-  journal: EffectJournal,
-) =>
-  browser.offline === true
-    ? browser
-    : { ...browser, kernel: journaledKernel(browser.kernel, journal), journal };
 
 type Declared = ScriptQuestionDeclarations[string];
 /**
@@ -278,7 +224,7 @@ interface ScriptBrowser {
   readonly siteOrigin?: string;
   /** The host's registrable domain for `siteOrigin`; the sandbox has no public suffix list. */
   readonly siteDomain?: string;
-  /** An offline run cannot reach a site, so it never marks a possible effect or signs in. */
+  /** An offline run cannot reach a site, so it never signs in. */
   readonly offline?: boolean;
   readonly dialogs?: DialogDecider;
   /**
@@ -371,12 +317,6 @@ const makeKernelOperationContext = <Input>(
       });
   },
 });
-
-/** The write's declared commit step names, only strings, in order. */
-const declaredCommits = (write: WriteDeclaration | undefined): readonly string[] => {
-  const declared: unknown = write?.commits;
-  return Array.isArray(declared) ? declared.filter((n): n is string => typeof n === "string") : [];
-};
 
 export const isKernelOperation = (
   value: unknown,
@@ -495,73 +435,4 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
           : failure;
       },
     });
-  });
-
-/**
- * Runs a Kernel script under the execution deadline: input decoded, capture bracketed, output
- * validated. The whole run may have dispatched, so the journal is marked before it starts and
- * again at each execute call, and only the script's `verified` after its read-back settles it.
- * `first`, a registered run's HTTP version, runs after the login hooks in place of the script and
- * gets the script's run as its fallback.
- */
-export const executeKernelOperation = <
-  Input,
-  EncodedInput,
-  Output,
-  EncodedOutput,
-  FirstError = never,
-  FirstServices = never,
->(
-  operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
-  rawInput: unknown,
-  browser: ScriptBrowser,
-  first?: (
-    script: Effect.Effect<Output, ScriptFailure>,
-    input: Input,
-  ) => Effect.Effect<Output, FirstError, FirstServices>,
-): Effect.Effect<
-  Output,
-  | ScriptFailure
-  | InvalidInput
-  | InvalidOutput
-  | DeadlineExceeded
-  | CaptureUnavailable
-  | EventUnavailable
-  | FirstError,
-  ExecutionContext | Scope.Scope | FirstServices
-> =>
-  Effect.gen(function* () {
-    const execution = yield* ExecutionContext;
-    // Declared first, so every exit reports which commit steps were never reached.
-    yield* execution.journal.declareCommits(declaredCommits(operation.write));
-    const input = yield* decodeKernelOperationInput(operation, rawInput);
-    if (execution.deadline.remainingMs() <= 0)
-      return yield* new DeadlineExceeded({ phase: "execution", dispatch: "not_sent" });
-    return yield* Effect.gen(function* () {
-      yield* Effect.acquireRelease(execution.capture.start, () =>
-        finishCaptureAsEvidence(execution),
-      );
-      yield* execution.events.emit("operation.started", { operation: operation.name });
-      const live = liveBrowser(browser, execution.journal);
-      if (browser.offline !== true) yield* execution.journal.enteringDispatch;
-      // The runner provides the caller's questions; only the script itself may ask.
-      const scriptInput = yield* Effect.serviceOption(ScriptInput);
-      const script = runKernelScript(operation, input, {
-        ...live,
-        deadline: execution.deadline,
-        ...(Option.isSome(scriptInput) ? { scriptInput: scriptInput.value } : {}),
-      });
-      const output = yield* first === undefined ? script : first(script, input);
-      const validated = yield* validateKernelOperationOutput(operation, output);
-      yield* execution.events.emit("operation.output_validated", { operation: operation.name });
-      return validated;
-    }).pipe(
-      Effect.raceFirst(
-        execution.deadline.awaitExpiry.pipe(
-          Effect.zipRight(
-            Effect.fail(new DeadlineExceeded({ phase: "execution", dispatch: "unknown" })),
-          ),
-        ),
-      ),
-    );
   });

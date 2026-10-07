@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { CDPSession, Frame, Locator, Page } from "playwright";
-import { kernelPlaywrightUtilityWorld } from "../../src/destinations/cdp-contracts.js";
+
+/** Patchright's isolated world for locator evaluation, which also binds private typing. */
+export const isolatedWorldName = "utility";
 
 const boundMember = (target: object, property: string | symbol): unknown => {
   const value: unknown = Reflect.get(target, property);
@@ -82,7 +84,7 @@ export const isolatedLocatorPage = async (page: Page) => {
     if (found === undefined) throw new Error("Fixture element missing");
     const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
       frameId: found.frameId,
-      worldName: kernelPlaywrightUtilityWorld,
+      worldName: isolatedWorldName,
     });
     const { object } = await cdp.send("DOM.resolveNode", {
       backendNodeId: found.backendNodeId,
