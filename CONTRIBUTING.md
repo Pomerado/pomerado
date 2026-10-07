@@ -62,7 +62,7 @@ Tests use synthetic sites and scripted model responses. They need no model API k
 - Each merge to `main` publishes a canary to npm. [Releasing](docs/RELEASING.md) describes canaries and how `latest` moves.
 - CI checks every pull request, and each canary before it publishes. A merge that a newer merge replaces before its canary starts gets no run of its own on `main`. Its pull request already passed CI on the same tree. CI runs typecheck, build, unit tests, the packed package check, browser tests, a gitleaks secret scan and a public content scan. Run `node tools/check-public-content.ts` before you push.
 - Code, tests and pull request text stay free of customer data, credentials and internal references.
-- This package holds only code the local host runs, plus the hook interfaces another host implements.
+- Add to this package only code the local host runs, or a hook interface another host implements.
 
 ## License
 

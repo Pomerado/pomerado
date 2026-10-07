@@ -16,7 +16,7 @@
   - A secret handle is refused before Guardian reviews the step, instead of failing after review, when this attempt never issued it, when it sits in the source an example publishes, or when it is misplaced. A misplaced handle's refusal names its file and line. An offline step runs handle text as written.
   - A Guardian outage is retried for up to five minutes before the step reports the review as unavailable. A spent model quota ends the build with `model_quota_exhausted`.
 
-The package now holds only code the local host runs, plus the hook interfaces another host implements. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
+The package now holds the code the local host runs, the hook interfaces another host implements, and the signed-in marker checks behind `MintDependencies.checkSignedInMarker`. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
 
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes all three arguments, and its options need `executionEnvironment`. That option is a `GuardianExecutionEnvironment` object instead of `"hosted"` or `"native"`, and nothing defaults it. The `"hosted"` text is gone.
   - Migrate from `"native"` by passing `nativeExecutionEnvironment`, which gives the same policy text. Import it and the `GuardianExecutionEnvironment` type from `pomerado/core/guardian/openai`.

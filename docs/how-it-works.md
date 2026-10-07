@@ -128,7 +128,7 @@ The package has these entry points.
 
 - This repository is the only source for the shared core, the portable tests, the authoring assets and the local MCP adapters.
 - Another host installs the same core as a pinned library package and calls it directly, through the hook interfaces above. Its own frontend, accounts, storage, providers and authoring text live in its own code.
-- This package holds only code the local host runs, plus those hook interfaces. Code that only another host runs stays in that host.
+- This package holds the code the local host runs, those hook interfaces, and the signed-in marker checks in `destinations/signed-in-marker.ts`, which a host uses to implement `MintDependencies.checkSignedInMarker`. Code that only another host runs stays in that host.
 - A host adopts a tested release through an exact dependency pin with locked integrity, and rolls back by restoring its previous pin. Public commits don't update any host.
 - Contributors can test a host against a locally built package before a version is published.
 
