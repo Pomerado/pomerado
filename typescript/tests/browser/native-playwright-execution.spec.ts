@@ -109,7 +109,8 @@ const nextPageDelayMs = 8_000;
  * sixth character leaves the page at once (`submit`, `href`), after a request (`fetch`) or a task
  * (`timeout`), or moves the focus into the other origin's frame (`captcha`). A frame that gets six
  * characters tells the page, which moves the focus back to its own field. `/two` has only the code
- * field and a frame from each origin, `/plain` no field and no frame, and `/swap` a site frame
+ * field and a frame from each origin, `/plain` no field and no frame (with `grab`, the first key
+ * adds another origin's frame and focuses it), and `/swap` a site frame
  * that another origin's frame replaces after half a second, with a disabled field or none.
  */
 const typingSites = async () => {
@@ -129,7 +130,12 @@ const typingSites = async () => {
           `<input id="inner" class="${which}" aria-label="${which === "site" ? "Site" : "Other"} field"><script>document.getElementById('inner').addEventListener('input', (event) => { if (event.target.value.length >= 6) parent.postMessage('typed', '*'); });</script>`,
         );
       if (path === "/nest") return response.end('<iframe id="deeper" src="/frame"></iframe>');
-      if (path === "/plain") return response.end("<p>Enter the code</p>");
+      if (path === "/plain")
+        return response.end(
+          url.searchParams.has("grab")
+            ? `<p>Enter the code</p><script>addEventListener('keydown', () => { const frame = document.createElement('iframe'); frame.src = '${origins[1] ?? ""}/frame'; document.body.append(frame); frame.focus(); frame.addEventListener('load', () => frame.focus()); }, { once: true });</script>`
+            : "<p>Enter the code</p>",
+        );
       if (path === "/two")
         return response.end(
           `<label>Code<input id="code"></label><iframe id="same" src="/frame"></iframe><iframe id="other" src="${origins[1] ?? ""}/frame"></iframe>`,
@@ -264,6 +270,12 @@ test("a typing watch marks a value typed only by a typing call on the site that 
         "await page.keyboard.type('111111');",
       ])
         expect(await typed(code), code).toEqual({ success: true, typed: [] });
+      // Keys with nothing focused on a page that adds another origin's frame and focuses it as
+      // typing starts.
+      expect(await run(`${site}/plain?grab`, "await page.keyboard.type('111111', { delay: 150 });")).toEqual({
+        success: true,
+        typed: [],
+      });
       // Selectors that reach another origin's frame however Playwright lets them: any frame, an
       // aria snapshot's reference, and a frame the page swaps in while the call waits.
       for (const [code, url] of [

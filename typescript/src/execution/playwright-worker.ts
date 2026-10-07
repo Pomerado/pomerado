@@ -65,32 +65,45 @@ const identify = (context: BrowserContext, page: Page) =>
 type Delivery = readonly [index: number, urls: readonly string[]];
 
 /**
+ * The frames a typing call types in, found before it, and for keys with nothing focused the
+ * frames to check again once it completed.
+ */
+interface Targets {
+  readonly frames: readonly Frame[];
+  readonly later?: () => readonly Frame[];
+}
+
+/**
  * The frame the element `selector` names from `frame` is in, by Playwright's own lookup, the one
  * its actions use: frame locators, any-frame selectors and aria snapshot references included.
  * Undefined while there is no such element.
  */
-const selectorFrames = async (frame: Frame, selector: string, strict: unknown) => {
+const selectorFrames = async (
+  frame: Frame,
+  selector: string,
+  strict: unknown,
+): Promise<Targets | undefined> => {
   const element = await frame.$(selector, strict === true ? { strict } : undefined);
   if (element === null) return undefined;
   const owner = await element.ownerFrame();
   await element.dispose();
-  return owner === null ? undefined : [owner];
+  return owner === null ? undefined : { frames: [owner] };
 };
 
 /**
  * The frames of `page` the keyboard types in: the one whose document holds the focused element, by
  * the browser's own `:focus` match, which Playwright runs apart from the page's scripts and only
  * the focused frame matches. With nothing focused, keys go to whichever document has the focus,
- * so every frame of the page.
+ * so every frame of the page, before the call and once it completed.
  */
-const focusedFrames = async (page: Page) => {
+const focusedFrames = async (page: Page): Promise<Targets> => {
   for (const frame of page.frames()) {
     const focused = await frame.$(":focus").catch(() => null);
     if (focused === null) continue;
     await focused.dispose();
-    return [frame];
+    return { frames: [frame] };
   }
-  return page.frames();
+  return { frames: page.frames(), later: () => page.frames() };
 };
 
 /**
@@ -98,7 +111,8 @@ const focusedFrames = async (page: Page) => {
  * page's and a locator's `fill`, `type` and `pressSequentially` go through, and the keyboard's
  * `type`. Before a call with a watched value as its text, it finds the frames the call types in:
  * the frame of the element its selector names for a frame's call, looked up again once the call
- * completed when there was none yet, and the focused frames for the keyboard's. Once the call
+ * completed when there was none yet, and the focused frames for the keyboard's, with every frame
+ * of the page again once it completed when nothing was focused. Once the call
  * completed, it adds the value to `typed` with those frames' URLs then and now, read without
  * waiting for any page the typing started to load, unless one of them left the page meanwhile,
  * as a frame the page swapped out does. A call that throws adds nothing. The methods are shared
@@ -141,10 +155,11 @@ const watchTypingCalls = (
         const at = typeof text === "string" ? values.indexOf(text) : -1;
         if (at < 0) return (await Reflect.apply(original, this, args)) as unknown;
         const before = await targets(this, args).catch(() => undefined);
-        const started = before?.map((frame) => frame.url()) ?? [];
+        const started = before?.frames.map((frame) => frame.url()) ?? [];
         const result: unknown = await Reflect.apply(original, this, args);
-        const frames =
+        const found =
           before ?? (again ? await targets(this, args).catch(() => undefined) : undefined);
+        const frames = found && [...found.frames, ...(found.later?.() ?? [])];
         const stayed = frames !== undefined && !frames.some((frame) => frame.isDetached());
         if (stayed && frames.length > 0)
           typed.push([at, [...new Set([...started, ...frames.map((frame) => frame.url())])]]);
