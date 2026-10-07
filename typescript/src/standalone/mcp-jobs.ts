@@ -5,6 +5,7 @@ import { ReviewFailure } from "../guardian/review.js";
 import { modelFailureMetadata } from "../models/model-failure.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
 import { makeInputAsker } from "../inputs/callback.js";
+import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,
@@ -28,6 +29,8 @@ interface Job {
   output?: unknown;
   finishedAt?: number;
   error?: string;
+  /** The job failed signing in, before the operation it runs could act on the website. */
+  beforeOperation?: true;
   fiber?: Fiber.RuntimeFiber<void>;
 }
 export interface McpJobView {
@@ -59,6 +62,8 @@ export const mcpFailureMessage = (
   if (error instanceof ReviewFailure) return `Guardian review failed (${error.code}).`;
   if (error instanceof MintFailure) return `Mint failed (${error.code}).`;
   if (error instanceof InputRequestFailure) return `Input could not be completed (${error.code}).`;
+  // A run's sign-in failure names only the field or step, never a value, and what to do next.
+  if (error instanceof SignInRunFailed) return `Sign-in failed (${error.code}): ${error.message}`;
   // The tool's own InvalidInput says which value the task or site refuses, for the caller to fix.
   // A schema decode failure carries only its name, which the generic message below covers.
   if (
@@ -109,7 +114,10 @@ const snapshot = (job: Job): McpJobView => {
       : {}),
     ...(job.status === "failed"
       ? {
-          error: `${job.error ?? "Operation failed."} A dispatched website action may have taken effect; this job will not be replayed.`,
+          error:
+            job.beforeOperation === true
+              ? (job.error ?? "Operation failed.")
+              : `${job.error ?? "Operation failed."} A dispatched website action may have taken effect; this job will not be replayed.`,
         }
       : {}),
   };
@@ -156,6 +164,7 @@ const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, 
         Effect.gen(function* () {
           job.status = Cause.isInterruptedOnly(cause) ? "cancelled" : "failed";
           job.error = mcpFailureMessage(cause, kind);
+          if (Cause.squash(cause) instanceof SignInRunFailed) job.beforeOperation = true;
           job.finishedAt = yield* Clock.currentTimeMillis;
           yield* signalChange(job);
         }),

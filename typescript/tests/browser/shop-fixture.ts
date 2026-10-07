@@ -53,6 +53,11 @@ interface ShopState {
    * signs the browser in. The screen's form posts the code back to it.
    */
   loginCode: boolean;
+  /**
+   * What the one-screen sign-in shows a signed-in session: `form` its form, as any session sees
+   * it, `account` a redirect to the account page, as many sites answer a signed-in visit.
+   */
+  signedInLogin: "form" | "account";
 }
 
 export interface Shop {
@@ -181,8 +186,12 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       return json(response, 403, { error: "csrf" });
     return json(response, 200, { cartId: "c-9" });
   };
-  const loginPage: Route = (request, response) =>
-    html(
+  const loginPage: Route = (request, response) => {
+    if (state.signedInLogin === "account" && cookieOf(request, "shop_session") === signedIn) {
+      response.writeHead(303, { location: "/account" });
+      return void response.end();
+    }
+    return html(
       response,
       `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button${state.loginSubmit === "after_input" ? " disabled" : ""}>Sign in</button></form>
 <script>const csrf=document.cookie.match(/csrf_token=([^;]*)/)?.[1]??'';</script>${
@@ -194,6 +203,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
 <script>document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});if(response.ok)location.href=(await response.json()).next??'/account'})</script>`,
       { "set-cookie": cookiesFor(request) },
     );
+  };
   const login: Route = async (request, response) => {
     state.loginPosts += 1;
     const text = await readBody(request);
@@ -345,6 +355,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     home: "ok",
     homeRenderMs: 300,
     loginCode: false,
+    signedInLogin: "form",
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;

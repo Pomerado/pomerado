@@ -467,7 +467,9 @@ test("a signed-in build's example starts at the root with the session saved afte
     `${site.origin}/deep`,
   );
   expect(built.build).toBe("published");
-  expect(site.visits).toEqual(["/login", "/account", "/deep", "/", "/"]);
+  // The run first checks its sign-in from the entry page. This site shows its form to a signed-in
+  // session too, so the run signs in again (the check's load, then the replay's) before the root.
+  expect(site.visits).toEqual(["/login", "/account", "/deep", "/", "/login", "/login", "/account", "/"]);
   const [example, run] = site.probes;
   // The sign-in's cookie and storage come back; exploration's do not.
   expect(example).toMatchObject({

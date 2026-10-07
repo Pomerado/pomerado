@@ -17,5 +17,6 @@ export type {
 export { makePomeradoMcp, makeIntegrationMcp } from "./mcp-server.js";
 export type { PomeradoMcpOptions, IntegrationMcpOptions } from "./mcp-server.js";
 export { readArtifact, writeArtifact, readIntegration, Deployment } from "./artifact-files.js";
+export { SignInRunFailed } from "../runtime/sign-in-replay.js";
 export { prepareIntegration } from "./mcp-package.js";
 export { runMcpCli, startMcpCli } from "./mcp-cli.js";

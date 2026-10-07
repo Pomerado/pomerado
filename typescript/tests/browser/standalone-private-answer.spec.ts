@@ -13,6 +13,7 @@ import type { SignInRequest } from "../../src/destinations/sign-in-recipe.js";
 import type { SignInStep } from "../../src/mint/contracts.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import type { InputAsker } from "../../src/runtime/input-request.js";
+import { signInForRun } from "../../src/runtime/sign-in-replay.js";
 import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
@@ -466,4 +467,123 @@ test("records a sign-in through a security question as a version 3 recipe withou
   const text = JSON.stringify(published);
   for (const held of ["First pet", "synthetic-first-pet", login.username, login.password, "Security answer"])
     expect(text).not.toContain(held);
+});
+
+// A run replays that recipe: it asks for the login and the private answer on each run, from the
+// question the screen shows then, and keeps neither once the run's sign-in is done.
+test("a run's replay asks the private answer on every run, from the question its screen shows then", async ({ page }) => {
+  test.slow();
+  const site = "https://bank.example.test";
+  const shown = { question: "First pet?" };
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<form method="post" action="/session"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>' }));
+  await page.route(`${site}/session`, (route) => route.fulfill({ contentType: "text/html", body:
+    `<form method="post" action="/answer"><p id="question">${shown.question}</p><label>Security answer<input id="answer" name="answer"></label><button id="continue">Continue</button></form>` }));
+  await page.route(`${site}/answer`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="identity">Signed in</p>' }));
+  const recipe = {
+    version: 3,
+    steps: [
+      {
+        page: `${site}/login`,
+        fields: [{ selector: "#email", accepts: ["email"] }, { selector: "#password", slot: "password" }],
+        submit: "#sign-in",
+        submittedBy: "host",
+      },
+      {
+        page: `${site}/session`,
+        fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
+        submit: "#continue",
+        submittedBy: "host",
+      },
+    ],
+    signedIn: { selector: "#identity" },
+  } as const;
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const prompts: string[] = [];
+  const answers = ["synthetic-first-pet", "synthetic-first-school"];
+  /** One run's sign-in, with its own owner and masked values, as each run has. */
+  const run = () => {
+    const secrets = makeRunSecrets();
+    const ask = makeInputAsker((request) =>
+      Effect.sync(() => {
+        const question = request.questions[0];
+        prompts.push(question?.type === "credential" ? "login" : (question?.prompt ?? ""));
+        return question?.type === "credential"
+          ? { login: { ...login, saveLogin: false } }
+          : { private_answer: answers[prompts.filter((prompt) => prompt !== "login").length - 1] };
+      }),
+    );
+    return Effect.runPromise(
+      signInForRun({
+        recipe,
+        entryUrl: `${site}/login`,
+        browser: makeSignInBrowser({
+          page: browser,
+          keyboard,
+          siteOrigin: site,
+          authenticationOrigins: [],
+          onRequest: pageRequests(page),
+          typing: { typed: false },
+        }),
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+        values: askingValueHooks({ ask, register: secrets.register, site: "bank.example.test", siteOrigin: site }),
+        carries: secrets.carries,
+        site: "bank.example.test",
+        siteOrigin: site,
+      }),
+    );
+  };
+  expect(await run()).toEqual({ alreadySignedIn: false });
+  shown.question = "First school?";
+  expect(await run()).toEqual({ alreadySignedIn: false });
+  expect(prompts).toEqual(["login", `First pet? (${site})`, "login", `First school? (${site})`]);
+  for (const value of [...answers, login.password]) expectNotCarried(browser.calls, value);
+});
+
+// A run reads a recipe's recorded rejection markers only as shown or not: on the screen's own
+// origin, in the page or a frame on that origin, never in another site's frame or on a page the
+// screen isn't on, and never through a selector that chains into other content.
+test("the local rejection marker check reads only whether a marker shows, on the screen's own origin", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="password-error">Wrong password</p><p id="code-error" hidden>Wrong code</p><iframe id="own" src="https://bank.example.test/frame"></iframe><iframe id="other" src="https://other.example.test/frame"></iframe><iframe id="sign-in" src="https://login.bank.example.test/frame"></iframe>' }));
+  await page.route(`${site}/frame`, (route) => route.fulfill({ contentType: "text/html", body: '<p id="frame-error">Wrong answer</p>' }));
+  await page.route("https://other.example.test/frame", (route) => route.fulfill({ contentType: "text/html", body: '<p id="other-error">Wrong answer</p>' }));
+  await page.route("https://login.bank.example.test/frame", (route) => route.fulfill({ contentType: "text/html", body: '<p id="sign-in-error">Wrong answer</p>' }));
+  await page.goto(`${site}/login`);
+  await page.frameLocator("#own").locator("#frame-error").waitFor();
+  await page.frameLocator("#other").locator("#other-error").waitFor();
+  await page.frameLocator("#sign-in").locator("#sign-in-error").waitFor();
+  const browser = await hostPage(page);
+  const signIn = makeSignInBrowser({
+    page: browser,
+    keyboard: (await hostKeyboard(page)).keyboard,
+    siteOrigin: site,
+    authenticationOrigins: [],
+    onRequest: pageRequests(page),
+    typing: { typed: false },
+  });
+  const shows = (selector: string, screen = `${site}/login`, popup?: { opener: "primary"; origin: string }) =>
+    Effect.runPromise(signIn.markerVisible(selector, screen, popup));
+  expect(await shows("#password-error")).toBe(true);
+  expect(await shows("#code-error")).toBe(false);
+  expect(await shows("#frame-error")).toBe(true);
+  expect(await shows("#other-error")).toBe(false);
+  // A screen on another origin of the site, or off the site, shows no marker on this page, even
+  // in a frame on the screen's origin.
+  expect(await shows("#password-error", "https://login.bank.example.test/login")).toBe(false);
+  expect(await shows("#sign-in-error", "https://login.bank.example.test/login")).toBe(false);
+  expect(await shows("#sign-in-error")).toBe(false);
+  expect(await shows("#password-error", "https://elsewhere.test/login")).toBe(false);
+  // A recorded popup that is gone shows none.
+  expect(await shows("#password-error", `${site}/login`, { opener: "primary", origin: site })).toBe(false);
+  // A selector that chains into other content is never read.
+  const calls = browser.calls.length;
+  expect(await shows("#password-error >> nth=0")).toBe(false);
+  expect(await shows("internal:text=\"Wrong password\"")).toBe(false);
+  expect(browser.calls.length).toBe(calls);
+  // Each read answered only whether the marker shows.
+  for (const { answer } of browser.calls.slice(-9)) expect(typeof answer === "boolean" || JSON.stringify(answer).includes("popup_missing")).toBe(true);
 });

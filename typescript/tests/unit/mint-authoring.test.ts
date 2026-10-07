@@ -358,8 +358,8 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
 });
 
 // A local build asks for a username, email, phone or account number as text, which the terminal
-// shows, and records a verified sign-in's screens as a recipe that runs don't replay yet.
-it("tells the local minter how its sign-in values are asked and what it records", async () => {
+// shows, and records a verified sign-in's screens as a recipe that each run of the tool replays.
+it("tells the local minter how its sign-in values are asked, what it records and what a run does with it", async () => {
   const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
   const auth = (contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "").replace(
     /\s+/g,
@@ -369,9 +369,10 @@ it("tells the local minter how its sign-in values are asked and what it records"
     "The host obtains the needed value through the caller's input callback or the terminal, checks the original field/document/origin/focus binding and inserts privately. The terminal hides a password, code or other secret as it is typed, and shows a username, email, phone number or account number.",
   );
   expect(auth).toContain(
-    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; runs don't replay them yet.",
+    "No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; each run of the tool replays them, asking for the login and any code or answer only when the site needs it.",
   );
   expect(auth).not.toContain("masked terminal");
+  expect(auth).not.toContain("don't replay");
   const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
   const instructions = guide.instructions.replace(/\s+/g, " ");
   expect(instructions).toContain(
@@ -434,7 +435,7 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["f05f2cc16363ea91cfa8be4e0e1fcf9d648e770f1f13ff79fb0059443b019455", "core"],
-    ["029de5cd345a8faa5a2e6e77c44d0a46ac5074ed30402a6c71b0d8fa2dac52bb", "auth"],
+    ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
     ["0e4584d71b07af68dc54696c280c853b2eca74d533a3f92356848ae0a19fb860", "writes"],
