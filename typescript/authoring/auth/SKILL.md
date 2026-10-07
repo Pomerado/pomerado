@@ -100,12 +100,13 @@ screen again and send its step, and the owner is asked the question it shows now
 Do not mark sign-in complete while a recorded answer or verification field is still visible,
 including one inside a provider frame. Account search, support and security-settings forms are
 not sign-in evidence. Inspect and record each new authentication screen before checking completion.
-The host checks the challenge fields recorded since the last check that showed the site signed
-in. One counts only while the same control shows and takes typing, on the site or a configured
-sign-in origin: the label, accessible name and placeholder it had when you recorded it name it
-again, with the same name and id where it had them. Another control your selector also matches, such as a gift-card or promo code box, does not
-count. It does not classify unrecorded forms by their names or page route. A successful host check does
-not replace inspecting the current screen and verifying authenticated access.
+The host checks the challenge fields recorded since the last check that showed the site signed in.
+One counts only while the same control shows and takes typing, on the site or a configured sign-in
+origin: the label, accessible name and placeholder it had when you recorded it name it again, with
+the same name and id where it had them. Another control your selector also matches, such as a
+gift-card or promo code box, does not count. It does not classify unrecorded forms by their names or
+page route. A successful host check does not replace inspecting the current screen and verifying
+authenticated access.
 
 <!-- pomerado:section auth.code-rejection -->
 
@@ -115,9 +116,22 @@ choice, and that a step without one advances by itself. The host checks that eac
 and visible and that its frame, form actions and link destination are on the site or a configured
 sign-in origin. A refused step typed and sent nothing and spends no sign-in: fix it from the evidence.
 
-<!-- pomerado:section auth.slow-screens -->
+Sign-in pages are often slow, and the next screen can take a while to show. Wait for its field with
+a bounded readiness wait (such as `locator.waitFor` with a timeout of about 30 seconds) before you
+map or fill it, and read the page again.<!-- pomerado:section auth.slow-screens -->
 
-<!-- pomerado:section auth.next-screen -->
+After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`
+(`nextScreen`), where the host saved the next screen's controls: role, name or label, input type,
+and whether each is required, visible and enabled, never a value. Read it with `read_source` first
+to see what the screen asks for. A step that did not resolve shows the last saved controls inline
+(`lastScreen`), at most 30, and the file holds the rest.
+Then read what the file lacks, such as a selector or form destination, with a read-only `explore`. Never read, change or return a field
+the host filled, not even to check it. If the host reports that its click of the submit failed after
+the fields filled, you may click that one submit yourself in an `explore`, and nothing else; the host
+counts a value as sent only once it sees the form go out carrying it, whoever clicked. If it reports `submit: refused`, never click it.
+If the site says a field was wrong, send `signInStep: { rejected: { slot: "password" } }`
+with the actual rejected slot at once. The host asks for corrections; never ask for substitute
+credentials yourself or send a rejected value again.<!-- pomerado:section auth.next-screen -->
 
 A rejected code permits at most two fresh-code corrections within the remaining sign-in time.
 This does not extend the unchanged password's limit of two sends, including sends before worker

@@ -23,13 +23,19 @@ reworded question still asks for it again. A placeholder that stands in for a re
 such as "[redacted value]", supplies nothing. A supplied value the site rejects, or two that
 conflict, can still need a question, one that names the actual problem.
 
-<!-- pomerado:section caller-input.published-input -->
+Use a published input instead whenever the value is stable and the caller can supply it
+up front, such as a flight number, a date or a quantity. Never ask for a password, a
+username or any other login: the host asks for a login itself and signs in. Never ask
+for something the page shows, for permission to proceed with the operation the caller
+already asked for, or to solve a CAPTCHA.
 
 ## Declare, read, ask
 
 <!-- pomerado:section caller-input.declare -->
 
-<!-- pomerado:section caller-input.ask-limits -->
+   One ask takes up to eight questions, with up to 50 options per choice. A choice
+   returns the chosen `value`, a multi-choice an array of values. Write answers into
+   the next call's code with `JSON.stringify`.
 
 The run waits with its browser open and its active budget stopped, and the next call
 starts on the same page. Continue from there. Do not reload, search again or repeat an
@@ -59,7 +65,15 @@ before the question is reported as a possible change when no answer comes.
 
 ## During a mint
 
-<!-- pomerado:section caller-input.during-mint -->
+A read build's example run, or a write build's `act` step, asks the build's owner
+through the same request, and the answer comes back to the running script. Guardian
+reviews each question first. When it asks for a rewording, nobody is asked, the `ask`
+fails and the execution's result carries `scriptQuestion` with Guardian's rationale:
+change the declared question as it says and execute again. If the
+owner does not answer in time, the build ends as `no_response`; there is nothing to
+retry, and a write step after one that sent something is reported as a possible
+change. Do not turn an account-specific choice into a published input to work around
+a question.
 
 `references/caller-choice.ts` books a seat on the caller's chosen flight: it asks for a
 seat and a saved traveler once the flight's seat map is shown, then books once and calls
