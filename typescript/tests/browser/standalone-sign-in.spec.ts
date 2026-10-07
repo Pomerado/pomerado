@@ -1,15 +1,16 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
-import { Effect, Schema } from "effect";
+import { Effect, Either, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
+import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
 import { recordingGuardian } from "./guardian-context-fixture.js";
 import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
@@ -196,7 +197,7 @@ const withShop = async (use: (shop: Shop, endpoint: string) => Promise<void>) =>
   }
 };
 
-test("a local build asks for its login once and publishes its sign-in without a value, and a run in a new session never signs in", async () => {
+test("a local build asks for its login once and publishes its sign-in without a value; a run in its session asks nothing, and a run in a new session asks once and signs in", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "Original SDKs, Chromium, a scripted build with a host sign-in, then two runs",
@@ -257,7 +258,9 @@ test("a local build asks for its login once and publishes its sign-in without a 
           });
           expect(built.build, JSON.stringify(built)).toBe("published");
           if (built.artifact === undefined) throw new Error(JSON.stringify(built));
-          // The minting session's own browser stays signed in for a run.
+          // The minting session's own browser stays signed in, so its run checks the sign-in
+          // without a value, lands on the account page and asks nothing.
+          shop.state.signedInLogin = "account";
           expect(yield* service.run(built.artifact, request)).toEqual({ signedIn: true });
           return built.artifact;
         }),
@@ -290,23 +293,240 @@ test("a local build asks for its login once and publishes its sign-in without a 
     expect(JSON.stringify(artifact)).not.toContain(shopAccount.password);
     expect(JSON.stringify(artifact.signIn)).not.toContain(shopAccount.username);
     expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
-    // A new session starts signed out, and its run neither asks for a login nor signs in.
-    const runAsked: InputRequest[] = [];
-    const output = await Effect.runPromise(
+    // The written folder holds the recipe and no value, and a new session runs from it.
+    const folder = await mkdtemp(join(tmpdir(), "pomerado-sign-in-artifact-"));
+    try {
+      await Effect.runPromise(Effect.scoped(writeArtifact(folder, artifact as MintArtifact)));
+      const written = await Promise.all(
+        (await readdir(folder, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => readFile(join(entry.parentPath, entry.name), "utf8")),
+      );
+      expect(written.join("\n")).toContain('"submittedBy": "host"');
+      for (const value of [shopAccount.username, shopAccount.password])
+        expect(written.join("\n")).not.toContain(value);
+      const restored = await Effect.runPromise(Effect.scoped(readArtifact(folder)));
+      // A new session starts signed out: its run asks for the login once, signs in with the
+      // recipe and runs signed in.
+      const runAsked: InputRequest[] = [];
+      const output = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* createPomerado({
+              browser: { endpoint },
+              ask: answers(runAsked),
+              timeoutMs: 30_000,
+            });
+            return yield* service.run(restored, request);
+          }),
+        ),
+      );
+      expect(output).toEqual({ signedIn: true });
+      expect(runAsked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+      expect(shop.state.loginPosts).toBe(2);
+      expect(await readdir(folder, { recursive: true })).toEqual(
+        expect.arrayContaining(["pomerado.json", "auth-fill.json"]),
+      );
+      const after = await Promise.all(
+        (await readdir(folder, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => readFile(join(entry.parentPath, entry.name), "utf8")),
+      );
+      expect(after).toEqual(written);
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+/** The account reader with a published sign-in, as a written folder holds it. */
+const accountReader = (signIn?: { readonly recipe: unknown; readonly entryUrl: string }) =>
+  ({
+    entrypoint: "src/tool.mjs",
+    files: [{ path: "src/tool.mjs", content: readAccount }],
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+    ...(signIn === undefined ? {} : { signIn }),
+  }) as MintArtifact;
+/** The one-screen sign-in as a build publishes it. */
+const loginRecipe = (origin: string) => ({
+  version: 1,
+  steps: [
+    {
+      page: `${origin}/login`,
+      fields: [
+        { selector: "input[name=username]", accepts: ["username"] },
+        { selector: "input[name=password]", slot: "password" },
+      ],
+      submit: "button",
+      submittedBy: "host",
+    },
+  ],
+  signedIn: { selector: "#account" },
+});
+/** Runs `artifact` once in a new session, answering with `ask`; its failure comes back. */
+const runInNewSession = (
+  endpoint: string,
+  ask: ReturnType<typeof makeInputAsker>,
+  artifact: MintArtifact,
+  url: string,
+) =>
+  Effect.runPromise(
+    Effect.either(
       Effect.scoped(
         Effect.gen(function* () {
-          const service = yield* createPomerado({
-            browser: { endpoint },
-            ask: answers(runAsked),
-            timeoutMs: 30_000,
-          });
-          return yield* service.run(artifact as MintArtifact, request);
+          const service = yield* createPomerado({ browser: { endpoint }, ask, timeoutMs: 30_000 });
+          return yield* service.run(artifact, { url, intent: "Read the account", input: {} });
         }),
       ),
+    ),
+  );
+/** Answers each login question with the shop's username and the next of `passwords`. */
+const loginAnswers = (asked: InputRequest[], passwords: string[]) =>
+  makeInputAsker((request) =>
+    Effect.sync(() => {
+      asked.push(request);
+      return Object.fromEntries(
+        request.questions.map((question) => [
+          question.id,
+          question.type === "credential"
+            ? {
+                username: shopAccount.username,
+                password: passwords.shift() ?? shopAccount.password,
+                saveLogin: false,
+              }
+            : shopAccount.username,
+        ]),
+      );
+    }),
+  );
+const reasons = (asked: readonly InputRequest[]) =>
+  asked.flatMap(({ questions }) =>
+    questions.map((question) => (question.type === "credential" ? question.reason : question.id)),
+  );
+
+test("a run corrects a rejected password without sending it again, asking again for a correction that repeats it", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Chromium and a run whose rejected sign-in waits out the recorded marker",
+  });
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const wrong = `${shopAccount.password}-wrong`;
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, [wrong, wrong, shopAccount.password]),
+      accountReader({ recipe: loginRecipe(shop.origin), entryUrl: `${shop.origin}/login` }),
+      `${shop.origin}/account`,
     );
-    expect(output).toEqual({ signedIn: false });
-    expect(runAsked).toEqual([]);
-    expect(shop.state.loginPosts).toBe(1);
+    expect(result).toEqual(Either.right({ signedIn: true }));
+    // The login, then a correction naming the username; the correction that repeated the
+    // rejected password was asked again rather than sent.
+    expect(reasons(asked)).toEqual([
+      "missing_credentials",
+      "invalid_credentials",
+      "invalid_credentials",
+    ]);
+    expect(asked[1]?.questions[0]).toMatchObject({ username: shopAccount.username });
+    expect(shop.state.loginPosts).toBe(2);
+  });
+});
+
+test("a 0.2.0 folder without a sign-in runs as it always did, asking nothing", async () => {
+  await withShop(async (shop, endpoint) => {
+    const folder = await mkdtemp(join(tmpdir(), "pomerado-sign-in-artifact-"));
+    try {
+      // pomerado.json as 0.2.0 wrote it: no signIn, and no recipe beside it.
+      await Effect.runPromise(Effect.scoped(writeArtifact(folder, accountReader())));
+      expect((await readdir(folder)).sort()).toEqual(["pomerado.json", "src"]);
+      const asked: InputRequest[] = [];
+      const result = await runInNewSession(
+        endpoint,
+        answers(asked),
+        await Effect.runPromise(Effect.scoped(readArtifact(folder))),
+        `${shop.origin}/account`,
+      );
+      expect(result).toEqual(Either.right({ signedIn: false }));
+      expect(asked).toEqual([]);
+      expect(shop.state.loginPosts).toBe(0);
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a recipe of a version this host does not know is refused before the run signs in or runs", async () => {
+  await withShop(async (shop, endpoint) => {
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      answers(asked),
+      accountReader({
+        recipe: { ...loginRecipe(shop.origin), version: 4 },
+        entryUrl: `${shop.origin}/login`,
+      }),
+      `${shop.origin}/account`,
+    );
+    expect(Either.isLeft(result) && result.left).toMatchObject({
+      _tag: "SignInRunFailed",
+      code: "MissingRecipe",
+      reason: "unknown_version",
+    });
+    expect(asked).toEqual([]);
+    expect(shop.state.loginPosts).toBe(0);
+  });
+});
+
+test("a run's second screen whose form posts to a URL holding the password is refused after the first screen's typing", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Chromium and a run through two recorded sign-in screens",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    // The password screen's form posts to a URL that holds the password, as page code that kept
+    // a typed value could make it.
+    const entryUrl = `${shop.origin}/sign-in?echo=none&stash=password`;
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      answers(asked),
+      accountReader({
+        recipe: {
+          version: 1,
+          steps: [
+            {
+              page: `${shop.origin}/sign-in`,
+              fields: [{ selector: "#username", accepts: ["email"] }],
+              submit: "#next",
+              submittedBy: "host",
+            },
+            {
+              page: `${shop.origin}/sign-in/password`,
+              fields: [{ selector: "#password", slot: "password" }],
+              submit: "#sign-in",
+              submittedBy: "host",
+            },
+          ],
+          signedIn: { selector: "#account" },
+        },
+        entryUrl,
+      }),
+      `${shop.origin}/account`,
+    );
+    // The host typed on the identifier screen, so the password screen's guard refuses the submit
+    // to the URL holding the password as it fires: the run fails and the operation never runs.
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(Either.isLeft(result) && result.left).toMatchObject({
+      _tag: "SignInRunFailed",
+      code: "RecipeFailed",
+      reason: "submit_refused",
+    });
+    expect(shop.state.sessionPosts).toBe(0);
+    expect(String(Either.isLeft(result) && result.left.message)).not.toContain(
+      shopAccount.password,
+    );
   });
 });
 

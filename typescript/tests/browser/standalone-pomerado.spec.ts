@@ -345,6 +345,9 @@ for (const [authentication, submitAfterInput] of [
             );
             if (built.artifact === undefined) throw new Error(JSON.stringify(built));
             const modelRequests = [mintRequests.length, reviewRequests.length];
+            // The run checks its sign-in first: a signed-in session's visit to the sign-in page
+            // lands on the account page, so the minting session's run asks nothing.
+            if (shop !== undefined) shop.state.signedInLogin = "account";
             expect(
               yield* service.run(built.artifact, {
                 url: shop === undefined ? url : `${shop.origin}/account`,
@@ -1109,6 +1112,136 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a served integration with a recorded sign-in asks for the login on each call and keeps no value in its folder", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Stdio child process serving from mcp.json, Chromium and two signed-in calls",
+  });
+  test.setTimeout(90_000);
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-sign-in-"));
+  const shop = await startShop(directory);
+  const remote = await chromium.launchServer({
+    args: [
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1`,
+      "--no-proxy-server",
+      "--ignore-certificate-errors",
+    ],
+  });
+  const readAccount = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_account",input:Schema.Struct({}),output:Schema.Struct({signedIn:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/account', page.url()).href); return (await page.locator('#account').count()) > 0;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {signedIn:response.result === true};
+});`;
+  try {
+    // The integration as a build that signed in publishes it: the recipe beside pomerado.json.
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const publish = yield* prepareIntegration({
+            root: directory,
+            name: "read_account",
+            request: { url: `${shop.origin}/account`, intent: "Read the account", effect: "read" },
+          });
+          yield* publish({
+            entrypoint: "src/tool.mjs",
+            files: [{ path: "src/tool.mjs", content: readAccount }],
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            outputSchema: {
+              type: "object",
+              properties: { signedIn: { type: "boolean" } },
+              required: ["signedIn"],
+              additionalProperties: false,
+            },
+            signIn: {
+              recipe: {
+                version: 1,
+                steps: [
+                  {
+                    page: `${shop.origin}/login`,
+                    fields: [
+                      { selector: "input[name=username]", accepts: ["username"] },
+                      { selector: "input[name=password]", slot: "password" },
+                    ],
+                    submit: "button",
+                    submittedBy: "host",
+                  },
+                ],
+                signedIn: { selector: "#account" },
+              },
+              entryUrl: `${shop.origin}/login`,
+            },
+          });
+        }),
+      ),
+    );
+    const saved = join(directory, "read_account");
+    const files = async () =>
+      Promise.all(
+        (await readdir(saved, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map(async (entry) => [
+            join(entry.parentPath, entry.name),
+            await readFile(join(entry.parentPath, entry.name), "utf8"),
+          ]),
+      );
+    const before = await files();
+    // Served as mcp.json starts it, in a new process, with the recorded runtime in place of the
+    // installed one so it uses the fixture's browser.
+    const launcher = Schema.decodeUnknownSync(
+      Schema.Struct({
+        mcpServers: Schema.Struct({
+          read_account: Schema.Struct({ command: Schema.String, args: Schema.Array(Schema.String) }),
+        }),
+      }),
+    )(JSON.parse(await readFile(join(saved, "mcp.json"), "utf8"))).mcpServers.read_account;
+    expect(launcher.command).toBe(process.execPath);
+    const fixture = await mcpRuntime(directory, [], { endpoint: remote.wsEndpoint() });
+    const served = await stdioMcp([launcher.args[0] ?? "", pathToFileURL(fixture.file).href]);
+    try {
+      // Each call runs in a new browser context, so each asks for the login once and signs in.
+      for (const call of [1, 2]) {
+        const started = viewOf(
+          await served.client.callTool({ name: "read_account", arguments: { input: {} } }),
+        );
+        const pending =
+          started.status === "input_required"
+            ? started
+            : await observeMcp(served.client, started.job_id, "input_required");
+        expect(pending.pending_input?.questions, served.stderr()).toEqual([
+          expect.objectContaining({ id: "login", type: "credential", reason: "missing_credentials" }),
+        ]);
+        await served.client.callTool({
+          name: "provide_input",
+          arguments: {
+            job_id: started.job_id,
+            request_id: pending.pending_input?.id ?? "",
+            answers: { login: { ...shopAccount, saveLogin: false } },
+          },
+        });
+        const completed = await observeMcp(served.client, started.job_id, "completed");
+        expect(completed.output).toEqual({ signedIn: true });
+        expect(shop.state.loginPosts).toBe(call);
+      }
+    } finally {
+      await served.client.close();
+    }
+    // The folder is as published: the recipe and source, and no login value.
+    const after = await files();
+    expect(after).toEqual(before);
+    expect(after.map(([path]) => path)).toContain(join(saved, "auth-fill.json"));
+    for (const [, text] of after)
+      for (const value of [shopAccount.username, shopAccount.password])
+        expect(text).not.toContain(value);
+  } finally {
+    await remote.close();
+    await shop.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

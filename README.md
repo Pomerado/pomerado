@@ -120,7 +120,7 @@ Authority decides what an integration is allowed to do, so choose it deliberatel
 - Use `write` only when the task changes something, such as submitting a form or making a booking
 - A write mint performs the action once while it builds, then reviews the final source without repeating it
 - A read mint that finds the task needs a change asks to switch to write, and your agent's answer decides
-- A run doesn't check authority, intent or sign-in origins, and edits to `src/` or `deployment.json` aren't reviewed
+- A run doesn't check authority or intent, and edits to `src/` or `deployment.json` aren't reviewed. A run that signs in replays its sign-in only on the site and the sign-in origins in `deployment.json`
 
 Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 
@@ -151,6 +151,7 @@ Each integration appears to your agent as its own MCP server.
 - It also has `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time
 - A call returns output that matches the schema in `pomerado.json`, or a job ID to follow up on
 - Each call is a new run. With write authority, calling again performs the write again
+- An integration whose build signed in signs in on each call. It asks for the login, and any code or answer the site needs, and saves none of them
 - The integration runs on the Pomerado installation that minted it. For a stable path, install globally with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`
 
 ## Open source and Pomerado Cloud
