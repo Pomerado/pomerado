@@ -5,6 +5,7 @@ import { ReviewFailure } from "../guardian/review.js";
 import { modelFailureMetadata } from "../models/model-failure.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
 import { makeInputAsker } from "../inputs/callback.js";
+import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,
@@ -59,6 +60,8 @@ export const mcpFailureMessage = (
   if (error instanceof ReviewFailure) return `Guardian review failed (${error.code}).`;
   if (error instanceof MintFailure) return `Mint failed (${error.code}).`;
   if (error instanceof InputRequestFailure) return `Input could not be completed (${error.code}).`;
+  // A run's sign-in failure names only the field or step, never a value, and what to do next.
+  if (error instanceof SignInRunFailed) return `Sign-in failed (${error.code}): ${error.message}`;
   // The tool's own InvalidInput says which value the task or site refuses, for the caller to fix.
   // A schema decode failure carries only its name, which the generic message below covers.
   if (

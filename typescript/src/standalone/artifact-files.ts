@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { decodeSignInRecipe, signInRecipePath } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
+import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
 
 const Metadata = Schema.Struct({
@@ -87,15 +88,14 @@ export const readArtifact = (directory: string) =>
     const { signIn, ...source } = metadata;
     if (signIn === undefined) return yield* validateArtifact({ ...source, files });
     // A recipe this host cannot read fails the artifact: it never runs signed out instead.
-    const recipe = decodeSignInRecipe(yield* workspace.read(signIn.recipe));
-    if (recipe === "invalid" || recipe === "unknown_version")
-      return yield* Effect.fail(
-        new Error(
-          recipe === "invalid"
-            ? "The artifact's sign-in recipe is not one this host can read"
-            : "The artifact's sign-in recipe has a version this host does not know",
-        ),
+    const text = yield* workspace
+      .read(signIn.recipe)
+      .pipe(
+        Effect.mapError(() => new SignInRunFailed({ code: "MissingRecipe", reason: "missing" })),
       );
+    const recipe = decodeSignInRecipe(text);
+    if (recipe === "invalid" || recipe === "unknown_version")
+      return yield* new SignInRunFailed({ code: "MissingRecipe", reason: recipe });
     return yield* validateArtifact({
       ...source,
       files,
