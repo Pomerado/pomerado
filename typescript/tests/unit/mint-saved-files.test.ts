@@ -68,6 +68,18 @@ describe("the files a local build saves", () => {
     ]);
   });
 
+  // Node loads an extensionless file in a module scope as ESM, so its own imports are followed.
+  it("follows the imports of an extensionless module", () => {
+    expect(
+      saved({
+        ...workspace,
+        "src/tool.mjs": 'import { helper } from "../explore/helper";\nexport default helper;',
+        "explore/helper": 'import { other } from "./other.js";\nexport const helper = other;',
+        "explore/other.js": "export const other = 1;",
+      }),
+    ).toEqual(["explore/helper", "explore/other.js", "src/query.mjs", "src/tool.mjs"]);
+  });
+
   it("does not follow an import of the host's runtime or a file outside the four folders", () => {
     expect(
       saved({
