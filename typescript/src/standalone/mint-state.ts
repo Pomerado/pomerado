@@ -6,11 +6,9 @@ import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
 import {
   identifierPreference,
+  type AutofillSlot,
   type AutofillStepReport,
   type AutofillStepRequest,
-  type PrivateAnswerSlot,
-  type SecretSlot,
-  type StepSlot,
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
@@ -31,7 +29,7 @@ import { makeLiveAuthentication } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
-const identifiers: ReadonlySet<StepSlot> = new Set(identifierPreference);
+const identifiers: ReadonlySet<AutofillSlot> = new Set(identifierPreference);
 /** What the host does with a sign-in step Guardian allows, for its review. */
 const signInStepNote =
   "The host fills the login's values, which never appear in this review, into the fields the step names and clicks the named submit on the sign-in screen of the authorized site.";
@@ -81,10 +79,7 @@ export const makeBuildStart = (
      * whose answer was lost counts every field the step asked for. The signed-in check stays the
      * gate.
      */
-    sent: (
-      report: AutofillStepReport<StepSlot>,
-      requested: AutofillStepRequest<SecretSlot | PrivateAnswerSlot>["fields"],
-    ) => {
+    sent: (report: AutofillStepReport, requested: AutofillStepRequest["fields"]) => {
       const slots =
         report.outcome === "filled" && report.submit !== "stayed_disabled"
           ? report.fields.filter((field) => field.status === "filled").map((field) => field.slot)

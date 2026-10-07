@@ -32,7 +32,6 @@ import {
   BuildBlocked,
   CaptureRequest,
   ExecutionRequest,
-  PrivateAnswerExecutionRequest,
   isReadOrWriteChoice,
   MintFailure,
   MintRequest,
@@ -2237,12 +2236,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               )
                 return signInUnavailable.answer;
               yield* active();
-              // A host that fills private answers gets a signInStep that may hold a private_answer
-              // field, which its reviewAndExecute reads as a PrivateAnswerSignInStep. The harness
-              // reads no field of a signInStep.
-              const submitted = (yield* dependencies.privateAnswers
-                ? decode(PrivateAnswerExecutionRequest, input)
-                : decode(ExecutionRequest, input)) as ExecutionRequest;
+              const submitted = yield* decode(ExecutionRequest, input);
               yield* Effect.try({
                 try: () => relativeSourcePath(submitted.entrypoint),
                 catch: (error) =>
@@ -3251,7 +3245,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }),
           ...(effectQuestion ? { effectQuestion: true as const } : {}),
           ...(dependencies.autofillSignIn ? { autofillSignIn: true as const } : {}),
-          ...(dependencies.privateAnswers ? { privateAnswers: true as const } : {}),
           input: JSON.stringify({
             ...(effectQuestion
               ? { effectQuestion: { instruction: effectQuestionInstruction } }

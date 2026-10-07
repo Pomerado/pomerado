@@ -57,7 +57,6 @@ const mintDependencies = (state: MintState) => {
     model: makeOpenAIMinter(options.minterProvider),
     deadline,
     autofillSignIn: true,
-    privateAnswers: true,
     requestLogin: () => Effect.succeed("inspect"),
     reviewQuestion: (candidate, facts) =>
       Effect.gen(function* () {

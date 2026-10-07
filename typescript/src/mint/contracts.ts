@@ -363,84 +363,6 @@ export const SignedInMarkerCheckRequest = Schema.Struct({
   openPath: Schema.optional(SignedInOpenPath),
 });
 export type SignedInMarkerCheckRequest = typeof SignedInMarkerCheckRequest.Type;
-// An identifier field lists every kind it accepts; the host picks what it sends.
-const IdentifierField = Schema.Struct({
-  selector: SignInSelector,
-  accepts: Schema.Array(IdentifierKinds).pipe(
-    Schema.minItems(1),
-    Schema.filter((kinds) => new Set(kinds).size === kinds.length, {
-      message: () => "list each accepted kind once",
-    }),
-  ),
-});
-// A date of birth names how the field takes it, or the one part a dropdown takes.
-const SecretField = Schema.Struct({
-  selector: SignInSelector,
-  slot: SecretSlots,
-  format: Schema.optional(DateOfBirthFormat),
-});
-/**
- * A secret field where the host also fills private answers: a security question's answer field
- * takes `private_answer`, and may name the observed question it answers (`questionSelector`).
- */
-const PrivateAnswerSecretField = Schema.Struct({
-  selector: SignInSelector,
-  slot: Schema.Literal(...SecretSlots.literals, "private_answer"),
-  format: Schema.optional(DateOfBirthFormat),
-  questionSelector: Schema.optional(SignInSelector),
-}).pipe(
-  Schema.filter(
-    (field) => field.questionSelector === undefined || field.slot === "private_answer",
-    { message: () => "only a private answer names a question selector" },
-  ),
-);
-const StepPopup = Schema.optional(AutofillPopup);
-const StepRejectedMarkers = Schema.optional(
-  Schema.Array(RejectedMarker).pipe(Schema.maxItems(maximumStepFields)),
-);
-/**
- * A two-factor method choice: every method the screen offers, each with the control that
- * picks it, and `submit` the one to pick now. Runs pick again from these.
- */
-const StepMethods = Schema.optional(
-  Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: SignInSelector })).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(8),
-  ),
-);
-interface FieldsStep {
-  readonly fields: readonly unknown[];
-  readonly submit?: string | undefined;
-  readonly methods?: readonly { readonly selector: string }[] | undefined;
-}
-const fillsOrClicks = (step: FieldsStep) => step.fields.length > 0 || step.submit !== undefined;
-const methodChoiceOnly = (step: FieldsStep) =>
-  step.methods === undefined ||
-  (step.fields.length === 0 && step.methods.some((option) => option.selector === step.submit));
-const fillsOrClicksMessage = { message: () => "a sign-in step fills a field or clicks a control" };
-const methodChoiceMessage = {
-  message: () =>
-    "a method choice fills no field, and its submit is the selector of one of its methods",
-};
-const ApprovalStep = Schema.Struct({ approval: AutofillApproval, popup: Schema.optional(AutofillPopup) });
-// The site showed that the login's password or code was wrong: the host asks the owner
-// for a correction in place and never sends the rejected value again.
-const RejectedStep = Schema.Struct({ rejected: Schema.Struct({ slot: CredentialRejectedField }) });
-const SignedInStep = Schema.Struct({
-  signedIn: Schema.Struct({
-    selector: Schema.optional(SignInSelector),
-    urlPath: Schema.optional(SignedInUrlPath),
-    /**
-     * An account page on the site the host opens first, when the page the sign-in lands on
-     * shows no marker itself; the selector or path is checked there.
-     */
-    openPath: Schema.optional(SignedInOpenPath),
-  }).pipe(
-    Schema.filter((signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined, {
-      message: () => "name a selector or a URL path that shows the site signed in",
-    }),
-  ),
-});
 /**
  * One sign-in screen for host autofill (autofill enabled): the
  * fields the host fills from the held login, each with the kind of value it takes, and the control
@@ -450,41 +372,86 @@ const SignedInStep = Schema.Struct({
  */
 export const SignInStep = Schema.Union(
   Schema.Struct({
-    popup: StepPopup,
-    rejectedMarkers: StepRejectedMarkers,
-    fields: Schema.Array(Schema.Union(IdentifierField, SecretField)).pipe(
-      Schema.maxItems(maximumStepFields),
+    popup: Schema.optional(AutofillPopup),
+    rejectedMarkers: Schema.optional(
+      Schema.Array(RejectedMarker).pipe(Schema.maxItems(maximumStepFields)),
     ),
+    fields: Schema.Array(
+      Schema.Union(
+        // An identifier field lists every kind it accepts; the host picks what it sends.
+        Schema.Struct({
+          selector: SignInSelector,
+          accepts: Schema.Array(IdentifierKinds).pipe(
+            Schema.minItems(1),
+            Schema.filter((kinds) => new Set(kinds).size === kinds.length, {
+              message: () => "list each accepted kind once",
+            }),
+          ),
+        }),
+        // A date of birth names how the field takes it, or the one part a dropdown takes.
+        Schema.Struct({
+          selector: SignInSelector,
+          slot: SecretSlots,
+          format: Schema.optional(DateOfBirthFormat),
+          questionSelector: Schema.optional(SignInSelector),
+        }).pipe(
+          Schema.filter(
+            (field) => field.questionSelector === undefined || field.slot === "private_answer",
+            { message: () => "only a private answer names a question selector" },
+          ),
+        ),
+      ),
+    ).pipe(Schema.maxItems(maximumStepFields)),
     submit: Schema.optional(SignInSelector),
-    methods: StepMethods,
+    /**
+     * A two-factor method choice: every method the screen offers, each with the control that
+     * picks it, and `submit` the one to pick now. Runs pick again from these.
+     */
+    methods: Schema.optional(
+      Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: SignInSelector })).pipe(
+        Schema.minItems(1),
+        Schema.maxItems(8),
+      ),
+    ),
   }).pipe(
-    Schema.filter(fillsOrClicks, fillsOrClicksMessage),
-    Schema.filter(methodChoiceOnly, methodChoiceMessage),
+    Schema.filter((step) => step.fields.length > 0 || step.submit !== undefined, {
+      message: () => "a sign-in step fills a field or clicks a control",
+    }),
+    Schema.filter(
+      (step) =>
+        step.methods === undefined ||
+        (step.fields.length === 0 &&
+          step.methods.some((option) => option.selector === step.submit)),
+      {
+        message: () =>
+          "a method choice fills no field, and its submit is the selector of one of its methods",
+      },
+    ),
   ),
-  ApprovalStep,
-  RejectedStep,
-  SignedInStep,
+  Schema.Struct({ approval: AutofillApproval, popup: Schema.optional(AutofillPopup) }),
+  // The site showed that the login's password or code was wrong: the host asks the owner
+  // for a correction in place and never sends the rejected value again.
+  Schema.Struct({ rejected: Schema.Struct({ slot: CredentialRejectedField }) }),
+  Schema.Struct({
+    signedIn: Schema.Struct({
+      selector: Schema.optional(SignInSelector),
+      urlPath: Schema.optional(SignedInUrlPath),
+      /**
+       * An account page on the site the host opens first, when the page the sign-in lands on
+       * shows no marker itself; the selector or path is checked there.
+       */
+      openPath: Schema.optional(SignedInOpenPath),
+    }).pipe(
+      Schema.filter(
+        (signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined,
+        {
+          message: () => "name a selector or a URL path that shows the site signed in",
+        },
+      ),
+    ),
+  }),
 );
 export type SignInStep = typeof SignInStep.Type;
-/** `SignInStep` where the host also fills private answers (`MintDependencies.privateAnswers`). */
-export const PrivateAnswerSignInStep = Schema.Union(
-  Schema.Struct({
-    popup: StepPopup,
-    rejectedMarkers: StepRejectedMarkers,
-    fields: Schema.Array(Schema.Union(IdentifierField, PrivateAnswerSecretField)).pipe(
-      Schema.maxItems(maximumStepFields),
-    ),
-    submit: Schema.optional(SignInSelector),
-    methods: StepMethods,
-  }).pipe(
-    Schema.filter(fillsOrClicks, fillsOrClicksMessage),
-    Schema.filter(methodChoiceOnly, methodChoiceMessage),
-  ),
-  ApprovalStep,
-  RejectedStep,
-  SignedInStep,
-);
-export type PrivateAnswerSignInStep = typeof PrivateAnswerSignInStep.Type;
 
 export const ExecutionRequest = Schema.Struct({
   /** `act` is a step of a write build's one live write session; see the writes skill. */
@@ -523,11 +490,6 @@ export const ExecutionRequest = Schema.Struct({
   exampleInput: Schema.optional(Schema.String),
 });
 export type ExecutionRequest = typeof ExecutionRequest.Type;
-/** The execute tool's input where the host also fills private answers. */
-export const PrivateAnswerExecutionRequest = Schema.Struct({
-  ...ExecutionRequest.fields,
-  signInStep: Schema.optional(PrivateAnswerSignInStep),
-});
 /** The execute tool's input where the site signs in through Kernel Managed Auth. */
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
 
@@ -937,11 +899,6 @@ export interface MintTurn {
   readonly effectQuestion?: true;
   /** The site signs in by host autofill: `execute` offers `signInStep` on authenticate. */
   readonly autofillSignIn?: true;
-  /**
-   * The host fills private answers: with `autofillSignIn`, `signInStep` also takes a security
-   * question's answer field (`PrivateAnswerSignInStep`).
-   */
-  readonly privateAnswers?: true;
   readonly deadline?: Deadline;
   readonly session: SandboxSession;
   /** The workspace AGENTS.md: the always-on context the model receives as its instructions. */
@@ -1249,11 +1206,6 @@ export interface MintDependencies {
   readonly websiteCredentialsAvailable?: boolean;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
-  /**
-   * See `MintTurn.privateAnswers`. The host's `reviewAndExecute` then receives a `signInStep` that
-   * may hold a `private_answer` field, which it reads as a `PrivateAnswerSignInStep`.
-   */
-  readonly privateAnswers?: true;
   /**
    * Proposed screened request only; missing reviewer fails closed. Never receives an answer.
    * `requestId` is the id the request is asked under if allowed, so its lifecycle events join.

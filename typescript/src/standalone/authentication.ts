@@ -16,9 +16,6 @@ import type {
   AutofillSlot,
   AutofillStep,
   AutofillStepRequest,
-  PrivateAnswerSlot,
-  SecretSlot,
-  StepSlot,
 } from "../destinations/autofill-step.js";
 import { rememberTyping } from "../destinations/autofill-typed-page.js";
 import type { CredentialKeyboard } from "../destinations/credential-keyboard.js";
@@ -26,7 +23,7 @@ import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-
 import type { InputAsker, Question } from "../runtime/input-request.js";
 import { autofillRefusalFailure } from "../mint/sign-in-failure.js";
 
-const credentialQuestion = (slot: StepSlot, siteOrigin: string, prompt?: string): Question => ({
+const credentialQuestion = (slot: AutofillSlot, siteOrigin: string, prompt?: string): Question => ({
   id: slot,
   type: "secret",
   secretKind: slot === "code" ? "one_time_code" : "private_text",
@@ -92,22 +89,13 @@ export const makeLiveAuthentication = (options: {
   readonly ask: InputAsker;
   readonly registerSecret: (value: string) => void;
   readonly review: (
-    step: AutofillStep<StepSlot>,
-    inspection: AutofillInspection<StepSlot>,
+    step: AutofillStep,
+    inspection: AutofillInspection,
   ) => Effect.Effect<void, Error>;
   readonly typing?: SessionTyping;
 }) => {
   const typing = options.typing ?? { typed: false };
-  const browser = rememberTyping<
-    {
-      readonly step: AutofillStep<StepSlot>;
-      readonly inspection: AutofillInspection<StepSlot>;
-      readonly values: readonly string[];
-    },
-    never,
-    never,
-    StepSlot
-  >({
+  const browser = rememberTyping({
     inspect: (request) =>
       inspectAutofillStep({
         ...request,
@@ -115,7 +103,11 @@ export const makeLiveAuthentication = (options: {
         siteOrigin: options.siteOrigin,
         authenticationOrigins: options.authenticationOrigins,
       }),
-    fill: (input) =>
+    fill: (input: {
+      readonly step: AutofillStep;
+      readonly inspection: AutofillInspection;
+      readonly values: readonly string[];
+    }) =>
       fillAutofillStep({ ...input, page: options.page, keyboard: options.keyboard }).pipe(
         // The shared record counts what `rememberTyping` counts: a fill that typed.
         Effect.tap((report) =>
@@ -133,9 +125,7 @@ export const makeLiveAuthentication = (options: {
   let signInStart = 0;
   /** Whether a screen's fill may have sent anything to the site. */
   let sent = false;
-  const field = (
-    input: AutofillStepRequest<SecretSlot | PrivateAnswerSlot>["fields"][number],
-  ): AutofillField<StepSlot> => {
+  const field = (input: AutofillStepRequest["fields"][number]): AutofillField => {
     if ("slot" in input) return input;
     const held = identifierPreference.find(
       (kind) => input.accepts.includes(kind) && values[kind] !== undefined,
@@ -145,12 +135,12 @@ export const makeLiveAuthentication = (options: {
     return { ...input, slot };
   };
   const step = (
-    request: AutofillStepRequest<SecretSlot | PrivateAnswerSlot>,
+    request: AutofillStepRequest,
     beforeFill: Effect.Effect<void, Error> = Effect.void,
   ) => {
     const privateAnswers: string[] = [];
     return Effect.gen(function* () {
-      const selected: AutofillStep<StepSlot> = yield* Effect.try({
+      const selected: AutofillStep = yield* Effect.try({
         try: () => ({ ...request, fields: request.fields.map(field) }),
         catch: (cause) => new Error("Invalid sign-in field", { cause }),
       });
@@ -159,7 +149,7 @@ export const makeLiveAuthentication = (options: {
       yield* options.review(selected, inspected);
       yield* beforeFill;
       const missing = [...new Set(selected.fields.map((item) => item.slot))].filter(
-        (slot): slot is AutofillSlot =>
+        (slot) =>
           slot !== "private_answer" &&
           (values[slot] === undefined || slot === "code" || slot === "recovery_code"),
       );

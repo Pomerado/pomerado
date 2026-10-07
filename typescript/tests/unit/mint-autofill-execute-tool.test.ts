@@ -31,8 +31,9 @@ const requestInput: ModelResponse = {
   ],
 };
 
-/** The execute tool the model is offered on an autofill site, with the host's own flags. */
-const executeTool = async (host: Pick<MintDependencies, "privateAnswers">) => {
+// With autofill on for the site, execute's signInStep (a union with
+// optional fields) made the SDK refuse the tool before the first model call.
+it("offers execute with signInStep to the model on an autofill site", async () => {
   const workspace = await portableJobSession({ "src/tool.ts": "export {};" });
   cleanups.push(async () => {
     await workspace.close();
@@ -45,7 +46,6 @@ const executeTool = async (host: Pick<MintDependencies, "privateAnswers">) => {
     skills: [{ name: "core", description: "Synthetic", content: "Synthetic contract." }],
     deadline: Deadline.after(60_000),
     autofillSignIn: true,
-    ...host,
     model: makeOpenAIMinter({
       getModel: () => ({
         getResponse: async (request) => {
@@ -78,22 +78,6 @@ const executeTool = async (host: Pick<MintDependencies, "privateAnswers">) => {
     }).pipe(Effect.provideService(MintServices, dependencies)),
   );
   expect(requests).toHaveLength(1);
-  return JSON.stringify(requests[0]?.tools.find((tool) => tool.name === "execute") ?? null);
-};
-
-// With autofill on for the site, execute's signInStep (a union with
-// optional fields) made the SDK refuse the tool before the first model call.
-it("offers execute with signInStep to the model on an autofill site", async () => {
-  expect(await executeTool({})).toContain("signInStep");
-});
-
-// A host that fills no private answers is offered no slot for one, so its model never sends a
-// field the host cannot fill.
-it("offers the private_answer slot only to a host that fills private answers", async () => {
-  const plain = await executeTool({});
-  expect(plain).not.toContain("private_answer");
-  expect(plain).not.toContain("questionSelector");
-  const answering = await executeTool({ privateAnswers: true });
-  expect(answering).toContain("private_answer");
-  expect(answering).toContain("questionSelector");
+  const execute = requests[0]?.tools.find((tool) => tool.name === "execute");
+  expect(JSON.stringify(execute ?? null)).toContain("signInStep");
 });

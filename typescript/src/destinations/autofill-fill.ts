@@ -25,8 +25,6 @@ import {
   type AutofillRefusal,
   type AutofillStep,
   type AutofillStepReport,
-  type AutofillSlot,
-  type StepSlot,
   LocatedError,
   Targets,
   untrustedTarget,
@@ -143,13 +141,13 @@ interface FillProgress {
 }
 
 const filledReport = (
-  step: AutofillStep<StepSlot>,
+  step: AutofillStep,
   progress: FillProgress,
   submit: "clicked" | "failed" | "not_attempted" | "refused" | "stayed_disabled" | "none",
   url: string,
   refusal?: AutofillRefusal,
   clicked?: true,
-): AutofillStepReport<StepSlot> => ({
+): AutofillStepReport => ({
   outcome: "filled",
   fields: step.fields.map((field, index) => ({
     slot: field.slot,
@@ -171,7 +169,7 @@ const failedCall = (
   progress: FillProgress,
   error: Error,
   call: { readonly heldValue: boolean; readonly mayMutate: boolean },
-): AutofillStepReport<StepSlot> => {
+): AutofillStepReport => {
   const detail = call.heldValue
     ? failureDetail("autofill_step_failed", {
         operation: "autofill.fill",
@@ -197,11 +195,11 @@ const failedCall = (
  * typed field left empty fails, and only the submit's recheck refuses the submit.
  */
 const stopped = (
-  step: AutofillStep<StepSlot>,
+  step: AutofillStep,
   progress: FillProgress,
   answer: Stop | { readonly checked: false; readonly url: string },
   during: "field" | "submit",
-): AutofillStepReport<StepSlot> => {
+): AutofillStepReport => {
   if ("checked" in answer) {
     if (progress.check !== null) progress.statuses[progress.check] = "failed";
     return filledReport(step, progress, "not_attempted", answer.url);
@@ -230,10 +228,10 @@ const evidenceOrigins = (input: FillInput, progress: FillProgress) =>
     ? guardOrigins(input)
     : undefined;
 
-interface FillInput<Slot extends StepSlot = StepSlot> {
-  readonly step: AutofillStep<Slot>;
+interface FillInput {
+  readonly step: AutofillStep;
   readonly values: readonly string[];
-  readonly inspection: AutofillInspection<Slot>;
+  readonly inspection: AutofillInspection;
   readonly page: AutofillPage;
   readonly keyboard: CredentialKeyboard;
   /** How each value is typed; `paste` by default. */
@@ -365,7 +363,7 @@ const fillField = (
   input: FillInput,
   progress: FillProgress,
   index: number,
-): Effect.Effect<AutofillStepReport<StepSlot> | undefined> =>
+): Effect.Effect<AutofillStepReport | undefined> =>
   Effect.gen(function* () {
     const field = input.step.fields[index];
     const value = input.values[index] ?? "";
@@ -426,7 +424,7 @@ const afterFieldCall = (
   index: number,
   answer: Exclude<CallAnswer, Stop | { readonly checked: false }>,
   bindingKey: string,
-): Effect.Effect<AutofillStepReport<StepSlot> | undefined> =>
+): Effect.Effect<AutofillStepReport | undefined> =>
   Effect.gen(function* () {
     if ("dated" in answer) {
       // A date's call may have changed the field even when it failed.
@@ -480,14 +478,7 @@ const afterFieldCall = (
  * clicked: the host waits for the page to enable it once the fields are filled, and when it stays
  * disabled the report says so (`stayed_disabled`).
  */
-export const fillAutofillStep = <Slot extends StepSlot = AutofillSlot>(
-  input: FillInput<Slot>,
-): Effect.Effect<AutofillStepReport<Slot>> =>
-  // The report names each field by the step's own slot.
-  fillStep(input) as Effect.Effect<AutofillStepReport<Slot>>;
-
-/** `fillAutofillStep` over any slot. */
-const fillStep = (input: FillInput): Effect.Effect<AutofillStepReport<StepSlot>> =>
+export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
     const { step } = input;
     if (input.typing === "keyboard")

@@ -5,7 +5,6 @@ import type {
   AutofillRefusal,
   AutofillStepReport,
   LocatedError,
-  StepSlot,
   Targets,
 } from "./autofill-step.js";
 
@@ -207,7 +206,7 @@ export const locatedRefusal = (answer: typeof LocatedError.Type, named?: Readonl
  * A fill whose host click ran, even one whose submission the guard then refused as it fired, or
  * whose answer was lost, may have sent what it filled: the page's own handlers ran on the click.
  */
-export const maySend = (stepReport: AutofillStepReport<StepSlot>) =>
+export const maySend = (stepReport: AutofillStepReport) =>
   stepReport.outcome === "uncertain" ||
   (stepReport.outcome === "filled" &&
     (stepReport.submit === "clicked" || stepReport.clicked === true));
@@ -273,7 +272,7 @@ interface NamedScreen {
  */
 export const typingRefusal = (
   step: NamedScreen,
-  report: AutofillStepReport<StepSlot>,
+  report: AutofillStepReport,
 ): HostRefusal | undefined => {
   if (report.outcome === "uncertain" || report.failureDetail?.subCause !== "autofill_step_failed")
     return undefined;

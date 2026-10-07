@@ -9,7 +9,7 @@ import {
 import {
   type MintDependencies,
   type ExecutionEvidence,
-  type PrivateAnswerSignInStep,
+  type ExecutionRequest,
   type ScriptQuestionOutcome,
 } from "../mint/contracts.js";
 import { localCommandTimeoutMs } from "../execution/local-workspace.js";
@@ -86,7 +86,7 @@ const credentialsNotSubmitted = {
 } as const;
 const executeAuthentication = (
   state: MintState,
-  signIn: PrivateAnswerSignInStep,
+  signIn: NonNullable<ExecutionRequest["signInStep"]>,
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {

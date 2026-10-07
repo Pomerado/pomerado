@@ -6,7 +6,6 @@ import {
   inspectAutofillStep,
   type AutofillInspection,
   type AutofillStep,
-  type StepSlot,
 } from "../../src/destinations/autofill-step.js";
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import { judgedOrigins } from "../../src/destinations/autofill-refusal.js";
@@ -43,7 +42,7 @@ const serve = async (page: Page, controls: string, passwordField = true) => {
   return received;
 };
 
-const inspect = async (page: Page, step: AutofillStep<StepSlot> = passwordStep) =>
+const inspect = async (page: Page, step: AutofillStep = passwordStep) =>
   Effect.runPromise(
     inspectAutofillStep({
       step,
@@ -55,8 +54,8 @@ const inspect = async (page: Page, step: AutofillStep<StepSlot> = passwordStep) 
 
 const fill = async (
   page: Page,
-  inspection: AutofillInspection<StepSlot>,
-  step: AutofillStep<StepSlot> = passwordStep,
+  inspection: AutofillInspection,
+  step: AutofillStep = passwordStep,
   values: readonly string[] = [password],
 ) =>
   Effect.runPromise(
@@ -847,7 +846,7 @@ test("a private answer the click handler puts inside the action's path is refuse
   page,
 }) => {
   const answer = "synthetic-first-pet";
-  const answerStep: AutofillStep<StepSlot> = {
+  const answerStep: AutofillStep = {
     fields: [{ selector: "#answer", slot: "private_answer" }],
     submit: "#continue",
   };

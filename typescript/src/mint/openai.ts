@@ -37,7 +37,6 @@ import {
   BuildBlocked,
   CaptureRequest,
   ExecutionRequest,
-  PrivateAnswerExecutionRequest,
   ManagedSignInExecutionRequest,
   MintFailure,
   PublicationRequest,
@@ -583,9 +582,7 @@ export const makeOpenAIMinter = (
                   // Autofill's signInStep is a union with optional fields, which strict mode
                   // cannot express; the harness decodes the request itself.
                   strict: false,
-                  parameters: turn.privateAnswers
-                    ? looseParameters(withIntent(PrivateAnswerExecutionRequest))
-                    : looseParameters(withIntent(ExecutionRequest)),
+                  parameters: looseParameters(withIntent(ExecutionRequest)),
                 })
               : tool({
                   ...executeTool,
