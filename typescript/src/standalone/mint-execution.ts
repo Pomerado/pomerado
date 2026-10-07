@@ -100,6 +100,7 @@ const executeAuthentication = (
     let authenticated = false;
     if ("fields" in signIn) {
       start.signIn();
+      markers.signInStep();
       yield* markers.beforeFirstScreen;
       const report = yield* auth.step(signIn, beforeDispatch);
       start.sent(report, signIn.fields);
@@ -114,10 +115,12 @@ const executeAuthentication = (
       } else result = credentialsNotSubmitted;
     } else if ("rejected" in signIn) {
       start.signIn();
+      markers.signInStep();
       auth.rejected(signIn.rejected.slot);
       result = { outcome: "correction_requested" };
     } else {
       start.signIn();
+      markers.signInStep();
       result = yield* mintAsk(
         noticeRequest(
           randomUUID(),
@@ -399,7 +402,10 @@ const authoredExecution = (
             decideDialog: makeDialogDecider(mintAsk, secrets.redact),
           }),
         );
-        if (watch !== undefined && watch.typed().size > 0) start.typedCode();
+        if (watch !== undefined && watch.typed().size > 0) {
+          start.typedCode();
+          state.markers.signInStep();
+        }
         if (live) {
           yield* context.observe;
           state.markers.visited(context.observedUrl);

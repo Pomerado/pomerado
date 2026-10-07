@@ -40,7 +40,7 @@ const SignedOutPage = Schema.Struct({ url: Schema.String, dom: Schema.String });
  * one whose document is still over 1 MiB, is skipped: a later check has fewer pages to compare, and
  * the step that took it does not fail.
  */
-export const makeSignedOutPages = (page: AutofillPage) => {
+const makeSignedOutPages = (page: AutofillPage) => {
   const pages: SignedOutSnapshot[] = [];
   return {
     /** Keeps the page the primary tab shows now. */
@@ -63,63 +63,115 @@ export const makeSignedOutPages = (page: AutofillPage) => {
 /** How long a loaded page may take to show the marker, as checks one interval apart. */
 const markerSettle = { checks: 6, interval: Duration.millis(500) };
 
+/** The most pages a build notes as visited signed in, newest last. */
+const keptPaths = 10;
+
+/** A page's path with its query, as the build notes the pages it visited. */
+const pathOf = (url: URL) => `${url.pathname}${url.search}`;
+
 /**
- * The local host's `MintDependencies.checkSignedInMarker`: the marker against the build's
- * signed-out pages, on the live page as it is, after the host loads the marker's page (`openPath`,
- * else `urlPath`, else the site's root) again, and on the newest other page the build visited
- * signed in. It signs nothing in and sends no value. The loads move the primary tab, so the host
- * then opens the address it was on again; what that page held only in memory, such as a
- * half-filled form, is gone. A current page the host cannot read fails the check as unavailable.
+ * The local host's `MintDependencies.checkSignedInMarker`, and the pages it compares. It tests the
+ * marker against the build's signed-out pages, on the live page as it is, after the host loads
+ * the marker's page (`openPath`, else `urlPath`, else the site's root) again, and on the newest
+ * other page the build visited once its sign-in sent the login. It signs nothing in and sends no
+ * value. The loads move the primary tab, so the host then opens the address it was on again; what
+ * that page held only in memory, such as a half-filled form, is gone. A current page the host
+ * cannot read fails the check as unavailable.
  */
-export const makeSignedInMarkerCheck =
-  (input: {
-    readonly page: AutofillPage;
-    readonly siteOrigin: string;
-    /** The live check, on the current page or on `openPath` once the host opened it. */
-    readonly check: (indicator: AutofillSignedIn) => Effect.Effect<AutofillSignedInCheck>;
-    readonly signedOutPages: () => readonly SignedOutSnapshot[];
-    /** The paths, with their queries, of pages the build visited signed in, oldest first. */
-    readonly signedInPaths: () => readonly string[];
-  }) =>
-  (marker: SignedInMarkerCheckRequest): Effect.Effect<SignedInMarkerCheck, MintFailure> =>
+export const makeMarkerChecks = (input: {
+  readonly page: AutofillPage;
+  readonly siteOrigin: string;
+  /** The live check, on the current page or on `openPath` once the host opened it. */
+  readonly check: (indicator: AutofillSignedIn) => Effect.Effect<AutofillSignedInCheck>;
+  /** Whether a sign-in of the build is verified. */
+  readonly signedIn: () => boolean;
+  /** Whether the build's current sign-in sent the login, or a sign-in of the build is verified. */
+  readonly loginSent: () => boolean;
+}) => {
+  const signedOut = makeSignedOutPages(input.page);
+  /** Pages the build visited once its sign-in sent the login, as paths, oldest first. */
+  const visitedPaths: string[] = [];
+  let firstScreen = true;
+  // A page that renders after it loads gets a few seconds to show the marker.
+  const load = (indicator: AutofillSignedIn, path: string) =>
     Effect.gen(function* () {
-      const indicator = { selector: marker.selector, urlPath: marker.urlPath };
-      const signedInNow = yield* input.check(indicator);
-      if (!signedInNow.signedIn && signedInNow.failed === "page_unavailable")
-        return yield* new MintFailure({
-          code: "Unavailable",
-          failureDetail:
-            signedInNow.failureDetail ??
-            failureDetail("mint_host_dependency_failed", {
-              operation: "standalone.checkSignedInMarker",
-              error: new Error("The current page could not be read"),
-            }),
-        });
-      // A page that renders after it loads gets a few seconds to show the marker.
-      const load = (path: string) =>
-        Effect.gen(function* () {
-          let checked = yield* input.check({ ...indicator, openPath: path });
-          for (let check = 1; check < markerSettle.checks; check++) {
-            if (checked.signedIn || checked.failed !== "indicator_not_visible") break;
-            yield* Effect.sleep(markerSettle.interval);
-            checked = yield* input.check(indicator);
-          }
-          return checked;
-        });
-      const freshPath = marker.openPath ?? marker.urlPath ?? "/";
-      const freshLoad = yield* load(freshPath);
-      const second = input.signedInPaths().findLast((path) => path !== freshPath);
-      const secondPage = second === undefined ? undefined : yield* load(second);
-      // Back to the page the agent was on, when it was on the site and the loads left it.
-      const here = URL.parse(signedInNow.url ?? "");
-      const left = new URL(second ?? freshPath, input.siteOrigin);
-      if (here !== null && here.origin === left.origin && here.href !== left.href)
-        yield* openAutofillLogin({ page: input.page, url: here.href }).pipe(Effect.ignore);
-      return evaluateSignedInMarker({
-        marker: indicator,
-        signedOutSnapshots: input.signedOutPages(),
-        signedInNow,
-        freshLoad,
-        secondPage,
-      });
+      let checked = yield* input.check({ ...indicator, openPath: path });
+      for (let check = 1; check < markerSettle.checks; check++) {
+        if (checked.signedIn || checked.failed !== "indicator_not_visible") break;
+        yield* Effect.sleep(markerSettle.interval);
+        checked = yield* input.check(indicator);
+      }
+      return checked;
     });
+  return {
+    /** Keeps the page a reset cleared of cookies and site storage. */
+    afterClear: signedOut.take,
+    /**
+     * Keeps the page before the build's first sign-in screen, when no sign-in of the build is
+     * verified: nothing was typed on it yet, so it shows the site signed out.
+     */
+    beforeFirstScreen: Effect.suspend(() => {
+      if (!firstScreen || input.signedIn()) return Effect.void;
+      firstScreen = false;
+      return signedOut.take;
+    }),
+    /**
+     * A sign-in screen, a rejected value, an approval or a code an exploration typed: the pages
+     * visited before it may be screens of the sign-in under way, such as a code's, so none of them
+     * is loaded as a signed-in page.
+     */
+    signInStep: () => {
+      visitedPaths.length = 0;
+    },
+    /** Notes the page a live step left, once the build's sign-in sent the login. */
+    visited: (url: string | undefined) => {
+      const page = URL.parse(url ?? "");
+      if (!input.loginSent() || page === null || page.origin !== input.siteOrigin) return;
+      const path = pathOf(page);
+      const seen = visitedPaths.indexOf(path);
+      if (seen !== -1) visitedPaths.splice(seen, 1);
+      visitedPaths.push(path);
+      if (visitedPaths.length > keptPaths) visitedPaths.shift();
+    },
+    check: (marker: SignedInMarkerCheckRequest): Effect.Effect<SignedInMarkerCheck, MintFailure> =>
+      Effect.gen(function* () {
+        const indicator = { selector: marker.selector, urlPath: marker.urlPath };
+        const signedInNow = yield* input.check(indicator);
+        if (!signedInNow.signedIn && signedInNow.failed === "page_unavailable")
+          return yield* new MintFailure({
+            code: "Unavailable",
+            failureDetail:
+              signedInNow.failureDetail ??
+              failureDetail("mint_host_dependency_failed", {
+                operation: "standalone.checkSignedInMarker",
+                error: new Error("The current page could not be read"),
+              }),
+          });
+        const freshPath = marker.openPath ?? marker.urlPath ?? "/";
+        const freshLoad = yield* load(indicator, freshPath);
+        const here = URL.parse(signedInNow.url ?? "");
+        const fresh = new URL(freshPath, input.siteOrigin);
+        // Another page, once the page the agent is on shows the marker: before that, the sign-in
+        // may still be under way. Neither the page loaded fresh nor the agent's own page counts.
+        const second = !signedInNow.signedIn
+          ? undefined
+          : visitedPaths.findLast(
+              (path) =>
+                path !== pathOf(fresh) &&
+                (here === null || here.origin !== input.siteOrigin || path !== pathOf(here)),
+            );
+        const secondPage = second === undefined ? undefined : yield* load(indicator, second);
+        // Back to the page the agent was on, when it was on the site and the loads left it.
+        const left = second === undefined ? fresh : new URL(second, input.siteOrigin);
+        if (here !== null && here.origin === left.origin && here.href !== left.href)
+          yield* openAutofillLogin({ page: input.page, url: here.href }).pipe(Effect.ignore);
+        return evaluateSignedInMarker({
+          marker: indicator,
+          signedOutSnapshots: signedOut.pages,
+          signedInNow,
+          freshLoad,
+          secondPage,
+        });
+      }),
+  };
+};

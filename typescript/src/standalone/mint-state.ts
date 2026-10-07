@@ -25,7 +25,7 @@ import {
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
-import { makeSignedInMarkerCheck, makeSignedOutPages } from "./signed-in-marker.js";
+import { makeMarkerChecks } from "./signed-in-marker.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
@@ -208,45 +208,20 @@ export const mintState = (
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    const signedOut = makeSignedOutPages(browser);
+    const markers = makeMarkerChecks({
+      page: browser,
+      siteOrigin: context.siteOrigin,
+      check: auth.signedIn,
+      signedIn: () => context.signedIn,
+      loginSent: () => start.submitted || context.signedIn,
+    });
     const start = makeBuildStart(
       browser,
       context.siteOrigin,
       context.navigate,
       context.leavePage,
-      signedOut.take,
+      markers.afterClear,
     );
-    /** Pages the build visited signed in, as paths with their queries, oldest first. */
-    const signedInPaths: string[] = [];
-    let firstScreen = true;
-    const markers = {
-      /**
-       * Keeps the page before the build's first sign-in screen, when no sign-in of the build is
-       * verified: nothing was typed on it yet, so it shows the site signed out.
-       */
-      beforeFirstScreen: Effect.suspend(() => {
-        if (!firstScreen || context.signedIn) return Effect.void;
-        firstScreen = false;
-        return signedOut.take;
-      }),
-      /** Notes the page a live step left, once the build is signed in. */
-      visited: (url: string | undefined) => {
-        const page = URL.parse(url ?? "");
-        if (!context.signedIn || page === null || page.origin !== context.siteOrigin) return;
-        const path = `${page.pathname}${page.search}`;
-        const seen = signedInPaths.indexOf(path);
-        if (seen !== -1) signedInPaths.splice(seen, 1);
-        signedInPaths.push(path);
-        if (signedInPaths.length > 10) signedInPaths.shift();
-      },
-      check: makeSignedInMarkerCheck({
-        page: browser,
-        siteOrigin: context.siteOrigin,
-        check: auth.signedIn,
-        signedOutPages: () => signedOut.pages,
-        signedInPaths: () => signedInPaths,
-      }),
-    };
     return {
       session,
       context,
