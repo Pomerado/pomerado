@@ -391,7 +391,8 @@ const fillField = (
 
 /**
  * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
- * cause), and why.
+ * cause), and why. A private answer's question that changed is a change on the screen, as when the
+ * call found it changed before focusing.
  */
 const untypedRefusal = (
   input: FillInput,
@@ -402,7 +403,11 @@ const untypedRefusal = (
 ) =>
   withCheck(
     refused("credential_target_refused", index),
-    insertion === undefined ? "not_focused" : "typing_refused",
+    insertion === undefined
+      ? "not_focused"
+      : insertion === "question_changed"
+        ? "change"
+        : "typing_refused",
     {
       ...answer.unfocused,
       ...(insertion === undefined ? {} : { insertion }),
