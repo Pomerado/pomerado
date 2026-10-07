@@ -92,12 +92,6 @@ export type SpentSignIn =
 
 export type { SessionLoss };
 
-/**
- * Why the host signed a page in again by itself, as it records each automatic sign-in: the page
- * was signed out when the operation started, or became signed out while it ran.
- */
-export type AutomaticSignInCause = "signed_out_at_start" | "signed_out_mid_operation";
-
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
