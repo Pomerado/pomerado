@@ -21,6 +21,7 @@ import {
   withEvidence,
 } from "./autofill-refusal.js";
 import { sameSite, siteDomain } from "../runtime/same-site.js";
+import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { PageControls } from "./page-controls.js";
 import type {
   AutofillPopup,
@@ -325,20 +326,6 @@ export interface AutofillPage {
   readonly execute: HostExecute;
   readonly targetId: string;
 }
-
-const trustedUrl = (
-  siteOrigin: string,
-  authenticationOrigins: readonly string[],
-  value: string,
-) => {
-  const url = URL.parse(value);
-  return (
-    url !== null &&
-    !url.username &&
-    !url.password &&
-    (authenticationOrigins.includes(url.origin) || sameSite(siteOrigin, url))
-  );
-};
 
 /**
  * The first control that sits or submits off the site and its configured sign-in origins, or a
