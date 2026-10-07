@@ -6,7 +6,7 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Either, Fiber, Schema } from "effect";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
-import { GuardianDecision, ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
+import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { GuardianDiagnostics, PendingExecution } from "../../src/guardian/review.js";
 import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
 import type { ModelObserverFactory } from "../../src/models/model-observer.js";
@@ -288,12 +288,6 @@ it("keeps a publication's permit wait separate from the mint review holding the 
           retainScreenedSource: () => Effect.void,
         },
         {},
-        {
-          decodePublication: (_scope, raw) =>
-            Schema.decodeUnknown(GuardianDecision)(raw).pipe(
-              Effect.mapError(() => new ReviewFailure({ code: "InvalidDecision" })),
-            ),
-        },
       );
       const mint = yield* Effect.fork(guardian.review(pending, readCurrent));
       yield* Deferred.await(entered);

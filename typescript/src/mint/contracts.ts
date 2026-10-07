@@ -62,6 +62,7 @@ import type { RunnerFailure } from "./runner-failure.js";
 import type { HostAnomalySummary, MintAttemptOutcome } from "./incident-contracts.js";
 import type {
   InputFeedbackFallback,
+  InputFeedbackReview,
   PublishedBuild,
   MintArtifact,
   MintCompletion,
@@ -1061,6 +1062,11 @@ export interface MintHarnessSnapshot {
   };
   /** The attempt's last publication was a Guardian denial; optional for the same reason. */
   readonly publicationDenial?: PublicationDenial;
+  /**
+   * The last completed publication review returned input feedback: its categories and screened
+   * rationale, which a build without a fallback ends with. Optional for the same reason.
+   */
+  readonly inputFeedbackReview?: InputFeedbackReview;
 }
 
 /** How a build ended, as a harness checkpoint keeps it. */
@@ -1147,6 +1153,13 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     { exact: true },
   ),
   publicationDenial: Schema.optionalWith(PublicationDenial, { exact: true }),
+  inputFeedbackReview: Schema.optionalWith(
+    Schema.Struct({
+      categories: Schema.Array(PublicationFinding.fields.category),
+      rationale: Schema.String,
+    }),
+    { exact: true },
+  ),
 });
 
 export interface MintDependencies {

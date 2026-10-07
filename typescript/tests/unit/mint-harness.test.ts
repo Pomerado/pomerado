@@ -2469,6 +2469,7 @@ it("never publishes Guardian's input-feedback fallback after the claimed attempt
         ),
       inputFeedbackFallback: {
         kept: () => true,
+        outcome: () => "the host publishes it privately",
         flagPublished: Effect.void,
         publish: Effect.sync(() => {
           fallbackPublications++;
@@ -2488,6 +2489,130 @@ it("never publishes Guardian's input-feedback fallback after the claimed attempt
     phase: "attempt",
     reason: "stopped",
   });
+});
+
+/** A publication review that returns input feedback with these categories. */
+const inputFeedback = (...categories: ("account_specific_enum" | "example_value")[]) =>
+  new MintFailure({
+    code: "ReviewDenied",
+    review: {
+      outcome: "deny",
+      reason: "input_feedback",
+      reviewId: "review_feedback",
+      rationale: "Make the account an input.",
+      findings: categories.map((category) => ({
+        path: "publication/definition.json",
+        byteStart: 0,
+        byteEnd: 1,
+        category,
+      })),
+    },
+  });
+const noFallbackEnding = "the build ends unpublished and reports Guardian's findings to the owner";
+const unresolvedSummary =
+  "Not built: Guardian's input feedback on this tool's schema was not resolved (account_specific_enum, example_value). Guardian's rationale: Make the account an input.";
+
+it("ends a build with no fallback unpublished once input feedback outlasts its two rounds", async () => {
+  const replies: Record<string, unknown>[] = [];
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        for (let round = 0; round < 3; round++)
+          replies.push(JSON.parse(yield* turn.actions.finish(publication)));
+      }),
+    {
+      publish: () =>
+        Effect.suspend(() => {
+          publications++;
+          return Effect.fail(inputFeedback("account_specific_enum", "example_value"));
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(publications).toBe(3);
+  expect(replies.map((reply) => [reply["reason"], reply["feedbackRoundsRemaining"]])).toEqual([
+    ["input_feedback", 1],
+    ["input_feedback", 0],
+    ["input_feedback_unresolved", undefined],
+  ]);
+  expect(String(replies[0]?.["instruction"])).toContain(
+    `If input findings remain after 1 more feedback round, or the build ends first, ${noFallbackEnding}.`,
+  );
+  expect(String(replies[1]?.["instruction"])).toContain(
+    `This was the last feedback round: if the next review still finds input problems, ${noFallbackEnding}.`,
+  );
+  expect(outcome).toMatchObject({ build: "incomplete", summary: unresolvedSummary });
+  expect(outcome.artifact).toBeUndefined();
+});
+
+it("ends a build with no fallback on the last review's input feedback when the minter stops first", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+      }),
+    { publish: () => Effect.fail(inputFeedback("account_specific_enum", "example_value")) },
+  );
+  expect(await f.run()).toMatchObject({ build: "incomplete", summary: unresolvedSummary });
+});
+
+it("reports no input feedback a later completed review replaced", async () => {
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publish: () =>
+        Effect.fail(
+          publications++ === 0
+            ? inputFeedback("account_specific_enum")
+            : new MintFailure({
+                code: "ReviewDenied",
+                review: {
+                  outcome: "deny",
+                  reason: "privacy",
+                  reviewId: "review_privacy",
+                  rationale: "Remove the literal.",
+                },
+              }),
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.build).toBe("incomplete");
+  expect(outcome.summary).not.toContain("input feedback");
+});
+
+it("ends each input-feedback instruction with the outcome a host's fallback names", async () => {
+  let reply: Record<string, unknown> = {};
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        reply = JSON.parse(yield* turn.actions.finish(publication));
+      }),
+    {
+      publish: () => Effect.fail(inputFeedback("account_specific_enum")),
+      inputFeedbackFallback: {
+        kept: () => true,
+        outcome: () => "the host keeps a synthetic fallback version",
+        flagPublished: Effect.void,
+        publish: Effect.succeed(undefined),
+      },
+    },
+  );
+  await f.run();
+  expect(String(reply["instruction"])).toContain(
+    "If input findings remain after 1 more feedback round, or the build ends first, the host keeps a synthetic fallback version.",
+  );
+  expect(String(reply["instruction"])).not.toContain(noFallbackEnding);
 });
 
 it("joins an in-flight editor promise before asking and refuses edits after the build ends", async () => {

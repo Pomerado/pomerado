@@ -187,6 +187,11 @@
       "import": "./dist/typescript/src/guardian/openai.js",
       "default": "./dist/typescript/src/guardian/openai.js"
     },
+    "./core/guardian/publication": {
+      "types": "./dist/typescript/src/guardian/publication.d.ts",
+      "import": "./dist/typescript/src/guardian/publication.js",
+      "default": "./dist/typescript/src/guardian/publication.js"
+    },
     "./core/guardian/question": {
       "types": "./dist/typescript/src/guardian/question.d.ts",
       "import": "./dist/typescript/src/guardian/question.js",
@@ -266,6 +271,11 @@
       "types": "./dist/typescript/src/mint/projection.d.ts",
       "import": "./dist/typescript/src/mint/projection.js",
       "default": "./dist/typescript/src/mint/projection.js"
+    },
+    "./core/mint/publication-review": {
+      "types": "./dist/typescript/src/mint/publication-review.d.ts",
+      "import": "./dist/typescript/src/mint/publication-review.js",
+      "default": "./dist/typescript/src/mint/publication-review.js"
     },
     "./core/mint/recovery-contracts": {
       "types": "./dist/typescript/src/mint/recovery-contracts.d.ts",

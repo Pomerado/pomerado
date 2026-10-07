@@ -787,6 +787,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let inputFeedbackPublicTool = recovered?.inputFeedbackPublicTool ?? false;
       /** The screened coverage of the last candidate Guardian returned input feedback for. */
       let inputFeedbackCoverage = recovered?.inputFeedbackCoverage ?? "";
+      /** The last completed publication review's input feedback, while no later review replaced it. */
+      let inputFeedbackReview = recovered?.inputFeedbackReview;
       /** Guardian's finite reason when the latest publication was a completed denial. */
       let publicationDenial = recovered?.publicationDenial;
       const destinationEvidenceInstruction = {
@@ -837,11 +839,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /**
        * Publishes the last candidate whose review found only input feedback, privately and
        * flagged, and settles the build. Nothing publishes for a tool that is already public or
-       * when that publication fails; the build then ends incomplete, naming which.
+       * when that publication fails; the build then ends incomplete, naming which. A host with no
+       * fallback ends the build incomplete with the last review's categories and rationale.
        */
       const settleUnresolvedInputFeedback = Effect.gen(function* () {
         const fallback = dependencies.inputFeedbackFallback;
-        if (fallback === undefined) return false;
+        // With no fallback the build ends unpublished, with the last review's findings.
+        if (fallback === undefined) {
+          if (inputFeedbackReview !== undefined)
+            terminal = {
+              build: "incomplete",
+              summary: unresolvedInputFeedbackSummary(undefined, inputFeedbackReview),
+            };
+          return false;
+        }
         const outcome = yield* Effect.either(fallback.publish);
         if (outcome._tag === "Left") {
           yield* diagnose({
@@ -2489,8 +2500,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   evidence,
                 )
                 .pipe(Effect.either);
-              if (publication._tag === "Right" || reviewDecided(publication.left))
+              if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
+                // A completed review replaces the input feedback an earlier one returned.
+                inputFeedbackReview = undefined;
+              }
               const denial = publication._tag === "Left" ? publication.left.review : undefined;
               const deniedCategory = denial?.findings?.[0]?.category;
               publicationDenial =
@@ -2588,27 +2602,33 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   });
                 if (error.code !== "PublicationUnavailable" && error.code !== "ReviewDenied")
                   return yield* error;
-                // Input feedback never fails the mint: the minter gets bounded rounds to fix it,
-                // then the last reviewed candidate publishes privately and flagged.
+                // Input feedback never fails the mint at once: the minter gets bounded rounds to
+                // fix it. Then a host's fallback publishes the last reviewed candidate, privately
+                // and flagged, or with no fallback the build ends unpublished with the findings.
                 if (error.review?.reason === "input_feedback") {
                   inputFeedbackRounds++;
                   inputFeedbackCoverage = coverage;
-                  const privateFallback = dependencies.inputFeedbackFallback?.kept() === true;
-                  inputFeedbackPublicTool =
-                    dependencies.inputFeedbackFallback !== undefined && !privateFallback;
+                  const fallback = dependencies.inputFeedbackFallback;
+                  inputFeedbackPublicTool = fallback !== undefined && !fallback.kept();
+                  const rationale = yield* screenRationale(error.review.rationale);
+                  const findings = error.review.findings ?? [];
+                  inputFeedbackReview = {
+                    categories: [...new Set(findings.map(({ category }) => category))],
+                    rationale,
+                  };
                   if (inputFeedbackRounds <= maximumInputFeedbackRounds)
                     return notPublished(
                       error.code,
                       "input_feedback",
                       {
-                        findings: error.review.findings ?? [],
-                        rationale: yield* screenRationale(error.review.rationale),
+                        findings,
+                        rationale,
                         reviewId: error.review.reviewId,
                         feedbackRoundsRemaining: maximumInputFeedbackRounds - inputFeedbackRounds,
                       },
                       inputFeedbackInstruction(maximumInputFeedbackRounds - inputFeedbackRounds, {
                         write: buildEffect === "write",
-                        privateFallback,
+                        ending: fallback === undefined ? "none" : { outcome: fallback.outcome() },
                       }),
                     );
                   if (yield* settleUnresolvedInputFeedback)
@@ -3190,6 +3210,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(writeUpgradeDeclined ? { writeUpgradeDeclined: true as const } : {}),
         ...(signInUnavailable === undefined ? {} : { signInUnavailable }),
         ...(publicationDenial === undefined ? {} : { publicationDenial }),
+        ...(inputFeedbackReview === undefined ? {} : { inputFeedbackReview }),
       });
       const agentRecovery = dependencies.agentRecovery;
       yield* agentRecovery?.bindHarness?.(captureHarness) ?? Effect.void;
@@ -3382,8 +3403,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       }
       // A minter that stopped without fixing Guardian's input feedback still publishes its last
-      // reviewed candidate, privately and flagged. Publication needs no browser or executor, but
-      // an attempt that lost its lease publishes nothing.
+      // reviewed candidate, privately and flagged, where the host has a fallback; without one the
+      // build ends with the review's findings. Publication needs no browser or executor, but an
+      // attempt that lost its lease publishes nothing.
       if (terminal === undefined && inputFeedbackRounds > 0 && !stopRevokedAttempt())
         yield* settleUnresolvedInputFeedback;
       // Background traffic can poison the host after the last tool call and completion check.

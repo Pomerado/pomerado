@@ -187,7 +187,8 @@ export interface WriteStep {
   readonly stateChanging: boolean;
 }
 
-const sourceDigest = (files: ReadonlyMap<string, string>) =>
+/** The sha256 digest of a set of source files, whatever order they come in. */
+export const sourceDigest = (files: ReadonlyMap<string, string>) =>
   createHash("sha256")
     .update(JSON.stringify([...files].sort(([left], [right]) => left.localeCompare(right))))
     .digest("hex");

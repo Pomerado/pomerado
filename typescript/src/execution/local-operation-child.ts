@@ -194,6 +194,7 @@ const extractCurrentContract = (
       effect: "not_started",
       commits: [],
       ...(operation.write === undefined ? {} : { write: operation.write }),
+      ...(operation.questions === undefined ? {} : { questions: operation.questions }),
       ...(start.validateInput === true || start.retainedOutput !== undefined
         ? { inputDecodes: true }
         : {}),

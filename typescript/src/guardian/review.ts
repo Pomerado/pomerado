@@ -1,6 +1,7 @@
 import { makeGuardianSession } from "./session.js";
 import type { GuardianSession, GuardianSessionOptions } from "./session.js";
 import { QuestionDecision } from "./question.js";
+import { decodePublicationDecision } from "./publication.js";
 import type { AnsweredQuestion, PendingQuestion } from "./question.js";
 import {
   failureDetail,
@@ -58,10 +59,6 @@ export interface GuardianDiagnostics {
   }) => Effect.Effect<void, Error>;
 }
 export interface GuardianReviewOptions {
-  readonly decodePublication?: (
-    scope: PublicationScope,
-    raw: unknown,
-  ) => Effect.Effect<GuardianDecision, ReviewFailure>;
   readonly diagnosticFailure?: (error: unknown, operation: string) => ReviewFailure;
   readonly bestEffort?: <A, E>(
     effect: Effect.Effect<A, E>,
@@ -958,8 +955,7 @@ export const makeGuardian = (
           review(run, pending, readSource, (raw) =>
             scope === undefined
               ? decodeExecution(raw)
-              : (options.decodePublication?.(scope, boundedRationale(raw)) ??
-                Effect.fail(new ReviewFailure({ code: "InvalidDecision" }))),
+              : decodePublicationDecision(scope, boundedRationale(raw)),
           ),
         );
       }),

@@ -5,10 +5,12 @@ import {
   guardianReviewInput,
   guardianReviewSettings,
   guardianReviewState,
+  guardianReviewTurns,
   SourceInput,
 } from "./openai-input.js";
 import { guardianDecisionFormat, reviewKindOf, withholdPrivateReviews } from "./review-layout.js";
 import { guardianContinuityPolicy } from "./session.js";
+import { guardianPublicationPolicy, type PublicationPolicySections } from "./publication.js";
 import { guardianModel, guardianReviewTimeout } from "./model.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
@@ -40,10 +42,13 @@ export interface GuardianModelOptions {
   /**
    * The host's additions for one review: policy text for its kind and input fields, both sent in
    * that review's user message, and its turn limit. Never the instructions, tools or output
-   * format, which every kind shares so the conversation stays cached across kinds.
+   * format, which every kind shares so the conversation stays cached across kinds. `policy`
+   * follows the core policy for the kind; a publication review's `publicationPolicy` places the
+   * host's sentences inside the core publication policy.
    */
   readonly specialize?: (turn: ReviewTurn) => {
     readonly policy?: string;
+    readonly publicationPolicy?: PublicationPolicySections;
     readonly input?: Readonly<Record<string, unknown>>;
     readonly maxTurns?: number;
   };
@@ -89,26 +94,36 @@ submitted_call.entrypointSource, when present, is the first chunk of the submitt
 const guardianInstructions = (policy: string, turn: ReviewTurn) =>
   `${turn.session ? `${guardianContinuityPolicy}\n\n` : ""}${policy}\n\n${reviewLayoutPolicy}`;
 
-/** The kind's policy, sent in the review's user message. */
+/**
+ * The kind's policy, sent in the review's user message: the outcome policy, the core policy for a
+ * publication or question review, then the host's own.
+ */
 const reviewPolicy = (turn: ReviewTurn, options: GuardianModelOptions) => {
-  const host = options.specialize?.(turn).policy;
+  const specialized = options.specialize?.(turn);
+  const host = specialized?.policy;
   const hostReview = turn.pending.hostReview;
   if (hostReview !== undefined)
     return [hostReview.policy, host]
       .filter((part) => part !== undefined && part !== "")
       .join("\n\n");
+  const kind = reviewKindOf(turn.pending);
   return [
     executionOutcomePolicy,
+    kind === "publication" ? guardianPublicationPolicy(specialized?.publicationPolicy) : undefined,
     host,
-    reviewKindOf(turn.pending) === "question" ? questionPolicy : undefined,
+    kind === "question" ? questionPolicy : undefined,
   ]
     .filter((part) => part !== undefined && part !== "")
     .join("\n\n");
 };
 
+/** The review's input: the host's fields, a publication's file index, then the environment. */
 const reviewInput = (turn: ReviewTurn, options: GuardianModelOptions) =>
   guardianReviewInput(turn, reviewPolicy(turn, options), {
     ...options.specialize?.(turn).input,
+    ...(turn.pending.publication === undefined
+      ? {}
+      : { trusted_publication: turn.pending.publication }),
     trusted_execution_environment: options.executionEnvironment ?? "hosted",
   });
 
@@ -314,7 +329,7 @@ const reviewerWithPolicy = (
           diagnostics?.attach(runner);
           const input = reviewInput(turn, options);
           diagnostics?.started(input);
-          const maxTurns = options.specialize?.(turn).maxTurns ?? 12;
+          const maxTurns = options.specialize?.(turn).maxTurns ?? guardianReviewTurns(turn);
           let activeState = await Effect.runPromise(
             guardianReviewState(turn, input, agent, maxTurns),
             {

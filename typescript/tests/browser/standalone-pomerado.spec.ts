@@ -2157,7 +2157,7 @@ test("a next screen whose first hundred controls are hidden still saves its visi
   );
 });
 
-test("finish_build reviews its source once as a contract run and saves every probe file", async () => {
+test("finish_build runs a contract review, then one publication review, and saves only what the operation loads", async () => {
   test.setTimeout(60_000);
   const site = await startSite((_request, response) =>
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
@@ -2191,19 +2191,19 @@ test("finish_build reviews its source once as a contract run and saves every pro
       ],
     });
     expect(built.build, JSON.stringify(built)).toBe("published");
-    // After its example, the build's one review is the offline contract run's.
+    // After its example, the build's reviews are the offline contract run's, then publication's.
     const example = guardian.reviews.findIndex(
       (review) => currentOf(review)?.["purpose"] === "example",
     );
-    expect(
-      guardian.reviews.slice(example + 1).map((review) => currentOf(review)?.["purpose"]),
-    ).toEqual(["contract"]);
-    expect(guardian.reviews.some((review) => "trusted_publication" in review.input)).toBe(false);
-    // Every authored file is saved, whether the operation imports it or not.
+    const after = guardian.reviews.slice(example + 1);
+    expect(after.map((review) => review.kind)).toEqual(["execution", "publication"]);
+    expect(currentOf(after[0]!)?.["purpose"]).toBe("contract");
+    expect(guardian.reviews.filter((review) => "trusted_publication" in review.input)).toEqual([
+      after[1],
+    ]);
+    // Only src/, the entrypoint and the files it imports are saved; other probes are not.
     expect(built.artifact?.files.map((file) => file.path).sort()).toEqual([
-      "explore/look.mjs",
       "explore/trim.mjs",
-      "scratch/notes.mjs",
       "src/heading.mjs",
       "src/tool.mjs",
     ]);

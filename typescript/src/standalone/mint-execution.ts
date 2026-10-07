@@ -205,6 +205,7 @@ interface ReceiptInput {
   readonly id: string;
   readonly sources: readonly (readonly [string, string])[];
   readonly input: unknown;
+  readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
   readonly reviewed: {
     readonly reviewId: string;
     readonly decision: {
@@ -223,7 +224,7 @@ const failedReceipt = (
   },
 ) =>
   Effect.gen(function* () {
-    const { state, execution, id, sources, input, reviewed, journal } = receipt;
+    const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
@@ -239,6 +240,7 @@ const failedReceipt = (
       sources,
       entrypoint: execution.entrypoint,
       input,
+      ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: undefined,
       purpose: execution.purpose,
       journal: failureJournal,
@@ -267,7 +269,7 @@ const failedReceipt = (
   });
 const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =>
   Effect.gen(function* () {
-    const { state, execution, id, sources, input, reviewed, journal } = receipt;
+    const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
     const { runs } = state;
     const { projection } = state.session;
 
@@ -290,6 +292,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       sources,
       entrypoint: execution.entrypoint,
       input,
+      ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
       purpose: execution.purpose,
       journal: result,
@@ -407,7 +410,16 @@ const authoredExecution = (
           });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
-        const receipt = { state, execution, id, sources, input, reviewed, journal };
+        const receipt = {
+          state,
+          execution,
+          id,
+          sources,
+          input,
+          ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
+          reviewed,
+          journal,
+        };
         return yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)
           : completedReceipt(receipt, executed.right);
