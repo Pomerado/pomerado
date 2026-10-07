@@ -840,7 +840,7 @@ describe("browser calls while the host signs in", () => {
     );
     let duringSignIn: string[] | undefined;
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {
@@ -886,7 +886,7 @@ describe("browser calls while the host signs in", () => {
       started,
     );
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {
@@ -913,7 +913,7 @@ describe("browser calls while the host signs in", () => {
         (await Promise.all([ensureSignedIn(), ensureSignedIn()])).map((r) => r.signedInAgain),
     );
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {
@@ -949,7 +949,7 @@ describe("browser calls while the host signs in", () => {
     );
     let duringSignIn: string[] | undefined;
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {
@@ -995,7 +995,7 @@ describe("browser calls while the host signs in", () => {
       },
     );
     const { exit } = await run(
-      executeKernelOperation(
+      runKernelOperation(
         script,
         {},
         {
