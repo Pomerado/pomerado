@@ -159,6 +159,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let approvedChange: string | undefined;
     let navigated = false;
     let observed: { readonly page: ObservedPage; readonly capture: PageCapture } | undefined;
+    /** The address of the page `observed` came from, unredacted, for the host's own loads. */
+    let observedUrl: string | undefined;
     let inputSchema: unknown;
     const executions: ExecutionEntry[] = [];
     const stepResults = makeStepResults();
@@ -345,6 +347,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         Effect.flatMap((value) => Schema.decodeUnknown(PageSnapshot)(value)),
         Effect.option,
       );
+      observedUrl = Option.isSome(read) ? read.value.url : undefined;
       const location = Option.flatMap(read, ({ url: href }) =>
         Option.fromNullable(URL.canParse(href) ? pageLocation(new URL(href)) : undefined),
       );
@@ -396,6 +399,15 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       /** Drops the observed page: a step's start is resetting it, so no review reads it again. */
       leavePage: () => {
         observed = undefined;
+        observedUrl = undefined;
+      },
+      /** The address of the page the last live step left, as the browser reported it. */
+      get observedUrl() {
+        return observedUrl;
+      },
+      /** Whether a sign-in of this attempt is verified. */
+      get signedIn() {
+        return signedIn();
       },
       executions: () => executions,
       repeatableRead: host.repeatableRead,

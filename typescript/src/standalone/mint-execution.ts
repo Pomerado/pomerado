@@ -90,7 +90,7 @@ const executeAuthentication = (
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { start, auth, afterSubmit, mintAsk, context } = state;
+    const { start, auth, afterSubmit, mintAsk, context, markers } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
@@ -100,6 +100,7 @@ const executeAuthentication = (
     let authenticated = false;
     if ("fields" in signIn) {
       start.signIn();
+      yield* markers.beforeFirstScreen;
       const report = yield* auth.step(signIn, beforeDispatch);
       start.sent(report, signIn.fields);
       result = yield* afterSubmit(report);
@@ -399,7 +400,10 @@ const authoredExecution = (
           }),
         );
         if (watch !== undefined && watch.typed().size > 0) start.typedCode();
-        if (live) yield* context.observe;
+        if (live) {
+          yield* context.observe;
+          state.markers.visited(context.observedUrl);
+        }
         if (execution.purpose === "act")
           writeSession.steps.push({
             entrypoint: execution.entrypoint,

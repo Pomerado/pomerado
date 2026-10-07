@@ -25,6 +25,7 @@ import {
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
 import { makeLiveAuthentication } from "./authentication.js";
+import { makeSignedInMarkerCheck, makeSignedOutPages } from "./signed-in-marker.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
@@ -41,13 +42,15 @@ const unavailable = (operation: string) => (error: unknown) =>
  * root; see `startStateFor`. A new sign-in drops the session saved after the last one, and a
  * check counts the build signed in only once a sign-in step sent the login (see `sent`).
  * `leavePage` runs before each reset, so the page the last step left is never taken for the
- * reset step's page, even when the reset fails.
+ * reset step's page, even when the reset fails. `afterClear` runs once a reset cleared the
+ * browser's cookies and site storage, on that signed-out page.
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
   siteOrigin: string,
   enterRequest: Effect.Effect<void, Error>,
   leavePage: () => void,
+  afterClear: Effect.Effect<void> = Effect.void,
 ) => {
   const tracker = makeStartTracker();
   const hooks = localStartHooks(browser.execute, browser.targetId);
@@ -130,6 +133,7 @@ export const makeBuildStart = (
             hooks,
           ).pipe(Effect.mapError(unavailable("standalone.startPage")));
           entered = true;
+          if (plan.start === "clear") yield* afterClear;
         }
         tracker.dispatched(planned);
       }),
@@ -204,7 +208,45 @@ export const mintState = (
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    const start = makeBuildStart(browser, context.siteOrigin, context.navigate, context.leavePage);
+    const signedOut = makeSignedOutPages(browser);
+    const start = makeBuildStart(
+      browser,
+      context.siteOrigin,
+      context.navigate,
+      context.leavePage,
+      signedOut.take,
+    );
+    /** Pages the build visited signed in, as paths with their queries, oldest first. */
+    const signedInPaths: string[] = [];
+    let firstScreen = true;
+    const markers = {
+      /**
+       * Keeps the page before the build's first sign-in screen, when no sign-in of the build is
+       * verified: nothing was typed on it yet, so it shows the site signed out.
+       */
+      beforeFirstScreen: Effect.suspend(() => {
+        if (!firstScreen || context.signedIn) return Effect.void;
+        firstScreen = false;
+        return signedOut.take;
+      }),
+      /** Notes the page a live step left, once the build is signed in. */
+      visited: (url: string | undefined) => {
+        const page = URL.parse(url ?? "");
+        if (!context.signedIn || page === null || page.origin !== context.siteOrigin) return;
+        const path = `${page.pathname}${page.search}`;
+        const seen = signedInPaths.indexOf(path);
+        if (seen !== -1) signedInPaths.splice(seen, 1);
+        signedInPaths.push(path);
+        if (signedInPaths.length > 10) signedInPaths.shift();
+      },
+      check: makeSignedInMarkerCheck({
+        page: browser,
+        siteOrigin: context.siteOrigin,
+        check: auth.signedIn,
+        signedOutPages: () => signedOut.pages,
+        signedInPaths: () => signedInPaths,
+      }),
+    };
     return {
       session,
       context,
@@ -219,6 +261,7 @@ export const mintState = (
       writeSession,
       start,
       afterSubmit,
+      markers,
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;
