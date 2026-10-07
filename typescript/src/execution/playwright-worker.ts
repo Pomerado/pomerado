@@ -66,11 +66,11 @@ type Delivery = readonly [index: number, urls: readonly string[]];
 
 /**
  * The frames a typing call types in, found before it, and for keys with nothing focused the
- * frames to check again once it completed.
+ * frames and addresses the page had while it ran, which `later` gives once it ended.
  */
 interface Targets {
   readonly frames: readonly Frame[];
-  readonly later?: () => readonly Frame[];
+  readonly later?: () => { readonly frames: readonly Frame[]; readonly urls: readonly string[] };
 }
 
 /**
@@ -94,7 +94,8 @@ const selectorFrames = async (
  * The frames of `page` the keyboard types in: the one whose document holds the focused element, by
  * the browser's own `:focus` match, which Playwright runs apart from the page's scripts and only
  * the focused frame matches. With nothing focused, keys go to whichever document has the focus,
- * so every frame of the page, before the call and once it completed.
+ * so every frame the page has before the call, gets or loads a document in while it runs, and has
+ * once it ended, with each address it loaded.
  */
 const focusedFrames = async (page: Page): Promise<Targets> => {
   for (const frame of page.frames()) {
@@ -103,7 +104,24 @@ const focusedFrames = async (page: Page): Promise<Targets> => {
     await focused.dispose();
     return { frames: [frame] };
   }
-  return { frames: page.frames(), later: () => page.frames() };
+  const seen = new Set(page.frames());
+  const urls = new Set<string>();
+  const attached = (frame: Frame) => seen.add(frame);
+  const navigated = (frame: Frame) => {
+    seen.add(frame);
+    urls.add(frame.url());
+  };
+  page.on("frameattached", attached);
+  page.on("framenavigated", navigated);
+  return {
+    frames: page.frames(),
+    later: () => {
+      page.off("frameattached", attached);
+      page.off("framenavigated", navigated);
+      for (const frame of page.frames()) seen.add(frame);
+      return { frames: [...seen], urls: [...urls] };
+    },
+  };
 };
 
 /**
@@ -112,10 +130,10 @@ const focusedFrames = async (page: Page): Promise<Targets> => {
  * `type`. Before a call with a watched value as its text, it finds the frames the call types in:
  * the frame of the element its selector names for a frame's call, looked up again once the call
  * completed when there was none yet, and the focused frames for the keyboard's, with every frame
- * of the page again once it completed when nothing was focused. Once the call
- * completed, it adds the value to `typed` with those frames' URLs then and now, read without
- * waiting for any page the typing started to load, unless one of them left the page meanwhile,
- * as a frame the page swapped out does. A call that throws adds nothing. The methods are shared
+ * and address the page had while it ran when nothing was focused. Once the call completed, it
+ * adds the value to `typed` with those frames' URLs then and now, read without waiting for any
+ * page the typing started to load, unless one of them left the page meanwhile, as a frame the
+ * page swapped out does. A call that throws adds nothing. The methods are shared
  * by every page, so the returned restore puts the originals back once the script ends.
  */
 const watchTypingCalls = (
@@ -156,13 +174,19 @@ const watchTypingCalls = (
         if (at < 0) return (await Reflect.apply(original, this, args)) as unknown;
         const before = await targets(this, args).catch(() => undefined);
         const started = before?.frames.map((frame) => frame.url()) ?? [];
-        const result: unknown = await Reflect.apply(original, this, args);
+        let during: ReturnType<NonNullable<Targets["later"]>> | undefined;
+        let result: unknown;
+        try {
+          result = await Reflect.apply(original, this, args);
+        } finally {
+          during = before?.later?.();
+        }
         const found =
           before ?? (again ? await targets(this, args).catch(() => undefined) : undefined);
-        const frames = found && [...found.frames, ...(found.later?.() ?? [])];
+        const frames = found && [...found.frames, ...(during?.frames ?? [])];
         const stayed = frames !== undefined && !frames.some((frame) => frame.isDetached());
-        if (stayed && frames.length > 0)
-          typed.push([at, [...new Set([...started, ...frames.map((frame) => frame.url())])]]);
+        const urls = [...started, ...(during?.urls ?? []), ...(frames ?? []).map((f) => f.url())];
+        if (stayed && frames.length > 0) typed.push([at, [...new Set(urls)]]);
         return result;
       },
     });
