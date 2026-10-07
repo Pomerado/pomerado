@@ -58,6 +58,16 @@ first:
   Schema form (core skill, the input schema). A read's schemas come from current source, so
   fix one there and call again with the same `executionId`; a required output field its example
   did not return is refused (`contract_output_mismatch`).
+- **Typed output.** Prefer parsing what the page shows into typed fields over returning a
+  result row, card or itinerary as one text blob or summary. Prefer giving each fact a caller
+  would filter, sort or compare on its own field: a price as integer minor units with
+  `currency`, times as ISO 8601 with the offset, durations in minutes, counts as integers, and
+  codes and names as their own strings. A flight card reading "XX 234, 7:00 AM-3:31 PM,
+  Nonstop, 5h 31m, $244" should return `{ "flight_number": "XX 234", "departure_time":
+  "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0,
+  "duration_minutes": 331, "price_minor": 24400, "currency": "USD" }` rather than
+  `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
+  or stand in for one value that truly does not parse, with that field's description saying so.
 - **Inputs.** Nothing the caller could vary is a literal, and every optional field the flow
   offers that bears on the tool's purpose is an optional input, even one the request never
   mentioned and one you never asked about (core skill, the input schema). Guardian counts such an input as part of the
