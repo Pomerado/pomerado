@@ -222,7 +222,10 @@ load in the middle of the script: a `page.goto`, a reload, or a click or submit 
 document. In-page navigation in a single-page app needs no call. The host checks the signed-in
 marker on the current page without moving it and signs in again only when the page is signed out.
 When `signedInAgain` is true, the sign-in left the page somewhere else: open the page you were on
-again before you go on. The operation's deadline pauses while the host signs in.
+again before you go on. The host signs in on the same browser while your script waits in
+`ensureSignedIn`, and the operation's deadline pauses meanwhile. Any other browser call the script
+makes during that time, even from a timer or a promise it never awaited, is held until the host is
+done, then sent in order.
 
 Never call it between a write's commit and its read-back: read the outcome back first. Let its
 failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
@@ -239,7 +242,7 @@ A direct sign-in request signs in with one host-filled HTTP request instead of a
 
 Observe the current login screen with a reviewed read-only probe: its URL, frames, visible field labels/types/names/autocomplete, form destination and submit. Never read control values or enter credentials in source. Pass `signInStep` to execute purpose `authenticate`, target `liveBrowser`, with the evidenced reusable `loginUrl`.
 
-Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. A private answer is prompted from the current `questionSelector` text when it has one visible match in the answer field's frame, otherwise from the field label, and discarded after this fill. Supply the observed question selector when the question is adjacent to a generic answer label. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
+Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's protected input callback or masked terminal, checks the original field/document/origin/focus binding and inserts privately. A private answer is prompted from the current `questionSelector` text when it has one visible match in the answer field's frame. When a recorded question could not be read, the prompt says so; with no `questionSelector`, it uses the field label. The answer is discarded after this fill. Supply the observed question selector when the question is adjacent to a generic answer label. No saved credential, seed, SMS automation or recipe is used. No value enters your model context or files.
 
 Inspect each subsequent screen and send its observed step. After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`, where the host saved the next screen's controls: role, name or label, input type, and whether each is required, visible and enabled, never a value. Read it first to see what the screen asks for, then probe read-only only for what it lacks, such as a selector or form destination. A failed step's result shows the last saved controls inline, at most 30, and the file holds the rest. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
 

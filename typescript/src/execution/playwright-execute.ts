@@ -14,7 +14,10 @@ export const NativeWorkerRequest = Schema.Union(
     id: Schema.String,
     kind: Schema.Literal("execute"),
     code: Schema.String,
-    /** Values to watch for: the worker answers which ones a typing call delivered (`typed`). */
+    /**
+     * Values to watch for: the worker answers which ones a typing call delivered, and in which
+     * frame (`typed`).
+     */
     watch: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
@@ -51,20 +54,30 @@ export interface PlaywrightOptions {
   readonly startupTimeoutMs?: number;
   readonly cleanupTimeoutMs?: number;
 }
-/** An answered script and which watched values its typing calls delivered, by index. */
+/**
+ * An answered script and which watched values its typing calls delivered, by index, each with the
+ * URLs of the frames it may have gone into: when the call started and once it completed, and for
+ * keys typed with nothing focused every address a frame of the page loaded while the call ran.
+ */
 const WatchedResponse = Schema.Struct({
   ...BrowserExecuteResponse.fields,
-  typed: Schema.optionalWith(Schema.Array(Schema.Number), { exact: true }),
+  typed: Schema.optionalWith(
+    Schema.Array(Schema.Tuple(Schema.Number, Schema.Array(Schema.String))),
+    { exact: true },
+  ),
 });
 
 /**
  * Page code run while the host watches for `values`. A value counts as typed once a `fill`,
  * `type` or `pressSequentially` call on a page, frame, locator or keyboard got it as the text to
- * enter and completed without error. A call that failed, or code that never ran, types nothing.
+ * enter, completed without error and typed it where `where` accepts every URL reported for it: the
+ * frame's when the call started and once it completed, and for keys typed with nothing focused
+ * every frame's of the page and every address one loaded while the call ran. A call that failed
+ * or typed elsewhere, or code that never ran, types nothing.
  */
 export interface TypingWatch {
   readonly executeResponse: BrowserExecute;
-  /** The indexes into `values` that a completed typing call delivered so far. */
+  /** The indexes into `values` that a completed typing call delivered where wanted so far. */
   readonly typed: () => ReadonlySet<number>;
 }
 
@@ -72,8 +85,11 @@ export interface PlaywrightExecutor {
   readonly sessionId: string;
   readonly targetId: string;
   readonly executeResponse: BrowserExecute;
-  /** Runs page code as `executeResponse` does, watching which of `values` it types. */
-  readonly watchTyping: (values: readonly string[]) => TypingWatch;
+  /** Runs page code as `executeResponse` does, watching which of `values` it types `where`. */
+  readonly watchTyping: (
+    values: readonly string[],
+    where: (frameUrl: string) => boolean,
+  ) => TypingWatch;
   readonly execute: HostExecute;
   readonly keyboard: CredentialKeyboard;
   readonly close: Effect.Effect<void, Error>;
@@ -362,14 +378,18 @@ export const makePlaywrightExecutor = (
         Effect.flatMap((response) => Schema.decodeUnknown(BrowserExecuteResponse)(response)),
         Effect.mapError(asError),
       );
-    const watchTyping = (values: readonly string[]): TypingWatch => {
+    const watchTyping = (
+      values: readonly string[],
+      where: (frameUrl: string) => boolean,
+    ): TypingWatch => {
       const typed = new Set<number>();
       return {
         executeResponse: (code, timeoutSec = 60) =>
           call({ kind: "execute", code, watch: values }, timeoutSec).pipe(
             Effect.flatMap((response) => Schema.decodeUnknown(WatchedResponse)(response)),
             Effect.map(({ typed: delivered, ...response }) => {
-              for (const index of delivered ?? []) typed.add(index);
+              for (const [index, urls] of delivered ?? [])
+                if (urls.length > 0 && urls.every(where)) typed.add(index);
               return response;
             }),
             Effect.mapError(asError),

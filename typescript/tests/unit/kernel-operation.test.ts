@@ -20,7 +20,11 @@ import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js"
 import type { ScriptQuestionHandler } from "../../src/runtime/script-input.js";
 
 import type { BrowserExecuteResponse } from "../../src/runtime/browser-execution.js";
-import type { DialogDecider, KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
+import type {
+  DialogDecider,
+  KernelExecuteClient,
+  KernelOperationContext,
+} from "../../src/runtime/kernel-operation.js";
 
 /** Scripted answers through the portable execution port, without provider HTTP. */
 const fakeKernel = (answer: (code: string) => BrowserExecuteResponse) => {
@@ -846,5 +850,250 @@ describe("a signed-in session kept across page loads", () => {
     expect(failureOf(rejected.exit)).toMatchObject(
       Option.some({ _tag: "CredentialsRejected", field: "password" }),
     );
+  });
+});
+
+describe("browser calls while the host signs in", () => {
+  const signal = () => {
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const nextTask = () => new Promise<void>((done) => setImmediate(done));
+
+  /**
+   * A script whose timer, set before it asks the host to sign in, fires during the host's sign-in
+   * and starts browser work the script never awaits. `start` is that work; the script waits for it
+   * only after the sign-in settles.
+   */
+  const strayDuringSignIn = (
+    start: (context: KernelOperationContext<unknown>) => Promise<unknown>,
+    started: { readonly resolve: () => void },
+  ) =>
+    defineOperation({ input: Schema.Struct({}), output: Schema.Boolean }, async (context) => {
+      let stray: Promise<unknown> = Promise.resolve();
+      setTimeout(() => {
+        stray = start(context);
+        started.resolve();
+      }, 0);
+      try {
+        await context.ensureSignedIn();
+      } finally {
+        await stray;
+      }
+      return true;
+    });
+
+  /** The host's hook: free at the start, then slow, until the script's stray work has started. */
+  const slowSecondSignIn = (
+    started: { readonly promise: Promise<void> },
+    signedIn: () => Promise<{ readonly signedInAgain: boolean }>,
+  ) => {
+    let signIns = 0;
+    return async () => {
+      signIns += 1;
+      if (signIns === 1) return { signedInAgain: false };
+      await started.promise;
+      await nextTask();
+      return signedIn();
+    };
+  };
+
+  it("holds a call the script did not await until the sign-in returns, then sends it", async () => {
+    const reached: string[] = [];
+    const kernel = fakeKernel(() => {
+      reached.push("execute");
+      return { success: true, result: null };
+    });
+    const started = signal();
+    const script = strayDuringSignIn(
+      ({ kernel: client, sessionId, decideDialog }) =>
+        Promise.all([
+          client.browsers.playwright.execute(sessionId, {
+            code: 'await page.click("#refresh");',
+            timeout_sec: 10,
+          }),
+          decideDialog({ step: "refresh", type: "alert", message: "Saved", url: "about:blank" }),
+        ]),
+      started,
+    );
+    let duringSignIn: string[] | undefined;
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          dialogs: () =>
+            Effect.sync(() => {
+              reached.push("dialog");
+              return { choice: "accept" as const };
+            }),
+          signIn: slowSecondSignIn(started, async () => {
+            duringSignIn = [...reached];
+            return { signedInAgain: false };
+          }),
+        },
+      ),
+    );
+    expect(exit).toEqual(Exit.succeed(true));
+    expect(duringSignIn).toEqual([]);
+    expect(reached.toSorted()).toEqual(["dialog", "execute"]);
+  });
+
+  it("starts a held call's own timeout only when the call is sent", async () => {
+    let now = 0;
+    const signedIn = signal();
+    // A request times out when the page answers later than its SDK timeout after it was sent.
+    const client: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: async (_sessionId, _body, options) => {
+            const sentAt = now;
+            await signedIn.promise;
+            if (options?.timeout !== undefined && now - sentAt > options.timeout)
+              throw new Error("Request timed out");
+            return { success: true, result: { cleared: true, waitedMs: 0 } };
+          },
+        },
+      },
+    };
+    const started = signal();
+    const script = strayDuringSignIn(
+      ({ waitPastChallenge }) => waitPastChallenge({ ready: "return true;" }),
+      started,
+    );
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: client,
+          sessionId: "session-1",
+          signIn: slowSecondSignIn(started, async () => {
+            // Signing in takes longer than any call's timeout.
+            now += 170_000;
+            signedIn.resolve();
+            return { signedInAgain: false };
+          }),
+        },
+      ),
+      Deadline.after(60_000, () => now),
+    );
+    expect(exit).toEqual(Exit.succeed(true));
+  });
+
+  it("makes one host sign-in for calls the script makes while one is under way", async () => {
+    let signIns = 0;
+    const script = defineOperation(
+      { input: Schema.Struct({}), output: Schema.Array(Schema.Boolean) },
+      async ({ ensureSignedIn }) =>
+        (await Promise.all([ensureSignedIn(), ensureSignedIn()])).map((r) => r.signedInAgain),
+    );
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: fakeKernel(() => ({ success: true, result: null })).client,
+          sessionId: "session-1",
+          signIn: async () => {
+            signIns += 1;
+            await nextTask();
+            return { signedInAgain: signIns > 1 };
+          },
+        },
+      ),
+    );
+    expect(exit).toEqual(Exit.succeed([true, true]));
+    // One at the start and one for both of the script's calls.
+    expect(signIns).toBe(2);
+  });
+
+  it("sends held calls when the host cannot sign in, and fails the sign-in", async () => {
+    const reached: string[] = [];
+    const kernel = fakeKernel(() => {
+      reached.push("execute");
+      return { success: true, result: null };
+    });
+    const started = signal();
+    const script = strayDuringSignIn(
+      ({ kernel: client, sessionId }) =>
+        client.browsers.playwright.execute(sessionId, {
+          code: 'await page.click("#refresh");',
+          timeout_sec: 10,
+        }),
+      started,
+    );
+    let duringSignIn: string[] | undefined;
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          signIn: slowSecondSignIn(started, async () => {
+            duringSignIn = [...reached];
+            throw new Error("The automatic sign-in budget is spent");
+          }),
+        },
+      ),
+    );
+    // The held call goes out after the failure, so the run may have sent it.
+    expect(failureOf(exit)).toMatchObject(
+      Option.some({
+        _tag: "OperationFailure",
+        sessionLoss: "session_not_kept",
+        dispatch: "unknown",
+      }),
+    );
+    expect(duringSignIn).toEqual([]);
+    expect(reached).toEqual(["execute"]);
+  });
+
+  it("counts a held call as possibly sent when the script ends before it goes out", async () => {
+    const reached: string[] = [];
+    const kernel = fakeKernel(() => {
+      reached.push("execute");
+      return { success: true, result: null };
+    });
+    let signIns = 0;
+    const signedIn = signal();
+    // The script ends wrongly, with an Effect it never ran, while its last call is still held.
+    const script = defineOperation(
+      { input: Schema.Struct({}), output: Schema.Boolean },
+      async ({ kernel: client, sessionId, ensureSignedIn }) => {
+        void ensureSignedIn();
+        void client.browsers.playwright.execute(sessionId, {
+          code: 'await page.click("#refresh");',
+          timeout_sec: 10,
+        });
+        return Effect.succeed(true) as unknown as boolean;
+      },
+    );
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          signIn: async () => {
+            signIns += 1;
+            if (signIns > 1) await signedIn.promise;
+            return { signedInAgain: false };
+          },
+        },
+      ),
+    );
+    expect(failureOf(exit)).toMatchObject(Option.some({ dispatch: "unknown" }));
+    expect(reached).toEqual([]);
+    signedIn.resolve();
+    await nextTask();
+    expect(reached).toEqual(["execute"]);
   });
 });

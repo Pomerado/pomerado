@@ -16,6 +16,7 @@ import type {
   AutofillStep,
   AutofillStepRequest,
 } from "../destinations/autofill-step.js";
+import { rememberTyping } from "../destinations/autofill-typed-page.js";
 import type { CredentialKeyboard } from "../destinations/credential-keyboard.js";
 import { parseDateOfBirth, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { InputAsker, Question } from "../runtime/input-request.js";
@@ -64,10 +65,20 @@ const answerPrompt = (
 };
 
 /**
+ * Whether the host typed a sign-in value into the session browser's page. It lasts for the
+ * session, since page code may have kept what was typed for any later screen.
+ */
+export interface SessionTyping {
+  typed: boolean;
+}
+
+/**
  * Local values feed the original inspected-field fill without a credential store or portal. A fill
  * that refused a field of the screen fails as a sign-in the host refused (`autofillRefusalFailure`).
- * A check that shows the site signed in ends the sign-in, so a later check counts only the
- * challenge fields of screens filled after it.
+ * Once the host typed into the page, each later screen is judged as typed into (`rememberTyping`).
+ * `typing` carries that across every authentication on the same browser; without it, this one
+ * keeps its own. A check that shows the site signed in ends the sign-in, so a later check counts
+ * only the challenge fields of screens filled after it.
  */
 export const makeLiveAuthentication = (options: {
   readonly page: AutofillPage;
@@ -80,7 +91,32 @@ export const makeLiveAuthentication = (options: {
     step: AutofillStep,
     inspection: AutofillInspection,
   ) => Effect.Effect<void, Error>;
+  readonly typing?: SessionTyping;
 }) => {
+  const typing = options.typing ?? { typed: false };
+  const browser = rememberTyping({
+    inspect: (request) =>
+      inspectAutofillStep({
+        ...request,
+        page: options.page,
+        siteOrigin: options.siteOrigin,
+        authenticationOrigins: options.authenticationOrigins,
+      }),
+    fill: (input: {
+      readonly step: AutofillStep;
+      readonly inspection: AutofillInspection;
+      readonly values: readonly string[];
+    }) =>
+      fillAutofillStep({ ...input, page: options.page, keyboard: options.keyboard }).pipe(
+        // The shared record counts what `rememberTyping` counts: a fill that typed.
+        Effect.tap((report) =>
+          Effect.sync(() => {
+            if (report.outcome !== "refused" && report.typed === true) typing.typed = true;
+          }),
+        ),
+      ),
+    typed: typing.typed,
+  });
   const values: Partial<Record<AutofillSlot, string>> = {};
   const screens: AutofillStep[] = [];
   /** Where the current sign-in's screens start in `screens`. */
@@ -106,12 +142,7 @@ export const makeLiveAuthentication = (options: {
         try: () => ({ ...request, fields: request.fields.map(field) }),
         catch: (cause) => new Error("Invalid sign-in field", { cause }),
       });
-      const inspected = yield* inspectAutofillStep({
-        step: selected,
-        page: options.page,
-        siteOrigin: options.siteOrigin,
-        authenticationOrigins: options.authenticationOrigins,
-      });
+      const inspected = yield* browser.inspect(selected);
       if ("outcome" in inspected) return inspected;
       yield* options.review(selected, inspected);
       yield* beforeFill;
@@ -167,11 +198,9 @@ export const makeLiveAuthentication = (options: {
         options.registerSecret(answer.value);
         privateAnswers[index] = answer.value;
       }
-      const result = yield* fillAutofillStep({
+      const result = yield* browser.fill({
         step: selected,
         inspection: inspected,
-        page: options.page,
-        keyboard: options.keyboard,
         values: selected.fields.map((item, index) =>
           item.slot === "private_answer" ? (privateAnswers[index] ?? "") : (values[item.slot] ?? ""),
         ),
