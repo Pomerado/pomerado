@@ -73,11 +73,11 @@ pomerado:section core.execute-calls:end -->
   run then fails as the caller's input and nothing repairs the tool. A write that throws it
   before entering a commit mark reports that it changed nothing. A page, control or response
   that changed is still `OperationFailure`.
-- After a write, call `verified()` just before returning, once a call has read the saved
-  result back, or `verified({ confirmation: "message" })` when the site's own confirmation
-  for this submission proves it. Without it the write stays a possible effect. A write
-  declares which in its contract's `write`, and a write build runs as `act` steps; see
-  `writes/SKILL.md` and `forms/SKILL.md`.
+- After a write, call `verified()` with no argument just before returning, once a call has
+  read the result back, either the site's confirmation for this submission or the saved state.
+  Return the confirmation number or record in the output. Without it the write stays a
+  possible effect. A write declares which in its contract's `write`, and a write build runs
+  as `act` steps; see `writes/SKILL.md` and `forms/SKILL.md`.
 
 **The input schema.** Every caller sees the tool's input schema, so build it from the
 request and the flow, never from one caller's account or example.
@@ -265,9 +265,10 @@ inspect them and choose by evidence such as section, accessible name and
 destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
-For a detail read, derive the destination from a schema-validated caller identifier
-and a trusted origin/path template. Do not accept an arbitrary caller URL as the
-target. A successful response or plausible content is insufficient: the final page's
+For a detail read, reach the record through the site's own search, list or link for the
+schema-validated caller identifier (AGENTS.md, "Reach every page the way a person does").
+Never build its page URL from the identifier, and never accept a caller URL as the target.
+A successful response or plausible content is insufficient: the final page's
 site (any https host on the site's registrable domain), exact final path and stable page
 identity must all agree with the requested identifier. Explicitly classify a detail
 page, loading state, known interstitial and unsupported or mismatched page. Continue through an interstitial only when its

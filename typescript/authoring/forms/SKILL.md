@@ -188,10 +188,10 @@ saved payment method is still a yes-or-no choice to ask about. Confirm by meanin
 submission, never wording you expect; when no such message was observed, read back the saved
 state (the record, its quantity or status) instead.
 
-Once that read-back matches the request, call the context's `verified()` just before
-returning, so the run reports the write as landed; a confirmation the site shows for
-this submission is `verified({ confirmation: "message" })`, as the writes skill
-describes. Without it the write stays a possible effect. Never call it for a toast,
+Once that read-back matches the request, call the context's `verified()` with no argument
+just before returning, so the run reports the write as landed, whether it read the site's
+confirmation for this submission or the saved state. Without it the write stays a possible
+effect. Never call it for a toast,
 a status code alone or a missing confirmation, and make no execute call after it: a
 later call makes the effect possible again. Missing confirmation preserves uncertainty; it
 does not authorize another submit.
