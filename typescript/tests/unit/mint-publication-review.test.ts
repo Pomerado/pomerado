@@ -183,22 +183,6 @@ describe("the public definition", () => {
     );
     expect(publicDefinition(metadata, schemas)).not.toContain('"questions"');
   });
-
-  // A host with fields of its own places them before the schemas or after them.
-  it("places a host's own fields before or after the schemas", () => {
-    const text = publicDefinition(metadata, schemas, {
-      beforeSchemas: { site: "Reports" },
-      afterSchemas: { variants: [] },
-    });
-    expect(Object.keys(JSON.parse(text) as object)).toEqual([
-      "name",
-      "description",
-      "site",
-      "inputSchema",
-      "outputSchema",
-      "variants",
-    ]);
-  });
 });
 
 describe("the evidence index", () => {
@@ -213,7 +197,6 @@ describe("the evidence index", () => {
         ["publication/session-output.json", "{}"],
         ["publication/session/0/src/tool.mjs", "old"],
       ]),
-      new Set(["src/entry.mjs"]),
     );
     expect(scope.files).toEqual([
       {
@@ -228,7 +211,7 @@ describe("the evidence index", () => {
         byteLength: 10,
         published: true,
         current: true,
-        owner: "host",
+        owner: "minter",
       },
       {
         path: "publication/definition.json",
@@ -316,10 +299,7 @@ describe("reviewPublication", () => {
     entrypoint: "src/tool.mjs",
     files: new Map([["src/tool.mjs", "export default 1;"]]),
     definition,
-    evidence: {
-      files: new Map([["publication/example-output.json", "{}"]]),
-      hostWritten: new Set(),
-    },
+    evidence: new Map([["publication/example-output.json", "{}"]]),
     baseline: new Map([["src/tool.mjs", "export default 0;"]]),
     notes: "Evidence note.",
     inputSchema: JSON.parse(definition).inputSchema as unknown,
@@ -350,7 +330,7 @@ describe("reviewPublication", () => {
         "Publish the current operation bundle, including the files the host adds to it, and the public definition only; do not execute the business action again.",
       ],
     });
-    expect([...(request?.evidence.files ?? [])]).toEqual([
+    expect([...(request?.evidence ?? [])]).toEqual([
       ["publication/definition.json", definition],
       ["publication/example-output.json", "{}"],
     ]);

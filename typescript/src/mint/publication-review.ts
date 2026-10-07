@@ -111,26 +111,14 @@ export const exampleOutputEvidence = (
   });
 
 /**
- * One review's host-built publication files besides the definition: the output or session
- * evidence and any of the host's own, and the bundle paths the host wrote itself.
- */
-export interface PublicationEvidence {
-  readonly files: ReadonlyMap<string, string>;
-  /** Bundle paths the host wrote, which nothing the minter edits changes. */
-  readonly hostWritten: ReadonlySet<string>;
-}
-
-/**
  * The index of a publication review's evidence: every bundle file under `operation/`, then each
  * publication file. The bundle and the public definition ship; the other publication files are
  * evidence for the review only. A write session's act-step source is historical; everything
- * else is current. The host wrote every publication file and the bundle files it added; the
- * minter wrote the rest.
+ * else is current. The minter wrote the bundle and the host every publication file.
  */
 export const publicationScope = (
   files: ReadonlyMap<string, string>,
   publicationFiles: ReadonlyMap<string, string>,
-  hostWritten: ReadonlySet<string>,
 ): PublicationScope => ({
   files: [
     ...[...files].map(([path, source]) => ({
@@ -138,7 +126,7 @@ export const publicationScope = (
       byteLength: byteLength(source),
       published: true,
       current: true,
-      owner: hostWritten.has(path) ? ("host" as const) : ("minter" as const),
+      owner: "minter" as const,
     })),
     ...[...publicationFiles].map(([path, source]) => ({
       path,
@@ -167,8 +155,7 @@ export const sessionEvidenceFiles = (
 
 /**
  * The public definition as Guardian reads it, at `publication/definition.json`: the build's name
- * and description, then its input and output schemas and declared questions. A host with fields
- * of its own places them before the schemas or after them.
+ * and description, then its input and output schemas and declared questions.
  */
 export const publicDefinition = (
   metadata: { readonly name: string; readonly description: string },
@@ -177,17 +164,14 @@ export const publicDefinition = (
     readonly output: unknown;
     readonly questions?: ScriptQuestionDeclarations;
   },
-  host: { readonly beforeSchemas?: Json; readonly afterSchemas?: Json } = {},
 ) =>
   JSON.stringify(
     {
       name: metadata.name,
       description: metadata.description,
-      ...host.beforeSchemas,
       inputSchema: schemas.input,
       outputSchema: schemas.output,
       ...(schemas.questions === undefined ? {} : { questions: schemas.questions }),
-      ...host.afterSchemas,
     },
     null,
     2,
@@ -221,7 +205,7 @@ const publicationAllowedEffect =
   "Publish the current operation bundle, including the files the host adds to it, and the public definition only; do not execute the business action again.";
 
 /**
- * A host's Guardian review of a publication: `files` is the bundle, `evidence` its publication
+ * A host's Guardian review of a publication: `files` is the bundle, `evidence` the publication
  * files with the definition first, and `baseline` the source a read example ran, served under
  * `executed/`. It returns the review's ID once Guardian allows; a denial fails as `ReviewDenied`
  * with Guardian's reason and findings.
@@ -232,7 +216,7 @@ export type PublicationReview = (request: {
   readonly allowedEffects: readonly string[];
   readonly notes: string;
   readonly baseline?: ReadonlyMap<string, string>;
-  readonly evidence: PublicationEvidence;
+  readonly evidence: ReadonlyMap<string, string>;
 }) => Effect.Effect<string, MintFailure>;
 
 /** What one finish_build would publish, and the evidence it is reviewed against. */
@@ -242,8 +226,8 @@ export interface PublicationCandidate {
   readonly files: ReadonlyMap<string, string>;
   /** `publicDefinition`'s text. */
   readonly definition: string;
-  /** The output or session evidence and any host files; the definition goes first. */
-  readonly evidence: PublicationEvidence;
+  /** The output or session evidence; the definition goes before it. */
+  readonly evidence: ReadonlyMap<string, string>;
   readonly baseline?: ReadonlyMap<string, string>;
   /** Host text the review reads after the build's observations. */
   readonly notes: string;
@@ -309,10 +293,7 @@ export const reviewPublication = (review: PublicationReview, candidate: Publicat
       allowedEffects: [publicationAllowedEffect],
       notes: candidate.notes,
       ...(candidate.baseline === undefined ? {} : { baseline: candidate.baseline }),
-      evidence: {
-        files: new Map([[publicDefinitionPath, candidate.definition], ...candidate.evidence.files]),
-        hostWritten: candidate.evidence.hostWritten,
-      },
+      evidence: new Map([[publicDefinitionPath, candidate.definition], ...candidate.evidence]),
     });
     if (unlisted.length === 0) return reviewId;
     const inputSchemaAt = byteLength(

@@ -262,7 +262,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             ...[...(publication.baseline ?? [])].map(
               ([path, text]) => [`executed/${path}`, text] as const,
             ),
-            ...publication.evidence.files,
+            ...publication.evidence,
           ]),
         });
         const result = yield* guardian
@@ -270,11 +270,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             {
               ...turn,
               allowedEffects: publication.allowedEffects,
-              publication: publicationScope(
-                publication.files,
-                publication.evidence.files,
-                publication.evidence.hostWritten,
-              ),
+              publication: publicationScope(publication.files, publication.evidence),
             },
             readSource,
           )

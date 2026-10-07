@@ -11,7 +11,7 @@ import {
 } from "./openai-input.js";
 import { guardianDecisionFormat, reviewKindOf, withholdPrivateReviews } from "./review-layout.js";
 import { guardianContinuityPolicy } from "./session.js";
-import { guardianPublicationPolicy, type PublicationPolicySections } from "./publication.js";
+import { guardianPublicationPolicy } from "./publication.js";
 import { guardianModel, guardianReviewTimeout } from "./model.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
@@ -50,12 +50,10 @@ export interface GuardianModelOptions {
    * The host's additions for one review: policy text for its kind and input fields, both sent in
    * that review's user message, and its turn limit. Never the instructions, tools or output
    * format, which every kind shares so the conversation stays cached across kinds. `policy`
-   * follows the core policy for the kind; a publication review's `publicationPolicy` places the
-   * host's sentences inside the core publication policy.
+   * follows the core policy for the kind.
    */
   readonly specialize?: (turn: ReviewTurn) => {
     readonly policy?: string;
-    readonly publicationPolicy?: PublicationPolicySections;
     readonly input?: Readonly<Record<string, unknown>>;
     readonly maxTurns?: number;
   };
@@ -116,7 +114,7 @@ const reviewPolicy = (turn: ReviewTurn, options: GuardianModelOptions) => {
   const kind = reviewKindOf(turn.pending);
   return [
     executionOutcomePolicy,
-    kind === "publication" ? guardianPublicationPolicy(specialized?.publicationPolicy) : undefined,
+    kind === "publication" ? guardianPublicationPolicy : undefined,
     host,
     kind === "question" ? questionPolicy : undefined,
   ]

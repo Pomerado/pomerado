@@ -300,8 +300,8 @@ describe("a publication decision", () => {
 });
 
 describe("the publication policy", () => {
-  it("is the core text with no host sections, naming the files the host writes", () => {
-    const policy = guardianPublicationPolicy();
+  it("is the core text, naming the files the host writes", () => {
+    const policy = guardianPublicationPolicy;
     expect(policy.split("\n")).toHaveLength(12);
     expect(
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
@@ -313,46 +313,6 @@ describe("the publication policy", () => {
       "never ask for a source correction or another run for it. When such a file shows a problem the minter's source causes, the finding keeps its ordinary reason and the rationale names the source to change.",
     );
     expect(policy).not.toContain("  ");
-  });
-
-  // A host with evidence files and definition fields of its own keeps its sentences where its
-  // reviews read them.
-  it("places each of a host's sections at its own point in the text", () => {
-    const sections = {
-      hostFiles: "HOST_FILES.",
-      hostFileReading: "HOST_FILE_READING.",
-      findingPointer: "FINDING_POINTER.",
-      hostFileProblem: "HOST_FILE_PROBLEM.",
-      bundleAuthority: "BUNDLE_AUTHORITY.",
-      recordedRequests: "RECORDED_REQUESTS.",
-      requestMarks: "REQUEST_MARKS.",
-      definitionFields: "DEFINITION_FIELDS.",
-    };
-    const policy = guardianPublicationPolicy(sections);
-    const lines = policy.split("\n");
-    expect(lines).toHaveLength(12);
-    expect(policy).not.toContain("Every owner: host file is written by the host");
-    expect(policy).not.toContain("When such a file shows a problem the minter's source causes");
-    expect(lines[1]).toContain(
-      "build metadata from which the host writes publication/definition.json. HOST_FILES. No file must be read in full:",
-    );
-    expect(lines[1]?.endsWith("when a concrete question needs them. HOST_FILE_READING.")).toBe(
-      true,
-    );
-    expect(lines[3]).toContain(
-      "which follows from its source and build metadata. FINDING_POINTER. A finding in any other owner: host file",
-    );
-    expect(lines[3]?.endsWith("another run for it. HOST_FILE_PROBLEM.")).toBe(true);
-    expect(lines[4]).toContain(
-      "supported-claim checks. BUNDLE_AUTHORITY. Compare the trusted original intent's",
-    );
-    expect(lines[6]?.startsWith("RECORDED_REQUESTS. The site's own page traffic")).toBe(true);
-    expect(lines[6]).toContain("say so in the rationale. REQUEST_MARKS. Put every finding");
-    expect(lines[7]?.endsWith("did not demonstrate. DEFINITION_FIELDS.")).toBe(true);
-    // Without its own sentences there, a host's empty section leaves the core text out.
-    expect(guardianPublicationPolicy({ hostFiles: "" })).toContain(
-      "publication/definition.json. No file must be read in full:",
-    );
   });
 });
 
@@ -401,14 +361,12 @@ const policyOf = (request: ModelRequest | undefined) =>
 describe("the OpenAI publication reviewer", () => {
   it("sends the outcome policy, the publication policy, then the host's, and indexes the evidence before the environment", async () => {
     const requests = scripted(() => [message(allow)]);
-    const sections = { requestMarks: "Synthetic request marks." };
     await Effect.runPromise(
       makeGuardian(
         makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
           ...native,
           specialize: () => ({
             policy: "Synthetic host policy.",
-            publicationPolicy: sections,
             input: { trusted_host_record: { synthetic: true } },
           }),
         }),
@@ -417,7 +375,7 @@ describe("the OpenAI publication reviewer", () => {
     const policy = policyOf(requests[0]);
     expect(policy.startsWith("Return the structured outcome allow, deny or escalate")).toBe(true);
     expect(
-      policy.endsWith(`\n\n${guardianPublicationPolicy(sections)}\n\nSynthetic host policy.`),
+      policy.endsWith(`\n\n${guardianPublicationPolicy}\n\nSynthetic host policy.`),
     ).toBe(true);
     const request = reviewRequest(requests[0]);
     const keys = Object.keys(request);
@@ -441,14 +399,10 @@ describe("the OpenAI publication reviewer", () => {
     const { publication: _publication, ...execution } = pending;
     await Effect.runPromise(
       makeGuardian(
-        makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
-          ...native,
-          specialize: () => ({ publicationPolicy: { requestMarks: "Synthetic request marks." } }),
-        }),
+        makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
       ).review(execution, sourcesOf(files)),
     );
     expect(policyOf(requests[0])).not.toContain("publication review");
-    expect(policyOf(requests[0])).not.toContain("Synthetic request marks.");
     expect(reviewRequest(requests[0])).not.toHaveProperty("trusted_publication");
   });
 

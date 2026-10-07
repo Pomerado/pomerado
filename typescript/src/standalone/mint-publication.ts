@@ -160,7 +160,7 @@ export const mintPublication =
         entrypoint: publication.entrypoint,
         files,
         definition: publicDefinition(publication.metadata, result.schemas),
-        evidence: { files: judged.files, hostWritten: new Set() },
+        evidence: judged.files,
         ...("baseline" in judged ? { baseline: judged.baseline } : {}),
         notes: `${judged.note} Coverage: ${secrets.redact(publication.coverage)}`,
         inputSchema: result.schemas.input,
