@@ -359,35 +359,75 @@ const policyOf = (request: ModelRequest | undefined) =>
   (reviewRequest(request)["trusted_review"] as { readonly policy: string }).policy;
 
 describe("the OpenAI publication reviewer", () => {
-  it("sends the outcome policy, the publication policy, then the host's, and indexes the evidence before the environment", async () => {
-    const requests = scripted(() => [message(allow)]);
-    await Effect.runPromise(
-      makeGuardian(
-        makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
-          ...native,
-          specialize: () => ({
-            policy: "Synthetic host policy.",
-            input: { trusted_host_record: { synthetic: true } },
+  it.each([
+    ["the local host, with no specialize", undefined, ["trusted_publication"]],
+    [
+      "a host that adds input but no policy",
+      () => ({ input: { trusted_host_record: { synthetic: true } } }),
+      ["trusted_host_record", "trusted_publication"],
+    ],
+  ])(
+    "gives %s the outcome policy and the core publication policy, and the index before the environment",
+    async (_host, specialize, fields) => {
+      const requests = scripted(() => [message(allow)]);
+      await Effect.runPromise(
+        makeGuardian(
+          makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+            ...native,
+            ...(specialize === undefined ? {} : { specialize }),
           }),
-        }),
-      ).review(pending, sourcesOf(files)),
+        ).review(pending, sourcesOf(files)),
+      );
+      const policy = policyOf(requests[0]);
+      expect(policy.startsWith("Return the structured outcome allow, deny or escalate")).toBe(true);
+      expect(policy.endsWith(`\n\n${guardianPublicationPolicy}`)).toBe(true);
+      const request = reviewRequest(requests[0]);
+      const keys = Object.keys(request);
+      const at = keys.indexOf("trusted_authority");
+      expect(keys.slice(at, at + fields.length + 2)).toEqual([
+        "trusted_authority",
+        ...fields,
+        "trusted_execution_environment",
+      ]);
+      expect(request["trusted_publication"]).toEqual(pending.publication);
+    },
+  );
+
+  // A host that sends its own publication policy keeps exactly what it sends: no core policy,
+  // file index or turn limit is added to its review.
+  it("keeps a host's own publication policy, input and turn limit as it sends them", async () => {
+    const requests = scripted((index) => [read(pending.entrypoint, 0, `read_${index}`)]);
+    const result = await Effect.runPromise(
+      Effect.either(
+        makeGuardian(
+          makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, {
+            ...native,
+            specialize: (turn) =>
+              turn.pending.publication === undefined
+                ? {}
+                : {
+                    policy: "Synthetic host publication policy.",
+                    input: { trusted_host_record: { synthetic: true } },
+                  },
+          }),
+        ).review(pending, sourcesOf(files)),
+      ),
     );
     const policy = policyOf(requests[0]);
     expect(policy.startsWith("Return the structured outcome allow, deny or escalate")).toBe(true);
-    expect(
-      policy.endsWith(`\n\n${guardianPublicationPolicy}\n\nSynthetic host policy.`),
-    ).toBe(true);
+    expect(policy.split("\n\n").at(-1)).toBe("Synthetic host publication policy.");
+    expect(policy).not.toContain("This is the existing publication review");
     const request = reviewRequest(requests[0]);
     const keys = Object.keys(request);
-    expect(
-      keys.slice(keys.indexOf("trusted_authority"), keys.indexOf("trusted_authority") + 4),
-    ).toEqual([
+    const at = keys.indexOf("trusted_authority");
+    expect(keys.slice(at, at + 3)).toEqual([
       "trusted_authority",
       "trusted_host_record",
-      "trusted_publication",
       "trusted_execution_environment",
     ]);
-    expect(request["trusted_publication"]).toEqual(pending.publication);
+    expect(request).not.toHaveProperty("trusted_publication");
+    expect(result).toMatchObject({ _tag: "Left", left: { code: "TurnLimitExceeded" } });
+    expect(requests).toHaveLength(12);
   });
 
   it("gives an execution review no publication policy or index", async () => {
