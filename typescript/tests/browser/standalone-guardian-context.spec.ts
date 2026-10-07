@@ -620,7 +620,7 @@ test("a write session runs the input its first act step read from the request, a
   }
 });
 
-test("a write session refuses exampleInput that is not an object, or once it started without one", async () => {
+test("a write session refuses exampleInput that is not an object, and takes it on a step after one without it", async () => {
   test.setTimeout(90_000);
   const fixture = noteSite();
   const site = await fixture.start();
@@ -638,15 +638,16 @@ test("a write session refuses exampleInput that is not an object, or once it sta
       ],
     });
     expect(toolResult(last, "started")).toMatchObject({ status: "completed" });
-    for (const [id, reason] of [
-      ["not_object", "exampleInput must be JSON text of the tool's input object"],
-      ["late", "only the session's first act step can pass exampleInput"],
-    ] as const) {
-      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
-      expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
-    }
-    expect(executions(guardian.reviews)).toHaveLength(1);
-    expect(currentOf(executions(guardian.reviews)[0]!)).not.toHaveProperty("input");
+    expect(toolResult(last, "not_object")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "not_object"))).toContain(
+      "exampleInput must be JSON text of the tool's input object",
+    );
+    // A later step may be the first to pass it: it runs, reviewed as intent_derived.
+    expect(toolResult(last, "late")).toMatchObject({ status: "completed" });
+    const reviews = executions(guardian.reviews);
+    expect(reviews).toHaveLength(2);
+    expect(currentOf(reviews[0]!)).not.toHaveProperty("input");
+    expect(currentOf(reviews[1]!)?.["input"]).toBe("intent_derived");
   } finally {
     await site.close();
   }
