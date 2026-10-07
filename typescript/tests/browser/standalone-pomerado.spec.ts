@@ -314,8 +314,8 @@ for (const [authentication, submitAfterInput] of [
                           question.id,
                           question.id === "effect"
                             ? "read"
-                            : question.id === "username"
-                              ? shopAccount.username
+                            : question.type === "credential"
+                              ? { ...shopAccount, saveLogin: false }
                               : shopAccount.password,
                         ]),
                       );
@@ -1960,7 +1960,12 @@ async ({kernel,sessionId}) => {
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(
-                  request.questions.map((question) => [question.id, answers[question.id] ?? ""]),
+                  request.questions.map((question) => [
+                    question.id,
+                    question.type === "credential"
+                      ? { username: answers.username, password: answers.password, saveLogin: false }
+                      : (answers[question.id] ?? ""),
+                  ]),
                 ),
               ),
             ),
@@ -2030,9 +2035,9 @@ const piecesIn = (text: string, value: string) =>
 
 /**
  * A mint that signs in on the shop's two-screen sign-in: the identifier step, a read of the saved
- * controls, then (with `failNext`) a step whose field the next screen lacks. It answers every
- * sign-in question with `identifier` and returns the file as saved on disk after the first submit,
- * and each tool result by call id.
+ * controls, then (with `failNext`) a step whose field the next screen lacks. It answers the login
+ * question with `identifier` as the username, and any other with `identifier`, and returns the
+ * file as saved on disk after the first submit, and each tool result by call id.
  */
 const twoScreenSignIn = async (options: {
   readonly identifier: string;
@@ -2100,7 +2105,12 @@ const twoScreenSignIn = async (options: {
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(
-                  request.questions.map((question) => [question.id, options.identifier]),
+                  request.questions.map((question) => [
+                    question.id,
+                    question.type === "credential"
+                      ? { username: options.identifier, password: "synthetic-password", saveLogin: false }
+                      : options.identifier,
+                  ]),
                 ),
               ),
             ),

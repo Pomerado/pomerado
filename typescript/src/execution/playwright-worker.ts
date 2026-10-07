@@ -11,6 +11,7 @@ import {
   type CDPSession,
   type Frame,
   type Page,
+  type Request,
 } from "playwright";
 import { Cause, Effect, Exit, Schema } from "effect";
 import type { BrowserExecuteResponse } from "../runtime/browser-execution.js";
@@ -38,7 +39,8 @@ if (import.meta.url.endsWith(".ts"))
         : nextLoad(url, context),
   });
 const { makeCredentialKeyboard } = await import("../destinations/credential-keyboard.js");
-const { NativeWorkerOptions, NativeWorkerRequest } = await import("./playwright-execute.js");
+const { NativeWorkerListen, NativeWorkerOptions, NativeWorkerRequest, requestBodyLimit } =
+  await import("./playwright-execute.js");
 
 const asError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("Native browser worker failed", { cause });
@@ -369,6 +371,84 @@ const credential = (
     );
   });
 
+/**
+ * Reports each request `context` sends to `port` while on, in the order the browser sent them:
+ * its URL, method, resource type, body up to `requestBodyLimit` (a longer or unreadable one as
+ * unseen), whether it is the primary page's or a popup's own document request, and the tab that
+ * sent it. Nothing is kept once it is posted.
+ */
+const requestReporter = (
+  port: NonNullable<typeof parentPort>,
+  context: BrowserContext,
+  primary: { readonly page: Page; readonly targetId: string },
+) => {
+  const targets = new WeakMap<Page, Promise<string | undefined>>([
+    [primary.page, Promise.resolve(primary.targetId)],
+  ]);
+  const targetOf = (owner: Page) => {
+    const known = targets.get(owner);
+    if (known !== undefined) return known;
+    const found = Effect.runPromise(
+      identify(context, owner).pipe(
+        Effect.map((target) => target.targetId),
+        Effect.orElseSucceed(() => undefined),
+      ),
+    );
+    targets.set(owner, found);
+    return found;
+  };
+  let posted = Promise.resolve();
+  const report = (request: Request) => {
+    let frame: Frame | undefined;
+    try {
+      frame = request.frame();
+    } catch {
+      // A service worker's request has no frame.
+    }
+    const owner = frame?.page();
+    let body: { readonly body: string | null; readonly bodyUnseen?: true };
+    try {
+      const sent = request.postDataBuffer();
+      body =
+        sent === null
+          ? { body: null }
+          : sent.length > requestBodyLimit
+            ? { body: null, bodyUnseen: true }
+            : { body: sent.toString("utf8") };
+    } catch {
+      body = { body: null, bodyUnseen: true };
+    }
+    const document = request.isNavigationRequest() && owner !== undefined;
+    const reported = {
+      url: request.url(),
+      method: request.method(),
+      resourceType: request.resourceType(),
+      ...body,
+      channel: !document ? "http" : owner === primary.page ? "navigation" : "popup",
+      ...(document && frame !== undefined
+        ? { frame: frame === owner.mainFrame() ? "main" : "sub" }
+        : {}),
+    };
+    posted = posted
+      .then(async () => {
+        const ownerTargetId = owner === undefined ? undefined : await targetOf(owner);
+        port.postMessage({
+          kind: "request",
+          request: { ...reported, ...(ownerTargetId === undefined ? {} : { ownerTargetId }) },
+        });
+      })
+      // A report that could not be posted is not heard; the later ones still go, in order.
+      .catch(() => undefined);
+  };
+  let on = false;
+  return (listen: boolean) => {
+    if (listen === on) return;
+    on = listen;
+    if (listen) context.on("request", report);
+    else context.off("request", report);
+  };
+};
+
 await Effect.runPromise(
   Effect.gen(function* () {
     const port = parentPort;
@@ -387,8 +467,15 @@ await Effect.runPromise(
       targetId: target.targetId,
       contextId: target.browserContextId,
     });
+    const listen = requestReporter(port, context, { page, targetId: target.targetId });
     const semaphore = yield* Effect.makeSemaphore(1);
     port.on("message", (value: unknown) => {
+      // Listening starts and stops at once, in the order sent, never behind a running script.
+      const toggle = Schema.decodeUnknownOption(NativeWorkerListen)(value);
+      if (toggle._tag === "Some") {
+        listen(toggle.value.on);
+        return;
+      }
       const handle = Effect.gen(function* () {
         const request = yield* Schema.decodeUnknown(NativeWorkerRequest)(value).pipe(
           Effect.mapError(asError),

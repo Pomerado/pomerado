@@ -366,8 +366,8 @@ const build = (
               Object.fromEntries(
                 asked.questions.map((question) => [
                   question.id,
-                  question.id === "username"
-                    ? account.username
+                  question.type === "credential"
+                    ? { ...account, saveLogin: false }
                     : question.id === "code"
                       ? signInCode
                       : account.password,

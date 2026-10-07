@@ -18,7 +18,7 @@ import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
-import { noticeRequest, InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
+import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
@@ -77,72 +77,37 @@ const executeCommand = (
       }),
     );
   });
-/** A page check before this sign-in's steps sent the login proves nothing about this build. */
-const credentialsNotSubmitted = {
-  signedIn: false,
-  failed: "credentials_not_submitted",
-  nextStep:
-    "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
-} as const;
-/** A marker that a page the build saw signed out shows cannot tell signed in from signed out. */
-const markerOnSignedOutPage = {
-  signedIn: false,
-  failed: "marker_matches_signed_out_page",
-  nextStep:
-    "A page this build saw signed out shows this marker too, so it cannot tell the site signed in from signed out. The sign-in is still open. Choose an element only a signed-in user sees, test it with check_signed_in_marker, then check again.",
-} as const;
+/**
+ * A sign-in step: a screen the recorder fills, an approval, a rejected value or a signed-in check.
+ * Each belongs to the sign-in under way, and after a verified sign-in the first one starts a new
+ * one. A screen's report reaches the minter as `step`, with its controls after a clicked submit.
+ */
 const executeAuthentication = (
   state: MintState,
   signIn: NonNullable<ExecutionRequest["signInStep"]>,
+  loginUrl: string | undefined,
   beforeDispatch: BeforeDispatch,
 ) =>
   Effect.gen(function* () {
-    const { start, auth, afterSubmit, mintAsk, context, markers } = state;
+    const { start, recorder, afterSubmit, context, markers } = state;
     const { projection } = state.session;
     const id = randomUUID();
 
     yield* start.enter;
-
-    let result: unknown;
-    let authenticated = false;
-    if ("fields" in signIn) {
-      start.signIn();
-      markers.signInStep();
-      const report = yield* auth.step(
-        signIn,
-        Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
-      );
-      start.sent(report, signIn.fields);
-      result = yield* afterSubmit(report);
-    } else if ("signedIn" in signIn) {
-      // A check is a sign-in step too: after a verified sign-in it starts a new one.
-      start.signIn();
-      if (start.submitted) {
-        const checked = yield* auth.signedIn(signIn.signedIn);
-        if (checked.signedIn && markers.signedOutShows(signIn.signedIn))
-          result = markerOnSignedOutPage;
-        else {
-          authenticated = checked.signedIn && start.verified();
-          result = checked;
-        }
-      } else result = credentialsNotSubmitted;
-    } else if ("rejected" in signIn) {
-      start.signIn();
-      markers.signInStep();
-      auth.rejected(signIn.rejected.slot);
-      result = { outcome: "correction_requested" };
-    } else {
-      start.signIn();
-      markers.signInStep();
-      result = yield* mintAsk(
-        noticeRequest(
-          randomUUID(),
-          "system",
-          `Complete the ${signIn.approval.replaceAll("_", " ")} sign-in for ${context.siteOrigin}, then confirm.`,
-        ),
-      );
-      start.approved();
-    }
+    start.signIn();
+    if (!("signedIn" in signIn)) markers.signInStep();
+    const step = yield* recorder.step(
+      signIn,
+      loginUrl,
+      Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
+    );
+    if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
+    if (step.approved === true) start.approved();
+    const authenticated = step.verified === true && start.verified();
+    const result =
+      step.report === undefined
+        ? step.result
+        : { step: yield* afterSubmit(step.report), ...step.result };
     yield* context.observe;
     return {
       executionId: id,
@@ -420,6 +385,7 @@ const authoredExecution = (
         );
         if (watch !== undefined && watch.typed().size > 0) {
           start.typedCode();
+          state.recorder.codeTyped();
           state.markers.signInStep();
         }
         if (live) {
@@ -464,7 +430,12 @@ export const mintExecution =
         : execution.purpose === "authenticate" && execution.signInStep !== undefined
           ? state.context.recorded(
               { purpose: "authenticate", target: "liveBrowser" },
-              executeAuthentication(state, execution.signInStep, beforeDispatch),
+              executeAuthentication(
+                state,
+                execution.signInStep,
+                execution.loginUrl,
+                beforeDispatch,
+              ),
             )
           : authoredExecution(state, execution, beforeDispatch, journal);
     return perform.pipe(Effect.mapError(mintError));

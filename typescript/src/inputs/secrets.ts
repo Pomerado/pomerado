@@ -74,53 +74,67 @@ const tokenPattern = (form: string) => {
   );
 };
 
+/**
+ * Each form a page or URL can show `value` in, each with whether it is short (`shortForm`). The
+ * value as given, trimmed, and with its whitespace collapsed as an accessibility snapshot shows it;
+ * each of them as written, JSON-escaped, escaped as a snapshot's quoted value, and with each `'`
+ * doubled as a snapshot's quoted key holds a name; and percent-encoded as `encodeURIComponent` and
+ * a form write it, and as Chromium writes it into a URL's query, path and fragment, in uppercase
+ * and lowercase hex. A value that cannot be encoded, such as one holding a lone surrogate, keeps
+ * every other form. Each form counts by the length of the shown value it came from.
+ */
+const shownForms = (value: string) => {
+  const shown = [
+    value,
+    value.trim(),
+    value
+      .replace(/[\u200b\u00ad]/gu, "")
+      .trim()
+      .replace(/\s+/gu, " "),
+  ];
+  return shown.flatMap((form) => {
+    if (form.length === 0) return [];
+    const json = JSON.stringify(form).slice(1, -1);
+    const forms = [
+      form,
+      json,
+      yamlValueEscaped(form),
+      form.replaceAll("'", "''"),
+      json.replaceAll("'", "''"),
+    ];
+    if (form.isWellFormed()) {
+      const percent = [
+        encodeURIComponent(form),
+        new URLSearchParams([["", form]]).toString().slice(1),
+        urlPartForm(form, "query"),
+        urlPartForm(form, "path"),
+        urlPartForm(form, "fragment"),
+      ];
+      forms.push(...percent, ...percent.map(lowercaseHex));
+    }
+    const short = form.length < shortForm;
+    return forms.map((shownForm) => [shownForm, short] as const);
+  });
+};
+
+/** A form-encoded text decoded, as a form body or a query string carries it; else undefined. */
+const formDecoded = (text: string) => {
+  try {
+    return decodeURIComponent(text.replaceAll("+", " "));
+  } catch {
+    return undefined;
+  }
+};
+
 /** Explicit caller secrets live only for this run. This does not detect or classify page data. */
 export const makeRunSecrets = () => {
   /** Each registered form, with the pattern source screening counts it by when it is short. */
   const values = new Map<string, RegExp | undefined>();
-  /**
-   * Each form a page or URL can show the value in. The value as given, trimmed, and with its
-   * whitespace collapsed as an accessibility snapshot shows it; each of them as written,
-   * JSON-escaped, escaped as a snapshot's quoted value, and with each `'` doubled as a snapshot's
-   * quoted key holds a name; and percent-encoded as `encodeURIComponent` and a form write it, and
-   * as Chromium writes it into a URL's query, path and fragment, in uppercase and lowercase hex. A
-   * value that cannot be encoded, such as one holding a lone surrogate, keeps every other form.
-   * In source, each form counts by the length of the shown value it came from (`shortForm`).
-   */
+  /** Registers each form a page or URL can show the value in (`shownForms`). */
   const register = (value: string) => {
-    const shown = [
-      value,
-      value.trim(),
-      value
-        .replace(/[\u200b\u00ad]/gu, "")
-        .trim()
-        .replace(/\s+/gu, " "),
-    ];
-    for (const form of shown) {
-      if (form.length === 0) continue;
-      const json = JSON.stringify(form).slice(1, -1);
-      const forms = [
-        form,
-        json,
-        yamlValueEscaped(form),
-        form.replaceAll("'", "''"),
-        json.replaceAll("'", "''"),
-      ];
-      if (form.isWellFormed()) {
-        const percent = [
-          encodeURIComponent(form),
-          new URLSearchParams([["", form]]).toString().slice(1),
-          urlPartForm(form, "query"),
-          urlPartForm(form, "path"),
-          urlPartForm(form, "fragment"),
-        ];
-        forms.push(...percent, ...percent.map(lowercaseHex));
-      }
-      const short = form.length < shortForm;
-      for (const shownForm of forms)
-        if (!short) values.set(shownForm, undefined);
-        else if (!values.has(shownForm)) values.set(shownForm, tokenPattern(shownForm));
-    }
+    for (const [shownForm, short] of shownForms(value))
+      if (!short) values.set(shownForm, undefined);
+      else if (!values.has(shownForm)) values.set(shownForm, tokenPattern(shownForm));
   };
   const ordered = () => [...values].sort(([left], [right]) => right.length - left.length);
   const redact = (text: string) =>
@@ -145,6 +159,33 @@ export const makeRunSecrets = () => {
         ? Effect.fail(new Error("Source contains a caller-supplied secret"))
         : Effect.void,
     );
+  /**
+   * Whether `texts` carry every value in `expected`, each one registered: one of its registered
+   * forms in a text as written or form-decoded, where a short form counts only as a whole token,
+   * as in source. Only a sign-in's seen-sent rule asks it, about a request the host heard.
+   */
+  const carries = (expected: readonly string[], texts: readonly string[]) =>
+    Effect.sync(() => {
+      const read = texts.flatMap((text) => {
+        const decoded = formDecoded(text);
+        return decoded === undefined || decoded === text ? [text] : [text, decoded];
+      });
+      return (
+        expected.length > 0 &&
+        expected.every((value) => {
+          const forms = shownForms(value).filter(([form]) => values.has(form));
+          return (
+            forms.length > 0 &&
+            forms.some(([form]) => {
+              const token = values.get(form);
+              return read.some((text) =>
+                token === undefined ? text.includes(form) : token.test(text),
+              );
+            })
+          );
+        })
+      );
+    });
   const json = (value: unknown) =>
     // error-reporting-allow: typed-recovery an observation getter may throw raw secrets, so only the finite serialization failure crosses this redaction boundary
     Effect.try({
@@ -167,5 +208,13 @@ export const makeRunSecrets = () => {
       },
       catch: () => new Error("Observation must be JSON serializable"),
     });
-  return { register, redact, redactCut, assertAbsent, json, clear: () => values.clear() };
+  return {
+    register,
+    redact,
+    redactCut,
+    assertAbsent,
+    carries,
+    json,
+    clear: () => values.clear(),
+  };
 };

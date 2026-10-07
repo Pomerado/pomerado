@@ -14,7 +14,6 @@ export type {
   InputRequest,
   ValidAnswers,
 } from "../runtime/input-request.js";
-export { makeLiveAuthentication } from "./authentication.js";
 export { makePomeradoMcp, makeIntegrationMcp } from "./mcp-server.js";
 export type { PomeradoMcpOptions, IntegrationMcpOptions } from "./mcp-server.js";
 export { readArtifact, writeArtifact, readIntegration, Deployment } from "./artifact-files.js";
