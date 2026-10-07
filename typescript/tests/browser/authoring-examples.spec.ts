@@ -146,12 +146,13 @@ for (const clears of [true, false]) {
 }
 
 // A records site reached the way a person does: its entry page has a search box, the search lists
-// matching records as links, and each record opens behind its own interstitial. record_7's page
-// belongs to another record, and record_5's link lands on another path.
+// matching records as links, or says none match, and each record opens behind its own
+// interstitial. record_7's page belongs to another record, and record_5's link lands on another
+// path. record_8's results load late behind a busy region, and a search for record_down fails.
 const recordsSite = async (page: Page, origin: string) => {
   const opened: string[] = [];
   const searches: string[] = [];
-  const records = ["record_42", "record_420", "record_7", "record_5"];
+  const records = ["record_42", "record_420", "record_7", "record_5", "record_8"];
   await page.route(`${origin}/**`, (route) => {
     const url = new URL(route.request().url());
     if (url.pathname !== "/favicon.ico") opened.push(url.pathname);
@@ -163,10 +164,24 @@ const recordsSite = async (page: Page, origin: string) => {
     if (url.pathname === "/search") {
       const query = url.searchParams.get("q") ?? "";
       searches.push(query);
+      if (query === "record_down")
+        return route.fulfill({
+          status: 503,
+          contentType: "text/html",
+          body: `<div role="alert">Search is unavailable. Try again later.</div>`,
+        });
       const found = records.filter((id) => id.includes(query));
-      return html(`<section role="region" aria-label="Search results">
-          ${found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") || "<p>No matching records</p>"}
-        </section>`);
+      const listed =
+        found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") ||
+        `<p role="status">No matching records</p>`;
+      if (query === "record_8")
+        return html(`<section role="region" aria-label="Search results" aria-busy="true"><p>Loading results</p></section>
+          <script>setTimeout(() => {
+            const results = document.querySelector("section");
+            results.innerHTML = ${JSON.stringify(listed)};
+            results.setAttribute("aria-busy", "false");
+          }, 800)</script>`);
+      return html(`<section role="region" aria-label="Search results">${listed}</section>`);
     }
     if (url.pathname === "/records/record_5")
       return html(`<script>location.replace("/records/archived")</script>`);
@@ -203,12 +218,27 @@ test("detail example searches the site for the record, follows its link and chec
     _tag: "OperationFailure",
     message: "target_mismatch",
   });
-  // The site's search shows no such record, so the caller's value is at fault.
+  // The site's search says no record matches, so the caller's value is at fault.
   expect(failure(await read("record_9"))).toMatchObject({
     _tag: "InvalidInput",
     message: "The site's search lists no record with this ID",
   });
-  expect(site.searches).toEqual(["record_42", "record_7", "record_5", "record_9"]);
+  // Results still loading, or a search that failed, say nothing about the caller's value.
+  expect(await read("record_8")).toEqual(
+    Either.right({ record_id: "record_8", title: "Quarterly report" }),
+  );
+  expect(failure(await read("record_down"))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "results_unavailable",
+  });
+  expect(site.searches).toEqual([
+    "record_42",
+    "record_7",
+    "record_5",
+    "record_9",
+    "record_8",
+    "record_down",
+  ]);
 });
 
 const siteOrigin = "https://members.example.test";
