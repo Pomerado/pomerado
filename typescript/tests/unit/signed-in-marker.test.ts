@@ -121,6 +121,20 @@ describe("role names on the signed-out page", () => {
     ).toBe("absent");
   });
 
+  it("still checks other roles on a page with an input it cannot map", () => {
+    const login =
+      '<form><label>PIN <input type="password" name="pin"></label>' +
+      '<input type="date" name="born"><button type="submit">Sign in</button></form>';
+    expect(match("role=navigation", login)).toBe("absent");
+    expect(match('role=button[name="Account menu"]', login)).toBe("absent");
+    expect(match('role=button[name="Sign in"]', login)).toBe("matches");
+    // Either input may be a text box, so a text box marker cannot be decided here.
+    expect(match("role=textbox", login)).toBe("unchecked");
+    expect(match('role=button[name="Upload"]', '<input type="file" name="upload">')).toBe(
+      "unchecked",
+    );
+  });
+
   it("leaves out content the page hides from the name", () => {
     expect(
       match(

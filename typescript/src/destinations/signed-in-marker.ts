@@ -14,8 +14,9 @@
  *   `role` engines. Anything else, such as XPath or `:hover`, leaves the page unchecked, as does
  *   a frame-crossing selector (`>>`, `internal:`), which the live check refuses too.
  * - A role selector is checked only for the roles whose implicit elements this match knows
- *   (`coveredRoles`); any other leaves the page unchecked, as does an input whose type it does
- *   not map with certainty, such as `password` or `date`. What it cannot decide is never absent.
+ *   (`coveredRoles`); any other leaves the page unchecked. An input whose type it does not map
+ *   with certainty, such as `password` or `date`, leaves a `textbox` marker unchecked (and a file
+ *   input a `button` one); other roles ignore it. What it cannot decide is never absent.
  * - A role's name follows the accessible-name rules in part: `aria-labelledby` first, then
  *   `aria-label` or a native attribute (`alt`, a button's value, an svg's `<title>`, a table's
  *   caption), then, for roles named from their content, the content, built from each child's own
@@ -776,11 +777,17 @@ const nameOf = (element: SnapshotElement, role: string): Name => {
 const mappedInputTypes = new Set(
   "button submit reset image checkbox radio search range text email tel url hidden".split(" "),
 );
-/** An input without its own role whose type `implicitRole` does not map: its role is unknown. */
-const uncertainRole = (element: SnapshotElement) =>
-  element.tag === "input" &&
-  !element.attributes.get("role")?.trim() &&
-  !mappedInputTypes.has((element.attributes.get("type") ?? "text").trim().toLowerCase());
+/**
+ * Whether an input without its own role, whose type `implicitRole` does not map, may have `role`:
+ * Playwright gives such an input `textbox`, or `button` for a file input. For any other role it is
+ * no candidate.
+ */
+const uncertainRole = (element: SnapshotElement, role: string) => {
+  if (element.tag !== "input" || element.attributes.get("role")?.trim()) return false;
+  const type = (element.attributes.get("type") ?? "text").trim().toLowerCase();
+  if (mappedInputTypes.has(type)) return false;
+  return role === "textbox" || (role === "button" && type === "file");
+};
 
 /** Whether the element or an ancestor hides it from the accessibility tree with `aria-hidden`. */
 const hiddenFromRoles = (element: SnapshotElement) => {
@@ -826,7 +833,7 @@ const roleStep = (body: string): Step => {
     kind: "role",
     test: (element) => {
       if (!includeHidden && hiddenFromRoles(element)) return false;
-      if (uncertainRole(element)) return "unknown";
+      if (uncertainRole(element, role)) return "unknown";
       if (roleOf(element) !== role) return false;
       let answer: boolean | "unknown" = true;
       for (const test of tests) {
