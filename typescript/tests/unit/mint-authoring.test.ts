@@ -205,7 +205,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["publication", "Guardian reports what it finds in rounds, and each round costs minutes"],
   [
     "publication",
-    "- Published files are all of `src/`, the named entrypoints and any `explore/`, `test/` or `scratch/` module they import.",
+    "- Published files are all of `src/`, the named entrypoints and any `explore/`, `test/` or `scratch/` module they import",
   ],
   ["publication", "## Never put these in published files"],
   [
@@ -354,7 +354,7 @@ it("renders the pinned standalone authoring", async () => {
     ["8a936f1400d1302eea14f0c169dbafe536b26509c10932dde53dc26d876f54d1", "forms"],
     ["a9c144aadfa33307345c4cc316d41714b99a61acf640946708abbeed05befdca", "writes"],
     ["e9e936136236eaac36f74520342867b8949c249fd83a86265e96c32573cd41a3", "caller-input"],
-    ["0ed84075c7b2236e7fab58b7f1121bd88bd8ebc6822c54073f624fe10303d887", "publication"],
+    ["73561b4bf299dfbcc6ca9c043898d59d226fa3cee5ea5532e03c96de96ff628f", "publication"],
     ["7393cc5de00ce49cc05d78ecab6d4c8f05b1c681a7f1abc7e5b44a5d85ab9f23", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
