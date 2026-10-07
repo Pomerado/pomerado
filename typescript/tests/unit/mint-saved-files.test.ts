@@ -158,8 +158,9 @@ describe("the saved files the operation could run", () => {
     expect(runnable(files)).toEqual(saved(files));
   });
 
-  // A package manifest saves every candidate as a precaution; a probe no import names is not run.
-  it("leave out a probe saved only because the workspace has a package manifest", () => {
+  // A manifest saves every candidate as a precaution. One without exports names no file for the
+  // package's own name, so a probe no import names is not run.
+  it("leave out a probe saved only beside a package manifest without exports", () => {
     const files = { ...workspace, "scratch/package.json": "{}" };
     expect(saved(files)).toContain("explore/look.mjs");
     expect(runnable(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
@@ -177,5 +178,70 @@ describe("the saved files the operation could run", () => {
     ],
   ])("are every saved file when a module the operation runs %s", (_case, source) => {
     expect(runnable({ ...workspace, "src/tool.mjs": source })).toEqual(everyCandidate);
+  });
+  // Each is a way Node loads a saved file that no import the walker follows names.
+  it.each([
+    [
+      "a saved manifest's exports serve an import of the package's own name",
+      {
+        "src/tool.mjs": 'import { run } from "../explore/run.mjs";\nexport default run;',
+        "explore/package.json": '{"name":"probes","exports":{"./look":"./look.mjs"}}',
+        "explore/run.mjs": 'export { look as run } from "probes/look";',
+      },
+    ],
+    ["a saved manifest does not parse", { "scratch/package.json": '{"name":' }],
+    [
+      "a saved folder holds node_modules",
+      {
+        "src/tool.mjs": 'import { look } from "../explore/run.mjs";\nexport default look;',
+        "explore/run.mjs": 'export { look } from "helper";',
+        "explore/node_modules/helper/index.js": 'export { look } from "../../look.mjs";',
+      },
+    ],
+    [
+      "the operation reaches a WebAssembly module",
+      {
+        "src/tool.mjs": 'import { look } from "../explore/look.wasm";\nexport default look;',
+        "explore/look.wasm": "\u0000asm",
+      },
+    ],
+    ["the operation reaches a native addon", { "src/addon.node": "native" }],
+    [
+      "a CommonJS module calls its wrapper's require through arguments",
+      {
+        "src/tool.mjs": 'import look from "./look.cjs";\nexport default look;',
+        "src/look.cjs": 'module.exports = arguments[1]("../explore/look.mjs");',
+      },
+    ],
+    [
+      "an arrow function in a CommonJS module reaches its wrapper's require through arguments",
+      {
+        "src/tool.mjs": 'import look from "./look.cjs";\nexport default look;',
+        "src/look.cjs": 'module.exports = (() => arguments[1]("../explore/look.mjs"))();',
+      },
+    ],
+  ])("are every saved file when %s", (_case, files) => {
+    const all = { ...workspace, ...files };
+    const every = Object.keys(all)
+      .filter((path) => /^(src|explore|test|scratch)\//u.test(path))
+      .sort();
+    expect(runnable(all)).toEqual(every);
+  });
+
+  // A function's own arguments are its callers' values, never a CommonJS wrapper's require.
+  it("leave out a probe when a module reads a function's own arguments", () => {
+    const files = {
+      ...workspace,
+      "src/tool.mjs": [
+        "function first() {",
+        "  return arguments[0];",
+        "}",
+        "const list = { all() { return [...arguments]; } };",
+        "export default [first, list];",
+      ].join("\n"),
+      "explore/look.mjs": 'export const look = "{{secret.s1}}";',
+    };
+    expect(runnable(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
+    expect(saved(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
   });
 });
