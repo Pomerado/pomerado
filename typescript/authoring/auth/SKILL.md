@@ -142,7 +142,9 @@ signed-in indicator; confirmation alone does not verify the session.
 <!-- pomerado:section auth.signed-in-evidence:start
 Prefer an observed protected account page or authenticated workflow control that the signed-out
 flow cannot reach, corroborated by the live business example. Generic Sign out or account chrome
-alone does not establish access to the caller's workflow.
+alone does not establish access to the caller's workflow. The signed-in marker you send is a
+separate check, of presence only (below): for it, a site-wide account menu or sign-out control is
+the right choice once `check_signed_in_marker` shows that the signed-out page lacks it.
 pomerado:section auth.signed-in-evidence:end -->
 
 # Popup sign-in
@@ -175,9 +177,31 @@ the same field on the same screen three times in a row ends sign-in in this buil
 # Every sign-in ends with its check
 
 <!-- pomerado:section auth.sign-in-check:start
-End every sign-in with a check that it worked: an observed signed-in marker that every
-signed-in account shows and a signed-out page never does. Never use an account's name, email or
-number as the marker.
+End every sign-in with a check that it worked, sent as `signInStep.signedIn`: an observed
+signed-in marker that every signed-in account shows and a signed-out page never does. Never use an
+account's name, email or number as the marker.
+
+The marker is checked in many places across the site, not only where this sign-in lands: after
+every reset, at the start of every operation, after a page load in the middle of a script, and on
+whatever page a failure lands on. So choose a site-wide element only a signed-in user sees, such as
+the global header's account menu or sign-out control, never something only the page after sign-in
+shows. It must show on any signed-in page, not only on `openPath`.
+
+- Prefer stable attributes and names, such as `aria-label`, a role and its name, visible text or a
+  test id, over generated class names such as `css-1q2w3e`.
+- Never send a `urlPath` alone on a single-page app, or for a page the site also serves signed out:
+  the path stays the same when the session is gone. Never use the login page's path.
+- Test the marker with `check_signed_in_marker` before you send it, and choose another until every
+  check passes: absent on the signed-out page the host saw before the sign-in, and present on the
+  signed-in page now, after a fresh load and on another page you visited signed in. The host
+  refuses a marker that the signed-out page shows. When the tool reports the check unavailable,
+  or passed with the signed-out page unchecked, compare it yourself against the signed-out pages
+  you explored before signing in.
+
+For example, after sign-in the header shows an "Account" link, which the signed-out header shows
+too, and an account menu button, which it does not. `{ "selector": "text=Account" }` matches the
+signed-out page and is refused. `{ "selector": "header [aria-label=\"Account menu\"]" }` passes
+every check, and is the marker to send.
 pomerado:section auth.sign-in-check:end -->
 
 ## A sign-in refusal found by operation code

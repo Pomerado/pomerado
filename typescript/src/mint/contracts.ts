@@ -8,6 +8,7 @@ import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
 import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
+import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
@@ -356,6 +357,18 @@ export const MintRequest = Schema.Struct({
 export type MintRequest = typeof MintRequest.Type;
 
 const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
+const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
+/**
+ * A signed-in marker the minting agent asks the host to test before it sends it
+ * (`check_signed_in_marker`): its selector, with the path and account page `signedIn` takes.
+ */
+export const SignedInMarkerCheckRequest = Schema.Struct({
+  selector: SignInSelector,
+  urlPath: Schema.optional(SignedInUrlPath),
+  openPath: Schema.optional(SignedInOpenPath),
+});
+export type SignedInMarkerCheckRequest = typeof SignedInMarkerCheckRequest.Type;
 /**
  * One sign-in screen for host autofill (autofill enabled): the
  * fields the host fills from the held login, each with the kind of value it takes, and the control
@@ -428,12 +441,12 @@ export const SignInStep = Schema.Union(
   Schema.Struct({
     signedIn: Schema.Struct({
       selector: Schema.optional(SignInSelector),
-      urlPath: Schema.optional(Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/))),
+      urlPath: Schema.optional(SignedInUrlPath),
       /**
        * An account page on the site the host opens first, when the page the sign-in lands on
        * shows no marker itself; the selector or path is checked there.
        */
-      openPath: Schema.optional(Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/))),
+      openPath: Schema.optional(SignedInOpenPath),
     }).pipe(
       Schema.filter(
         (signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined,
@@ -873,6 +886,8 @@ export interface MintActions {
   readonly captchaState?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** The agent's troubleshooting request for a new browser; absent where the host has none. */
   readonly requestBrowserRecovery?: (input: unknown) => Effect.Effect<string, MintFailure>;
+  /** Tests a signed-in marker; reports the check unavailable where the host has none. */
+  readonly checkSignedInMarker?: (input: unknown) => Effect.Effect<string, MintFailure>;
 }
 
 /**
@@ -882,6 +897,7 @@ export interface MintActions {
 export interface HostToolDescriptions {
   readonly captchaState?: string;
   readonly requestBrowserRecovery?: string;
+  readonly checkSignedInMarker?: string;
 }
 
 export interface MintTurn {
@@ -1306,6 +1322,16 @@ export interface MintDependencies {
   readonly requestBrowserRecovery?: (
     rationale: string,
   ) => Effect.Effect<MintBrowserRecoveryResult, MintFailure>;
+  /**
+   * Tests a signed-in marker before the agent sends it with `authenticate`: whether the
+   * signed-out snapshot the host saved before the sign-in sent anything shows it
+   * (`evaluateSignedInMarker` matches it), whether the live page shows it now, after the host
+   * loads `openPath` (or the site's origin) again, and on another page the agent visited signed
+   * in. It never signs in or sends a value. Absent, the tool reports the check unavailable.
+   */
+  readonly checkSignedInMarker?: (
+    marker: SignedInMarkerCheckRequest,
+  ) => Effect.Effect<SignedInMarkerCheck, MintFailure>;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   readonly projection: MintProjection;
