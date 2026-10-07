@@ -178,6 +178,8 @@ const account = { username: "member@example.test", password: "fixture-password-4
 /** The code the site sends during a passwordless sign-in. */
 const signInCode = "482913";
 const hostname = "www.start.test";
+/** Another site the same server answers for, which a page on the site may frame. */
+const elsewhere = "www.elsewhere.test";
 const page = (response: ServerResponse, text: string) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   response.end(text);
@@ -194,7 +196,8 @@ const body = (request: IncomingMessage) =>
 
 /**
  * A local HTTPS site with a deep page, a sign-in and a probe the operations report to. Its
- * root sets no cookie, so a reset's root load keeps whatever session the reset left.
+ * root sets no cookie, so a reset's root load keeps whatever session the reset left. The same
+ * server answers as another site, whose code field a page on the site frames.
  */
 const startSite = async () => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-start-state-"));
@@ -275,6 +278,30 @@ const startSite = async () => {
             `<title>Sign in</title><form id="identify"><input name="username"><button>Continue</button></form><form id="verify" hidden><input name="code" autocomplete="one-time-code"><button id="verify-button">Verify</button></form>
 <script>document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/identify',{method:'POST',body:JSON.stringify({username:new FormData(event.target).get('username')})});if(sent.ok){event.target.hidden=true;document.querySelector('#verify').hidden=false}});document.querySelector('#verify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/verify',{method:'POST',body:JSON.stringify({code:new FormData(event.target).get('code')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
           );
+        // A code screen that sends itself the moment the sixth digit is typed.
+        if (path === "/verify-code") {
+          const sent = new URL(request.url ?? "/", "https://fixture").searchParams.get("code");
+          const matches = sent === signInCode;
+          response.writeHead(302, {
+            location: matches ? "/account" : "/login-code-self",
+            ...(matches ? { "set-cookie": "member=signed; Path=/; Secure; HttpOnly" } : {}),
+          });
+          response.end();
+          return;
+        }
+        if (path === "/login-code-self")
+          return page(
+            response,
+            `<title>Sign in</title><form id="identify"><input name="username"><button>Continue</button></form><form id="verify" action="/verify-code" hidden><input name="code" autocomplete="one-time-code"></form>
+<script>document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const sent=await fetch('/api/identify',{method:'POST',body:JSON.stringify({username:new FormData(event.target).get('username')})});if(sent.ok){event.target.hidden=true;document.querySelector('#verify').hidden=false}});const verify=document.querySelector('#verify');verify.code.addEventListener('input',()=>{if(verify.code.value.length===6)verify.submit()})</script>`,
+          );
+        if (path === "/framed")
+          return page(
+            response,
+            `<title>Framed</title><iframe src="https://${elsewhere}:${request.socket.localPort}/code-frame"></iframe>`,
+          );
+        if (path === "/code-frame")
+          return page(response, `<title>Code</title><input name="code">`);
         if (path === "/account")
           return page(
             response,
@@ -291,13 +318,14 @@ const startSite = async () => {
   if (address === null || typeof address === "string") throw new Error("No fixture address");
   const browser = await chromium.launchServer({
     args: [
-      `--host-resolver-rules=MAP ${hostname} 127.0.0.1`,
+      `--host-resolver-rules=MAP ${hostname} 127.0.0.1, MAP ${elsewhere} 127.0.0.1`,
       "--no-proxy-server",
       "--ignore-certificate-errors",
     ],
   });
   return {
     origin: `https://${hostname}:${address.port}`,
+    elsewhere: `https://${elsewhere}:${address.port}`,
     endpoint: browser.wsEndpoint(),
     visits,
     probes,
@@ -318,7 +346,11 @@ type Site = Awaited<ReturnType<typeof startSite>>;
 /** Mints with the scripted steps, then runs the published probe on `runUrl` when given. */
 const build = (
   site: Site,
-  request: { readonly url: string; readonly effect: "read" | "write" },
+  request: {
+    readonly url: string;
+    readonly effect: "read" | "write";
+    readonly authenticationOrigins?: readonly string[];
+  },
   steps: readonly ((request: ModelRequest) => Output)[],
   runUrl?: string,
 ) =>
@@ -735,6 +767,8 @@ async ({kernel,sessionId}) => {
   return {done:true};
 });`;
 const forgeOperation = operation("forge", `${forge}\nreturn true;`);
+/** Types the code into the other site's field, framed by a page on the site, then forges. */
+const typeInFrame = `await page.goto(new URL('/framed', page.url()).href); await page.frameLocator('iframe').locator('input[name=code]').fill('{{secret.s1}}'); ${forgeByContext} return true;`;
 
 for (const [name, files, explores] of [
   [
@@ -775,6 +809,21 @@ for (const [name, files, explores] of [
     ["explore/forge.mjs"],
   ],
   [
+    "was typed into a page of the explore's own off the site",
+    {
+      "explore/code.mjs": operation(
+        "code",
+        `const site = page.url(); await page.goto('data:text/html,<input name=code>'); await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.goto(site); ${forgeByContext} return true;`,
+      ),
+    },
+    ["explore/code.mjs"],
+  ],
+  [
+    "was typed into another site's frame on the site's page",
+    { "explore/code.mjs": operation("code", typeInFrame) },
+    ["explore/code.mjs"],
+  ],
+  [
     "never reached a field, in a fill whose failure the explore caught",
     {
       "explore/code.mjs": operation(
@@ -813,3 +862,54 @@ for (const [name, files, explores] of [
       tabs: 1,
     });
   });
+
+test("a code typed into a frame on a configured sign-in origin counts as typed on the site", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const built = await build(
+    site,
+    {
+      url: `${site.origin}/login-code`,
+      effect: "read",
+      authenticationOrigins: [site.elsewhere],
+    },
+    passwordlessSteps({ "explore/code.mjs": operation("code", typeInFrame) }, [
+      "explore/code.mjs",
+    ]),
+  );
+  expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
+  // The same explore as the frame above, but that origin is where this site signs in.
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
+    token: null,
+    tabs: 1,
+  });
+});
+
+test("a code typed into a code screen that sends itself at once counts as its proof", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const built = await build(
+    site,
+    { url: `${site.origin}/login-code-self`, effect: "read" },
+    passwordlessSteps(
+      {
+        "explore/code.mjs": operation(
+          "code",
+          "await page.locator('input[name=code]').fill('{{secret.s1}}'); await page.locator('#account').waitFor({ timeout: 5000 }); return true;",
+        ),
+      },
+      ["explore/code.mjs"],
+    ),
+  );
+  expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
+    token: null,
+    tabs: 1,
+  });
+});
