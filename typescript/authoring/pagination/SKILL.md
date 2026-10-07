@@ -9,9 +9,19 @@ A cursor represents the query and a logical position under the same authorized
 tenant/account/site. The host protects and validates that scope; a saved profile
 or an agent's remembered Page is not a cursor authenticity check.
 
-<!-- pomerado:section pagination.continuation -->
+1. Validate cursor/query/account scope before browser effects.
+2. Inspect restored live/profile state. Reuse it only if the current signed-in page,
+   query and logical position are suitable.
+3. Otherwise start from the host's fresh sign-in and reconstruct the
+   repeatable read/search, then advance to the logical position. Loading a profile
+   does not restore JS heaps, expiring server cursors, drafts or DOM state.
+4. Tolerate changing live data. Return observed IDs and coverage; do not promise an
+   immutable snapshot if the site has none. Prefer stable IDs over visual row index.
+5. If reconstruction is unsupported, return bounded partial data with an explicit
+   reason and no pretend next cursor.
 
-<!-- pomerado:section pagination.no-recreated-writes -->
+Never recreate a hold, draft, upload, payment token or write as pagination. Unknown
+prior effects require recovery, not fresh navigation.<!-- pomerado:section pagination.no-recreated-writes -->
 
 ## Append pagination ("load more")
 
