@@ -4,6 +4,7 @@ import { makePlaywrightExecutor } from "../execution/playwright-execute.js";
 import { makeRunSecrets } from "../inputs/secrets.js";
 import { localRuntimeAssets } from "../execution/local-runtime-assets.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import type { SessionTyping } from "./authentication.js";
 import type { PomeradoOptions } from "./contracts.js";
 import { error, mintError } from "./errors.js";
 export const makeSession = (options: PomeradoOptions) =>
@@ -39,6 +40,18 @@ export const makeSession = (options: PomeradoOptions) =>
           }),
         ),
       );
-    return { options, browser, policy, secrets, mutex, trustedSources, projection, ask };
+    // One typing memory for the session's browser, across every build on it.
+    const signInTyping: SessionTyping = { typed: false };
+    return {
+      options,
+      browser,
+      policy,
+      secrets,
+      mutex,
+      trustedSources,
+      projection,
+      ask,
+      signInTyping,
+    };
   });
 export type StandaloneSession = Effect.Effect.Success<ReturnType<typeof makeSession>>;

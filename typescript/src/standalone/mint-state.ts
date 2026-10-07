@@ -163,6 +163,7 @@ export const mintState = (
       authenticationOrigins: request.authenticationOrigins ?? [],
       ask: mintAsk,
       registerSecret: secrets.register,
+      typing: session.signInTyping,
       review: (step, inspection) =>
         context
           .review(
