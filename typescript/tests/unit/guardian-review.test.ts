@@ -577,24 +577,20 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   });
 
   // A security question's answer field takes private_answer, which no other slot may take, and
-  // private_answer goes on no other field. A host that fills no private answers is told nothing
-  // of the slot: its policy is the same text without the rule.
-  it("ties private_answer to a security question's answer field for a host that fills one", async () => {
+  // private_answer goes on no other field. The rule is shared text, whatever host fills the slots.
+  it("ties private_answer to a security question's answer field only", async () => {
     const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
     const sentence =
       "slot private_answer must be the answer field of a security question the screen shows, and its questionSelector, when present, that question's own text; never private_answer on any other field.";
-    const answering = guardianExecutionPolicy({ ...otherHost, privateAnswers: true });
     for (const policy of [
       requests[0]?.systemInstructions ?? "",
-      answering,
+      guardianExecutionPolicy(otherHost),
       guardianExecutionPolicy(nativeExecutionEnvironment),
     ])
       expect(policy).toContain(sentence);
-    expect(guardianExecutionPolicy(otherHost)).not.toContain("private_answer");
-    expect(answering.replace(` ${sentence}`, "")).toBe(guardianExecutionPolicy(otherHost));
   });
 
   // A site's own trackers carry caller input off-site and its page saves recent searches, and a
