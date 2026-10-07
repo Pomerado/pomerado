@@ -504,8 +504,11 @@ const markerSession = async (
   return requests;
 };
 /** Mints a read of the shop from `url` with a minter that plays `steps`, one per model request. */
-const markerBuild = async (endpoint: string, url: string, steps: readonly Output[]) =>
-  (await markerSession(endpoint, [{ url, steps }]))[0] ?? [];
+const markerBuild = async (
+  endpoint: string,
+  url: string,
+  steps: readonly (Output | (() => Output))[],
+) => (await markerSession(endpoint, [{ url, steps }]))[0] ?? [];
 
 test("the local minter's marker check before the signedIn step compares a page explored once the login was sent", async () => {
   test.info().annotations.push({
@@ -816,5 +819,53 @@ test("a client-rendered root counts as signed out once it renders", async () => 
       freshLoad: true,
       refusals: ["marker_matches_signed_out_page"],
     });
+  });
+});
+
+/** An exploration that posts an empty form to the shop's search page, as a search form may. */
+const postSearch = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"post_search",input:Schema.Struct({}),output:Schema.Struct({done:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    `await Promise.all([page.waitForURL("**/search?q=lamp"), page.evaluate(() => { const form = document.createElement("form"); form.method = "post"; form.action = "/search?q=lamp"; document.body.append(form); form.submit(); })]); return true;`,
+  )},timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {done:true};
+});`;
+
+test("the local minter's marker check leaves a form's answer where its loads left the tab", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a host sign-in, two explorations and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    let searchLoads: number | undefined;
+    const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
+      [...markerFiles, create("explore/post-search.mjs", postSearch, "patch_post_search")],
+      [signInFields()],
+      [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      [
+        execute(
+          "explore",
+          { entrypoint: "explore/post-search.mjs", intent: "Post the search form" },
+          "explore_post_search",
+        ),
+      ],
+      () => {
+        searchLoads = shop.state.searchPageLoads;
+        return [checkMarker({ selector: "#results" }, "results")];
+      },
+      [explore("where")],
+    ]);
+    expect(searchLoads).toBe(1);
+    expect(markerResult(mintRequests, "results")).toEqual(
+      expect.objectContaining({ signedInNow: true, freshLoad: false }),
+    );
+    // The search page answered the form's post, so its address alone would send a GET in its
+    // place: the host leaves the tab on the root it loaded.
+    expect(shop.state.searchPageLoads).toBe(1);
+    expect(objects(toolResult(mintRequests, "explore_where"))).toContainEqual({ where: "/" });
   });
 });

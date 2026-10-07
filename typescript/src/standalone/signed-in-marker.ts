@@ -91,6 +91,25 @@ const makeSignedOutPages = (page: AutofillPage, siteOrigin: string) => {
   };
 };
 
+/**
+ * Browser code that says whether the primary tab shows the direct answer to a form it submitted,
+ * with no redirect after it. Opening that address again would send a GET in place of what the
+ * form sent, such as a POST, so it may load another page. A history it cannot read counts too.
+ */
+const formAnswerCode = (targetId: string) => `${primaryPageCode(targetId)}
+const history = await context.newCDPSession(primary);
+let submitted = true;
+try {
+  const { currentIndex, entries } = await history.send("Page.getNavigationHistory");
+  submitted = entries[currentIndex]?.transitionType === "form_submit";
+} finally {
+  await history.detach().catch(() => undefined);
+}
+if (!submitted) return false;
+return await primary.evaluate(
+  () => (performance.getEntriesByType("navigation")[0]?.redirectCount ?? 0) === 0,
+);`;
+
 /** How long a loaded page may take to show the marker, as checks one interval apart. */
 const markerSettle = { checks: 6, interval: Duration.millis(500) };
 
@@ -105,10 +124,13 @@ const pathOf = (url: URL) => `${url.pathname}${url.search}`;
  * marker against the build's signed-out pages, on the live page as it is, after the host loads
  * the marker's page (`openPath`, else the site's root) again, and on the newest
  * other page the build explored once its sign-in sent the login. It signs nothing in and sends no
- * value. The loads move the primary tab, so the host then opens the address it was on again; what
- * that page held only in memory, such as a half-filled form, is gone. A current page the host
- * cannot read fails the check as unavailable, and so does a check once the write session started:
- * its act steps continue the page as it is.
+ * value. The loads move the primary tab. When the agent's page showed the marker and is not the
+ * direct answer to a form, the host then opens its address again, and what that page held only in
+ * memory, such as a half-filled form, is gone; otherwise the tab stays where the loads left it, as
+ * the tool's text allows. Either way the host reads the page again for the next review. A current
+ * page the host cannot read fails the check as unavailable, and so does an address that does not
+ * open again, and a check once the write session started: its act steps continue the page as it
+ * is.
  */
 export const makeMarkerChecks = (input: {
   readonly page: AutofillPage;
@@ -125,6 +147,8 @@ export const makeMarkerChecks = (input: {
   readonly loginSent: () => boolean;
   /** Whether the build's write session started: its act steps continue the page as it is. */
   readonly writeSessionStarted: () => boolean;
+  /** Reads the page the tab shows for the next review, once a check moved it. */
+  readonly observe: Effect.Effect<void>;
 }) => {
   const signedOut = makeSignedOutPages(input.page, input.siteOrigin);
   /** Pages the build explored once its sign-in sent the login, as paths, oldest first. */
@@ -204,10 +228,22 @@ export const makeMarkerChecks = (input: {
                 error: new Error("The current page could not be read"),
               }),
           });
+        const here = URL.parse(signedInNow.url ?? "");
+        // The tab returns to the agent's page only when that page showed the marker, so it is a
+        // signed-in page of the site, not a sign-in screen, and its address loads it again: not
+        // the direct answer to a form.
+        const formAnswer = input.page
+          .execute(formAnswerCode(input.page.targetId), 15)
+          .pipe(Effect.map((answer) => answer !== false));
+        const returnTo =
+          signedInNow.signedIn &&
+          here !== null &&
+          !(yield* Effect.orElseSucceed(formAnswer, () => true))
+            ? here
+            : undefined;
         // The tool's text: `openPath`, or the site's origin.
         const freshPath = marker.openPath ?? "/";
         const freshLoad = yield* load(indicator, freshPath);
-        const here = URL.parse(signedInNow.url ?? "");
         const fresh = new URL(freshPath, input.siteOrigin);
         // Another page, once the page the agent is on shows the marker: before that, the sign-in
         // may still be under way. Neither the page loaded fresh nor the agent's own page counts.
@@ -219,10 +255,21 @@ export const makeMarkerChecks = (input: {
                 (here === null || here.origin !== input.siteOrigin || path !== pathOf(here)),
             );
         const secondPage = second === undefined ? undefined : yield* load(indicator, second);
-        // Back to the page the agent was on, when it was on the site and the loads left it.
-        const left = second === undefined ? fresh : new URL(second, input.siteOrigin);
-        if (here !== null && here.origin === left.origin && here.href !== left.href)
-          yield* openAutofillLogin({ page: input.page, url: here.href }).pipe(Effect.ignore);
+        const left = (secondPage ?? freshLoad).url;
+        const reopened =
+          returnTo === undefined || left === returnTo.href
+            ? undefined
+            : yield* Effect.either(openAutofillLogin({ page: input.page, url: returnTo.href }));
+        yield* input.observe;
+        // The agent then reads the page, as the tool's failure says, before it checks again.
+        if (reopened?._tag === "Left")
+          return yield* new MintFailure({
+            code: "Unavailable",
+            failureDetail: failureDetail("mint_host_dependency_failed", {
+              operation: "standalone.checkSignedInMarker.return",
+              error: reopened.left,
+            }),
+          });
         return evaluateSignedInMarker({
           marker: indicator,
           signedOutSnapshots: signedOut.pages,

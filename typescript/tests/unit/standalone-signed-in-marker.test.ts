@@ -6,13 +6,21 @@ import { makeMarkerChecks } from "../../src/standalone/signed-in-marker.js";
 const origin = "https://www.shop.test";
 
 /**
- * A primary tab on a modeled site: `shows` lists the paths whose page shows the marker. It
- * records each address the host loaded, by the live check's `openPath` or a host call's goto.
+ * A primary tab on a modeled site: `shows` lists the paths whose page shows the marker, and
+ * `formAnswer` says the page it starts on answered a form directly. It records each address the
+ * host loaded, by the live check's `openPath` or a host call's goto, which fails once `failGoto`
+ * is set.
  */
-const modeledTab = (options: { readonly at: string; readonly shows: readonly string[] }) => {
+const modeledTab = (options: {
+  readonly at: string;
+  readonly shows: readonly string[];
+  readonly formAnswer?: boolean;
+  readonly failGoto?: boolean;
+}) => {
   let current = new URL(options.at, origin).href;
   const loads: string[] = [];
   let snapshots = 0;
+  let observed = 0;
   const open = (url: string) => {
     current = url;
     const loaded = new URL(url);
@@ -21,17 +29,22 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
   const page = {
     targetId: "primary",
     execute: (code: string) =>
-      Effect.sync((): unknown => {
+      Effect.suspend((): Effect.Effect<unknown, Error> => {
         const goto = /primary\.goto\(("[^"]*")/u.exec(code)?.[1];
-        if (goto !== undefined) {
-          open(JSON.parse(goto) as string);
-          return current;
-        }
-        if (code.includes("outerHTML")) {
-          snapshots += 1;
-          return { url: current, dom: "<!doctype html><html><body><p>Shop</p></body></html>" };
-        }
-        throw new Error("Unexpected host call");
+        if (goto !== undefined && options.failGoto === true)
+          return Effect.fail(new Error("Navigation failed"));
+        return Effect.sync((): unknown => {
+          if (goto !== undefined) {
+            open(JSON.parse(goto) as string);
+            return current;
+          }
+          if (code.includes("getNavigationHistory")) return options.formAnswer === true;
+          if (code.includes("outerHTML")) {
+            snapshots += 1;
+            return { url: current, dom: "<!doctype html><html><body><p>Shop</p></body></html>" };
+          }
+          throw new Error("Unexpected host call");
+        });
       }),
   };
   const check = (indicator: AutofillSignedIn) =>
@@ -46,6 +59,12 @@ const modeledTab = (options: { readonly at: string; readonly shows: readonly str
     page,
     check,
     loads,
+    observe: Effect.sync(() => {
+      observed += 1;
+    }),
+    get observed() {
+      return observed;
+    },
     get snapshots() {
       return snapshots;
     },
@@ -72,6 +91,7 @@ const markerChecks = (
     typing,
     loginSent: () => state.loginSent,
     writeSessionStarted: () => state.writeSessionStarted === true,
+    observe: tab.observe,
   });
 
 const accountMarker = { selector: "#account", openPath: "/account" };
@@ -172,5 +192,27 @@ describe("makeMarkerChecks", () => {
     // The root is not the marker's path, as a run's reset finds it.
     expect(checked).toMatchObject({ signedInNow: true, freshLoad: false });
     expect(tab.loads[0]).toBe("/");
+  });
+
+  it("returns the tab only to a page that showed the marker and did not answer a form", async () => {
+    // A code screen shows no marker, so its address is never loaded again.
+    const code = modeledTab({ at: "/sign-in/code", shows: ["/account"] });
+    await Effect.runPromise(markerChecks(code).check(accountMarker));
+    expect(code.loads).toEqual(["/account"]);
+    expect(code.where).toBe("/account");
+    // The direct answer to a form, which its address alone would not load again.
+    const answer = modeledTab({ at: "/orders", shows: ["/account", "/orders"], formAnswer: true });
+    await Effect.runPromise(markerChecks(answer).check(accountMarker));
+    expect(answer.loads).toEqual(["/account"]);
+    expect(answer.where).toBe("/account");
+    // Either way the next review reads the page the tab shows.
+    expect([code.observed, answer.observed]).toEqual([1, 1]);
+  });
+
+  it("fails the check when the agent's page does not open again", async () => {
+    const tab = modeledTab({ at: "/orders", shows: ["/account", "/orders"], failGoto: true });
+    const checked = await Effect.runPromise(Effect.either(markerChecks(tab).check(accountMarker)));
+    expect(checked).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
+    expect(tab.observed).toBe(1);
   });
 });

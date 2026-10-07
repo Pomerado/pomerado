@@ -215,6 +215,7 @@ export const mintState = (
       typing: session.signInTyping,
       loginSent: () => start.submitted || context.signedIn,
       writeSessionStarted: () => writeSession.started,
+      observe: context.observe,
     });
     const start = makeBuildStart(
       browser,
