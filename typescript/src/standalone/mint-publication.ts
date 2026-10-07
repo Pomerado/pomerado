@@ -77,7 +77,9 @@ export const mintPublication =
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
       // Published code never holds a handle: no saved file the operation could run may hold one,
-      // whatever its extension. A probe saved only beside a package manifest never runs.
+      // whatever its extension. That is every saved file when Node could load one its imports
+      // don't name (see runnableOperationFiles); otherwise a probe saved only beside a package
+      // manifest is not checked.
       const runnable = runnableOperationFiles(snapshot, publication.entrypoint);
       if ([...runnable.values()].some(holdsSecretHandle))
         return yield* Effect.fail(

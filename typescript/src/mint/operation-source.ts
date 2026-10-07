@@ -24,6 +24,11 @@ const loaderNames = new Set([
   "process",
   "Reflect",
 ]);
+/**
+ * The names the save rule also treats as loaders: a CommonJS module's wrapper arguments hold its
+ * `require`, as `arguments[1]`. Only the local save rule reads this set.
+ */
+const savedLoaderNames: ReadonlySet<string> = new Set([...loaderNames, "arguments"]);
 /** Node built-ins that run, spawn or read and load code. */
 const loaderModules = new Set([
   "child_process",
@@ -59,39 +64,40 @@ const field = (node: object, key: string): unknown =>
  * plain key it or an object literal declares, and any other string, the page code a template
  * literal holds included, are not uses.
  */
-/** Whether a node is a loader name itself: an identifier, or a computed key's string. */
-const loaderName = (node: object, type: unknown): boolean => {
+/** Whether a node is one of `names` itself: an identifier, or a computed key's string. */
+const loaderName = (node: object, type: unknown, names: ReadonlySet<string>): boolean => {
   if (type === "Identifier") {
     const name = field(node, "name");
-    return typeof name === "string" && loaderNames.has(name);
+    return typeof name === "string" && names.has(name);
   }
   if (type !== "MemberExpression" || field(node, "computed") !== true) return false;
   const property = field(node, "property");
   const key =
     typeof property === "object" && property !== null ? field(property, "value") : undefined;
-  return typeof key === "string" && loaderNames.has(key);
+  return typeof key === "string" && names.has(key);
 };
-const usesLoader = (node: unknown): boolean => {
-  if (Array.isArray(node)) return node.some(usesLoader);
+const usesLoader = (node: unknown, names: ReadonlySet<string>): boolean => {
+  if (Array.isArray(node)) return node.some((entry) => usesLoader(entry, names));
   if (typeof node !== "object" || node === null) return false;
   const type = field(node, "type");
   if (typeof type === "string" && keyedMembers.has(type) && field(node, "computed") === false)
-    return usesLoader(field(node, "value"));
-  if (loaderName(node, type)) return true;
+    return usesLoader(field(node, "value"), names);
+  if (loaderName(node, type, names)) return true;
   if (type === "Identifier" || type === "Literal") return false;
-  return Object.values(node).some(usesLoader);
+  return Object.values(node).some((value) => usesLoader(value, names));
 };
 
 /**
  * A module's module requests, or undefined when a dynamic import's request is not a string
- * literal. `loader` also answers undefined for a module that could load a file those requests do
- * not name: a request with a query, fragment or percent escape, a package import (`#name`), an
- * absolute or URL request, a loader built-in, or a loader name in its code.
+ * literal. Given `loader` names, it also answers undefined for a module that could load a file
+ * those requests do not name: a request with a query, fragment or percent escape, a package
+ * import (`#name`), an absolute or URL request, a loader built-in, or one of those names in its
+ * code.
  */
 const moduleRequests = (
   source: string,
   path: string,
-  loader: boolean,
+  loader?: ReadonlySet<string>,
 ): readonly string[] | undefined => {
   try {
     const lang = sourceSyntax(path) === "typescript" ? "ts" : "js";
@@ -113,9 +119,9 @@ const moduleRequests = (
       if (typeof request !== "string") return undefined;
       requests.push(request);
     }
-    if (!loader) return requests;
+    if (loader === undefined) return requests;
     return requests.every((request) => plainRelative(request) || plainPackage(request)) &&
-      !usesLoader(parsed.program)
+      !usesLoader(parsed.program, loader)
       ? requests
       : undefined;
     // error-reporting-allow: parse-predicate an unparseable module keeps every candidate file
@@ -126,7 +132,7 @@ const moduleRequests = (
 
 /** Relative module requests, or undefined when a request cannot be resolved statically. */
 const relativeModuleRequests = (source: string, path: string): readonly string[] | undefined =>
-  moduleRequests(source, path, false)?.filter(
+  moduleRequests(source, path)?.filter(
     (request) => request.startsWith("./") || request.startsWith("../"),
   );
 
@@ -163,45 +169,71 @@ export const operationSourceFiles = (
 /** The folders a local build saves files from: its operation source and its probes. */
 const savedSourcePath = /^(src|explore|test|scratch)\//u;
 
+/** Extensions Node loads whose imports the walker cannot read: WebAssembly and native addons. */
+const opaqueModulePath = /\.(?:wasm|node)$/u;
+
+/**
+ * Whether a saved package manifest could map the package's own name to a saved file: it declares
+ * `exports`, or does not parse. A manifest without them, such as `{}`, maps nothing.
+ */
+const mapsOwnName = (source: string) => {
+  try {
+    const manifest: unknown = JSON.parse(source);
+    return typeof manifest !== "object" || manifest === null || "exports" in manifest;
+    // error-reporting-allow: parse-predicate a manifest that does not parse could map anything
+  } catch {
+    return true;
+  }
+};
+
 /**
  * Every file under src/ and the entrypoint, with the saved candidates they import, transitively,
  * whatever their extension; an extensionless file, which Node loads as ESM in a module scope, is
  * read as JavaScript. An import of another path, such as the host's runtime, is not followed.
- * `loads` is whether one of them could load a file its imports do not name (see
+ * Undefined, and the walk stops, when Node could load a saved file those imports do not name: a
+ * saved manifest maps the package's own name, a saved folder holds `node_modules`, or one of the
+ * files is a WebAssembly module or native addon, could load a file its imports do not name (see
  * `moduleRequests`), or does not parse.
  */
-const importedCandidates = (candidates: ReadonlyMap<string, string>, entrypoint: string) => {
+const importedCandidates = (
+  candidates: ReadonlyMap<string, string>,
+  entrypoint: string,
+): Map<string, string> | undefined => {
+  if (
+    [...candidates].some(
+      ([path, source]) =>
+        path.split("/").includes("node_modules") ||
+        (posix.basename(path) === "package.json" && mapsOwnName(source)),
+    )
+  )
+    return undefined;
   const files = new Map<string, string>();
-  let loads = false;
   const pending = [...[...candidates.keys()].filter((path) => path.startsWith("src/")), entrypoint];
   for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
     const source = candidates.get(path);
     if (files.has(path) || source === undefined) continue;
     files.set(path, source);
+    if (opaqueModulePath.test(path)) return undefined;
     if (sourceSyntax(path) === undefined && posix.extname(path) !== "") continue;
-    let requests = moduleRequests(source, path, true);
-    if (requests === undefined) {
-      loads = true;
-      requests = moduleRequests(source, path, false) ?? [];
-    }
+    const requests = moduleRequests(source, path, savedLoaderNames);
+    if (requests === undefined) return undefined;
     for (const request of requests.filter(plainRelative))
       pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
   }
-  return { files, loads };
+  return files;
 };
 
 /**
  * The saved files the operation could run: those `entrypoint` reaches through its imports (see
- * `importedCandidates`), or every file under the four folders when one of them could load a file
- * its imports do not name. The check that published code holds no secret handle reads these.
+ * `importedCandidates`), or every file under the four folders when Node could load a saved file
+ * those imports do not name. The check that published code holds no secret handle reads these.
  */
 export const runnableOperationFiles = (
   workspace: ReadonlyMap<string, string>,
   entrypoint: string,
 ): Map<string, string> => {
   const candidates = new Map([...workspace].filter(([path]) => savedSourcePath.test(path)));
-  const imported = importedCandidates(candidates, entrypoint);
-  return imported.loads ? candidates : imported.files;
+  return importedCandidates(candidates, entrypoint) ?? candidates;
 };
 
 /**
@@ -271,7 +303,7 @@ export const executedSourceClosure = (
     if (included.has(path) || source === undefined) continue;
     included.set(path, source);
     if (path.endsWith(".json")) continue;
-    const requests = moduleRequests(source, path, true);
+    const requests = moduleRequests(source, path, loaderNames);
     if (requests === undefined) return everyCandidate();
     for (const request of requests.filter(plainRelative))
       pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
