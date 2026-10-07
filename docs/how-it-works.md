@@ -1,6 +1,6 @@
 # How it works
 
-Pomerado has three parts. The minter builds an integration, Guardian reviews the minter's work while it builds, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and Pomerado Cloud, and the source layout.
+Pomerado has three parts. The minter builds an integration, Guardian reviews the minter's work while it builds, and the runtime runs the result. A job model ties them to your MCP client. This page also covers the library interfaces, the line between this repository and other hosts, and the source layout.
 
 ## The minter
 
@@ -55,7 +55,7 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - Operations run in child processes. Page code runs in native Playwright workers.
 - Authored code, offline commands and page-code workers run with your user account's file and network access. Guardian review and file checks are not an operating system sandbox. Clearing a worker's `process.env` hides environment variables from that API but doesn't isolate host credentials.
 
-Generated code keeps the browser call shape of the hosted application.
+Generated code keeps the Kernel SDK's browser call shape, so the same source also runs on a host that uses Kernel.
 
 ```js
 const response = await kernel.browsers.playwright.execute(sessionId, {
@@ -66,7 +66,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
 
 - Here `kernel` is a compatibility object that forwards calls to native Playwright over local process IPC. It doesn't load the Kernel SDK or call Kernel.
 - Narrow credential-keyboard and browser-ownership checks still use Chromium's low-level CDP primitives where required.
-- The local host doesn't mint HTTP variants, record network traffic or produce `captures/routes.json`. It has no hosted `SiteHttp` transport or capture replay helpers. Requests made inside the browser still work.
+- The local host doesn't mint HTTP variants, record network traffic or produce `captures/routes.json`. It has no `SiteHttp` transport or capture replay helpers. Requests made inside the browser still work.
 
 ## Jobs
 
@@ -115,21 +115,22 @@ await Effect.runPromise(
 The package has these entry points.
 
 - `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
-- Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, serve hosted library composition. The export map lists the supported modules.
+- Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, let other hosts compose the library. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
+- `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
+- `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 
 `npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
 
-## Pomerado Cloud
+## Other hosts
 
 - This repository is the only source for the shared core, the portable tests, the authoring assets and the local MCP adapters.
-- Cloud installs the same core as a pinned library package and calls it directly. Its hosted MCP frontend, with accounts, permissions and durable jobs, lives in a private repository.
-- Cloud owns the REST backend, database, hosted browser and compute providers, recorder, evidence bundles, general privacy service, repair loop, credential storage and its own hosted authoring text.
-- Cloud adopts a tested release through an exact dependency pin with locked integrity, and updates its controller and sandbox images together.
-- Cloud rolls back by restoring its previous package pin and matching image versions. Public commits don't update Cloud.
-- Contributors can test Cloud against a locally built package before a version is published.
+- Another host installs the same core as a pinned library package and calls it directly, through the hook interfaces above. Its own frontend, accounts, storage, providers and authoring text live in its own code.
+- This package holds only code the local host runs, plus those hook interfaces. Code that only another host runs stays in that host.
+- A host adopts a tested release through an exact dependency pin with locked integrity, and rolls back by restoring its previous pin. Public commits don't update any host.
+- Contributors can test a host against a locally built package before a version is published.
 
 ## Source layout
 

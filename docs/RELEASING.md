@@ -7,7 +7,7 @@ There are two channels:
 | Dist-tag | What it holds | Install |
 | --- | --- | --- |
 | `canary` | Every commit merged to `main`, as soon as its checks pass | `npm install pomerado@canary` |
-| `latest` | The canary that Pomerado's hosted service has run in production | `npm install pomerado` |
+| `latest` | The canary that has run in production | `npm install pomerado` |
 
 `latest` is always a canary, so `npm install pomerado` saves a range such as `^0.2.1-canary.57`. That range also matches later canaries of 0.2.1, which production may never have run, and package managers such as yarn classic and bun install the highest match. To stay on the version you installed, use `npm install --save-exact pomerado` or commit a lockfile.
 
@@ -24,7 +24,7 @@ A newer merge replaces a canary that is still waiting to start, and the newer ca
 
 ## Promotion to latest
 
-`latest` moves only to a canary that Pomerado's hosted service has run in staging and then promoted to production. That production deploy is the release approval. When it succeeds, the deploy dispatches the Release workflow on `main` with the version and its sha512 integrity. A production rollback dispatches it again with the older version, so `latest` follows production.
+`latest` moves only to a canary that has run in staging and then been promoted to production. That production deploy is the release approval. When it succeeds, the deploy dispatches the Release workflow on `main` with the version and its sha512 integrity. A production rollback dispatches it again with the older version, so `latest` follows production.
 
 The promote job:
 

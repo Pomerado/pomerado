@@ -5,7 +5,11 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest } from "@openai/agents";
 import { Effect } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
+import type { GuardianExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
@@ -541,6 +545,18 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     },
   );
 
+  // Another host's texts fill only the policy's host slots; every other sentence is shared.
+  const otherHost: GuardianExecutionEnvironment = {
+    name: "other-host",
+    operations: "OTHER-OPERATIONS runs operations elsewhere.",
+    bypassTarget: "OTHER-BYPASS",
+    offlineTargets: "OTHER-OFFLINE stays offline.",
+    commands: "OTHER-COMMANDS runs commands elsewhere.",
+    signIn: "OTHER-SIGN-IN",
+    challenges: "OTHER-CHALLENGES waits elsewhere.",
+    executor: "OTHER-EXECUTOR",
+  };
+
   // Many sign-in forms enable their submit only once the fields hold input, and the host waits for
   // the page to enable it before it clicks. Guardian judges what the submit is, not whether the page
   // has enabled it yet.
@@ -551,9 +567,13 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     );
     const sentence =
       "The submit must be an observed control that submits the named fields or is necessary to this authorized sign-in,";
-    const policy = requests[0]?.systemInstructions ?? "";
-    expect(policy).toContain(sentence);
-    expect(policy).not.toContain("enabled control");
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+    ]) {
+      expect(policy).toContain(sentence);
+      expect(policy).not.toContain("enabled control");
+    }
   });
 
   // A site's own trackers carry caller input off-site and its page saves recent searches, and a
@@ -568,8 +588,12 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       "An anonymous recent-search, prefill or search-state save that the site's own page fires when a read submits its search is part of that read, not a write.",
       "A host incident in a step result, such as an observation_gap, is a note about the host's recording, never by itself a reason to stop live probes or to tell the agent to report it. It leaves that execution possibly dispatched, and the rules here on possible writes still apply.",
     ];
-    const policy = requests[0]?.systemInstructions ?? "";
-    for (const sentence of sentences) expect(policy).toContain(sentence);
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      for (const sentence of sentences) expect(policy).toContain(sentence);
   });
 
   // Guardian reviews an execution's source, never each request it sends.
