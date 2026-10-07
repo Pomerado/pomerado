@@ -108,13 +108,6 @@ export const guardianReviewSettings = (turn: ReviewTurn) =>
       : {}),
   });
 
-/**
- * A review's default turn limit. A publication review reads across its whole evidence index, the
- * bundle, the definition and the output or session files, so it gets more turns than a step's.
- */
-export const guardianReviewTurns = (turn: ReviewTurn) =>
-  turn.pending.publication === undefined ? 12 : 32;
-
 export const guardianReviewState = <TContext, TOutput extends AgentOutputType>(
   turn: ReviewTurn,
   input: string,

@@ -91,7 +91,8 @@ export const decodePublicationDecision = (scope: PublicationScope, raw: unknown)
 
 /**
  * Guardian's policy for a publication review: what ships, who wrote each file, and the privacy,
- * authority, claim, input and write-session checks.
+ * authority, claim, input and write-session checks. A host that sends its own publication policy
+ * through the OpenAI reviewer's `specialize` gets that instead.
  */
 export const guardianPublicationPolicy = [
   ["This is the existing publication review, not an execution request."],
