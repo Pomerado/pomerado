@@ -13,9 +13,10 @@ import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { recordingGuardian } from "./guardian-context-fixture.js";
 import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
-// How a local build signs in today, on the shop's one-screen and two-screen sign-ins: what the
-// host asks, what a later run does, what a second screen's submit may carry, and what Guardian
-// reads of a screen that shows a typed value. Scripted models drive each build.
+// How a local build signs in, on the shop's one-screen and two-screen sign-ins: what the host
+// asks, what the build publishes of its sign-in, what a later run does, what a second screen's
+// submit may carry, and what Guardian reads of a screen that shows a typed value. Scripted models
+// drive each build.
 
 type Output = ModelResponse["output"];
 const call = (name: string, input: unknown, callId = name): Output[number] => ({
@@ -132,7 +133,10 @@ const toolResult = (requests: readonly ModelRequest[], callId: string) => {
   if (result === undefined) throw new Error(`No ${callId} result`);
   return result;
 };
-/** Answers each sign-in question with the shop account's value for it, and confirms a notice. */
+/**
+ * Answers the login question with the shop account, a correction with a new password, a code
+ * question with the shop's code and any other with the account's username, and confirms a notice.
+ */
 const answers = (asked: InputRequest[]) =>
   makeInputAsker((request) =>
     Effect.sync(() => {
@@ -142,8 +146,15 @@ const answers = (asked: InputRequest[]) =>
           question.id,
           question.type === "confirm"
             ? { confirmed: true }
-            : question.id === "password"
-              ? shopAccount.password
+            : question.type === "credential"
+              ? {
+                  username: shopAccount.username,
+                  password:
+                    question.reason === "invalid_credentials"
+                      ? `${shopAccount.password}-corrected`
+                      : shopAccount.password,
+                  saveLogin: false,
+                }
               : question.id === "code"
                 ? shopCode
                 : shopAccount.username,
@@ -151,6 +162,17 @@ const answers = (asked: InputRequest[]) =>
       );
     }),
   );
+/** The one login question a build asks, when its first sign-in screen needs the login. */
+const loginQuestion = (origin: string) =>
+  expect.objectContaining({
+    id: "login",
+    type: "credential",
+    fields: "username_password",
+    reason: "missing_credentials",
+    allowSave: false,
+    siteOrigin: origin,
+    prompt: "Sign in to the website so this request can continue.",
+  });
 
 /** Another host the shop's server answers for, as a sign-in site on its own origin. */
 const signInHost = "login.shop.test";
@@ -174,7 +196,7 @@ const withShop = async (use: (shop: Shop, endpoint: string) => Promise<void>) =>
   }
 };
 
-test("a local build asks for each sign-in slot on its own, and a run in a new session never signs in", async () => {
+test("a local build asks for its login once and publishes its sign-in without a value, and a run in a new session never signs in", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "Original SDKs, Chromium, a scripted build with a host sign-in, then two runs",
@@ -241,25 +263,33 @@ test("a local build asks for each sign-in slot on its own, and a run in a new se
         }),
       ),
     );
-    // One question for each slot the screen named, each a secret with its own prompt.
-    expect(asked.map(({ questions }) => questions)).toEqual([
-      [
-        expect.objectContaining({
-          id: "username",
-          type: "secret",
-          secretKind: "private_text",
-          prompt: `Enter your username for ${shop.origin}.`,
-        }),
-        expect.objectContaining({
-          id: "password",
-          type: "secret",
-          secretKind: "private_text",
-          prompt: `Enter your password for ${shop.origin}.`,
-        }),
-      ],
-    ]);
+    // One login question for the screen, with nothing saved.
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(asked[0]?.notice).toBe("Pomerado needs a login for this website to continue.");
     expect(shop.state.loginPosts).toBe(1);
+    // The page's own sign-in request carried the login, so the check verified the sign-in, and
+    // the build publishes its screens and check, value-free, entered from the screen's address.
+    expect(artifact.signIn).toEqual({
+      recipe: {
+        version: 1,
+        steps: [
+          {
+            page: `${shop.origin}/login`,
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+            submittedBy: "host",
+          },
+        ],
+        signedIn: { selector: "#account" },
+      },
+      entryUrl: `${shop.origin}/login`,
+    });
     expect(JSON.stringify(artifact)).not.toContain(shopAccount.password);
+    expect(JSON.stringify(artifact.signIn)).not.toContain(shopAccount.username);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
     // A new session starts signed out, and its run neither asks for a login nor signs in.
     const runAsked: InputRequest[] = [];
     const output = await Effect.runPromise(
@@ -277,6 +307,121 @@ test("a local build asks for each sign-in slot on its own, and a run in a new se
     expect(output).toEqual({ signedIn: false });
     expect(runAsked).toEqual([]);
     expect(shop.state.loginPosts).toBe(1);
+  });
+});
+
+test("a login URL that holds the login's email is refused at publication, naming the login URL and never the email, and a new sign-in from a URL without it publishes", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and a scripted build with two host sign-ins",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests: ModelRequest[] = [];
+    const asked: InputRequest[] = [];
+    const authenticate = (loginUrl: string, callId: string) =>
+      execute(
+        "authenticate",
+        {
+          signInStep: {
+            fields: [
+              { selector: "input[name=username]", accepts: ["username"] },
+              { selector: "input[name=password]", slot: "password" },
+            ],
+            submit: "button",
+          },
+          loginUrl,
+        },
+        callId,
+      );
+    let executionId: unknown;
+    const finish = (request: ModelRequest, callId: string): Output => {
+      executionId ??= objects(request.input)
+        .filter((item) => typeof item["executionId"] === "string")
+        .at(-1)?.["executionId"];
+      if (executionId === undefined) throw new Error("No execution receipt to finish with");
+      return [
+        call(
+          "finish_build",
+          {
+            intent: "Return the account reader",
+            entrypoint: "src/tool.mjs",
+            executionId,
+            metadata: { name: "read_account", description: "Read whether the account shows" },
+            coverage: "One live example, signed in",
+          },
+          callId,
+        ),
+      ];
+    };
+    const minter = provider((request, index) => {
+      const steps: (Output | ((request: ModelRequest) => Output))[] = [
+        [...patch, create("explore/login.mjs", openPage("open_login", "/login"), "patch_login")],
+        [
+          authenticate(
+            `${shop.origin}/login?email=${encodeURIComponent(shopAccount.username)}`,
+            "sign_in",
+          ),
+        ],
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+        [execute("example", {}, "example")],
+        (current) => finish(current, "finish_refused"),
+        // As the refusal says: a new sign-in from a login URL without the email.
+        [
+          execute(
+            "explore",
+            { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+            "explore_login",
+          ),
+        ],
+        [authenticate(`${shop.origin}/login`, "sign_in_again")],
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in_again")],
+        (current) => finish(current, "finish_published"),
+      ];
+      const step = steps[index];
+      return step === undefined
+        ? [message("Built.")]
+        : typeof step === "function"
+          ? step(request)
+          : step;
+    }, mintRequests);
+    const built = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: guardian(),
+            ask: answers(asked),
+            timeoutMs: 30_000,
+          });
+          return yield* service.mint({
+            url: `${shop.origin}/login`,
+            intent: "Read the account",
+            input: {},
+            effect: "read",
+          });
+        }),
+      ),
+    );
+    const result = toolResult(mintRequests, "finish_refused");
+    const refused = objects(result).find((item) => item["status"] === "not_published");
+    expect(refused).toMatchObject({
+      reason: "login_url_contains_credential",
+      parts: [{ part: "loginUrl", credentialKinds: ["credential"] }],
+    });
+    expect(String(refused?.["instruction"])).toContain("For loginUrl, run authenticate again");
+    // The refusal never holds the email.
+    expect(JSON.stringify(result)).not.toContain(shopAccount.username);
+    expect(JSON.stringify(result)).not.toContain(encodeURIComponent(shopAccount.username));
+    // The second sign-in publishes, entered from the URL without the email, with one login asked.
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.signIn?.entryUrl).toBe(`${shop.origin}/login`);
+    expect(JSON.stringify(built.artifact)).not.toContain(shopAccount.username);
+    expect(JSON.stringify(built.artifact)).not.toContain(encodeURIComponent(shopAccount.username));
+    expect(shop.state.loginPosts).toBe(2);
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
   });
 });
 
@@ -327,11 +472,8 @@ test("a second sign-in screen whose form posts to a URL holding the password is 
         }),
       ),
     );
-    // Each screen asks for its own slot.
-    expect(asked.map(({ questions }) => questions.map((question) => question.id))).toEqual([
-      ["email"],
-      ["password"],
-    ]);
+    // The identifier screen asks for the login, and the password screen fills the same one.
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
     expect(objects(toolResult(mintRequests, "identifier"))).toContainEqual(
       expect.objectContaining({ outcome: "filled", submit: "clicked" }),
     );
@@ -354,7 +496,7 @@ const expectRefusedSubmit = (shop: Shop, mintRequests: readonly ModelRequest[]) 
   expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
 };
 
-test("a later build in the same session judges its first sign-in screen as typed into", async () => {
+test("a later build in the same session refuses a password screen before its own identifier screen", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "Original SDKs, Chromium and two scripted builds in one session",
@@ -391,8 +533,8 @@ test("a later build in the same session judges its first sign-in screen as typed
           });
           const request = { intent: "Read the account", effect: "read" as const, input: {} };
           yield* service.mint({ ...request, url: `${shop.origin}/sign-in?echo=none` });
-          // The second build starts on a password-only screen. Its first screen comes after the
-          // first build typed into this session's page.
+          // The second build starts on a password-only screen, whose form would post to a URL
+          // that holds the password, before any identifier screen of its own.
           screen = "password";
           yield* service.mint({
             ...request,
@@ -401,11 +543,15 @@ test("a later build in the same session judges its first sign-in screen as typed
         }),
       ),
     );
-    expect(asked.map(({ questions }) => questions.map((question) => question.id))).toEqual([
-      ["email"],
-      ["password"],
-    ]);
-    expectRefusedSubmit(shop, mintRequests);
+    // Each build asks for its own login once a screen needs it. The later build holds none when
+    // its first screen asks for a password, so the host refuses that screen: it asks nothing and
+    // types nothing.
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(objects(toolResult(mintRequests, "password"))).toContainEqual(
+      expect.objectContaining({ outcome: "refused", reason: "login_identifier_unobserved" }),
+    );
+    expect(shop.state.sessionPosts).toBe(0);
+    expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
   });
 });
 
@@ -457,10 +603,7 @@ test("a password screen that shows the typed email signs in, and Guardian reads 
         }),
       ),
     );
-    expect(asked.map(({ questions }) => questions.map((question) => question.id))).toEqual([
-      ["email"],
-      ["password"],
-    ]);
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
     expect(objects(toolResult(mintRequests, "password"))).toContainEqual(
       expect.objectContaining({ outcome: "filled", submit: "clicked" }),
     );

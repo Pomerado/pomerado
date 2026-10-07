@@ -15,6 +15,7 @@ import {
 } from "../mint/publication-review.js";
 import { contractExtractionNote } from "../mint/review-context.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
+import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
 import type { MintState } from "./mint-state.js";
 import { validateStandaloneWrite } from "./write-completion.js";
@@ -59,6 +60,28 @@ const outputEvidence = (state: MintState, sample: Run, source: ExampleOutputSour
     );
   });
 
+/**
+ * The build's verified sign-in as it ships, value-free: its recipe and the address its runs start
+ * from. A login URL holding a sign-in value the build was given is refused, naming the login URL
+ * and never the value, so the minter can sign in again from a URL without it. A recipe holding one
+ * is refused too.
+ */
+export const screenedSignIn = <E>(
+  signIn: PublishedSignIn | undefined,
+  assertAbsent: (text: string) => Effect.Effect<void, E>,
+) =>
+  Effect.gen(function* () {
+    if (signIn === undefined) return undefined;
+    if (Either.isLeft(yield* Effect.either(assertAbsent(signIn.entryUrl))))
+      return yield* new MintFailure({
+        code: "PublicationUnavailable",
+        reason: "login_url_contains_credential",
+        publicationFeedback: { parts: [{ part: "loginUrl", credentialKinds: ["credential"] }] },
+      });
+    yield* assertAbsent(JSON.stringify(signIn.recipe));
+    return signIn;
+  });
+
 export const mintPublication =
   (state: MintState): MintDependencies["publish"] =>
   (publication, evidence) =>
@@ -76,6 +99,7 @@ export const mintPublication =
       const files = savedOperationFiles(snapshot, publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
+      const signIn = yield* screenedSignIn(state.recorder.published(), secrets.assertAbsent);
       // Published code never holds a handle: no saved file the operation could run may hold one,
       // whatever its extension. That is every saved file when Node could load one its imports
       // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only
@@ -179,6 +203,7 @@ export const mintPublication =
           entrypoint: publication.entrypoint,
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
+          ...(signIn === undefined ? {} : { signIn }),
         },
         diagnostics: [],
       };

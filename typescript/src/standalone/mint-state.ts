@@ -12,12 +12,14 @@ import {
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
+import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
 import type { WriteStep } from "../mint/step-checks.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import { askingValueHooks } from "../runtime/sign-in-values.js";
 import {
   localStartHooks,
   makeStartTracker,
@@ -25,7 +27,7 @@ import {
   startPage,
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
-import { makeLiveAuthentication } from "./authentication.js";
+import { localSignInLogin, makeSignInBrowser } from "./authentication.js";
 import { makeMarkerChecks } from "./signed-in-marker.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
@@ -34,6 +36,13 @@ const identifiers: ReadonlySet<AutofillSlot> = new Set(identifierPreference);
 /** What the host does with a sign-in step Guardian allows, for its review. */
 const signInStepNote =
   "The host fills the login's values, which never appear in this review, into the fields the step names and clicks the named submit on the sign-in screen of the authorized site.";
+/** A marker that a page the build saw signed out shows cannot tell signed in from signed out. */
+const markerOnSignedOutPage = {
+  signedIn: false,
+  failed: "marker_matches_signed_out_page",
+  nextStep:
+    "A page this build saw signed out shows this marker too, so it cannot tell the site signed in from signed out. The sign-in is still open. Choose an element only a signed-in user sees, test it with check_signed_in_marker, then check again.",
+} as const;
 /** A step that could not start its page: the browser call failed, so nothing ran. */
 const unavailable = (operation: string) => (error: unknown) =>
   new MintFailure({
@@ -177,14 +186,29 @@ export const mintState = (
         readonly journal: LocalOperationJournal;
       }
     >();
-    const auth = makeLiveAuthentication({
+    const signInBrowser = makeSignInBrowser({
       page: browser,
       keyboard: browser.keyboard,
       siteOrigin: context.siteOrigin,
       authenticationOrigins: request.authenticationOrigins ?? [],
-      ask: mintAsk,
-      registerSecret: secrets.register,
+      onRequest: browser.onRequest,
       typing: session.signInTyping,
+    });
+    // The site as the owner's questions name it: its host, without `www.`.
+    const site = new URL(context.siteOrigin).hostname.replace(/^www\./u, "");
+    const recorder = yield* makeSignInRecorder<Error>({
+      browser: signInBrowser,
+      login: localSignInLogin({
+        ask: mintAsk,
+        register: secrets.register,
+        siteOrigin: context.siteOrigin,
+      }),
+      values: askingValueHooks({
+        ask: mintAsk,
+        register: secrets.register,
+        site,
+        siteOrigin: context.siteOrigin,
+      }),
       // The screen may show a value the caller gave, such as the typed email on a password
       // screen; it reaches Guardian masked. The source check still refuses any value left.
       review: (step, inspection) =>
@@ -206,6 +230,10 @@ export const mintState = (
           ),
           Effect.asVoid,
         ),
+      site,
+      carries: secrets.carries,
+      refuseIndicator: (indicator) =>
+        markers.signedOutShows(indicator) ? markerOnSignedOutPage : undefined,
     });
     /**
      * The build's one write session: whether its first act step dispatched, the agent's
@@ -221,7 +249,11 @@ export const mintState = (
     const markers = makeMarkerChecks({
       page: browser,
       siteOrigin: context.siteOrigin,
-      check: auth.signedIn,
+      // The live check on the build's screens; it ends no sign-in.
+      check: (indicator) => {
+        const { screens, challengeScreens } = recorder.screens();
+        return signInBrowser.confirm(indicator, screens, challengeScreens);
+      },
       typing: session.signInTyping,
       loginSent: () => start.submitted || context.signedIn,
       writeSessionStarted: () => writeSession.started,
@@ -244,7 +276,7 @@ export const mintState = (
       deadline,
       mintAsk,
       runs,
-      auth,
+      recorder,
       writeSession,
       start,
       afterSubmit,
