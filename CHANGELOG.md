@@ -97,6 +97,7 @@ The package now holds the code the local host runs, the hook interfaces another 
   - Once the write session started, the check loads no page and fails as unavailable, since the next act step continues the page as it is.
 - A local build's `signedIn` step refuses a marker that one of the build's signed-out pages shows, with `marker_matches_signed_out_page`, and the sign-in stays open.
 - A local sign-in no longer stops on a screen that shows a value the caller gave, such as a password screen that shows the typed email in its text, label or placeholder. Guardian's review of the step used to carry the screen as it was, so the check that keeps caller values out of reviewed source refused it with `SourceUnavailable` and the screen never ran. The screen now reaches Guardian through `screenMintText`, with each such value masked, and that check still refuses any value left. The review also tells Guardian that the host fills the login's values, which never appear in the review.
+- `tldts` is 7.4.16 and `oxc-parser` 0.152.0, for the latest public suffix data and parser fixes. The new private suffixes `glideos.app`, `iqhs.pl`, `site.hosting-cluster.nl` and `site.webhosting.be` make each host under them its own site, as on `github.io`: two such hosts, or the suffix and a host under it, are no longer the same site. The source checks' parse results are unchanged. The optional `vitest` peer accepts any 5.x release from 5.0.2 (`^5.0.2`) instead of exactly 5.0.2.
 
 ### Fixes
 
