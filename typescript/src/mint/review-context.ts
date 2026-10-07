@@ -27,8 +27,6 @@ export interface MintReviewHost {
   readonly browser: () => MintReviewContext["browser"];
   /** Where the host last observed the active browser's page, with its readable capture. */
   readonly observedPage: () => ObservedPage | undefined;
-  /** Whether this step starts on a fresh page, so the page left open is not the one it reads. */
-  readonly startsOnFreshPage: (current: CurrentExecution) => boolean;
   /** This attempt's executions so far, a running one included. */
   readonly executions: () => readonly ExecutionEntry[];
   /** The input schema the latest example or contract run declared; undefined before either. */
@@ -105,6 +103,8 @@ export const mintReviewContext = (
     readonly sources: ReadonlyMap<string, string>;
     readonly entrypoint: string;
     readonly currentExecution?: CurrentExecution;
+    /** The step starts on a fresh page, so the page left open is not the one it reads. */
+    readonly startsOnFreshPage?: boolean;
   },
 ): Effect.Effect<MintReviewContext, MintFailure> =>
   Effect.gen(function* () {
@@ -126,9 +126,7 @@ export const mintReviewContext = (
       ...(currentExecution === undefined ? {} : { currentExecution }),
       browser,
       ...(signInCodes.length === 0 ? {} : { signInCodes: [...signInCodes] }),
-      ...(page === undefined ||
-      browser !== "active" ||
-      (currentExecution !== undefined && host.startsOnFreshPage(currentExecution))
+      ...(page === undefined || browser !== "active" || step.startsOnFreshPage === true
         ? {}
         : { currentPage: page }),
       executions: [...host.executions()],

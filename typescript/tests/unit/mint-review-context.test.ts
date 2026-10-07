@@ -32,7 +32,6 @@ const fakeHost = () => {
     repeatableRead: false,
     browser: "active" as ReturnType<MintReviewHost["browser"]>,
     observed: undefined as ObservedPage | undefined,
-    fresh: false,
     executions: [] as ExecutionEntry[],
     inputSchema: undefined as unknown,
     signInCodes: [] as string[],
@@ -41,7 +40,6 @@ const fakeHost = () => {
     repeatableRead: () => state.repeatableRead,
     browser: () => state.browser,
     observedPage: () => state.observed,
-    startsOnFreshPage: () => state.fresh,
     executions: () => state.executions,
     inputSchema: () => state.inputSchema,
     signInCodes: () => state.signInCodes,
@@ -54,12 +52,17 @@ const sources = new Map([
   ["operation/src/step.mjs", `import { readPage } from "./flow.mjs";\nexport default readPage;`],
   ["operation/command.sh", "ls src"],
 ]);
-const context = (host: MintReviewHost, currentExecution?: CurrentExecution, entrypoint?: string) =>
+const context = (
+  host: MintReviewHost,
+  currentExecution?: CurrentExecution,
+  step: { readonly entrypoint?: string; readonly startsOnFreshPage?: boolean } = {},
+) =>
   Effect.runPromise(
     mintReviewContext(host, projection, {
       sources,
-      entrypoint: entrypoint ?? "operation/src/tool.mjs",
+      entrypoint: step.entrypoint ?? "operation/src/tool.mjs",
       ...(currentExecution === undefined ? {} : { currentExecution }),
+      ...(step.startsOnFreshPage === undefined ? {} : { startsOnFreshPage: step.startsOnFreshPage }),
     }),
   );
 const live = (purpose: CurrentExecution["purpose"]): CurrentExecution => ({
@@ -117,16 +120,14 @@ describe("mintReviewContext", () => {
   it("gives Guardian the page the host last observed", async () => {
     const { state, host } = fakeHost();
     const pages: unknown[] = [];
-    const review = async (current?: CurrentExecution) =>
-      pages.push((await context(host, current)).currentPage);
+    const review = async (current?: CurrentExecution, startsOnFreshPage = false) =>
+      pages.push((await context(host, current, { startsOnFreshPage })).currentPage);
     await review({ purpose: "command", target: "pureFiles" });
     await review(live("explore"));
     state.observed = page;
     await review(live("explore"));
     // A step that starts on a fresh page does not read the page left open.
-    state.fresh = true;
-    await review(live("example"));
-    state.fresh = false;
+    await review(live("example"), true);
     await review(live("explore"));
     await review({ purpose: "command", target: "pureFiles" });
     // An observation that could not say which page is current leaves none.
@@ -228,7 +229,7 @@ describe("mintReviewContext", () => {
       target: "pureFiles",
       commandSandbox: { cwd: "/tmp/workspace", timeoutSeconds: 30, maxOutputBytes: 1_048_576 },
     };
-    const reviewed = await context(host, command, "operation/command.sh");
+    const reviewed = await context(host, command, { entrypoint: "operation/command.sh" });
     expect(reviewed.currentExecution).toEqual(command);
     expect(reviewed).not.toHaveProperty("executedSources");
     expect(reviewed).not.toHaveProperty("inputSchema");

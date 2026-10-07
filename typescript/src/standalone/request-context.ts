@@ -180,8 +180,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       undefined,
       {},
     );
-    // Each step says whether it starts on a fresh page; see `pending`.
-    const host: Omit<MintReviewHost, "startsOnFreshPage"> = {
+    const host: MintReviewHost = {
       repeatableRead: () => repeatableReadFor(buildEffect, claimed),
       browser: () => (navigated ? "active" : "not_opened"),
       // The page's place is redacted again on each read, as its capture is.
@@ -200,11 +199,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     /** The pending review of `step`, and the files Guardian may read for it. */
     const pending = (step: ReviewStep) =>
       Effect.gen(function* () {
-        const mintContext = yield* mintReviewContext(
-          { ...host, startsOnFreshPage: () => step.startsOnFreshPage === true },
-          projection,
-          step,
-        );
+        const mintContext = yield* mintReviewContext(host, projection, step);
         const requestedIntent = secrets.redact(request.intent);
         const turn: PendingExecution = {
           invocationId,
@@ -248,7 +243,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       });
     /** Guardian's review of a question the minter or a running script asks. */
     const reviewQuestion = (
-      step: Omit<ReviewStep, "currentExecution" | "note">,
+      step: Omit<ReviewStep, "currentExecution" | "startsOnFreshPage" | "note">,
       question: PendingQuestion,
     ) =>
       Effect.gen(function* () {
