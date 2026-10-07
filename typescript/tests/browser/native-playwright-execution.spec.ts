@@ -780,7 +780,13 @@ test("unchanged authored operations run through schema validation and native exe
     const site = "https://example.test";
     await Effect.runPromise(
       executor.execute(`
-      await context.route('${site}/**', route => route.fulfill({contentType:'text/html', body:'<h1>Invoices</h1><section role="region" aria-label="Record details" data-record-id="alpha"><h1>Requested record</h1></section>'}));
+      await context.route('${site}/**', route => {
+        const path = new URL(route.request().url()).pathname;
+        const body = path === '/search' ? '<section role="region" aria-label="Search results"><a href="/records/alpha">alpha</a></section>'
+          : path === '/records/alpha' ? '<section role="region" aria-label="Record details" data-record-id="alpha"><h1>Requested record</h1></section>'
+          : '<h1>Invoices</h1><form role="search" action="/search"><input type="search" name="q" aria-label="Record ID"></form>';
+        return route.fulfill({contentType:'text/html', body});
+      });
       await page.goto('${site}');
     `),
     );

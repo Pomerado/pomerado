@@ -145,28 +145,70 @@ for (const clears of [true, false]) {
   });
 }
 
-test("detail example continues through its own interstitial and checks the record identity", async ({
+// A records site reached the way a person does: its entry page has a search box, the search lists
+// matching records as links, and each record opens behind its own interstitial. record_7's page
+// belongs to another record, and record_5's link lands on another path.
+const recordsSite = async (page: Page, origin: string) => {
+  const opened: string[] = [];
+  const searches: string[] = [];
+  const records = ["record_42", "record_420", "record_7", "record_5"];
+  await page.route(`${origin}/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/favicon.ico") opened.push(url.pathname);
+    const html = (body: string) => route.fulfill({ contentType: "text/html", body });
+    if (url.pathname === "/")
+      return html(`<form role="search" action="/search">
+          <input type="search" name="q" aria-label="Record ID"><button>Search</button>
+        </form>`);
+    if (url.pathname === "/search") {
+      const query = url.searchParams.get("q") ?? "";
+      searches.push(query);
+      const found = records.filter((id) => id.includes(query));
+      return html(`<section role="region" aria-label="Search results">
+          ${found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") || "<p>No matching records</p>"}
+        </section>`);
+    }
+    if (url.pathname === "/records/record_5")
+      return html(`<script>location.replace("/records/archived")</script>`);
+    const shown = url.pathname === "/records/record_7" ? "record_42" : url.pathname.slice(9);
+    return html(`<section role="region" aria-label="Continue to record" data-record-id="${shown}">
+        <button onclick="this.closest('section').outerHTML = '<section role=region aria-label=\\'Record details\\' data-record-id=${shown}><h1>Quarterly report</h1></section>'">Continue</button>
+      </section>`);
+  });
+  return { opened, searches };
+};
+
+test("detail example searches the site for the record, follows its link and checks its identity", async ({
   page,
 }) => {
   const origin = "https://records.example.invalid";
-  await page.route(`${origin}/**`, (route) =>
-    route.fulfill({
-      contentType: "text/html",
-      body: `<section role="region" aria-label="Continue to record" data-record-id="record_42">
-          <button onclick="this.closest('section').outerHTML = '<section role=region aria-label=\\'Record details\\' data-record-id=${new URL(route.request().url()).pathname === "/records/record_42" ? "record_42" : "other"}><h1>Quarterly report</h1></section>'">Continue</button>
-        </section>`,
-    }),
+  const site = await recordsSite(page, origin);
+  const read = async (record_id: string) => {
+    const run = await runExample(page, detailNavigation, { record_id }, { siteOrigin: origin });
+    // No call opens a URL holding the caller's input: the record's page comes from its link.
+    for (const code of run.calls) expect(code).not.toContain(`/records/${record_id}`);
+    return run.result;
+  };
+  expect(await read("record_42")).toEqual(
+    Either.right({ record_id: "record_42", title: "Quarterly report" }),
   );
-  expect(
-    (await runExample(page, detailNavigation, { record_id: "record_42" }, { siteOrigin: origin }))
-      .result,
-  ).toEqual(Either.right({ record_id: "record_42", title: "Quarterly report" }));
-  expect(
-    failure(
-      (await runExample(page, detailNavigation, { record_id: "record_7" }, { siteOrigin: origin }))
-        .result,
-    ),
-  ).toMatchObject({ _tag: "OperationFailure", message: "identity_mismatch" });
+  expect(site.searches).toEqual(["record_42"]);
+  expect(site.opened).toEqual(["/", "/search", "/records/record_42"]);
+  expect(failure(await read("record_7"))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "identity_mismatch",
+  });
+  // The final path is checked against the link's own href.
+  expect(failure(await read("record_5"))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "target_mismatch",
+  });
+  // The site's search shows no such record, so the caller's value is at fault.
+  expect(failure(await read("record_9"))).toMatchObject({
+    _tag: "InvalidInput",
+    message: "The site's search lists no record with this ID",
+  });
+  expect(site.searches).toEqual(["record_42", "record_7", "record_5", "record_9"]);
 });
 
 const siteOrigin = "https://members.example.test";
@@ -597,7 +639,7 @@ const checkoutSite = async (page: Page, origin: string, orders: string[]) => {
   });
 };
 
-test("write-session example commits once across its act steps and records the site's message", async ({
+test("write-session example commits once across its act steps and reads the site's confirmation back", async ({
   page,
 }) => {
   const origin = "https://shop.example.invalid";
@@ -616,15 +658,15 @@ test("write-session example commits once across its act steps and records the si
   expect(placed).toMatchObject({
     result: Either.right({ order_number: "ORD-1001" }),
     effect: "verified",
-    confirmation: "message",
+    confirmation: "readback",
     commits: [{ name: "place-order", state: "confirmed" }],
   });
   expect(orders).toEqual(["lamp"]);
   // The composed script runs the same calls from a blank page and declares its confirmation.
-  expect(placeOrder.write).toEqual({ confirmation: "message", commits: ["place-order"] });
+  expect(placeOrder.write).toEqual({ confirmation: "readback", commits: ["place-order"] });
   await page.goto("about:blank");
   const composed = await runExample(page, placeOrder, input, { siteOrigin: origin });
-  expect(composed).toMatchObject({ confirmation: "message", effect: "verified" });
+  expect(composed).toMatchObject({ confirmation: "readback", effect: "verified" });
   expect(orders).toEqual(["lamp", "lamp"]);
 });
 

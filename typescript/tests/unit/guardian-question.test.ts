@@ -197,6 +197,23 @@ it("tells the question review that host sign-in rules are never an owner's prohi
   );
 });
 
+// A repair's report that the caller's value was at fault was reworded as asking the user for
+// something, and the caller lost the reason.
+it("allows a blocked report that names the caller input at fault and why", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
+  expect(input.trusted_review.policy).toContain(
+    'or when it asks the user for anything; the user then sees only a fixed sentence. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user. The rules below apply to questions, not to this report.\n',
+  );
+});
+
 it("rejects a question candidate smuggled into an execution review", async () => {
   const { reviewer, seen } = decisions(["allow"]);
   const result = await Effect.runPromise(
