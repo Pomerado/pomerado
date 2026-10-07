@@ -193,7 +193,8 @@ describe("the saved files the operation could run", () => {
     [
       "a saved folder holds node_modules",
       {
-        "src/tool.mjs": 'import { look } from "helper";\nexport default look;',
+        "src/tool.mjs": 'import { look } from "../explore/run.mjs";\nexport default look;',
+        "explore/run.mjs": 'export { look } from "helper";',
         "explore/node_modules/helper/index.js": 'export { look } from "../../look.mjs";',
       },
     ],
@@ -212,11 +213,35 @@ describe("the saved files the operation could run", () => {
         "src/look.cjs": 'module.exports = arguments[1]("../explore/look.mjs");',
       },
     ],
+    [
+      "an arrow function in a CommonJS module reaches its wrapper's require through arguments",
+      {
+        "src/tool.mjs": 'import look from "./look.cjs";\nexport default look;',
+        "src/look.cjs": 'module.exports = (() => arguments[1]("../explore/look.mjs"))();',
+      },
+    ],
   ])("are every saved file when %s", (_case, files) => {
     const all = { ...workspace, ...files };
     const every = Object.keys(all)
       .filter((path) => /^(src|explore|test|scratch)\//u.test(path))
       .sort();
     expect(runnable(all)).toEqual(every);
+  });
+
+  // A function's own arguments are its callers' values, never a CommonJS wrapper's require.
+  it("leave out a probe when a module reads a function's own arguments", () => {
+    const files = {
+      ...workspace,
+      "src/tool.mjs": [
+        "function first() {",
+        "  return arguments[0];",
+        "}",
+        "const list = { all() { return [...arguments]; } };",
+        "export default [first, list];",
+      ].join("\n"),
+      "explore/look.mjs": 'export const look = "{{secret.s1}}";',
+    };
+    expect(runnable(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
+    expect(saved(files)).toEqual(["src/query.mjs", "src/tool.mjs"]);
   });
 });
