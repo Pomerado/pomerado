@@ -224,6 +224,16 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "Keep the build's own execution and result separate from future code publication.",
   ],
+  // A format read from one sample breaks on the next value, so the minter reads it off the page.
+  [
+    "core",
+    "never just the example's value. The example's values are one case, never limits. - Never derive a format from one sample: not an input format, an element key, a selector or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+  ],
+  // Output a caller can filter and compare on is parsed into typed fields.
+  [
+    "publication",
+    'did not return is refused (`contract_output_mismatch`). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Prefer giving each fact a caller would filter, sort or compare on its own field: a price as integer minor units with `currency`, times as ISO 8601 with the offset, durations in minutes, counts as integers, and codes and names as their own strings. A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m, $244" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331, "price_minor": 24400, "currency": "USD" }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
+  ],
 ];
 
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
