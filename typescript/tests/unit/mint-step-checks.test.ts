@@ -117,6 +117,12 @@ describe("exampleInputRefusal", () => {
     ).toBeUndefined();
   });
 
+  it("lets a later act step fix the session's input after steps that ran on the caller's empty input", () => {
+    // The session's earlier act steps passed none, so they ran the caller's empty input.
+    const ranEmpty = { started: true, input: undefined };
+    expect(exampleInputRefusal(act(), scope("write", {}, ranEmpty))).toBeUndefined();
+  });
+
   it.each([
     ["the caller's own input", request({ exampleInput }), scope("read", { venue: "Venue Y" })],
     ["a write build's example", request({ exampleInput }), scope("write")],
@@ -132,11 +138,6 @@ describe("exampleInputRefusal", () => {
     ["a write's act step beside the caller's own input", act(), scope("write", { item: "desk" })],
     ["a write's act step that is not an input object", act([order]), scope("write")],
     [
-      "a session that started on the caller's empty input",
-      act(),
-      scope("write", {}, { started: true, input: undefined }),
-    ],
-    [
       "a session that runs another input",
       act({ ...order, quantity: 3 }),
       scope("write", {}, { started: true, input: order }),
@@ -148,16 +149,15 @@ describe("exampleInputRefusal", () => {
     expect(refusal?.reason).toContain("Nothing was executed.");
   });
 
-  it("says why a session's step cannot change or add its input", () => {
-    expect(
-      exampleInputRefusal(act(), scope("write", {}, { started: true, input: undefined }))?.reason,
-    ).toContain("only the session's first act step can pass exampleInput");
+  it("says why a session's step cannot change its input", () => {
     expect(
       exampleInputRefusal(
         act({ ...order, quantity: 3 }),
         scope("write", {}, { started: true, input: order }),
       )?.reason,
-    ).toContain("Repeat it unchanged or omit it");
+    ).toContain(
+      "This write session already runs the exampleInput an earlier act step passed. Repeat it unchanged or omit it.",
+    );
   });
 });
 
@@ -175,7 +175,7 @@ describe("stepInput", () => {
     });
   });
 
-  it("runs a write session's act steps on the input its first act step passed", async () => {
+  it("runs a write session's act steps on the input the first act step that passed one fixed", async () => {
     const order = { item: "lamp", quantity: 2 };
     const act = (extra: Partial<ExecutionRequest> = {}) =>
       request({ purpose: "act", target: "liveBrowser", ...extra });
@@ -193,6 +193,38 @@ describe("stepInput", () => {
     ).toEqual({
       input: {},
     });
+  });
+
+  it("runs a session's first act steps on the caller's empty input until one passes exampleInput, then that input", async () => {
+    const order = { item: "lamp", quantity: 2 };
+    const act = (extra: Partial<ExecutionRequest> = {}) =>
+      request({ purpose: "act", target: "liveBrowser", ...extra });
+    const writeScope = (session: { readonly started: boolean; readonly input?: typeof order }) => ({
+      buildEffect: "write" as const,
+      callerInput: {},
+      writeSession: { started: session.started, input: session.input },
+    });
+    // Step 1 passes none and runs the caller's empty input, unmarked.
+    expect(exampleInputRefusal(act(), writeScope({ started: false }))).toBeUndefined();
+    expect(
+      await Effect.runPromise(stepInput(act(), { callerInput: {}, sessionInput: undefined })),
+    ).toEqual({ input: {} });
+    // Step 2 is the first to pass one, so it fixes the session's input.
+    const fixing = act({ exampleInput: JSON.stringify(order) });
+    expect(exampleInputRefusal(fixing, writeScope({ started: true }))).toBeUndefined();
+    expect(await run(fixing, {})).toMatchObject({
+      _tag: "Right",
+      right: { input: order, mark: "intent_derived" },
+    });
+    // Step 3 omits it and runs that input; step 4 passes another and is refused.
+    expect(await run(act(), {}, order)).toMatchObject({
+      _tag: "Right",
+      right: { input: order, mark: "intent_derived" },
+    });
+    const changed = act({ exampleInput: JSON.stringify({ ...order, quantity: 3 }) });
+    expect(
+      exampleInputRefusal(changed, writeScope({ started: true, input: order }))?.reason,
+    ).toContain("Repeat it unchanged or omit it");
   });
 
   it("runs an agent-chosen test input, marked agent_chosen, and otherwise the caller's input", async () => {
