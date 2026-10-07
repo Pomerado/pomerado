@@ -52,6 +52,12 @@ interface SiteOptions {
   readonly questions?: string[];
   /** The login screen sits on another origin of the site than the recipe recorded. */
   readonly loginOrigin?: string;
+  /** The page's requests carry nothing: a fill sends no request the host hears. */
+  readonly silent?: boolean;
+  /** The login screen shows `#username-error` after a wrong username. */
+  readonly usernameMarker?: boolean;
+  /** The entry page fails to load. */
+  readonly entryFails?: boolean;
 }
 
 const pages = {
@@ -69,6 +75,7 @@ const fakeSite = (options: SiteOptions = {}) => {
     page: "login" as Page,
     signedIn: options.signedIn === true,
     loginError: false,
+    usernameError: false,
     codeError: false,
     question: options.questions?.[0] ?? question,
     loads: 0,
@@ -84,7 +91,7 @@ const fakeSite = (options: SiteOptions = {}) => {
   };
   const afterLogin = (): Page =>
     options.method ? "method" : options.code ? "code" : options.question ? "question" : "account";
-  const browser: SignInReplayBrowser<never> = {
+  const browser: SignInReplayBrowser<Error> = {
     inspect: (step) =>
       Effect.sync((): AutofillInspection | { readonly outcome: "refused"; readonly reason: "not_found" } => {
         const selectors = [...step.fields.map((field) => field.selector), ...(step.submit === undefined ? [] : [step.submit])];
@@ -140,10 +147,11 @@ const fakeSite = (options: SiteOptions = {}) => {
           frame: "main",
           resourceType: "document",
         };
-        for (const listener of [...listeners]) listener(request);
+        if (options.silent !== true) for (const listener of [...listeners]) listener(request);
         if (page === "login") {
           const right = values[0] === account.username && values[1] === account.password;
           state.loginError = !right && options.marker === true;
+          state.usernameError = values[0] !== account.username && options.usernameMarker === true;
           if (right) navigate(afterLogin());
           if (right && afterLogin() === "account") state.signedIn = true;
         } else if (page === "method") navigate("code");
@@ -178,15 +186,19 @@ const fakeSite = (options: SiteOptions = {}) => {
     },
     authenticationOrigins: [],
     open: (url) =>
-      Effect.sync(() => {
-        opened.push(url);
-        state.loginError = false;
-        navigate(state.signedIn && options.redirectWhenSignedIn === true ? "account" : "login");
-      }),
+      options.entryFails === true
+        ? Effect.fail(new Error(`net::ERR_NAME_NOT_RESOLVED at ${url}`))
+        : Effect.sync(() => {
+            opened.push(url);
+            state.loginError = false;
+            state.usernameError = false;
+            navigate(state.signedIn && options.redirectWhenSignedIn === true ? "account" : "login");
+          }),
     markerVisible: (selector) =>
       Effect.sync(
         () =>
           (selector === "#login-error" && state.page === "login" && state.loginError) ||
+          (selector === "#username-error" && state.page === "login" && state.usernameError) ||
           (selector === "#code-error" && state.page === "code" && state.codeError),
       ),
   };
@@ -441,6 +453,13 @@ it("says what each failure means without naming a value", () => {
   expect(new SignInRunFailed({ code: "MissingRecipe", reason: "unknown_version" }).message).toBe(
     "The tool's saved sign-in can't be read (unknown version), so the tool doesn't run signed out. Build the tool again.",
   );
+  // A changed security question or a page that didn't load is no fault of the recipe.
+  expect(new SignInRunFailed({ code: "NeedsInput", reason: "question_changed" }).message).not.toContain(
+    "Build the tool again",
+  );
+  expect(new SignInRunFailed({ code: "RecipeFailed", reason: "entry_page_unavailable" }).message).not.toContain(
+    "Build the tool again",
+  );
 });
 
 it("fills a recorded step's identifier with the kind the login holds", async () => {
@@ -450,4 +469,71 @@ it("fills a recorded step's identifier with the kind the login holds", async () 
   const recipe = { ...recipeOf(), steps: [{ ...loginStep, fields: [{ selector: "#username", accepts }, loginStep.fields[1]] }] } as SignInRecipe;
   expect(await signIn(recipe, fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
   expect(fake.fills).toEqual([{ page: "login", values: [account.username, account.password] }]);
+});
+
+const codeScreen = {
+  page: `${origin}/code`,
+  fields: [{ selector: "#code", slot: "code" as const }],
+  submit: "#verify",
+};
+/** What each fill of the login screen sent, in order. */
+const loginFills = (fake: ReturnType<typeof fakeSite>) =>
+  fake.fills.filter(({ page }) => page === "login").map(({ values }) => values);
+
+it("never fills a password the login screen rejected by showing again before a later screen, even when a correction repeats it", async () => {
+  const fake = fakeSite({ code: true });
+  const wrong = { ...account, password: "synthetic-wrong" };
+  const { ask, asked } = owner({ logins: [wrong, wrong, account] });
+  expect(await signIn(recipeOf(codeScreen), fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
+  // The code screen never showed: the login screen came back, so the password it took was
+  // rejected, and the correction that repeated it was asked again instead of filled.
+  expect(kinds(asked)).toEqual([
+    "credential:missing_credentials",
+    "credential:invalid_credentials",
+    "credential:invalid_credentials",
+    "code",
+  ]);
+  expect(loginFills(fake).map((values) => values[1])).toEqual([wrong.password, account.password]);
+});
+
+it("does not count a sign-in whose page sent no request carrying the values, even when the marker shows", async () => {
+  const fake = fakeSite({ silent: true });
+  const { ask, asked } = owner();
+  expect(await signIn(recipeOf(), fake, ask)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "sign_in_check_failed" })),
+  );
+  // The page showed the account, but no request it sent carried the login.
+  expect(fake.state.signedIn).toBe(true);
+  expect(kinds(asked)).toEqual(["credential:missing_credentials"]);
+});
+
+it("never fills a username its recorded marker rejected, even when a correction repeats it", async () => {
+  const fake = fakeSite({ usernameMarker: true });
+  const wrong = { username: "synthetic-wrong-user", password: account.password };
+  const { ask, asked } = owner({ logins: [wrong, wrong, account] });
+  const recipe: SignInRecipe = {
+    ...recipeOf(),
+    steps: [{ ...loginStep, rejectedMarkers: [{ slot: "username", selector: "#username-error" }] }],
+  };
+  expect(await signIn(recipe, fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(kinds(asked)).toEqual([
+    "credential:missing_credentials",
+    "credential:invalid_credentials",
+    "credential:invalid_credentials",
+  ]);
+  expect(loginFills(fake).map((values) => values[0])).toEqual([wrong.username, account.username]);
+});
+
+it("fails RecipeFailed, value-free, when the entry page does not load", async () => {
+  const fake = fakeSite({ entryFails: true });
+  const { ask, asked } = owner();
+  const result = await signIn(recipeOf(), fake, ask);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "entry_page_unavailable" })),
+  );
+  expect(Either.isLeft(result) && result.left.message).toBe(
+    "The sign-in page didn't load, so the run stopped before the tool ran. Check that the website is reachable, then run the tool again.",
+  );
+  expect(asked).toEqual([]);
+  expect(fake.fills).toEqual([]);
 });

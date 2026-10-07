@@ -56,3 +56,25 @@ it("says why a run's sign-in failed and what to do, naming the field and never a
     "Sign-in failed (MissingRecipe): The tool's saved sign-in can't be read (unknown version), so the tool doesn't run signed out. Build the tool again.",
   );
 });
+
+it("reports a run job whose sign-in failed without warning of a website action, since the operation never ran", async () => {
+  const view = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const jobs = yield* makeMcpJobs(1, "run");
+        const started = yield* jobs.start(() =>
+          Effect.fail(new SignInRunFailed({ code: "CredentialsRejected", reason: "password" })),
+        );
+        let current = yield* jobs.get(started.job_id, 500);
+        for (let attempt = 0; attempt < 5 && current.status === "running"; attempt++)
+          current = yield* jobs.get(started.job_id, 500);
+        return current;
+      }),
+    ),
+  );
+  expect(view).toMatchObject({
+    status: "failed",
+    error:
+      "Sign-in failed (CredentialsRejected): The website rejected the password given for this sign-in, and the run sends it no more. Run the tool again with the right value.",
+  });
+});
