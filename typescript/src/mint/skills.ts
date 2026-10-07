@@ -68,10 +68,11 @@ export interface WorkspaceGuide {
 }
 
 /**
- * `standalone` renders each named section's own text. `hosted` is for a host that composed the
- * directory with its own text for every section first, so any section left is an error.
+ * Turns one authoring file's text into what the minter reads. `sectionKey` is the file's key, such
+ * as `core` for `core/SKILL.md`. The default renders each named section's standalone text. A host
+ * that composed the directory with its own text supplies a render that checks that text instead.
  */
-export type AuthoringMode = "hosted" | "standalone";
+export type AuthoringRender = (text: string, sectionKey: string) => string;
 
 /**
  * A named section is `<!-- pomerado:section ID -->`, or `<!-- pomerado:section ID:start`, its
@@ -100,12 +101,7 @@ const refuseFencedSections = (text: string) => {
   }
 };
 
-const authoringText = (text: string, mode: AuthoringMode, sectionKey: string): string => {
-  if (mode === "hosted") {
-    if (sectionTrace.test(text))
-      throw new Error("Hosted authoring has a section the host did not compose");
-    return text;
-  }
+const standaloneText: AuthoringRender = (text, sectionKey) => {
   refuseFencedSections(text);
   const seen = new Set<string>();
   const rendered = text.replace(section, (_match: string, id: string, content?: string) => {
@@ -119,14 +115,18 @@ const authoringText = (text: string, mode: AuthoringMode, sectionKey: string): s
   return rendered;
 };
 
-const readGuideFile = (directory: string, path: string, sectionKey: string, mode: AuthoringMode) =>
+const readGuideFile = (
+  directory: string,
+  path: string,
+  sectionKey: string,
+  render: AuthoringRender,
+) =>
   Effect.tryPromise({
     try: async () =>
-      authoringText(
+      render(
         new TextDecoder("utf-8", { fatal: true }).decode(
           await readScopedFile(directory, `workspace/${path}`),
         ),
-        mode,
         sectionKey,
       ),
     catch: (error) =>
@@ -144,20 +144,20 @@ const readGuideFile = (directory: string, path: string, sectionKey: string, mode
 /** Pass the trusted installed authoring directory explicitly; it is not a model-selected path. */
 export const loadWorkspaceGuide = (
   directory: string,
-  mode: AuthoringMode = "standalone",
+  render: AuthoringRender = standaloneText,
 ): Effect.Effect<WorkspaceGuide, MintFailure> =>
   Effect.gen(function* () {
-    const instructions = yield* readGuideFile(directory, "AGENTS.md", "agents", mode);
+    const instructions = yield* readGuideFile(directory, "AGENTS.md", "agents", render);
     const files = new Map([["AGENTS.md", instructions]]);
     for (const { path, sectionKey } of workspaceGuideFiles)
-      files.set(path, yield* readGuideFile(directory, path, sectionKey, mode));
+      files.set(path, yield* readGuideFile(directory, path, sectionKey, render));
     return { instructions, files };
   });
 
 /** Pass the trusted installed authoring directory explicitly; it is not a model-selected path. */
 export const loadAuthoringSkills = (
   directory: string,
-  mode: AuthoringMode = "standalone",
+  render: AuthoringRender = standaloneText,
 ): Effect.Effect<readonly SkillDescriptor[], MintFailure> =>
   Effect.tryPromise({
     try: async () =>
@@ -172,11 +172,10 @@ export const loadAuthoringSkills = (
             name: entry.name,
             description: entry.description,
             content: new TextEncoder().encode(
-              authoringText(
+              render(
                 new TextDecoder("utf-8", { fatal: true }).decode(
                   await readScopedFile(directory, `${entry.name}/SKILL.md`),
                 ),
-                mode,
                 entry.name,
               ),
             ),
@@ -198,7 +197,7 @@ export const loadAuthoringSkills = (
 
 export const loadStandaloneAuthoring = (directory: string) =>
   Effect.gen(function* () {
-    const guide = yield* loadWorkspaceGuide(directory, "standalone");
-    const skills = yield* loadAuthoringSkills(directory, "standalone");
+    const guide = yield* loadWorkspaceGuide(directory);
+    const skills = yield* loadAuthoringSkills(directory);
     return { ...guide, skills };
   });

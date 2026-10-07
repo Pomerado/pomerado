@@ -92,12 +92,6 @@ export type SpentSignIn =
 
 export type { SessionLoss };
 
-/**
- * Why the host signed a page in again by itself, as it records each automatic sign-in: the page
- * was signed out when the operation started, or became signed out while it ran.
- */
-export type AutomaticSignInCause = "signed_out_at_start" | "signed_out_mid_operation";
-
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
@@ -743,11 +737,6 @@ const mintHostFailures = [
   "recovery_unconfirmed",
 ] as const;
 type MintHostFailure = (typeof mintHostFailures)[number];
-/**
- * Host failures no later attempt gets past: a spent model quota stays spent until someone restores
- * it, so maintenance never requeues the repair.
- */
-export const finalHostFailures: ReadonlySet<MintHostFailure> = new Set(["model_quota_exhausted"]);
 
 /** Guardian's finite reason for denying a publication, as a build's result carries it. */
 export const PublicationDenial = Schema.Struct({
@@ -1108,11 +1097,6 @@ const HarnessTerminal = Schema.Struct({
   // new workers each restore the other's checkpoint.
   blocked: Schema.optionalWith(BuildBlockedOutcome, { exact: true }),
 });
-/**
- * The part of a successful build's result its caller gets: its summary and the site defaults it
- * took. The rest of the result is the host's own record and stays in the stored result.
- */
-export const BuildCallerResult = HarnessTerminal.pick("summary", "assumptions");
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
@@ -1269,12 +1253,6 @@ export interface MintDependencies {
    * execution is reviewed under write authority and the write build rules.
    */
   readonly upgradeToWrite?: (change: string) => Effect.Effect<void, MintFailure>;
-  /**
-   * The host's part of `upgradeToWrite`: checks and screens `change`, then returns the switch of
-   * its own authority, which cannot fail, so the worker records the effect only once nothing else
-   * can fail.
-   */
-  readonly prepareWriteUpgrade?: (change: string) => Effect.Effect<() => void, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;

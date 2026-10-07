@@ -50,6 +50,16 @@ export interface CredentialKeyboard {
   ) => Effect.Effect<typeof CredentialInsertion.Type, Error>;
 }
 
+/**
+ * The execution context a host's page calls bound the field in, for a host whose page calls
+ * evaluate in a world other than the page's main one. `frameId` is the field's frame when it is
+ * not the session's own. Without it, the field resolves in the main world.
+ */
+export type CredentialBindingWorld = (
+  cdp: PrivateCredentialCdp,
+  binding: { readonly sessionId: string; readonly frameId: string | undefined },
+) => Effect.Effect<number, Error>;
+
 export interface PrivateCredentialCdp {
   readonly sessions: (targetId?: string) => readonly string[];
   readonly send: (
@@ -76,10 +86,6 @@ const NativeNode = Schema.Struct({
   shadowRoots: Schema.optional(Schema.Array(Schema.Unknown)),
 });
 const NativeDocument = Schema.Struct({ root: Schema.Unknown });
-const NativeFrameTree = Schema.Struct({
-  frameTree: Schema.Struct({ frame: Schema.Struct({ id: Schema.String }) }),
-});
-const NativeWorld = Schema.Struct({ executionContextId: Schema.Number });
 const ResolvedNode = Schema.Struct({
   object: Schema.Struct({ objectId: Schema.optional(Schema.String) }),
 });
@@ -172,7 +178,7 @@ const resultOf = (value: unknown) => {
 const findBinding = (
   cdp: PrivateCredentialCdp,
   target: CredentialTarget,
-  utilityWorldName: string | undefined,
+  bindingWorld: CredentialBindingWorld | undefined,
 ) =>
   Effect.gen(function* () {
     let found:
@@ -190,24 +196,11 @@ const findBinding = (
     }
     if (found === undefined) return "binding_not_found" as const;
     let executionContextId: number | undefined;
-    if (utilityWorldName !== undefined) {
-      const frameId =
-        found.frameId ??
-        (yield* command(cdp, found.sessionId, "Page.getFrameTree", {}).pipe(
-          Effect.flatMap(Schema.decodeUnknown(NativeFrameTree)),
-          Effect.map(({ frameTree }) => frameTree.frame.id),
-          Effect.mapError((cause) => new Error("Credential frame unavailable", { cause })),
-        ));
-      // Hosted locator evaluation binds in its existing isolated world; no main-world fallback.
-      const world = yield* command(cdp, found.sessionId, "Page.createIsolatedWorld", {
-        frameId,
-        worldName: utilityWorldName,
-      }).pipe(
-        Effect.flatMap(Schema.decodeUnknown(NativeWorld)),
-        Effect.mapError((cause) => new Error("Credential world unavailable", { cause })),
-      );
-      executionContextId = world.executionContextId;
-    }
+    if (bindingWorld !== undefined)
+      executionContextId = yield* bindingWorld(cdp, {
+        sessionId: found.sessionId,
+        frameId: found.frameId,
+      });
     const value = yield* command(cdp, found.sessionId, "DOM.resolveNode", {
       backendNodeId: found.backendNodeId,
       ...(executionContextId === undefined ? {} : { executionContextId }),
@@ -235,11 +228,11 @@ export const makeCredentialKeyboard = (
   cdp: PrivateCredentialCdp,
   // error-reporting-allow: typed-recovery releasing the temporary DOM object cannot undo inserted credentials; the owned browser context also releases it when closed
   release: (effect: Effect.Effect<unknown, Error>) => Effect.Effect<void> = Effect.ignore,
-  utilityWorldName?: string,
+  bindingWorld?: CredentialBindingWorld,
 ): CredentialKeyboard => ({
   insertText: (target, text) =>
     Effect.gen(function* () {
-      const bound = yield* findBinding(cdp, target, utilityWorldName);
+      const bound = yield* findBinding(cdp, target, bindingWorld);
       if (typeof bound === "string") return bound;
       const value = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
         objectId: bound.objectId,

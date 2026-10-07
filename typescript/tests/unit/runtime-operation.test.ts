@@ -8,8 +8,8 @@ import {
   maximumInputIssues,
 } from "../../src/runtime/errors.js";
 import { defineOperation, executeOperation } from "../../src/runtime/operation.js";
-import { browserPromise } from "../../src/browser/promise.js";
 import { leftOf } from "../support/expect-failure.js";
+import type { ConditionObservation, ConditionState } from "../../src/browser/index.js";
 
 const makeContext = (lifecycle: string[] = []) =>
   Effect.gen(function* () {
@@ -142,25 +142,6 @@ describe("operation host", () => {
     });
   });
 
-  it("constructs Promise adapters lazily and supplies the shared remaining budget", async () => {
-    const context = await Effect.runPromise(makeContext());
-    let calls = 0;
-    const operation = browserPromise(
-      context,
-      "read",
-      ({ remainingMs }) => {
-        calls += 1;
-        return Promise.resolve(remainingMs());
-      },
-      { timeoutMs: 200 },
-    );
-    expect(calls).toBe(0);
-    const remaining = await Effect.runPromise(operation);
-    expect(calls).toBe(1);
-    expect(remaining).toBeGreaterThan(0);
-    expect(remaining).toBeLessThanOrEqual(200);
-  });
-
   // The frozen deadline clock leaves the test clock to end the window. A slow observation keeps
   // the number of polls the test clock must step through small.
 
@@ -171,81 +152,6 @@ describe("operation host", () => {
     expect(outer.child(5_000).remainingMs()).toBe(10);
     now = 101;
     expect(outer.remainingMs()).toBe(0);
-  });
-
-  it("does not start a Promise after logging consumed the remaining budget", async () => {
-    let now = 0;
-    const context = await Effect.runPromise(makeContext());
-    let dispatched = false;
-    const result = await Effect.runPromise(
-      browserPromise(
-        {
-          ...context,
-          deadline: Deadline.after(100, () => now),
-          events: {
-            emit: () =>
-              Effect.sync(() => {
-                now = 101;
-              }),
-          },
-        },
-        "click",
-        () => {
-          dispatched = true;
-          return Promise.resolve();
-        },
-        {
-          deadline: Deadline.after(5_000, () => now),
-        },
-      ).pipe(Effect.either),
-    );
-    expect(leftOf(result)).toMatchObject({
-      _tag: "DeadlineExceeded",
-      dispatch: "not_sent",
-      pwTimeoutSource: "action_default",
-    });
-    expect(dispatched).toBe(false);
-  });
-
-  it.each([
-    { timeoutMs: undefined, expected: "action_default" },
-    { timeoutMs: 5_000, expected: "explicit_option" },
-  ])(
-    "reports $expected for an exhausted parent with option $timeoutMs without claiming its cause",
-    async ({ timeoutMs, expected }) => {
-      let now = 0;
-      const context = await Effect.runPromise(makeContext());
-      const parent = Deadline.after(10, () => now);
-      now = 11;
-      let called = false;
-      const result = await Effect.runPromise(
-        browserPromise(
-          { ...context, deadline: parent },
-          "read",
-          () => {
-            called = true;
-            return Promise.resolve("ready");
-          },
-          timeoutMs === undefined ? {} : { timeoutMs },
-        ).pipe(Effect.either),
-      );
-      expect(result).toMatchObject({
-        _tag: "Left",
-        left: { _tag: "DeadlineExceeded", dispatch: "not_sent", pwTimeoutSource: expected },
-      });
-      expect(called).toBe(false);
-    },
-  );
-
-  it("keeps native Promise rejection separate from deadline configuration", async () => {
-    const context = await Effect.runPromise(makeContext());
-    const result = await Effect.runPromise(
-      browserPromise(context, "read", () => Promise.reject(new Error("native locator failed")), {
-        timeoutMs: 5_000,
-      }).pipe(Effect.either),
-    );
-    expect(result).toMatchObject({ _tag: "Left", left: { _tag: "BrowserFailure" } });
-    expect(leftOf(result)).not.toHaveProperty("pwTimeoutSource");
   });
 
   it("leaves an outer operation deadline untagged", async () => {
@@ -358,5 +264,29 @@ describe("input issues", () => {
     const long = "a".repeat(maximumInputIssuePath);
     const [issue] = (await issuesFor(Schema.Struct({ [long]: Schema.String }), {})) ?? [];
     expect(issue?.path.length).toBe(maximumInputIssuePath);
+  });
+});
+
+// Saved integrations import the authored runtime (`../runtime/index.js`, which re-exports
+// `browser/index.js`) from the installed package on every run, so its error classes stay.
+describe("authored runtime errors", () => {
+  it.each([
+    "TargetPageMismatch",
+    "TargetNotFound",
+    "TargetAmbiguous",
+    "TargetGuardMismatch",
+    "TargetGuardUnavailable",
+    "ConditionTimeout",
+  ])("exports %s with its tag to authored operations", async (name) => {
+    const runtime: Record<string, unknown> = await import("../../src/browser/index.js");
+    const ErrorClass = runtime[name];
+    if (typeof ErrorClass !== "function") throw new Error(`${name} is not exported`);
+    expect(Reflect.construct(ErrorClass, [{}])).toMatchObject({ _tag: name });
+  });
+
+  it("exports the condition types a timeout reports", () => {
+    const observation: ConditionObservation = { name: "ready", state: "unknown" };
+    const state: ConditionState = observation.state;
+    expect(state).toBe("unknown");
   });
 });

@@ -997,27 +997,6 @@ export const withFailureContext = (
 };
 
 /**
- * Ends an existing detail's cause chain with another error, such as a failed ROLLBACK beside
- * the statement error that caused it. The entry is described, redacted and capped like every
- * chain entry; it replaces the innermost cause when the chain is full, and the detail keeps its
- * size bound and its archive-only serialization (a spread copy would lose both).
- */
-export const withCauseEntry = (detail: FailureDetail, error: unknown): FailureDetail => {
-  const entry = describeError(error).underlying;
-  if (entry === undefined) return archiveOnly(fitSize({ ...detail }));
-  const bounded =
-    entry.message === undefined
-      ? entry
-      : { ...entry, message: truncate(entry.message, bounds.chainMessage) };
-  return archiveOnly(
-    fitSize({
-      ...detail,
-      causeChain: [...(detail.causeChain ?? []).slice(0, bounds.chainDepth - 1), bounded],
-    }),
-  );
-};
-
-/**
  * A detail nested in a failure object is invisible to JSON serialization: RPC encoders,
  * public responses and `JSON.stringify(failure)` omit it. Only `failureDetailMetadata` and
  * `failureDetailOf` project it, into the archive and the maintenance evidence files, and
@@ -1131,52 +1110,6 @@ export const failureDetailOf = (
       ...(described.causeChain === undefined ? {} : { causeChain: described.causeChain }),
       ...(described.stack === undefined ? {} : { stack: described.stack }),
     }),
-  };
-};
-
-const finiteName = /^[A-Za-z][A-Za-z0-9_.:/-]{0,95}$/;
-const finiteNameOf = (value: unknown) =>
-  typeof value === "string" && finiteName.test(value) ? value : undefined;
-
-/** The finite identifiers beside full detail in a retained publication refusal. */
-export const failureFiniteNames = (
-  value: unknown,
-):
-  | {
-      readonly failure: {
-        readonly subCause: FailureSubCause;
-        readonly operation?: string;
-        readonly errorName?: string;
-        readonly errorCode?: string | number;
-      };
-    }
-  | Record<string, never> => {
-  const detail = failureDetailOf(value)?.failureDetail;
-  if (detail === undefined) return {};
-  const operation = finiteNameOf(detail.operation);
-  const errorName = finiteNameOf(detail.underlying?.name);
-  const code = detail.underlying?.code;
-  const errorCode =
-    typeof code === "number" && Number.isSafeInteger(code) ? code : finiteNameOf(code);
-  return {
-    failure: {
-      subCause: detail.subCause,
-      ...(operation === undefined ? {} : { operation }),
-      ...(errorName === undefined ? {} : { errorName }),
-      ...(errorCode === undefined ? {} : { errorCode }),
-    },
-  };
-};
-
-/** Operational-log projection: finite names only, never messages, stacks or context. */
-export const failureDetailFiniteMetadata = (
-  value: unknown,
-): { readonly subCause: FailureSubCause; readonly operation?: string } | undefined => {
-  const detail = failureDetailMetadata(value)?.failureDetail;
-  if (detail === undefined) return undefined;
-  return {
-    subCause: detail.subCause,
-    ...(detail.operation === undefined ? {} : { operation: detail.operation }),
   };
 };
 

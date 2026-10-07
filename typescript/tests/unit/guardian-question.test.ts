@@ -7,12 +7,15 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { answersForReview, questionForReview } from "../../src/guardian/question.js";
 import type { PendingQuestion } from "../../src/guardian/question.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution, Reviewer, ReviewTurn } from "../../src/guardian/review.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
+
+const native = { executionEnvironment: nativeExecutionEnvironment };
 
 afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
 
@@ -126,7 +129,7 @@ it("reviews a question with the execution context and the bounded capture reader
     [message({ outcome: "allow_business", rationale: "Plan choice needs the user." })],
   ]);
   const result = await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       question,
       (path, offset) =>
@@ -182,7 +185,7 @@ const unreadable: ReviewTurn["readSource"] = () =>
 it("tells the question review that host sign-in rules are never an owner's prohibition", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       question,
       unreadable,
@@ -283,7 +286,7 @@ it("reviews every string the caller will see, screened, but no host-held login d
   expect(JSON.stringify(screened)).not.toContain("PRIVATE_");
   const requests = scripted([[message({ outcome: "authentication", rationale: "Login." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       pending,
       screened,
       unreadable,
@@ -461,7 +464,7 @@ it("gives a review the owner's own option and note beside their picks, as the ow
   // A later review carries both to Guardian, and their links name where the owner's work lives.
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       { ...pending, answeredQuestions: reviewed },
       question,
       unreadable,
@@ -524,7 +527,7 @@ it("never takes an option label the owner typed back as a note or an own option 
   ]);
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}")).reviewQuestion(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
       { ...pending, answeredQuestions: reviewed },
       question,
       unreadable,
