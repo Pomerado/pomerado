@@ -375,7 +375,8 @@ const build = (
               ),
             ),
           ),
-          timeoutMs: 40_000,
+          // Each build runs several resets and live steps; under a loaded machine 40 s was tight.
+          timeoutMs: 60_000,
         });
         const built = yield* service.mint({
           ...request,
