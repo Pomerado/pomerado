@@ -39,6 +39,8 @@ const credentialQuestion = (
 /**
  * Local values feed the original inspected-field fill without a credential store or portal. A fill
  * that refused a field of the screen fails as a sign-in the host refused (`autofillRefusalFailure`).
+ * A check that shows the site signed in ends the sign-in, so a later check counts only the
+ * challenge fields of screens filled after it.
  */
 export const makeLiveAuthentication = (options: {
   readonly page: AutofillPage;
@@ -54,6 +56,8 @@ export const makeLiveAuthentication = (options: {
 }) => {
   const values: Partial<Record<AutofillSlot, string>> = {};
   const screens: AutofillStep[] = [];
+  /** Where the current sign-in's screens start in `screens`. */
+  let signInStart = 0;
   /** Whether a screen's fill may have sent anything to the site. */
   let sent = false;
   const field = (input: AutofillStepRequest["fields"][number]): AutofillField => {
@@ -172,7 +176,15 @@ export const makeLiveAuthentication = (options: {
         indicator,
         page: options.page,
         siteOrigin: options.siteOrigin,
+        authenticationOrigins: options.authenticationOrigins,
         screens,
-      }),
+        challengeScreens: screens.slice(signInStart),
+      }).pipe(
+        Effect.tap((checked) =>
+          Effect.sync(() => {
+            if (checked.signedIn) signInStart = screens.length;
+          }),
+        ),
+      ),
   };
 };

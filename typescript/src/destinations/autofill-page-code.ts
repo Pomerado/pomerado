@@ -327,17 +327,52 @@ export const SignedInPage = Schema.Struct({
   challengeFormVisible: Schema.Boolean,
 });
 
+/**
+ * Page code: whether a recorded challenge field still asks. A selector counts only where it
+ * matches a control that shows and takes typing, in a frame on the site or a configured sign-in
+ * origin whose every frame above it shows. A frame that detaches during the check shows nothing.
+ */
 const signedInChallengeFormCode = `
-const visibleFrame = async (frame) =>
-  frame.parentFrame() === null || await (await frame.frameElement()).isVisible();
+// A frame's own address, or for an about:blank or about:srcdoc frame, the first one above it with
+// a real address, as locate reads where a control sits.
+const frameAddress = (frame) => {
+  let scope = frame;
+  while (scope !== null && ["about:blank", "about:srcdoc"].includes(scope.url())) scope = scope.parentFrame();
+  return scope === null ? "" : scope.url();
+};
+const challengeOrigin = (frame) => {
+  let url;
+  try {
+    url = new URL(frameAddress(frame));
+  } catch {
+    return false;
+  }
+  return url.hostname === siteHost || url.hostname.endsWith("." + siteHost) || authenticationOrigins.includes(url.origin);
+};
+// The frame and every frame above it show, as a question's frames are read.
+const frameShows = async (frame) => {
+  for (let scope = frame; scope.parentFrame() !== null; scope = scope.parentFrame())
+    if (!(await (await scope.frameElement()).isVisible())) return false;
+  return true;
+};
+// A read-only or disabled control takes no typing, and one that is no form control throws.
+const takesTyping = (control) => control.isEditable({ timeout: 1000 }).catch(() => false);
 const recordedChallengeVisible = async (selectors) => {
+  if (selectors.length === 0) return false;
   for (const frame of primary.frames()) {
-    if (!(await visibleFrame(frame))) continue;
-    for (const selector of selectors) {
-      const located = frame.locator(selector);
-      const count = Math.min(await located.count(), 100);
-      for (let index = 0; index < count; index++)
-        if (await located.nth(index).isVisible()) return true;
+    try {
+      if (!challengeOrigin(frame) || !(await frameShows(frame))) continue;
+      for (const selector of selectors) {
+        const located = frame.locator(selector);
+        const count = Math.min(await located.count(), 100);
+        for (let index = 0; index < count; index++) {
+          const control = located.nth(index);
+          if (await control.isVisible() && await takesTyping(control)) return true;
+        }
+      }
+    } catch (error) {
+      if (frame.isDetached()) continue;
+      throw error;
     }
   }
   return false;
@@ -350,7 +385,9 @@ const recordedChallengeVisible = async (selectors) => {
  * Another form's password field, such as a change-password form or an inner service's login,
  * does not count unless one of those selectors matches in it. A hidden match, such as the username
  * a change-password form keeps for password managers, is no sign-in form showing. With no
- * `signInFields`, any visible password field counts.
+ * `signInFields`, any visible password field counts. A recorded challenge field
+ * (`challengeFields`) still asks as `signedInChallengeFormCode` reads it, on the site or one of
+ * `authenticationOrigins`.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -359,6 +396,7 @@ export const autofillSignedInCode = (
   signInFields: readonly string[],
   challengeFields: readonly string[],
   popups: readonly AutofillPopup[] = [],
+  authenticationOrigins: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
@@ -378,6 +416,7 @@ const onSite = (frame) => {
   }
   return host === siteHost || host.endsWith("." + siteHost);
 };
+const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
 const visibleIn = async (selector, scopes) => {
   for (const scope of scopes) {
     const located = scope.locator(selector);

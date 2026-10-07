@@ -504,17 +504,24 @@ export type AutofillScreens = readonly {
  * Checks the minter's signed-in indicator on the live page: the selector is visible and the path
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
- * visible one. It also refuses a visible explicitly recorded challenge, including in a provider
- * frame. It does not classify unrecorded controls or infer a challenge from the page route.
- * Callers must inspect and record each authentication screen before checking completion.
- * Another form's password field does not count unless a recorded selector matches in it.
- * Screens with no field leave any visible password field failing it.
+ * visible one. It also refuses an explicitly recorded challenge field of the current sign-in's
+ * `challengeScreens` (`screens` unless given) that still shows and takes typing, on the site or
+ * one of `authenticationOrigins`, a provider frame included. A read-only or disabled control, an
+ * unconfigured off-site frame and a frame inside a hidden one do not count. It does not classify
+ * unrecorded controls or infer a challenge from the page route. Callers must inspect and record
+ * each authentication screen before checking completion. Another form's password field does not
+ * count unless a recorded selector matches in it. Screens with no field leave any visible
+ * password field failing it.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly screens: AutofillScreens;
+  /** The current sign-in's screens, whose recorded challenges count; `screens` by default. */
+  readonly challengeScreens?: AutofillScreens | undefined;
+  /** The configured sign-in origins off the site, where a recorded challenge also counts. */
+  readonly authenticationOrigins?: readonly string[] | undefined;
 }): Effect.Effect<AutofillSignedInCheck> =>
   Effect.gen(function* () {
     const { indicator, page } = input;
@@ -527,7 +534,7 @@ export const checkAutofillSignedIn = (input: {
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields.map((field) => field.selector))
       .filter((selector) => !frameCrossing(selector));
-    const challengeFields = input.screens
+    const challengeFields = (input.challengeScreens ?? input.screens)
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
       .filter((field) =>
@@ -544,6 +551,7 @@ export const checkAutofillSignedIn = (input: {
           signInFields,
           challengeFields,
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
+          input.authenticationOrigins ?? [],
         ),
         15,
       )
