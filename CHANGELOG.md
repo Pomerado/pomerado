@@ -56,9 +56,7 @@ The package now holds the code the local host runs, the hook interfaces another 
 
 ### Other changes
 
-- `makeGuardian` decodes a publication decision with `decodePublicationDecision` when the host passes no `decodePublication`, instead of failing it as an invalid decision. A host's own `decodePublication` still decodes when given.
-- `pomerado/core/guardian/publication` exports `decodePublicationDecision`, which checks each finding against the review's file index, `guardianPublicationPolicy` and `publicDefinitionPath`.
-- `pomerado/core/mint/publication-review` holds the local publication review: `reviewPublication`, the `PublicationReview` hook its host supplies, `PublicationCandidate`, `publicDefinition`, `publicationScope`, `sessionEvidenceFiles`, `publicationEvidenceNote` and `exampleOutputEvidence`. That last one binds the example's screened output to the source it ran, keeps a prefix that ends on a code point past 96 KiB, and withholds it when the host's credential precheck fails. An intent-derived `exampleInput` key the input schema doesn't list comes back as the host's own input feedback.
+- `makeGuardian` decodes a publication decision with the package's own decoder, which checks each finding against the review's file index, when the host passes no `decodePublication`, instead of failing it as an invalid decision. A host's own `decodePublication` still decodes when given.
 - `savedOperationFiles` from `pomerado/core/mint/operation-source` gives the files a local build saves. `operationSourceFiles` is unchanged.
 - `reviewDenied` from `pomerado/core/mint/review-context` keeps a decision's `reason` and `findings` on the failure's `review` when the decision has them.
 - `pomerado/core/mint/step-checks` exports `sourceDigest`, the sha256 digest of a set of source files in any order.

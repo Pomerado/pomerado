@@ -53,7 +53,6 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - `trusted_publication` indexes those files: whether each ships, whether it is current and who wrote it, the host or the minter. A publication review gets 32 turns.
 - Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
 - Any other denial goes back to the minter with Guardian's reason and findings.
-- `pomerado/core/mint/publication-review` holds the review's parts, and the local host supplies the Guardian call as a `PublicationReview`.
 - A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
 
 ## The runtime

@@ -7,10 +7,10 @@ import { MintFailure } from "./contracts.js";
 import { entrypointImportClosure } from "./operation-source.js";
 
 /**
- * The publication review every host runs on finish_build, after its own checks: one Guardian
- * review of the bundle that would ship, the public definition the host writes from the build's
- * metadata and schemas, and the example's screened output or, for a write, the act session that
- * performed it. A host supplies the review itself through `PublicationReview`, and screens the
+ * The local host's publication review on finish_build, after its own checks: one Guardian review
+ * of the bundle that would ship, the public definition the host writes from the build's metadata
+ * and schemas, and the example's screened output or, for a write, the act session that performed
+ * it. The local host supplies the Guardian call through `PublicationReview`, and screens the
  * example's output before it reaches this module.
  */
 
@@ -194,7 +194,7 @@ type PublicationExample =
       readonly intentDerived: boolean;
     };
 
-/** What the review is told about its evidence, part of the notes a host gives it. */
+/** What the review is told about its evidence, part of the notes the host gives it. */
 export const publicationEvidenceNote = (example: PublicationExample) =>
   example.kind === "read"
     ? `The actual ${example.completed ? "completed" : "failed"} example used executed/${example.entrypoint}; its actual screened output and provenance are in ${exampleOutputPath}. Judge the declared capability claims against that output, not against exploratory probe observations. Its input/output contract was extracted from the imported operation before running the business action.${example.schemasReadOffline === true ? " The source changed after the example ran, so the host read the input and output schemas and questions again offline from current source and checked that the example's own input and output decode against them." : ""} Inspect its baseline and current source for schema compatibility. Publish only if the JSON schemas in publication/definition.json still describe the current operation.`
@@ -205,8 +205,8 @@ const publicationAllowedEffect =
   "Publish the current operation bundle, including the files the host adds to it, and the public definition only; do not execute the business action again.";
 
 /**
- * A host's Guardian review of a publication: `files` is the bundle, `evidence` the publication
- * files with the definition first, and `baseline` the source a read example ran, served under
+ * The local host's Guardian call for a publication review: `files` is the bundle, `evidence` the
+ * publication files with the definition first, and `baseline` the source a read example ran, under
  * `executed/`. It returns the review's ID once Guardian allows; a denial fails as `ReviewDenied`
  * with Guardian's reason and findings.
  */
