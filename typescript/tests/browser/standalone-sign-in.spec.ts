@@ -10,11 +10,12 @@ import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
+import { recordingGuardian } from "./guardian-context-fixture.js";
 import { startShop, shopAccount, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in today, on the shop's one-screen and two-screen sign-ins: what the
-// host asks, what a later run does, and what a second screen's submit may carry. Scripted models
-// drive each build.
+// host asks, what a later run does, what a second screen's submit may carry, and what Guardian
+// reads of a screen that shows a typed value. Scripted models drive each build.
 
 type Output = ModelResponse["output"];
 const call = (name: string, input: unknown, callId = name): Output[number] => ({
@@ -397,5 +398,86 @@ test("a later build in the same session judges its first sign-in screen as typed
       ["password"],
     ]);
     expectRefusedSubmit(shop, mintRequests);
+  });
+});
+
+test("a password screen that shows the typed email signs in, and Guardian reads that screen with the email masked", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium and three host sign-in steps through a form navigation",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests: ModelRequest[] = [];
+    const minter = provider((_request, index) => {
+      const steps: Output[] = [
+        [
+          signInStep(
+            { fields: [{ selector: "#username", accepts: ["email"] }], submit: "#next" },
+            "identifier",
+          ),
+        ],
+        [
+          signInStep(
+            { fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+            "password",
+          ),
+        ],
+        [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+      ];
+      return steps[index] ?? [message("Stopping here.")];
+    }, mintRequests);
+    const reviewer = recordingGuardian();
+    const asked: InputRequest[] = [];
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: reviewer.provider,
+            ask: answers(asked),
+            timeoutMs: 30_000,
+          });
+          // The password screen shows the typed email in its text, label and placeholder.
+          yield* service.mint({
+            url: `${shop.origin}/sign-in`,
+            intent: "Read the account",
+            effect: "read",
+            input: {},
+          });
+        }),
+      ),
+    );
+    expect(asked.map(({ questions }) => questions.map((question) => question.id))).toEqual([
+      ["email"],
+      ["password"],
+    ]);
+    expect(objects(toolResult(mintRequests, "password"))).toContainEqual(
+      expect.objectContaining({ outcome: "filled", submit: "clicked" }),
+    );
+    expect(shop.state.sessionPosts).toBe(1);
+    expect(objects(toolResult(mintRequests, "signed_in"))).toContainEqual(
+      expect.objectContaining({ signedIn: true }),
+    );
+    // Guardian read the password screen, with the email it shows masked.
+    const passwordReview = reviewer.reviews.find((review) =>
+      review.reads.some(
+        (read) =>
+          read["path"] === "operation/sign-in-step.json" &&
+          String(read["source"]).includes("#password"),
+      ),
+    );
+    const screen = String(passwordReview?.reads.map((read) => read["source"]).join("\n"));
+    expect(screen).toContain("[private]");
+    expect(screen).not.toContain(shopAccount.username);
+    // Its review says the host fills the login's values, which the review never shows.
+    expect(String(passwordReview?.input["untrusted_observations"])).toContain(
+      "never appear in this review",
+    );
+    for (const text of [JSON.stringify(mintRequests), JSON.stringify(reviewer.reviews)]) {
+      expect(text).not.toContain(shopAccount.username);
+      expect(text).not.toContain(shopAccount.password);
+    }
   });
 });
