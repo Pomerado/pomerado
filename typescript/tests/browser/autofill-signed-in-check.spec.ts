@@ -66,6 +66,7 @@ const checkPage = async (
   path = "/account",
   options: {
     readonly authenticationOrigins?: readonly string[];
+    readonly challengeScreens?: AutofillScreens;
     readonly frames?: Readonly<Record<string, string>>;
   } = {},
 ) => {
@@ -83,8 +84,10 @@ const checkPage = async (
       page: await hostPage(page),
       siteOrigin: site,
       screens: signIn,
-      challengeScreens: signIn,
-      authenticationOrigins: options.authenticationOrigins ?? [],
+      ...(options.authenticationOrigins === undefined
+        ? {}
+        : { authenticationOrigins: options.authenticationOrigins }),
+      ...(options.challengeScreens === undefined ? {} : { challengeScreens: options.challengeScreens }),
     }),
   );
 };
@@ -301,6 +304,21 @@ test("a recorded code field with no inspected identity leaves the check as witho
   expect(
     await checkPage(page, `${marker}${form}<label>Password<input id="password" type="password"></label>`, null, [...screens, code]),
   ).toEqual({ signedIn: false, failed: "password_field_visible", url: `${site}/account` });
+});
+
+// `challengeScreens` names the current sign-in's screens, whose recorded challenges count. Left
+// out, it is `screens`, so every recorded screen's challenges count.
+test("the signed-in check counts the recorded challenges of `challengeScreens`, and of `screens` without it", async ({ page }) => {
+  const account = `${marker}<form><label>Verification code<input name="code"></label><button>Verify</button></form>`;
+  expect(await checkPage(page, account, null, codeScreen)).toEqual({
+    signedIn: false,
+    failed: "challenge_form_visible",
+    url: `${site}/account`,
+  });
+  expect(await checkPage(page, account, null, codeScreen, "/account", { challengeScreens: screens })).toEqual({
+    signedIn: true,
+    url: `${site}/account`,
+  });
 });
 
 // A redeem box can share a code field's generic label. The name and id inspection recorded tell

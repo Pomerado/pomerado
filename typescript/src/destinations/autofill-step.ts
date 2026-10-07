@@ -512,14 +512,15 @@ export type AutofillScreens = readonly {
  * matches, the page is on the site, and no password field of the sign-in's own `screens` (the
  * recipe's in a run, the minter's in a mint) is left: one of their fields, or one in the form of a
  * visible one. It also refuses an explicitly recorded challenge field of the current sign-in's
- * `challengeScreens` while the same control still shows and takes typing, on the site or one of
- * `authenticationOrigins`, a provider frame included. The same control is one the same words name
- * as named the field at inspection (its label, `aria-label` and placeholder), with its type,
- * autocomplete, name and id where recorded. A field recorded with no such words counts for nothing,
- * since the host cannot tell it from another control its selector matches. A read-only or disabled
- * control, an unconfigured off-site frame, a frame inside a hidden one, and a control or frame the
- * host cannot read in time, such as one that detaches during the check, do not count. It does not
- * classify unrecorded controls or infer a challenge from the page route. Callers must inspect and record
+ * `challengeScreens` (`screens` unless given) while the same control still shows and takes
+ * typing, on the site or one of `authenticationOrigins`, a provider frame included. The same
+ * control is one the same words name as named the field at inspection (its label, `aria-label`
+ * and placeholder), with its type, autocomplete, name and id where recorded. A field recorded with
+ * no such words counts for nothing, since the host cannot tell it from another control its
+ * selector matches. A read-only or disabled control, an unconfigured off-site frame, a frame
+ * inside a hidden one, and a control or frame the host cannot read in time, such as one that
+ * detaches during the check, do not count. It does not classify unrecorded controls or infer a
+ * challenge from the page route. Callers must inspect and record
  * each authentication screen before checking completion. Another form's password field does not
  * count unless a recorded selector matches in it. Screens with no field leave any visible
  * password field failing it.
@@ -529,10 +530,10 @@ export const checkAutofillSignedIn = (input: {
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly screens: AutofillScreens;
-  /** The current sign-in's screens, whose recorded challenges count. */
-  readonly challengeScreens: AutofillScreens;
+  /** The current sign-in's screens, whose recorded challenges count; `screens` by default. */
+  readonly challengeScreens?: AutofillScreens | undefined;
   /** The configured sign-in origins off the site, where a recorded challenge also counts. */
-  readonly authenticationOrigins: readonly string[];
+  readonly authenticationOrigins?: readonly string[] | undefined;
 }): Effect.Effect<AutofillSignedInCheck> =>
   Effect.gen(function* () {
     const { indicator, page } = input;
@@ -545,7 +546,7 @@ export const checkAutofillSignedIn = (input: {
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields.map((field) => field.selector))
       .filter((selector) => !frameCrossing(selector));
-    const challengeFields = input.challengeScreens
+    const challengeFields = (input.challengeScreens ?? input.screens)
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
       .flatMap((field) =>
@@ -564,8 +565,8 @@ export const checkAutofillSignedIn = (input: {
           siteHost(input.siteOrigin),
           signInFields,
           challengeFields,
-          input.authenticationOrigins,
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
+          input.authenticationOrigins ?? [],
         ),
         15,
       )

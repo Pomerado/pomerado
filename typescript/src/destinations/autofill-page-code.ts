@@ -441,8 +441,8 @@ export const autofillSignedInCode = (
     readonly selector: string;
     readonly identity: ControlIdentity;
   }[],
-  authenticationOrigins: readonly string[],
   popups: readonly AutofillPopup[] = [],
+  authenticationOrigins: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
