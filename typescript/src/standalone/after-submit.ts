@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import type { AutofillStepReport } from "../destinations/autofill-step.js";
+import type { AutofillStepReport, StepSlot } from "../destinations/autofill-step.js";
 import {
   afterSubmitPath,
   inlineControls,
@@ -10,7 +10,7 @@ import {
 import type { LocalWorkspace } from "../execution/local-workspace.js";
 
 /** Whether a step did not resolve: refused, uncertain, or filled without its submit going out. */
-const failed = (report: AutofillStepReport) =>
+const failed = (report: AutofillStepReport<StepSlot>) =>
   report.outcome !== "filled" || (report.submit !== "clicked" && report.submit !== "none");
 
 /**
@@ -25,7 +25,7 @@ export const makeAfterSubmit = (options: {
 }) => {
   let step = 0;
   let last: { readonly path: string; readonly saved: Saved } | undefined;
-  return (report: AutofillStepReport) =>
+  return (report: AutofillStepReport<StepSlot>) =>
     Effect.gen(function* () {
       step += 1;
       if (report.outcome === "filled" && report.controls !== undefined) {

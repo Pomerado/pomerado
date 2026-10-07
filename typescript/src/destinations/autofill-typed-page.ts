@@ -3,8 +3,10 @@ import { judgedOrigins } from "./autofill-refusal.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
+  AutofillSlot,
   AutofillStep,
   AutofillStepReport,
+  StepSlot,
 } from "./autofill-step.js";
 
 /**
@@ -18,21 +20,22 @@ import type {
  * may have put a typed value in any other, such as a form action's host.
  */
 export const rememberTyping = <
-  Fill extends { readonly inspection: AutofillInspection },
+  Fill extends { readonly inspection: AutofillInspection<Slot> },
   EI,
   EF,
+  Slot extends StepSlot = AutofillSlot,
 >(calls: {
   readonly inspect: (request: {
-    readonly step: AutofillStep;
+    readonly step: AutofillStep<Slot>;
     readonly judgedBeforeTyping: readonly string[] | undefined;
-  }) => Effect.Effect<AutofillRefusal | AutofillInspection, EI>;
-  readonly fill: (input: Fill) => Effect.Effect<AutofillStepReport, EF>;
+  }) => Effect.Effect<AutofillRefusal | AutofillInspection<Slot>, EI>;
+  readonly fill: (input: Fill) => Effect.Effect<AutofillStepReport<Slot>, EF>;
   readonly typed?: boolean;
 }) => {
   let typed = calls.typed === true;
   const judged = new Set<string>();
   return {
-    inspect: (step: AutofillStep) =>
+    inspect: (step: AutofillStep<Slot>) =>
       calls.inspect({ step, judgedBeforeTyping: typed ? [...judged] : undefined }).pipe(
         Effect.tap((inspected) =>
           Effect.sync(() => {

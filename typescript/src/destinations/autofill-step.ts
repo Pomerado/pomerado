@@ -49,11 +49,18 @@ export const identifierPreference: readonly IdentifierKind[] = [
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
  * or one of its recovery codes. It proves the account and never picks it.
  */
-export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code" | "private_answer";
+export type ExtraSecretSlot = "date_of_birth" | "zip" | "recovery_code";
 /** A secret field's slot: the password, a one-time code or an extra secret. */
 export type SecretSlot = "password" | "code" | ExtraSecretSlot;
 /** The kind of value a sign-in field takes; the host fills it from the login of that kind. */
 export type AutofillSlot = IdentifierKind | SecretSlot;
+/**
+ * The answer to a security question, which the owner gives for each step and no login holds. Only
+ * a host that fills private answers offers it (`MintDependencies.privateAnswers`).
+ */
+export type PrivateAnswerSlot = "private_answer";
+/** Any slot a step's field may take: `AutofillSlot`, or a private answer where the host offers it. */
+export type StepSlot = AutofillSlot | PrivateAnswerSlot;
 
 /**
  * A field of a sign-in screen. An identifier field lists every kind it accepts (`accepts`, from the
@@ -61,9 +68,9 @@ export type AutofillSlot = IdentifierKind | SecretSlot;
  * one the login holds, by `identifierPreference`, or one the owner gave. A secret field names its
  * slot alone.
  */
-export interface AutofillField {
+export interface AutofillField<Slot extends StepSlot = AutofillSlot> {
   readonly selector: string;
-  readonly slot: AutofillSlot;
+  readonly slot: Slot;
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
@@ -80,15 +87,18 @@ export interface AutofillField {
     | undefined;
 }
 
-/** A sign-in screen as the minter names it: an identifier field lists the kinds it accepts. */
-export interface AutofillStepRequest {
+/**
+ * A sign-in screen as the minter names it: an identifier field lists the kinds it accepts. A host
+ * that fills private answers widens `Secret` with `PrivateAnswerSlot`.
+ */
+export interface AutofillStepRequest<Secret extends SecretSlot | PrivateAnswerSlot = SecretSlot> {
   readonly popup?: AutofillPopup | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   readonly fields: readonly (
     | { readonly selector: string; readonly accepts: readonly IdentifierKind[] }
     | {
         readonly selector: string;
-        readonly slot: SecretSlot;
+        readonly slot: Secret;
         readonly questionSelector?: string | undefined;
         readonly format?: DateOfBirthFormat | undefined;
         readonly control?: DateControl | undefined;
@@ -104,10 +114,10 @@ export interface AutofillStepRequest {
  * One sign-in screen: the fields the host fills and the control it clicks. A screen that advances
  * by itself names no submit; a method choice or a "Next" names only one.
  */
-export interface AutofillStep {
+export interface AutofillStep<Slot extends StepSlot = AutofillSlot> {
   readonly popup?: AutofillPopup | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
-  readonly fields: readonly AutofillField[];
+  readonly fields: readonly AutofillField<Slot>[];
   readonly submit?: string | undefined;
   /** A two-factor method choice: every method offered, and `submit` the one picked. */
   readonly methods?:
@@ -226,7 +236,7 @@ export type AutofillRefusal = {
  * The step's controls as the host found them, before anything is typed: where each sits, for the
  * host's own check and the fill's recheck, and how each is labelled, for Guardian.
  */
-export interface AutofillInspection {
+export interface AutofillInspection<Slot extends StepSlot = AutofillSlot> {
   /** Host-only target binding for this inspection/fill; never persisted or published. */
   readonly popupTargetId?: string | undefined;
   /**
@@ -257,7 +267,7 @@ export interface AutofillInspection {
      */
     readonly origin: string;
     readonly fields: readonly (typeof Described.Type & {
-      readonly slot: AutofillSlot;
+      readonly slot: Slot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
       readonly format?: DateOfBirthFormat | undefined;
     })[];
@@ -276,12 +286,12 @@ export type AutofillFieldStatus = "filled" | "failed" | "not_attempted";
  * the fields and the submit may have gone out. Nothing is ever retried by itself (Kernel's fill
  * rule too: a lost answer can follow writes that landed).
  */
-export type AutofillStepReport =
+export type AutofillStepReport<Slot extends StepSlot = AutofillSlot> =
   | AutofillRefusal
   | {
       readonly outcome: "filled";
       readonly fields: readonly {
-        readonly slot: AutofillSlot;
+        readonly slot: Slot;
         readonly status: AutofillFieldStatus;
       }[];
       /**
@@ -352,7 +362,7 @@ export interface AutofillPage {
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
-  step: AutofillStep,
+  step: AutofillStep<StepSlot>,
   trust: { readonly siteOrigin: string; readonly authenticationOrigins: readonly string[] },
   from: number,
   named?: ReadonlySet<string>,
@@ -395,13 +405,13 @@ export const untrustedTarget = (
  * land in a URL that stays byte-exact. Once the host typed into the page
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  */
-export const inspectAutofillStep = (input: {
-  readonly step: AutofillStep;
+export const inspectAutofillStep = <Slot extends StepSlot = AutofillSlot>(input: {
+  readonly step: AutofillStep<Slot>;
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly judgedBeforeTyping?: readonly string[] | undefined;
-}): Effect.Effect<AutofillRefusal | AutofillInspection> =>
+}): Effect.Effect<AutofillRefusal | AutofillInspection<Slot>> =>
   Effect.gen(function* () {
     const { step, page, siteOrigin, authenticationOrigins } = input;
     if (
@@ -458,7 +468,8 @@ export const inspectAutofillStep = (input: {
           const field = step.fields[index];
           return {
             ...described,
-            slot: field?.slot ?? "username",
+            // Each found field has its step's field: the default only answers the index's type.
+            slot: (field?.slot ?? "username") as Slot,
             ...(field?.accepts === undefined ? {} : { accepts: field.accepts }),
             ...(field?.format === undefined ? {} : { format: field.format }),
           };
@@ -501,7 +512,7 @@ export type AutofillScreens = readonly {
   readonly popup?: AutofillPopup | undefined;
   readonly fields: readonly {
     readonly selector: string;
-    readonly slot?: AutofillSlot;
+    readonly slot?: StepSlot;
     readonly identity?: ControlIdentity | undefined;
   }[];
 }[];
