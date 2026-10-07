@@ -77,7 +77,7 @@ it.skipIf(process.platform !== "linux")(
 
 it("keeps real authoring files compact through the pinned SDK manifest clone", async () => {
   const catalog = await Effect.runPromise(
-    loadAuthoringSkills(resolve("typescript/authoring"), "standalone"),
+    loadAuthoringSkills(resolve("typescript/authoring")),
   );
   const prepared = skills({ skills: [...catalog] }).processManifest(
     new Manifest({ root: "/workspace" }),

@@ -1,11 +1,11 @@
 import { expect } from "@playwright/test";
 import type { Page, CDPSession } from "playwright";
 import { runInThisContext } from "node:vm";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { AutofillPage } from "../../src/destinations/autofill-step.js";
-import { isolatedLocatorPage } from "./isolated-locator-page.js";
+import { isolatedLocatorPage, isolatedWorldName } from "./isolated-locator-page.js";
 import { makeCredentialKeyboard } from "../../src/destinations/credential-keyboard.js";
-import { kernelPlaywrightUtilityWorld } from "../../src/destinations/cdp-contracts.js";
+import type { CredentialBindingWorld } from "../../src/destinations/credential-keyboard.js";
 
 /** Every URL a report's failure detail names is an origin alone: no path, query or fragment. */
 export const expectOriginsOnly = (report: object) => {
@@ -107,6 +107,44 @@ export const hostPage = async (
   };
 };
 
+const FrameTree = Schema.Struct({
+  frameTree: Schema.Struct({ frame: Schema.Struct({ id: Schema.String }) }),
+});
+const World = Schema.Struct({ executionContextId: Schema.Number });
+const fixtureCall = (run: () => Promise<unknown>, failure: string) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new Error(failure, { cause }) });
+
+/**
+ * The isolated world `isolatedLocatorPage` evaluates locators in, so the keyboard resolves the
+ * field where the host's focus call bound it.
+ */
+const fixtureBindingWorld: CredentialBindingWorld = (cdp, { sessionId, frameId }) =>
+  Effect.gen(function* () {
+    const frame =
+      frameId ??
+      (yield* fixtureCall(
+        () => cdp.send("Page.getFrameTree", {}, sessionId),
+        "Fixture frame unavailable",
+      ).pipe(
+        Effect.flatMap(Schema.decodeUnknown(FrameTree)),
+        Effect.map(({ frameTree }) => frameTree.frame.id),
+        Effect.mapError((cause) => new Error("Fixture frame unavailable", { cause })),
+      ));
+    const world = yield* fixtureCall(
+      () =>
+        cdp.send(
+          "Page.createIsolatedWorld",
+          { frameId: frame, worldName: isolatedWorldName },
+          sessionId,
+        ),
+      "Fixture world unavailable",
+    ).pipe(
+      Effect.flatMap(Schema.decodeUnknown(World)),
+      Effect.mapError((cause) => new Error("Fixture world unavailable", { cause })),
+    );
+    return world.executionContextId;
+  });
+
 /**
  * The host's typing on a local page, over a DevTools session of its own, as the recorder's socket
  * types on a worker. Each value it is given to type counts as typed on the page from then on.
@@ -156,7 +194,7 @@ export const hostKeyboard = async (
       },
     },
     undefined,
-    kernelPlaywrightUtilityWorld,
+    fixtureBindingWorld,
   );
   const keyboard: typeof native = {
     insertText: (target, text) =>

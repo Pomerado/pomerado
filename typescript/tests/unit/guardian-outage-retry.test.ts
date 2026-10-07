@@ -2,6 +2,7 @@ import { OpenAIProvider, setDefaultModelProvider } from "@openai/agents";
 import { Effect, Fiber, TestClock, TestContext } from "effect";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type {
   GuardianDiagnostics,
@@ -11,6 +12,8 @@ import type {
 } from "../../src/guardian/review.js";
 
 afterEach(() => vi.restoreAllMocks());
+
+const native = { executionEnvironment: nativeExecutionEnvironment };
 
 const pending: PendingExecution = {
   invocationId: "invocation_a",
@@ -357,7 +360,7 @@ it("reports the provider's spent quota from Guardian's own model call, without r
     const result = await Effect.runPromise(
       Effect.either(
         makeGuardian({
-          ...makeOpenAIReviewer("{{ tenant_policy_config }}"),
+          ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
           retry: quickRetry,
         }).review(pending, readSource),
       ),
