@@ -77,6 +77,7 @@ Call `execute` with purpose `authenticate`, target `liveBrowser` and a `signInSt
 front of you. Pass the stable route you clicked as `loginUrl` on the first one (above), never the
 page it redirected to; runs open that route to replay your screens.
 
+<!-- pomerado:section auth.step-fields:start
 Security questions can change between screens and visits. Inspect the current question and its
 answer control each time, then record the observed field through the same `signInStep` mechanism.
 Never assume a fixed challenge stage or put question text or an answer into a recipe.
@@ -85,14 +86,15 @@ Use `slot: "private_answer"` for each observed security-question answer field. W
 question has one visible match in that field's frame, supply its stable `questionSelector`, never
 its text. The host rereads the question before privately filling the answer. No answer reaches
 you, Guardian, generated code or the recipe. One-time and recovery codes keep their own slots.
-
-<!-- pomerado:section auth.step-fields -->
+pomerado:section auth.step-fields:end -->
 
 A screen may record `rejectedMarkers`, each with a field slot and an observed, value-free
 rejection selector. The slots are `username`, `email`, `phone`, `account_number`, `password`,
 `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
+
+<!-- pomerado:section auth.code-rejection:start
 `private_answer` has no recorded rejection marker or automatic correction: when the site rejects
 an answer, inspect the question screen and stop rather than resending the same answer. A host
 refusal with cause `question_changed` is not the site's rejection: nothing was typed, so read the
@@ -106,8 +108,7 @@ sign-in origin: the label, accessible name and placeholder it had when you recor
 again. Another control your selector also matches, such as a gift-card or promo code box, does not
 count. It does not classify unrecorded forms by their names or page route. A successful host check does
 not replace inspecting the current screen and verifying authenticated access.
-
-<!-- pomerado:section auth.code-rejection -->
+pomerado:section auth.code-rejection:end -->
 
 Guardian checks each step against the screen: that every field takes the kinds it lists, that the
 submit is the right sign-in action, including a fieldless continuation or verification-method
