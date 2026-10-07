@@ -221,6 +221,8 @@ export const makeLiveAuthentication = (options: {
                   placeholder: named.placeholder,
                   type: named.type,
                   autocomplete: named.autocomplete,
+                  name: named.name,
+                  id: named.id,
                 },
               };
         }),

@@ -248,6 +248,29 @@ test("a later sign-in's check ignores an earlier sign-in's code selector on an a
   expect(await Effect.runPromise(auth.signedIn(indicator))).toEqual({ signedIn: true, url: `${site}/login` });
 });
 
+// A redeem box on the account page can share the code field's generic label and name. The id the
+// host recorded when it inspected the code field tells them apart, and the code form itself still
+// asks.
+test("a recorded code field's id tells it from a redeem box with the same label and name", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<form><label>Code<input name="code" id="otp"></label><button>Verify</button></form>' }));
+  await page.goto(`${site}/login`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const auth = makeLiveAuthentication({
+    page: browser, keyboard, siteOrigin: site, authenticationOrigins: [],
+    ask: makeInputAsker(() => Effect.succeed({ code: "482913" })),
+    registerSecret: () => undefined, review: () => Effect.void,
+  });
+  const indicator = { selector: "#identity" };
+  await Effect.runPromise(auth.step({ fields: [{ selector: 'role=textbox[name="Code"]', slot: "code" }] }));
+  await page.setContent('<p id="identity">Signed in</p><form><label>Code<input name="code" id="otp"></label></form>');
+  expect(await Effect.runPromise(auth.signedIn(indicator))).toMatchObject({ failed: "challenge_form_visible" });
+  await page.setContent('<p id="identity">Signed in</p><form><label>Code<input name="code" id="redeem"></label><button>Redeem</button></form>');
+  expect(await Effect.runPromise(auth.signedIn(indicator))).toEqual({ signedIn: true, url: `${site}/login` });
+});
+
 // The prompt holds at most 2,000 characters, so a long question is cut to leave room for the
 // site's origin, and the owner is still asked.
 test("asks a question too long for the prompt with the site's origin, cut to fit", async ({ page }) => {

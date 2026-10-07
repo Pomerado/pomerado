@@ -328,6 +328,8 @@ export interface ControlIdentity {
   readonly placeholder: string | null;
   readonly type: string | null;
   readonly autocomplete: string | null;
+  readonly name: string | null;
+  readonly id: string | null;
 }
 
 /** What `autofillSignedInCode` answers. */
@@ -346,8 +348,8 @@ export const SignedInPage = Schema.Struct({
  */
 const signedInChallengeFormCode = `
 ${clipCode}
-// The same words name it as named the recorded field, with its type and autocomplete where
-// inspection recorded one.
+// The same words name it as named the recorded field, with its type, autocomplete, name and id
+// where inspection recorded one.
 const sameControl = async (control, identity) => {
   const named = await control.evaluate((element) => {
     ${controlNamingCode}
@@ -355,7 +357,7 @@ const sameControl = async (control, identity) => {
   });
   const found = Object.fromEntries(Object.entries(named).map(([key, value]) => [key, clip(value)]));
   return ["label", "ariaLabel", "placeholder"].every((key) => found[key] === identity[key]) &&
-    ["type", "autocomplete"].every((key) => identity[key] === null || found[key] === identity[key]);
+    ["type", "autocomplete", "name", "id"].every((key) => identity[key] === null || found[key] === identity[key]);
 };
 // A frame's own address, or for an about:blank or about:srcdoc frame, the first one above it with
 // a real address, as locate reads where a control sits.

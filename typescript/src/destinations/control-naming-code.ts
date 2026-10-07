@@ -1,7 +1,8 @@
 /**
  * Page code, inside a function evaluated on a control: `controlNaming(element)`, what names it as
  * the host reads it, never its value: the words of its labels and `aria-labelledby` elements
- * without their fields, its `aria-label` and `placeholder`, and its `type` and `autocomplete`.
+ * without their fields, its `aria-label` and `placeholder`, its `type` and `autocomplete`, and its
+ * `name` and `id`.
  * Inspection describes a control with it, and the signed-in check compares a recorded challenge
  * field with it.
  */
@@ -20,6 +21,8 @@ export const controlNamingCode = `const controlNaming = (element) => {
     ariaLabel: element.getAttribute("aria-label"),
     type: element.getAttribute("type"),
     autocomplete: element.getAttribute("autocomplete"),
+    name: element.getAttribute("name"),
+    id: element.getAttribute("id"),
   };
 };`;
 

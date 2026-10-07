@@ -103,7 +103,7 @@ not sign-in evidence. Inspect and record each new authentication screen before c
 The host checks the challenge fields recorded since the last check that showed the site signed
 in. One counts only while the same control shows and takes typing, on the site or a configured
 sign-in origin: the label, accessible name and placeholder it had when you recorded it name it
-again. Another control your selector also matches, such as a gift-card or promo code box, does not
+again, with the same name and id where it had them. Another control your selector also matches, such as a gift-card or promo code box, does not
 count. It does not classify unrecorded forms by their names or page route. A successful host check does
 not replace inspecting the current screen and verifying authenticated access.
 

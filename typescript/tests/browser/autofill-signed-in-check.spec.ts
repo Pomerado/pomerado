@@ -24,12 +24,18 @@ const screens = [
 
 /**
  * A recorded challenge field: its selector and slot, and the words that named the control when the
- * host inspected it, which a control must share to count as that field still asking.
+ * host inspected it, with its name and id where given, which a control must share to count as that
+ * field still asking.
  */
 const recorded = (
   selector: string,
   slot: "code" | "private_answer",
-  naming: { readonly label?: string; readonly ariaLabel?: string },
+  naming: {
+    readonly label?: string;
+    readonly ariaLabel?: string;
+    readonly name?: string;
+    readonly id?: string;
+  },
 ) => ({
   fields: [
     {
@@ -41,6 +47,8 @@ const recorded = (
         placeholder: null,
         type: null,
         autocomplete: null,
+        name: naming.name ?? null,
+        id: naming.id ?? null,
       },
     },
   ],
@@ -294,3 +302,21 @@ test("a recorded code field with no inspected identity leaves the check as witho
     await checkPage(page, `${marker}${form}<label>Password<input id="password" type="password"></label>`, null, [...screens, code]),
   ).toEqual({ signedIn: false, failed: "password_field_visible", url: `${site}/account` });
 });
+
+// A redeem box can share a code field's generic label. The name and id inspection recorded tell
+// them apart, and the code form itself, with the same name and id, still asks.
+for (const [name, control, failed] of [
+  ["another name and id", '<input name="redeem" id="redeem">', undefined],
+  ["the same name and another id", '<input name="code" id="redeem">', undefined],
+  ["the same name and id", '<input name="code" id="otp">', "challenge_form_visible"],
+] as const)
+  test(`the signed-in check with a control labelled as the recorded code field, with ${name}`, async ({ page }) => {
+    const code = recorded('role=textbox[name="Code"]', "code", { label: "Code", name: "code", id: "otp" });
+    expect(
+      await checkPage(page, `${marker}<form><label>Code${control}</label><button>Apply</button></form>`, null, [...screens, code]),
+    ).toEqual(
+      failed === undefined
+        ? { signedIn: true, url: `${site}/account` }
+        : { signedIn: false, failed, url: `${site}/account` },
+    );
+  });
