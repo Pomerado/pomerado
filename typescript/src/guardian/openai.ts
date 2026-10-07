@@ -499,6 +499,7 @@ const reviewerWithPolicy = (
                   value: { modelState: "not_requested" },
                   timing: undefined,
                 };
+                // A private host kind reports only the final finite timing, as on success.
                 return (
                   turn.reportDiagnostic?.(
                     {
@@ -506,7 +507,9 @@ const reviewerWithPolicy = (
                       termination: { ...(options.causeMetadata ?? modelCauseMetadata)(exit.cause) },
                     },
                     timing,
-                  ) ?? Effect.void
+                  ) ??
+                  (timing === undefined ? undefined : turn.observeTiming?.(timing)) ??
+                  Effect.void
                 );
               }).pipe(
                 Effect.interruptible,

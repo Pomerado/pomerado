@@ -14,6 +14,7 @@ import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import type { WriteStep } from "../mint/step-checks.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
+import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { InputAsker } from "../runtime/input-request.js";
@@ -29,6 +30,9 @@ import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
 const identifiers: ReadonlySet<AutofillSlot> = new Set(identifierPreference);
+/** What the host does with a sign-in step Guardian allows, for its review. */
+const signInStepNote =
+  "The host fills the login's values, which never appear in this review, into the fields the step names and clicks the named submit on the sign-in screen of the authorized site.";
 /** A step that could not start its page: the browser call failed, so nothing ran. */
 const unavailable = (operation: string) => (error: unknown) =>
   new MintFailure({
@@ -177,23 +181,27 @@ export const mintState = (
       ask: mintAsk,
       registerSecret: secrets.register,
       typing: session.signInTyping,
+      // The screen may show a value the caller gave, such as the typed email on a password
+      // screen; it reaches Guardian masked. The source check still refuses any value left.
       review: (step, inspection) =>
-        context
-          .review(
-            {
-              entrypoint: "operation/sign-in-step.json",
-              sources: new Map([
-                [
-                  "operation/sign-in-step.json",
-                  JSON.stringify({ step, screen: inspection.screen }),
-                ],
-              ]),
-              input: {},
-              currentExecution: { purpose: "authenticate", target: "liveBrowser" },
-            },
-            "not_sent",
-          )
-          .pipe(Effect.asVoid),
+        screenMintText(
+          { projection: session.projection },
+          { step, screen: inspection.screen },
+        ).pipe(
+          Effect.flatMap((source) =>
+            context.review(
+              {
+                entrypoint: "operation/sign-in-step.json",
+                sources: new Map([["operation/sign-in-step.json", source]]),
+                input: {},
+                currentExecution: { purpose: "authenticate", target: "liveBrowser" },
+                note: signInStepNote,
+              },
+              "not_sent",
+            ),
+          ),
+          Effect.asVoid,
+        ),
     });
     /**
      * The build's one write session: whether its first act step dispatched, the agent's
