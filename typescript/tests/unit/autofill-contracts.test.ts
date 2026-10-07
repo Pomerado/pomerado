@@ -1,6 +1,7 @@
 import { Either, Schema } from "effect";
 import { expect, it } from "vitest";
 import { RejectedMarker, SecretSlots } from "../../src/destinations/autofill-contracts.js";
+import { autofillSignedInCode } from "../../src/destinations/autofill-page-code.js";
 import { SignInStep } from "../../src/mint/contracts.js";
 
 it("accepts a one-use private answer as a field but never as a recorded rejection", () => {
@@ -21,4 +22,15 @@ it("retains a private answer's question selector and rejects it on another secre
   expect(Either.isLeft(Schema.decodeUnknownEither(SignInStep)({
     fields: [{ ...field, slot: "password" }],
   }))).toBe(true);
+});
+
+// A caller written for the signed-in page code before challenge fields keeps its arguments:
+// `popups` stays fifth, and with no challenge fields given the code checks no challenge.
+it("keeps the signed-in page code's popups fifth, with no challenge check by default", () => {
+  const code = autofillSignedInCode("target", "#identity", "bank.example.test", ["#password"], [
+    { opener: "primary", origin: "https://login.example.test" },
+  ]);
+  expect(code).toContain('const popupOrigins = ["https://login.example.test"];');
+  expect(code).toContain("const challengeFields = [];");
+  expect(code).toContain("const authenticationOrigins = [];");
 });

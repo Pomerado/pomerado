@@ -430,18 +430,20 @@ const recordedChallengeVisible = async (fields) => {
  * a change-password form keeps for password managers, is no sign-in form showing. With no
  * `signInFields`, any visible password field counts. A recorded challenge field
  * (`challengeFields`, each with the identity the host inspected) still asks as
- * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`.
+ * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`. Both come
+ * after `popups` and default to none, so a caller that passes no challenge fields gets no
+ * challenge check.
  */
 export const autofillSignedInCode = (
   targetId: string,
   selector: string | undefined,
   siteHost: string,
   signInFields: readonly string[],
+  popups: readonly AutofillPopup[] = [],
   challengeFields: readonly {
     readonly selector: string;
     readonly identity: ControlIdentity;
-  }[],
-  popups: readonly AutofillPopup[] = [],
+  }[] = [],
   authenticationOrigins: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
