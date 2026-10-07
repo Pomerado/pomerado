@@ -93,7 +93,11 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
 - A pending question expires after 10 minutes.
 - The server runs one job at a time and keeps at most 32 job records. Finished records expire after 15 minutes.
 - Each job owns a fresh browser context and closes it when the job ends. A minted integration doesn't inherit the mint's signed-in session.
-- An integration that needs a login declares its own sign-in inputs. Pomerado doesn't replay a login automatically. A build that signed in saves its sign-in screens and check, with no value, in `auth-fill.json`.
+- A build that signed in saves its sign-in screens and check, with no value, in `auth-fill.json`. Each call replays them before the tool runs.
+  - It first checks without values, and asks nothing when the session already shows the account. A served call starts in a fresh browser context, so it asks.
+  - Otherwise it asks for the login, and for any code, date of birth, ZIP code or security answer a screen needs. It keeps them in memory for that call only.
+  - A rejected username or password is asked again at most twice, and a rejected value is never sent again.
+  - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs.
 - Restarting the server loses running jobs and keeps saved integrations.
 - A failed job is never replayed. A website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.

@@ -37,7 +37,14 @@
 - A local build publishes its verified sign-in with the integration, with no value in it. `auth-fill.json`, beside `pomerado.json`, holds the sign-in recipe: each screen's page, field selectors and slots, submit, and the signed-in check. It is version 3 only when a security answer names its question, and version 1 or 2 otherwise. `pomerado.json` names it as `signIn: { recipe: "auth-fill.json", entryUrl }`, where the entry is the minter's `loginUrl`, else the first screen's address, without its fragment. `MintArtifact` and `Artifact` take the same optional `signIn`.
   - `auth-fill.json` is reserved, like `pomerado.json`: an artifact's source may not use the name.
   - `readArtifact` refuses an artifact whose recipe it cannot read or whose version it does not know. An artifact with no `signIn` reads as before.
-  - A run in a new session still starts signed out.
+- A run of an artifact with a published sign-in signs in with its recipe before the operation runs.
+  - It first replays the recipe without values, and asks nothing when the session already shows the signed-in check. Otherwise it asks for the login once, as one `credential` question that is never saved, and for each code, date of birth, ZIP code or missing identifier a screen needs, in the site's words. A security answer is asked on every run, from the question its screen shows then. Values stay in memory for the run.
+  - A rejected username or password is asked for again at most twice. A correction that repeats a value the site rejected is never sent, and counts as one of the two. A rejected code gets two fresh ones at most, as in a build.
+  - The entry page must be on the site or a configured sign-in origin, and each screen on the origin its build recorded.
+  - A run that can't sign in fails with `SignInRunFailed` before its operation runs. Its `code` is `CredentialsRejected`, `NeedsInput`, `RecipeFailed` or `MissingRecipe`, and its `reason` names a field or step, never a value. An MCP call reports it as `Sign-in failed (code)` with the reason and what to do.
+  - `readArtifact` fails with `SignInRunFailed` and code `MissingRecipe` for a recipe that is missing, unreadable or of a version the host doesn't know, with `reason` `missing`, `invalid` or `unknown_version`.
+  - An artifact with no `signIn`, as 0.2.0 wrote it, runs as before.
+  - Migrate a library caller that runs a signed-in artifact by answering the login question through its `ask`, and by handling `SignInRunFailed` by its `_tag`.
 - `makeLiveAuthentication` is no longer exported from `pomerado`. `createPomerado` signs in itself.
 
 The package now holds the code the local host runs, the hook interfaces another host implements, and the signed-in marker checks behind `MintDependencies.checkSignedInMarker`. Local use through `pomerado`, `pomerado/mcp` and the CLI needs no change for the following.
