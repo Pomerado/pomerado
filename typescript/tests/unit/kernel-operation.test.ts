@@ -901,7 +901,7 @@ describe("browser calls while the host signs in", () => {
     };
   };
 
-  it("holds a call the script did not await until the host's sign-in returns, then sends it", async () => {
+  it("holds a call the script did not await until the sign-in returns, then sends it", async () => {
     const reached: string[] = [];
     const kernel = fakeKernel(() => {
       reached.push("execute");
@@ -1043,10 +1043,57 @@ describe("browser calls while the host signs in", () => {
         },
       ),
     );
+    // The held call goes out after the failure, so the run may have sent it.
     expect(failureOf(exit)).toMatchObject(
-      Option.some({ _tag: "OperationFailure", sessionLoss: "session_not_kept" }),
+      Option.some({
+        _tag: "OperationFailure",
+        sessionLoss: "session_not_kept",
+        dispatch: "unknown",
+      }),
     );
     expect(duringSignIn).toEqual([]);
+    expect(reached).toEqual(["execute"]);
+  });
+
+  it("counts a held call as possibly sent when the script ends before it goes out", async () => {
+    const reached: string[] = [];
+    const kernel = fakeKernel(() => {
+      reached.push("execute");
+      return { success: true, result: null };
+    });
+    let signIns = 0;
+    const signedIn = signal();
+    // The script ends wrongly, with an Effect it never ran, while its last call is still held.
+    const script = defineOperation(
+      { input: Schema.Struct({}), output: Schema.Boolean },
+      async ({ kernel: client, sessionId, ensureSignedIn }) => {
+        void ensureSignedIn();
+        void client.browsers.playwright.execute(sessionId, {
+          code: 'await page.click("#refresh");',
+          timeout_sec: 10,
+        });
+        return Effect.succeed(true) as unknown as boolean;
+      },
+    );
+    const { exit } = await run(
+      executeKernelOperation(
+        script,
+        {},
+        {
+          kernel: kernel.client,
+          sessionId: "session-1",
+          signIn: async () => {
+            signIns += 1;
+            if (signIns > 1) await signedIn.promise;
+            return { signedInAgain: false };
+          },
+        },
+      ),
+    );
+    expect(failureOf(exit)).toMatchObject(Option.some({ dispatch: "unknown" }));
+    expect(reached).toEqual([]);
+    signedIn.resolve();
+    await nextTask();
     expect(reached).toEqual(["execute"]);
   });
 });

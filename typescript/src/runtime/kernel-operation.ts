@@ -168,10 +168,10 @@ export interface KernelOperationContext<
    * and signs in again only when the page is signed out: `signedInAgain` says it did, so the script
    * opens the page it was on again. The runtime already calls it once before the script runs. The
    * deadline pauses while the host works, and every other browser call the script makes meanwhile
-   * waits until it is done; a call while one is under way joins it. A run with no sign-in, or an offline run, gets
-   * `{ signedInAgain: false }`. When the host cannot sign in again it throws `OperationFailure`
-   * with `sessionLoss: "session_not_kept"`; a value the site refused throws `CredentialsRejected`.
-   * Never call it between a write's commit and its read-back.
+   * waits until it is done; a call while one is under way joins it. A run with no sign-in, or an
+   * offline run, gets `{ signedInAgain: false }`. When the host cannot sign in again it throws
+   * `OperationFailure` with `sessionLoss: "session_not_kept"`; a value the site refused throws
+   * `CredentialsRejected`. Never call it between a write's commit and its read-back.
    */
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   readonly errors: typeof operationErrors;
@@ -411,12 +411,13 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
     const kernel: KernelExecuteClient = {
       browsers: {
         playwright: {
-          execute: (sessionId, body, options) =>
-            afterSignIn(() =>
+          execute: (sessionId, body, options) => {
+            // Counted when made: a held call goes out later, even after the script ends.
+            calls += 1;
+            return afterSignIn(() =>
               settle(
                 Effect.sync(() => {
                   actionTimeout = undefined;
-                  calls += 1;
                 }).pipe(
                   Effect.flatMap(() =>
                     Effect.tryPromise({
@@ -433,7 +434,8 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                   ),
                 ),
               ),
-            ),
+            );
+          },
         },
       },
     };
