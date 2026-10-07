@@ -9,6 +9,7 @@ import {
   type Browser,
   type BrowserContext,
   type CDPSession,
+  type Frame,
   type Page,
 } from "playwright";
 import { Cause, Effect, Exit, Schema } from "effect";
@@ -57,35 +58,147 @@ const identify = (context: BrowserContext, page: Page) =>
     );
   });
 
-/** The values the host watches for while one script runs, and which of them it typed. */
-let watching: { readonly values: readonly string[]; readonly typed: Set<number> } | undefined;
-let typingWatched = false;
 /**
- * Wraps the calls a handle may type through (`fill`, `type` and `pressSequentially` on a page,
- * frame, locator or keyboard) so that one which completed with a watched value as its text marks
- * that value typed. A call that throws marks nothing. The prototypes are shared by every page.
+ * A watched value's index and the URLs of the frames a completed typing call may have entered it
+ * in, when the call started and once it completed, and for keys typed with nothing focused every
+ * address a frame of the page loaded while the call ran.
  */
-const watchTypingCalls = (page: Page) => {
-  if (typingWatched) return;
-  typingWatched = true;
-  const sinks: readonly (readonly [object, readonly string[], number])[] = [
-    [Object.getPrototypeOf(page) as object, ["fill", "type"], 1],
-    [Object.getPrototypeOf(page.mainFrame()) as object, ["fill", "type"], 1],
-    [Object.getPrototypeOf(page.keyboard) as object, ["type"], 0],
-    [Object.getPrototypeOf(page.locator(":root")) as object, ["fill", "type", "pressSequentially"], 0],
-  ];
-  for (const [prototype, methods, index] of sinks)
-    for (const method of methods) {
-      const original: unknown = Reflect.get(prototype, method);
-      if (typeof original !== "function") continue;
-      Reflect.set(prototype, method, async function (this: unknown, ...args: unknown[]) {
-        const result: unknown = await Reflect.apply(original, this, args);
+type Delivery = readonly [index: number, urls: readonly string[]];
+
+/**
+ * The frames a typing call types in, found before it, and for keys with nothing focused the
+ * frames and addresses the page had while it ran, which `later` gives once it ended.
+ */
+interface Targets {
+  readonly frames: readonly Frame[];
+  readonly later?: () => { readonly frames: readonly Frame[]; readonly urls: readonly string[] };
+}
+
+/**
+ * The frame the element `selector` names from `frame` is in, by Playwright's own lookup, the one
+ * its actions use: frame locators, any-frame selectors and aria snapshot references included.
+ * Undefined while there is no such element.
+ */
+const selectorFrames = async (
+  frame: Frame,
+  selector: string,
+  strict: unknown,
+): Promise<Targets | undefined> => {
+  const element = await frame.$(selector, strict === true ? { strict } : undefined);
+  if (element === null) return undefined;
+  const owner = await element.ownerFrame();
+  await element.dispose();
+  return owner === null ? undefined : { frames: [owner] };
+};
+
+/**
+ * The frames of `page` the keyboard types in: the one whose document holds the focused element, by
+ * the browser's own `:focus` match, which Playwright runs apart from the page's scripts and only
+ * the focused frame matches. With nothing focused, keys go to whichever document has the focus,
+ * so every frame the page has before the call, gets or loads a document in while it runs, and has
+ * once it ended, with each address it loaded.
+ */
+const focusedFrames = async (page: Page): Promise<Targets> => {
+  for (const frame of page.frames()) {
+    const focused = await frame.$(":focus").catch(() => null);
+    if (focused === null) continue;
+    await focused.dispose();
+    return { frames: [frame] };
+  }
+  const seen = new Set(page.frames());
+  const urls = new Set<string>();
+  const attached = (frame: Frame) => seen.add(frame);
+  const navigated = (frame: Frame) => {
+    seen.add(frame);
+    urls.add(frame.url());
+  };
+  page.on("frameattached", attached);
+  page.on("framenavigated", navigated);
+  return {
+    frames: page.frames(),
+    later: () => {
+      page.off("frameattached", attached);
+      page.off("framenavigated", navigated);
+      for (const frame of page.frames()) seen.add(frame);
+      return { frames: [...seen], urls: [...urls] };
+    },
+  };
+};
+
+/**
+ * Wraps, for one script, the calls a handle may type through: a frame's `fill` and `type`, which a
+ * page's and a locator's `fill`, `type` and `pressSequentially` go through, and the keyboard's
+ * `type`. Before a call with a watched value as its text, it finds the frames the call types in:
+ * the frame of the element its selector names for a frame's call, looked up again once the call
+ * completed when there was none yet, and the focused frames for the keyboard's, with every frame
+ * and address the page had while it ran when nothing was focused. Once the call completed, it
+ * adds the value to `typed` with those frames' URLs then and now, read without waiting for any
+ * page the typing started to load, unless one of them left the page meanwhile, as a frame the
+ * page swapped out does. A call that throws adds nothing. The methods are shared
+ * by every page, so the returned restore puts the originals back once the script ends.
+ */
+const watchTypingCalls = (
+  page: Page,
+  browser: Browser,
+  values: readonly string[],
+  typed: Delivery[],
+) => {
+  const keyboardFrames = (keyboard: unknown) => {
+    const owner = browser
+      .contexts()
+      .flatMap((context) => context.pages())
+      .find((candidate) => candidate.keyboard === keyboard);
+    return owner === undefined ? Promise.resolve(undefined) : focusedFrames(owner);
+  };
+  const elementFrames = (frame: unknown, args: readonly unknown[]) =>
+    selectorFrames(
+      frame as Frame,
+      String(args[0]),
+      args[2] !== null && typeof args[2] === "object" ? Reflect.get(args[2], "strict") : undefined,
+    );
+  const framePrototype = Object.getPrototypeOf(page.mainFrame()) as object;
+  const sinks = [
+    [framePrototype, "fill", 1, elementFrames, true],
+    [framePrototype, "type", 1, elementFrames, true],
+    [Object.getPrototypeOf(page.keyboard) as object, "type", 0, keyboardFrames, false],
+  ] as const;
+  const restores = sinks.map(([prototype, method, index, targets, again]) => {
+    const own = Object.getOwnPropertyDescriptor(prototype, method);
+    const original: unknown = Reflect.get(prototype, method);
+    if (typeof original !== "function") return () => undefined;
+    Object.defineProperty(prototype, method, {
+      configurable: true,
+      writable: true,
+      value: async function (this: unknown, ...args: unknown[]) {
         const text = args[index];
-        const at = typeof text === "string" ? (watching?.values.indexOf(text) ?? -1) : -1;
-        if (at >= 0) watching?.typed.add(at);
+        const at = typeof text === "string" ? values.indexOf(text) : -1;
+        if (at < 0) return (await Reflect.apply(original, this, args)) as unknown;
+        const before = await targets(this, args).catch(() => undefined);
+        const started = before?.frames.map((frame) => frame.url()) ?? [];
+        let during: ReturnType<NonNullable<Targets["later"]>> | undefined;
+        let result: unknown;
+        try {
+          result = await Reflect.apply(original, this, args);
+        } finally {
+          during = before?.later?.();
+        }
+        const found =
+          before ?? (again ? await targets(this, args).catch(() => undefined) : undefined);
+        const frames = found && [...found.frames, ...(during?.frames ?? [])];
+        const stayed = frames !== undefined && !frames.some((frame) => frame.isDetached());
+        const urls = [...started, ...(during?.urls ?? []), ...(frames ?? []).map((f) => f.url())];
+        if (stayed && frames.length > 0) typed.push([at, [...new Set(urls)]]);
         return result;
-      });
-    }
+      },
+    });
+    return () =>
+      own === undefined
+        ? Reflect.deleteProperty(prototype, method)
+        : Object.defineProperty(prototype, method, own);
+  });
+  return () => {
+    for (const restore of restores.reverse()) restore();
+  };
 };
 
 const script = (
@@ -96,9 +209,8 @@ const script = (
   watch?: readonly string[],
 ) =>
   Effect.gen(function* () {
-    if (watch !== undefined) watchTypingCalls(page);
-    const typed = new Set<number>();
-    watching = watch === undefined ? undefined : { values: watch, typed };
+    const typed: Delivery[] = [];
+    const restore = watch === undefined ? undefined : watchTypingCalls(page, browser, watch, typed);
     let stdout = "";
     let stderr = "";
     let overflow = false;
@@ -153,11 +265,7 @@ const script = (
       catch: asError,
     }).pipe(
       Effect.either,
-      Effect.ensuring(
-        Effect.sync(() => {
-          watching = undefined;
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => restore?.())),
     );
     const delivered = watch === undefined ? {} : { typed: [...typed] };
     if (result._tag === "Left") {
@@ -169,7 +277,7 @@ const script = (
         stdout,
         stderr: `${stderr}${stack}`.slice(0, outputLimit),
         ...delivered,
-      } satisfies BrowserExecuteResponse & { readonly typed?: readonly number[] };
+      } satisfies BrowserExecuteResponse & { readonly typed?: readonly Delivery[] };
     }
     return {
       success: true,
@@ -177,7 +285,7 @@ const script = (
       stdout,
       stderr,
       ...delivered,
-    } satisfies BrowserExecuteResponse & { readonly typed?: readonly number[] };
+    } satisfies BrowserExecuteResponse & { readonly typed?: readonly Delivery[] };
   });
 
 const credential = (
