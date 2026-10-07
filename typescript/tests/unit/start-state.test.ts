@@ -392,7 +392,15 @@ describe("makeBuildStart", () => {
     await build.step("example");
     await build.step("example");
     await build.step("explore");
-    expect(build.calls).toEqual(["entry", "run", "reset:clear failed", "reset:clear", "root", "run", "run"]);
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "reset:clear failed",
+      "reset:clear",
+      "root",
+      "run",
+      "run",
+    ]);
     // Before each reset, never before an exploration that keeps its page.
     expect(build.left).toEqual([2, 3]);
   });

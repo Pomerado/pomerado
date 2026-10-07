@@ -62,7 +62,9 @@ const context = (
       sources,
       entrypoint: step.entrypoint ?? "operation/src/tool.mjs",
       ...(currentExecution === undefined ? {} : { currentExecution }),
-      ...(step.startsOnFreshPage === undefined ? {} : { startsOnFreshPage: step.startsOnFreshPage }),
+      ...(step.startsOnFreshPage === undefined
+        ? {}
+        : { startsOnFreshPage: step.startsOnFreshPage }),
     }),
   );
 const live = (purpose: CurrentExecution["purpose"]): CurrentExecution => ({

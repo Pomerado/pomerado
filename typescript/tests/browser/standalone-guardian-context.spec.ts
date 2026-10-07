@@ -203,7 +203,10 @@ test("a read build's reviews carry each step's own context", async () => {
 test("a step that starts on a reset page is shown no page, and the next step the page it left", async () => {
   test.setTimeout(90_000);
   const site = await startSite((request, response) =>
-    html(response, `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`),
+    html(
+      response,
+      `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`,
+    ),
   );
   const guardian = recordingGuardian();
   try {
@@ -335,7 +338,10 @@ async ({ ask }) => ({ note: await ask("note") }));`,
 test("a question a step asks after its page reset never shows Guardian the page the last step left", async () => {
   test.setTimeout(90_000);
   const site = await startSite((request, response) =>
-    html(response, `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`),
+    html(
+      response,
+      `<title>Fixture</title><h1>${new URL(request.url ?? "/", "http://fixture.invalid").pathname}</h1>`,
+    ),
   );
   const guardian = recordingGuardian();
   try {
