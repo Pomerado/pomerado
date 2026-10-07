@@ -462,19 +462,25 @@ const checkMarker = (marker: object, callId: string) =>
 const markerResult = (requests: readonly ModelRequest[], callId: string) =>
   objects(toolResult(requests, callId)).find((item) => item["kind"] === "host_signed_in_marker");
 /**
- * Mints reads of the shop in one session, one build for each of `builds`: each from its `url`,
- * with a minter that plays its `steps`, one per model request. Returns each build's requests.
+ * Mints the shop in one session, one build for each of `builds`: each from its `url`, a read
+ * unless its `effect` says otherwise, with a minter that plays its `steps`, one per model request.
+ * Returns each build's requests.
  */
 const markerSession = async (
   endpoint: string,
-  builds: readonly { readonly url: string; readonly steps: readonly Output[] }[],
+  builds: readonly {
+    readonly url: string;
+    readonly effect?: "read" | "write";
+    readonly steps: readonly (Output | (() => Output))[];
+  }[],
 ) => {
   const requests: ModelRequest[][] = builds.map(() => []);
   let build = 0;
   const minter = provider((request) => {
     const own = requests[build] ?? [];
     own.push(request);
-    return builds[build]?.steps[own.length - 1] ?? [message("Stopping here.")];
+    const step = builds[build]?.steps[own.length - 1] ?? [message("Stopping here.")];
+    return typeof step === "function" ? step() : step;
   });
   await Effect.runPromise(
     Effect.scoped(
@@ -486,9 +492,9 @@ const markerSession = async (
           ask: answers([]),
           timeoutMs: 45_000,
         });
-        for (const [index, { url }] of builds.entries()) {
+        for (const [index, { url, effect = "read" }] of builds.entries()) {
           build = index;
-          yield* service.mint({ url, intent: "Read the account", effect: "read", input: {} });
+          yield* service.mint({ url, intent: "Read the account", effect, input: {} });
         }
       }),
     ),
@@ -670,5 +676,60 @@ test("a later build in the same session keeps no signed-in page as a signed-out 
       warnings: ["signed_out_page_unchecked"],
     });
     expect(shop.state.loginPosts).toBe(2);
+  });
+});
+
+test("the local minter's marker check loads no page once the write session started", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a host sign-in, two act steps and a marker check",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    let searchLoads: number | undefined;
+    const [build] = await markerSession(endpoint, [
+      {
+        url: `${shop.origin}/login`,
+        effect: "write",
+        steps: [
+          [
+            create("src/search.mjs", openPage("open_search", "/search?q=lamp"), "patch_search"),
+            create("src/account.mjs", openPage("open_account", "/account"), "patch_account"),
+          ],
+          [signInFields()],
+          [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+          // An act step leaves the search page, whose load a site could take as an action.
+          [
+            execute(
+              "act",
+              { entrypoint: "src/search.mjs", intent: "Search the shop" },
+              "act_search",
+            ),
+          ],
+          [
+            execute(
+              "act",
+              { entrypoint: "src/account.mjs", intent: "Open the account" },
+              "act_account",
+            ),
+          ],
+          () => {
+            searchLoads = shop.state.searchPageLoads;
+            return [checkMarker({ selector: "#account", openPath: "/account" }, "account")];
+          },
+        ],
+      },
+    ]);
+    if (build === undefined) throw new Error("No build");
+    expect(objects(toolResult(build, "act_account"))).toContainEqual(
+      expect.objectContaining({ status: "completed" }),
+    );
+    expect(searchLoads).toBe(1);
+    // The next act step continues the page as it is, so the check loads nothing: not the
+    // marker's page, and not the search page the earlier act step left.
+    expect(shop.state.searchPageLoads).toBe(1);
+    expect(objects(toolResult(build, "account"))).toContainEqual(
+      expect.objectContaining({ status: "tool_failed", code: "Unavailable" }),
+    );
   });
 });
