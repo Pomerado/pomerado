@@ -445,28 +445,37 @@ const explore = (name: "search" | "account" | "where", callId = `explore_${name}
     { entrypoint: `explore/${name}.mjs`, intent: `Run the ${name} exploration` },
     callId,
   );
-const signInFields = signInStep(
-  {
-    fields: [
-      { selector: "input[name=username]", accepts: ["username"] },
-      { selector: "input[name=password]", slot: "password" },
-    ],
-    submit: "button",
-  },
-  "sign_in",
-);
+const signInFields = (callId = "sign_in") =>
+  signInStep(
+    {
+      fields: [
+        { selector: "input[name=username]", accepts: ["username"] },
+        { selector: "input[name=password]", slot: "password" },
+      ],
+      submit: "button",
+    },
+    callId,
+  );
 const checkMarker = (marker: object, callId: string) =>
   call("check_signed_in_marker", { intent: "Test the signed-in marker", ...marker }, callId);
 /** The host's answer to the minter's marker check `callId`. */
 const markerResult = (requests: readonly ModelRequest[], callId: string) =>
   objects(toolResult(requests, callId)).find((item) => item["kind"] === "host_signed_in_marker");
-/** Mints a read of the shop from `url` with a minter that plays `steps`, one per model request. */
-const markerBuild = async (endpoint: string, url: string, steps: readonly Output[]) => {
-  const mintRequests: ModelRequest[] = [];
-  const minter = provider(
-    (_request, index) => steps[index] ?? [message("Stopping here.")],
-    mintRequests,
-  );
+/**
+ * Mints reads of the shop in one session, one build for each of `builds`: each from its `url`,
+ * with a minter that plays its `steps`, one per model request. Returns each build's requests.
+ */
+const markerSession = async (
+  endpoint: string,
+  builds: readonly { readonly url: string; readonly steps: readonly Output[] }[],
+) => {
+  const requests: ModelRequest[][] = builds.map(() => []);
+  let build = 0;
+  const minter = provider((request) => {
+    const own = requests[build] ?? [];
+    own.push(request);
+    return builds[build]?.steps[own.length - 1] ?? [message("Stopping here.")];
+  });
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -477,12 +486,18 @@ const markerBuild = async (endpoint: string, url: string, steps: readonly Output
           ask: answers([]),
           timeoutMs: 45_000,
         });
-        yield* service.mint({ url, intent: "Read the account", effect: "read", input: {} });
+        for (const [index, { url }] of builds.entries()) {
+          build = index;
+          yield* service.mint({ url, intent: "Read the account", effect: "read", input: {} });
+        }
       }),
     ),
   );
-  return mintRequests;
+  return requests;
 };
+/** Mints a read of the shop from `url` with a minter that plays `steps`, one per model request. */
+const markerBuild = async (endpoint: string, url: string, steps: readonly Output[]) =>
+  (await markerSession(endpoint, [{ url, steps }]))[0] ?? [];
 
 test("the local minter's marker check before the signedIn step compares a page explored once the login was sent", async () => {
   test.info().annotations.push({
@@ -495,7 +510,7 @@ test("the local minter's marker check before the signedIn step compares a page e
     // The skill's order: sign in, explore signed in, test the marker, then send it.
     const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
       markerFiles,
-      [signInFields],
+      [signInFields()],
       [explore("search")],
       [explore("account")],
       // The search page, explored after the login was sent, lacks the account page's element.
@@ -545,7 +560,7 @@ test("the local minter's marker check after the signedIn step compares the signe
   test.setTimeout(60_000);
   await withShop(async (shop, endpoint) => {
     const mintRequests = await markerBuild(endpoint, `${shop.origin}/login`, [
-      [signInFields],
+      [signInFields()],
       [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
       // The sign-in page the host saw before typing shows it too.
       [checkMarker({ selector: "body" }, "shared")],
@@ -602,5 +617,58 @@ test("the local minter's marker check after the signedIn step compares the signe
     });
     expect(shop.state.loginPosts).toBe(1);
     expect(JSON.stringify(mintRequests)).not.toContain(shopAccount.password);
+  });
+});
+
+test("a later build in the same session keeps no signed-in page as a signed-out page", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Original SDKs, Chromium and two scripted builds with host sign-ins in one session",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const [, later] = await markerSession(endpoint, [
+      {
+        url: `${shop.origin}/login`,
+        steps: [
+          [signInFields()],
+          [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+        ],
+      },
+      {
+        // The session is still signed in, so the account page shows the account, and the first
+        // sign-in step finds no form there.
+        url: `${shop.origin}/account`,
+        steps: [
+          [signInFields()],
+          [create("explore/login.mjs", openPage("open_login", "/login"), "patch_login")],
+          [
+            execute(
+              "explore",
+              { entrypoint: "explore/login.mjs", intent: "Open the sign-in page" },
+              "explore_login",
+            ),
+          ],
+          [signInFields("sign_in_again")],
+          [checkMarker({ selector: "#account", openPath: "/account" }, "account")],
+        ],
+      },
+    ]);
+    if (later === undefined) throw new Error("No later build");
+    expect(objects(toolResult(later, "sign_in"))).toContainEqual(
+      expect.objectContaining({ outcome: "refused", reason: "not_found" }),
+    );
+    // The account page the later build started on was signed in, so it is no signed-out page.
+    // The build has none, and the marker passes unchecked.
+    expect(markerResult(later, "account")).toEqual({
+      kind: "host_signed_in_marker",
+      status: "passed_unchecked",
+      signedOutSnapshot: "unchecked",
+      signedInNow: true,
+      freshLoad: true,
+      warnings: ["signed_out_page_unchecked"],
+    });
+    expect(shop.state.loginPosts).toBe(2);
   });
 });
