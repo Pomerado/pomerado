@@ -360,6 +360,13 @@ describe("a run that can't sign in again", () => {
       journal: commitSent,
       outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false, retry: "never" },
     },
+    // A mark name no authored mark could have is no report, so it proves nothing about commits.
+    {
+      case: "a run labelled a read whose journal reports its commit marks unreadably",
+      declared: "read",
+      journal: { effect: "possible", commits: [{ name: "Place Order", state: "sent" }] },
+      outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false, retry: "never" },
+    },
     {
       case: "a write that entered none of its declared commit steps",
       declared: "write",
