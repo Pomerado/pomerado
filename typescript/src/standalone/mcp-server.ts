@@ -11,7 +11,7 @@ import {
   localRetryKey,
   makeFileJobStore,
   type LocalJobStore,
-} from "../jobs/local-job-store.js";
+} from "../runtime/local-job-store.js";
 import { standard } from "../mcp/schema.js";
 import { inlineLocalRefs } from "../registry/schema-references.js";
 import { InputAnswers } from "../runtime/input-request.js";

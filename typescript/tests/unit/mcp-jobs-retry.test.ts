@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Cause, Deferred, Effect, Ref } from "effect";
 import { expect, it } from "vitest";
 import { LocalOperationFailure } from "../../src/execution/local-operation.js";
-import { makeFileJobStore } from "../../src/jobs/local-job-store.js";
+import { makeFileJobStore } from "../../src/runtime/local-job-store.js";
 import { makeMcpJobs, mcpFailureMessage, type McpJobs } from "../../src/standalone/mcp-jobs.js";
 
 /** Polls a job until it leaves running, as a caller polling get_job does. */
