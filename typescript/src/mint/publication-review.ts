@@ -300,19 +300,21 @@ export const exampleInputFeedback = (
   const inputSchemaAt = byteLength(
     candidate.definition.slice(0, candidate.definition.indexOf('"inputSchema"')),
   );
+  const rationale = `The ${candidate.write ? "write session" : "example"} ran with ${unlisted.map((key) => JSON.stringify(key)).join(", ")} in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.`;
   return new MintFailure({
     code: "ReviewDenied",
     review: {
       outcome: "deny",
       reason: "input_feedback",
       reviewId,
-      rationale: `The ${candidate.write ? "write session" : "example"} ran with ${unlisted.map((key) => JSON.stringify(key)).join(", ")} in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.`,
+      rationale,
       findings: [
         {
           path: publicDefinitionPath,
           byteStart: inputSchemaAt,
           byteEnd: inputSchemaAt + '"inputSchema"'.length,
           category: "example_input",
+          explanation: rationale,
         },
       ],
     },

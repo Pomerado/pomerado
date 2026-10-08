@@ -2617,6 +2617,7 @@ it("lets the model correct source after a visible publication rejection without 
           byteStart: privateSource.indexOf(privateLiteral),
           byteEnd: privateSource.indexOf(privateLiteral) + privateLiteral.length,
           category: "private_literal",
+          explanation: "The source holds a private literal; take the value from the input.",
         },
       ],
     },
@@ -2696,6 +2697,7 @@ it("returns a publication finding in a host-owned file as host_owned, not a sour
       byteStart: 0,
       byteEnd: 12,
       category: "private_literal" as const,
+      explanation: "The host-written entry names a private value.",
     },
   ];
   const failure = new MintFailure({
@@ -2998,6 +3000,7 @@ it("never publishes Guardian's input-feedback fallback after the claimed attempt
                   byteStart: 0,
                   byteEnd: 1,
                   category: "account_specific_enum",
+                  explanation: "Correct the indicated input.",
                 },
               ],
             },
@@ -3027,7 +3030,7 @@ it("never publishes Guardian's input-feedback fallback after the claimed attempt
 });
 
 /** A publication review that returns input feedback with these categories. */
-const inputFeedback = (...categories: ("account_specific_enum" | "example_value")[]) =>
+const inputFeedback = (...categories: ("account_specific_enum" | "input_option")[]) =>
   new MintFailure({
     code: "ReviewDenied",
     review: {
@@ -3040,12 +3043,13 @@ const inputFeedback = (...categories: ("account_specific_enum" | "example_value"
         byteStart: 0,
         byteEnd: 1,
         category,
+        explanation: "The account input lists one value; make it free-form.",
       })),
     },
   });
 const noFallbackEnding = "the build ends unpublished and reports Guardian's findings to the owner";
 const unresolvedSummary =
-  "Not built: Guardian's input feedback on this tool's schema was not resolved (account_specific_enum, example_value). Guardian's rationale: Make the account an input.";
+  "Not built: Guardian's input feedback on this tool's schema was not resolved (account_specific_enum, input_option). Guardian's rationale: Make the account an input.";
 
 it("ends a build with no fallback unpublished once input feedback outlasts its two rounds", async () => {
   const replies: Record<string, unknown>[] = [];
@@ -3061,7 +3065,7 @@ it("ends a build with no fallback unpublished once input feedback outlasts its t
       publish: () =>
         Effect.suspend(() => {
           publications++;
-          return Effect.fail(inputFeedback("account_specific_enum", "example_value"));
+          return Effect.fail(inputFeedback("account_specific_enum", "input_option"));
         }),
     },
   );
@@ -3089,7 +3093,7 @@ it("ends a build with no fallback on the last review's input feedback when the m
         yield* turn.actions.execute(execution);
         yield* turn.actions.finish(publication);
       }),
-    { publish: () => Effect.fail(inputFeedback("account_specific_enum", "example_value")) },
+    { publish: () => Effect.fail(inputFeedback("account_specific_enum", "input_option")) },
   );
   expect(await f.run()).toMatchObject({ build: "incomplete", summary: unresolvedSummary });
 });
