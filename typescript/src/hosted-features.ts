@@ -26,8 +26,6 @@ export const hostedFeatures: readonly HostedFeature[] = [
     id: "state-changing-requests",
     name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
   },
-  { id: "run-outcomes", name: "Honest run outcomes" },
-  { id: "login-url-check", name: "One-time login URL check" },
   { id: "host-incidents", name: "Host incidents" },
   { id: "offline-command-sandbox", name: "Sandboxed offline commands" },
   { id: "protected-answers", name: "Protected answers" },

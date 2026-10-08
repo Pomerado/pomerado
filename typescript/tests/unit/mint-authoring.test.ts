@@ -389,8 +389,8 @@ it("lists every installed skill in the local workspace README", async () => {
 
 /*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
- * the private fallback and the login URL check, which its preamble lists as hosted features, and
- * about recorded confirm popups, which it now has too. The hosted-only checks (site metadata, the HTTP version, recorded requests,
+ * the private fallback, which its preamble lists as a hosted feature, and about the login URL
+ * check and recorded confirm popups, which it now has too. The hosted-only checks (site metadata, the HTTP version, recorded requests,
  * session tokens, protected results) stay in host sections it never reads. It saves every file
  * under the four folders when Node could load one the operation's imports do not name.
  */
