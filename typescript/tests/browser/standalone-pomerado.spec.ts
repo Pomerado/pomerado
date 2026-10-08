@@ -453,7 +453,7 @@ test("a run makes no Guardian or model call and returns the operation's output",
 });
 
 test("a run asks only the questions its artifact recorded, or that its entrypoint declares as a literal", async () => {
-  // Four runs, each in its own browser session.
+  // Five runs, each in its own browser session.
   test.setTimeout(90_000);
   const server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html");
@@ -471,7 +471,11 @@ export default defineOperation({name:"ask_note",input:Schema.Struct({}),output:S
 async ({ ask }) => ({ note: await ask("note") }));`;
   const literal = asking(JSON.stringify({ note }));
   const calls: string[] = [];
-  const run = (content: string, questions?: Readonly<Record<string, unknown>>) => {
+  const run = (
+    content: string,
+    questions?: Readonly<Record<string, unknown>>,
+    effect?: "read",
+  ) => {
     const asked: InputRequest[] = [];
     return Effect.runPromise(
       Effect.scoped(
@@ -496,7 +500,12 @@ async ({ ask }) => ({ note: await ask("note") }));`;
                 outputSchema: {},
                 ...(questions === undefined ? {} : { questions }),
               } as Parameters<typeof service.run>[0],
-              { url: `http://127.0.0.1:${address.port}/`, intent: "Read fixture", input: {} },
+              {
+                url: `http://127.0.0.1:${address.port}/`,
+                intent: "Read fixture",
+                input: {},
+                ...(effect === undefined ? {} : { effect }),
+              },
             ),
           );
         }),
@@ -509,12 +518,22 @@ async ({ ask }) => ({ note: await ask("note") }));`;
     expect(recorded.result._tag === "Right" && recorded.result.right).toEqual({ note: "kept" });
     expect(recorded.asked).toHaveLength(1);
     // The script asks something other than what publication recorded: its ask fails as
-    // Undeclared, so the run fails with nobody asked.
+    // Undeclared, so the run fails with nobody asked. A run that names no effect can't rule out
+    // a website action, so its outcome is unknown.
     const differs = await run(literal, { note: { ...note, prompt: "Which note?" } });
     expect(differs.result._tag === "Left" && differs.result.left).toMatchObject({
       _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
     });
     expect(differs.asked).toEqual([]);
+    // A served read tool names its effect, so the same refused ask fails as a read that changed
+    // nothing.
+    const served = await run(literal, { note: { ...note, prompt: "Which note?" } }, "read");
+    expect(served.result._tag === "Left" && served.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "execution_failed", possibleCommit: false, retry: "never" },
+    });
+    expect(served.asked).toEqual([]);
     // An artifact saved without its questions asks what its entrypoint declares as a literal.
     const saved = await run(literal);
     expect(saved.result._tag).toBe("Right");
@@ -522,6 +541,7 @@ async ({ ask }) => ({ note: await ask("note") }));`;
     const computed = await run(asking("computed"));
     expect(computed.result._tag === "Left" && computed.result.left).toMatchObject({
       _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
     });
     expect(computed.asked).toEqual([]);
     expect(calls).toEqual([]);
