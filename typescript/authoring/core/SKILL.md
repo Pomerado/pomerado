@@ -10,9 +10,8 @@ inputs, desired result and permitted effects. A read build explores, then iterat
 script from a clean start by running its example until it works (re-running a read's
 example is normal); resolve its missing choices with reads when possible. A write build
 does the caller's requested task once, live (in as many write steps as it takes), then
-composes its script from what happened (the `writes` skill). Ask about any choice the input leaves open; on a write, never
-assume one. Credentials and sign-in codes belong to the host; never request a password,
-cookie or TOTP seed in model-visible text.
+composes its script from what happened (the `writes` skill). Credentials and sign-in codes
+belong to the host; never request a password, cookie or TOTP seed in model-visible text.
 
 Asking the caller follows `AGENTS.md` ("Try hard, then ask").
 
@@ -26,7 +25,7 @@ against `typescript/src/runtime/index.ts` and show the real method signatures.
 A `secret` answer comes back as a handle such as `{{secret.s1}}`, never the value,
 which you never see. In explore, test or `act` source, write the handle exactly as given as
 the whole string passed as the value to `fill`, `type` or `pressSequentially` on a `page`
-chain, or as a field of a `fetch` or `page.request` call to a literal URL on this site, inside
+chain, or as a field of a `fetch` call to a literal URL on this site, inside
 the code of a `kernel.browsers.playwright.execute` call, such as
 `await page.getByLabel("Code").fill("{{secret.s1}}")`. The host fills in the value when it runs
 that source live and masks it in what comes back; offline targets get the handle unchanged.
@@ -67,7 +66,8 @@ pomerado:section core.execute-calls:end -->
   returns true once the page is usable. It throws `ChallengeFailure` if the page stays blocked.
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
-  or a party size over its limit, throw `new errors.InvalidInput(message)` saying why. `errors`
+  or a party size over its limit, throw `new errors.InvalidInput(message)` saying why and
+  naming the choices the page offers, when it shows them. `errors`
   exists only in the script, never in a call's `code`, so when the page shows the refusal,
   return a marker such as `{ refused: "why" }` from the call and throw once it returns. The
   run then fails as the caller's input. A host that repairs checks the value and asks the
@@ -92,21 +92,25 @@ a value the request genuinely leaves open; never make a required field optional 
 that asks.
 
 - The code works for every value the schema accepts. Never let the schema promise what
-  the code rejects, such as a string the code throws on unless it is the example's value.
+  the code rejects or ignores, such as a string the code throws on unless it is the example's
+  value, or an input the code accepts and then never applies, skips or always reports
+  unsupported or unapplied: wire it to the site's control, or leave it out and say in the
+  description what the tool does not cover.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
 - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
   error for that option over returning results for another one. A repair adds it when a caller
   needs it.
-- Never derive a format from one sample: not an input format, an element key, a selector or a
-  label. A key the page showed for the example's value says nothing about the next value, as
-  when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
+- Never derive a format from one sample: not an input format, an element key, a selector, a
+  URL path or a label. A key the page showed for the example's value says nothing about the
+  next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
   the format off the page for the value you need, such as the day cell whose visible label or
   accessible name is the caller's date, or a key the page itself lists, never a key rebuilt
   from the one you saw.
 - Inputs are values a caller knows, such as codes, names, dates and counts, never a
-  suggestion's full display text or an internal id the caller cannot know. A closed list
+  suggestion's full display text or an internal id the caller cannot know (an id the site
+  shows on its own pages, such as a product number, is not internal). A closed list
   of options stays an enum of the site's options, as above. When the options come from a
   query, as in an autocomplete, typeahead or searchable combobox, the tool types the
   caller's value and picks the matching suggestion itself: an exact code or name match
@@ -116,10 +120,12 @@ that asks.
   add-ons and pre-selected defaults included. Make it required when the site requires
   a choice (a fare class) and optional when it does not (a seat). An unset optional input
   keeps the page's default; an add-on, a pre-selected paid option or a saved payment is
-  never left to a default, so ask about it (the writes skill).
+  never left to a default, so ask about it (`AGENTS.md`, "Try hard, then ask").
 - Never make an account-specific value (a passenger, loyalty number, saved card or
   address, account or member ID) an enum member, example or default in a public
-  schema. Take it as a free-form input.
+  schema. Take it as a free-form input when the caller can name it, such as a loyalty
+  number; a choice among the account's saved items that the caller cannot name is a
+  declared `ask` with `accountSpecific` options (caller-input skill).
 - The host's `businessInputTypes` is a value-free tree of the JSON types in the caller's
   input. Use it to pick compatible types when a credential in the input is masked; a mask
   does not mean the value was a string. It says nothing about
@@ -132,9 +138,8 @@ that asks.
   such as cabin class (economy or first) on a flight search, even when the request never
   mentions it. Leave out controls unrelated to the purpose, such as a language switch or a
   newsletter opt-in on a search. Record such a field as an optional input whether or not
-  you ask about it, since callers of the tool can set it. Ask about one the input leaves
-  open only when the request's purpose clearly depends on its value, in the same batch as
-  your other questions; leave the rest unset, keeping the page's default.
+  you ask about it, since callers of the tool can set it. Ask about one only as `AGENTS.md`
+  ("Try hard, then ask") allows; left unset, it keeps the page's default.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The
@@ -150,18 +155,23 @@ that asks.
   example.
 - Give every input and output field, nested object and array item fields included, a short
   `description` annotation saying what it is, with the unit or format where one applies:
-  "Departure airport as a three-letter IATA code", "Departure date, YYYY-MM-DD". Effect's
-  stock text, such as "a non empty string", is no description. Annotate the field's own
-  schema, inside `Schema.optional(...)` for an optional one; a `Schema.Date` keeps it only on
-  `Schema.optional(Schema.Date)` or `Schema.propertySignature(Schema.Date)`. Callers see each
-  beside its name.
+  "Departure airport as a three-letter IATA code", "Departure date, YYYY-MM-DD", "Average
+  guest rating out of 5, not a count of reviews". Effect's stock text, such as "a non empty
+  string", is no description. Annotate the field's own schema, inside `Schema.optional(...)`
+  for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike: field names in
   snake_case; dates as `YYYY-MM-DD` and timestamps as ISO 8601 with an offset; money as an
-  integer in minor units with an ISO 4217 `currency` beside it, such as `total_minor` 12999 and
-  `currency` `"USD"`; enum values in lowercase snake_case (`"premium_economy"`); booleans named
-  as statements (`refundable`, not `is_refundable_flag`); lists named in the plural; and the
-  unit in the field name or its description (`duration_minutes`). Convert between these and the
-  site's own formats in code.
+  integer in minor units with the ISO 4217 `currency` the page shows beside it, such as
+  `total_minor` 12999 and `currency` `"EUR"` read from "€129.99"; enum values in lowercase
+  snake_case (`"premium_economy"`); booleans named as statements (`refundable`, not
+  `is_refundable_flag`); lists named in the plural; and the unit in the field name or its
+  description (`duration_minutes`). Convert between these and the site's own formats in code.
+- When `reference/site-tools.json` exists, it lists this site's published tools with their
+  descriptions and schemas. Read it before settling or changing yours: where this tool takes or
+  returns the same thing as one of them, use the same identifier, field names and shape, so a
+  caller can pass one tool's output to the next, such as a record's ID from a search tool into a
+  details tool. Never narrow an input to match. It is reference only: nothing here calls those
+  tools.
 - Give every input field one `examples` annotation value, which callers<!-- pomerado:section core.example-readers --> use to assemble a sample request: public, generic data such as a well-known airport code
   (`examples: ["SFO"]`), a date a few weeks ahead or a common product category. Never use a value
   from this session: not the caller's input, the owner's answers or anything the site showed
@@ -183,27 +193,28 @@ that asks.
   without fixing them, the host publishes the last reviewed version privately to the
   caller's account and flags it.
 
-Typed output:
+**Output fields.** Decide from the request and the pages which values the request needs: each
+value it names, the record's identifier as the site shows it, and the context those values
+depend on as the page shows it, such as dates, a party size or a location. Make each required
+and non-null, typed so a value the code could not read fails the output check
+(`Schema.NonEmptyString` for text, `Schema.Int` for a count), never an optional, nullable or
+plain `Schema.Number` field. Make a field optional or nullable only when the page can lack it
+and the result still serves the request, and say in its description when it is null. A run
+whose output fails its schema goes to repair.
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
-  itinerary as one text blob or summary. Prefer giving each fact a caller would filter, sort or
-  compare on its own field: a price as integer minor units with `currency`, times as ISO 8601
-  with the offset, durations in minutes, counts as integers, and codes and names as their own
-  strings. A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m, $244" should return
-  `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time":
-  "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331, "price_minor": 24400,
-  "currency": "USD" }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text
-  may ride beside the typed fields, or stand in for one value that truly does not parse, with
-  that field's description saying so.
-- Type a date-only value as the runtime's `CalendarDate` (forms skill).
-- Prefer keeping every result row the page shows.
-- Make the facts every result row has required output fields, such as a listing's price or a
-  flight's fare in each mode the tool offers. Type each so a value the code could not read
-  fails the output check, as `Schema.Int` or `Schema.NonEmptyString`, rather than an optional,
-  nullable or plain `Schema.Number` field. A run whose output fails its schema goes to repair.
-
-**Search results.** When the site says how its results matched, such as exact matches
-against suggested or fallback items, a search tool returns that. Otherwise its description
-and output say plainly that results may include the site's own suggestions.
+  itinerary as one text blob or summary, and keep every result row the page shows.
+- Read every output from the page or response on every run, so every returned field has
+  observable support: never a literal, a default you invented, or a constant `null`, `[]`,
+  `false`, `0` or fixed label where the page can show the value.
+- Return `null` only when this record's page lacks the value, and an empty list only when the
+  page shows none; never throw for either. When the code cannot read a value the request needs,
+  throw `OperationFailure` naming it; never return a placeholder, a label or another record's
+  value in its place.
+- One field per fact, as the page states it, and variants as the dimensions and values the page
+  lists.
+- Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations;
+  type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not
+  parse cleanly may be the site's own text.
 
 <!-- pomerado:section core.host-ownership:start
 
@@ -216,9 +227,9 @@ on a blank Page is not evidence about the website or its availability.
 
 Take the site origin from the context's `siteOrigin`. If it is undefined, fail before
 live navigation; offline fixtures intentionally have no live origin. Build URLs with
-`new URL("/", siteOrigin).href` or an observed relative path and write them into the
-code. Never embed the site's hostname or account-specific origin as a literal in
-authored source, schema examples, or logs, and never replace it with `page.url()`
+`new URL("/", siteOrigin).href` or a fixed path the site links to, never one that holds the
+caller's input (`AGENTS.md`), and write them into the code. Never embed the site's hostname
+or account-specific origin as a literal in authored source, schema examples, or logs, and never replace it with `page.url()`
 after a redirect. The host supplies the primary origin even when the model cannot see
 it. This value does not authorize other destinations or credential submission.
 The context's `siteDomain` is the site's registrable domain, which the host computed with
@@ -229,9 +240,12 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 (`github.io`). `references/native-page.ts` shows the check. Use `page.evaluate`,
 `locator.evaluate` or `locator.evaluateAll` when code needs browser globals such as
 `document`.
-For visible page text, prefer a scoped locator's `innerText`; `textContent` also
-includes hidden text and script/style contents. Read embedded data separately
-when it is relevant to the requested operation.
+Read each output value from the element or structured-data entry that holds it, found by a
+stable id, a `data-` attribute, a role and name or the record's own key, using its `innerText`.
+Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
+text or a page-wide setting such as a currency or language picker: `textContent` also includes
+hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
+embedded data separately when it is relevant to the requested operation.
 Default budgets: action, readiness and navigation 30 s. Give every Playwright
 wait in the code an explicit `timeout`, and keep `timeout_sec` within `remainingMs()`.
 Child waits cannot extend the outer deadline. Explicitly name observation conditions.
@@ -279,9 +293,10 @@ screened evidence to distinguish a remaining challenge, loading and changed
 layout.<!-- pomerado:section core.challenge-reference --> Do not invent a CAPTCHA bypass or replace the target with an arbitrary
 first element. Resolve role and computed accessible name from observed evidence;
 `searchbox` and `textbox`, and their exact names, are not interchangeable.
-When a Playwright timeout names a locator, repair that wait and keep the checks that
-already passed. A `DeadlineExceeded` phase of `execution` is the shared operation
-deadline. Before increasing a timeout, make one bounded observation of the candidate
+When a locator is missing or a Playwright timeout names one, first check that the page's URL and
+heading are the page you meant: a wrong or error page needs the site's own route to the right
+page, never a new selector. Otherwise repair that wait and keep the checks that already
+passed. A `DeadlineExceeded` phase of `execution` is the shared operation deadline. Before increasing a timeout, make one bounded observation of the candidate
 target count or state; increase it only when evidence shows that the correct unique
 target is slow. Do not catch-and-repeat timed-out work. A click or navigation that
 timed out is an uncertain transition: it may already have taken effect. Inspect the
@@ -301,9 +316,10 @@ For a detail read, reach the record through the site's own search, list or link 
 schema-validated caller identifier (AGENTS.md, "Reach every page the way a person does").
 Never build its page URL from the identifier, and never accept a caller URL as the target.
 A successful response or plausible content is insufficient: the final page's
-site (any https host on the site's registrable domain), exact final path and stable page
-identity must all agree with the requested identifier. Explicitly classify a detail
-page, loading state, known interstitial and unsupported or mismatched page. Continue through an interstitial only when its
+site (any https host on the site's registrable domain), final path and stable page
+identity must all agree with the requested identifier. A path agrees when it carries the
+identifier; a site can serve one record under several of its own routes. Explicitly classify
+a detail page, loading state, known interstitial and unsupported or mismatched page. Continue through an interstitial only when its
 own stable identity matches the request and one unique continuation control belongs
 to that interstitial. This exception does not include a CAPTCHA, login or unknown
 challenge. Wait for the detail or proven interstitial, guard the continuation, then
@@ -345,9 +361,9 @@ does not use every field; do not replace it with an empty or probe-only schema.
 <!-- pomerado:section core.captured-checks -->
 
 <!-- pomerado:section core.references:start
-Choose relevant references: writes, pagination, forms, caller input for a choice only
-the page can offer, or a code, during the run, and publication before the first
-`finish_build`.
+Choose relevant references: search for a search or listing tool, writes, cart for a cart or
+checkout, pagination, forms, caller input for a choice only the page can offer, or a code,
+during the run, and publication before the first `finish_build`.
 pomerado:section core.references:end --> Read their bodies only when useful.
 Finish with actual execution evidence and
 truthful coverage through `finish_build`. A write finishes after its session's
@@ -385,13 +401,14 @@ script starts signed in. Each enters private values through the trusted host. Th
 script never receives a password. After a full page load mid-script, call
 `ensureSignedIn()`, as the auth skill describes.
 
-When inspection establishes a login entry, pass `loginUrl` directly to `execute` with
-purpose `authenticate`. The host uses it exactly as given and grants it no authority:
-credentials are typed only on the site's registrable domain or a configured sign-in
-origin. Record a stable reusable entry and include any observed fieldless navigation steps needed to
-reach the credential form from that entry. A URL no sign-in can start from, and
+When inspection establishes a login entry, pass `loginUrl` and the first screen's
+`signInStep` to `execute` with purpose `authenticate`. The host uses the URL exactly as given
+and grants it no authority: credentials are typed only on the site's registrable domain or a configured sign-in
+origin. Record the site's own sign-in link (auth skill) and include any observed fieldless
+navigation steps needed to reach the credential form from it. A URL no sign-in can start from, and
 a failed sign-in, come back with the reason and the next step; fix the cause and call
-authenticate again. Do not author a login-routing metadata file.
+authenticate again. Author no login-routing file beyond the direct-request template the auth
+skill describes.
 
 Inspect login markup using reviewed read-only `explore` without private credential
 injection. Use execute purpose `authenticate`, target `liveBrowser`, to sign in. The
@@ -482,7 +499,7 @@ read-back above.
 
 Use the ordinary `defineOperation` API and existing Kernel-shaped browser calls above. `liveBrowser` is native Playwright and `pureFiles` is local computation. The host retains Guardian review, caller authority, source reads, questions, deadline/cleanup and no-replay rules. It offers no browser replacement or captured replay facility. An invalidated native executor ends this attempt; never use a new browser to repeat an uncertain effect.
 
-Declare explicit input and output schemas, concrete types and bounds for each supported field. Caller choices and account-specific values come from input or reviewed questions, never literals/defaults you invented. A detail read verifies the requested record identity and final page state. Every returned field has observable support; describe missing coverage truthfully.
+Declare explicit input and output schemas, concrete types and bounds for each supported field. A detail read verifies the requested record identity and final page state.
 
 `finish_build` returns the current integration files and schemas after shared checks. A read needs a successful example using supplied values. A write needs its original confirming act receipt and current source; compose it without running it again. Return the task result and honest evidence, not unsupported success claims.
 

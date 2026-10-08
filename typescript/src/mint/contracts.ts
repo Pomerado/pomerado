@@ -535,7 +535,7 @@ export const ExecutionRequest = Schema.Struct({
   exampleInput: Schema.optional(Schema.String),
 });
 export type ExecutionRequest = typeof ExecutionRequest.Type;
-/** The execute tool's input where the site signs in through Kernel Managed Auth. */
+/** The execute tool's input where the host offers no autofill sign-in: no `signInStep`. */
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
 
 export const CaptureRequest = Schema.Struct({

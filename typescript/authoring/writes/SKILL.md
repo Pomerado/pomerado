@@ -41,22 +41,19 @@ write build with `mint_update` and `recommend: "new_mint"`.
 
 ## Before the session
 
-Sign in first when the site needs it (the auth skill: read-only `explore` to find
-the login, then `authenticate`). Before the first `act` step you may still explore
+Sign in first when the site needs it, and always for a cart or checkout
+(.agents/cart/SKILL.md), with the auth skill: read-only `explore` to find the login, then
+`authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, but never fill, select,
 add, save or submit anything there.
 
 Read the path's options with read-only exploration where you can, then ask with
-`request_input` about each add-on, pre-selected paid option and saved payment you saw
-that the caller's input does not settle, and about any other option that is relevant or
-important to the request (delivery, seat or insurance choices, which saved card or
-address to use). An optional field that matters little keeps the page's default, and is
-still an optional input of the script. Ask only about options the site actually shows. A control with
-exactly one possible value (a select or radio group with a single option) is not a
-question, and neither is one the input or an earlier answer already settles; an add-on
-toggle, a pre-selected checkbox or a lone saved payment method is still a yes-or-no
-choice to ask about. Never keep, clear,
-accept or decline one of these unasked. Credentials never go through a question; the host's
+`request_input` about the ones the caller's input does not settle, as `AGENTS.md` ("Try
+hard, then ask") says: each add-on, pre-selected paid option and saved payment you saw,
+and any other option only when the request's purpose clearly depends on it. An unasked
+optional field keeps the page's default and is still an optional input of the script. Ask
+only about options the site actually shows. Never keep, clear, accept or decline an add-on,
+pre-selected paid option or saved payment unasked. Credentials never go through a question; the host's
 protected form owns them.
 
 During the session:
@@ -71,6 +68,10 @@ During the session:
   each value against the caller's input, in the session and on every branch of the
   composed script. Fail before the commit if one does not match. Never read back a
   field filled with a secret handle.
+- When the write changes state that already exists, such as a saved record or a cart
+  (.agents/cart/SKILL.md), read that state before the committing step and again after it,
+  in the session and in the composed script, and check that only the requested change
+  happened. Fail when it did not.
 - If a step meets an option the input does not settle, stop that step before choosing
   it and ask. A `request_input` question during the session waits in place; a choice
   that exists only on the page mid-flow, such as a seat on the flight just chosen, is
