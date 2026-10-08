@@ -19,16 +19,14 @@ export const hostedFeatures: readonly HostedFeature[] = [
   { id: "maintenance", name: "Maintenance and repair" },
   { id: "saved-browser-profiles", name: "Saved browser profiles" },
   { id: "mid-run-sign-in", name: "Mid-run re-sign-in" },
-  { id: "uncertain-commit-read-back", name: "Read-back after an uncertain commit" },
   // Covers the shared text about `stateChangingRequests`: the core skill's "State-changing
-  // requests" section and the write session's rule to read it on every step. It stays when
-  // read-back after an uncertain commit comes to the local host.
+  // requests" section and the write session's rule to read it on every step. The local host reads
+  // back an uncertain commit from its own record of the step, without this list.
   {
     id: "state-changing-requests",
     name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
   },
   { id: "run-outcomes", name: "Honest run outcomes" },
-  { id: "recorded-confirm-popups", name: "Recorded confirm popups" },
   { id: "login-url-check", name: "One-time login URL check" },
   { id: "host-incidents", name: "Host incidents" },
   { id: "offline-command-sandbox", name: "Sandboxed offline commands" },
