@@ -41,11 +41,26 @@ import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
 import { error } from "./errors.js";
 import { failureDetail } from "../runtime/failure-detail.js";
-const sourceInspector = (session: StandaloneSession, sources: ReadonlyMap<string, string>) => {
+/** The folder a review's authored files sit in, where staged runs also link the SDK. */
+const operationPrefix = "operation/";
+/**
+ * Guardian's source reads: the review's own file at the path, else the trusted SDK's. Authored
+ * source imports the SDK from inside `operation/`, as `../../runtime/index.js` from `src/`, so a
+ * path there that no authored file holds reads the SDK file at the rest of the path.
+ */
+export const sourceInspector = (
+  session: Pick<StandaloneSession, "trustedSources" | "secrets">,
+  sources: ReadonlyMap<string, string>,
+) => {
   const { trustedSources, secrets } = session;
   return makeSourceInspector(
     (path) => {
-      const text = sources.get(path) ?? trustedSources.get(path);
+      const text =
+        sources.get(path) ??
+        trustedSources.get(path) ??
+        (path.startsWith(operationPrefix)
+          ? trustedSources.get(path.slice(operationPrefix.length))
+          : undefined);
       return text === undefined
         ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
         : Effect.succeed(new TextEncoder().encode(text));
