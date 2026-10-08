@@ -26,10 +26,14 @@ interface ShopState {
   searchPageLoads: number;
   /** Loads of the code screen, by GET, that `loginCode` puts after the one-screen sign-in. */
   codePageLoads: number;
+  /** Codes posted to the code screen. */
+  codePosts: number;
   apiRequests: number;
   curlApiRequests: number;
   cartPosts: number;
   loginPosts: number;
+  /** Loads of the one-screen sign-in's page, `/login`, by GET. */
+  loginPageLoads: number;
   /** Posts to the two-screen sign-in's session endpoint, whatever they carry. */
   sessionPosts: number;
   /** The HTTP version's contract: `error` and `changed` break it for curl traffic only. */
@@ -58,6 +62,12 @@ interface ShopState {
    * it, `account` a redirect to the account page, as many sites answer a signed-in visit.
    */
   signedInLogin: "form" | "account";
+  /**
+   * A path whose next load by a signed-in browser signs it out, as a site that keeps its session
+   * in the page does on a full load: that load expires the session cookie and shows the signed-out
+   * page. Cleared once used. Only for a page that sets no cookie of its own, such as `/orders`.
+   */
+  signOutOn: string | undefined;
 }
 
 export interface Shop {
@@ -133,6 +143,7 @@ const shopRoutes = (
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
   const lateHome = (shell: string, ticking: boolean) => `<title>Shop</title><div id="app">${shell}</div>${ticking ? `<p id="tick">0</p>` : ""}
 <script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},${state.homeRenderMs})${ticking ? `;let ticks=0;setInterval(()=>{document.querySelector('#tick').textContent=String(++ticks)},200)` : ""}</script>`;
+  // The plain home shows the account link, the shop's signed-in marker, to a signed-in session.
   const home: Route = (request, response) => {
     if (state.home === "broken") return void response.destroy();
     if (state.home === "late" || state.home === "splash" || state.home === "ticking")
@@ -143,7 +154,7 @@ const shopRoutes = (
       );
     return html(
       response,
-      `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
+      `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>${cookieOf(request, "shop_session") === signedIn ? `<a id="account" href="/account">Account</a>` : ""}
 <button id="add">Add to cart</button><p id="added"></p>
 <script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>${state.home === "hang" ? `<img src="/hang" alt="">` : ""}`,
       { "set-cookie": cookiesFor(request) },
@@ -187,6 +198,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     return json(response, 200, { cartId: "c-9" });
   };
   const loginPage: Route = (request, response) => {
+    state.loginPageLoads += 1;
     if (state.signedInLogin === "account" && cookieOf(request, "shop_session") === signedIn) {
       response.writeHead(303, { location: "/account" });
       return void response.end();
@@ -228,18 +240,18 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       JSON.stringify(state.loginCode ? { ok: true, next: "/two-factor" } : { ok: true }),
     );
   };
-  // The code screen: a GET shows its form, and the form's post with the code signs in.
+  // The code screen: a GET shows its form, and the form's post with the code signs in. A wrong
+  // code shows the form again under the error.
+  const codeForm = `<form method="post" action="/two-factor"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>`;
   const twoFactor: Route = async (request, response) => {
     if (request.method !== "POST") {
       state.codePageLoads += 1;
-      return html(
-        response,
-        `<title>Code</title><form method="post" action="/two-factor"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>`,
-      );
+      return html(response, `<title>Code</title>${codeForm}`);
     }
+    state.codePosts += 1;
     const code = new URLSearchParams(await readBody(request)).get("code");
     if (code !== shopCode || cookieOf(request, "shop_pending") !== pending)
-      return html(response, "<title>Code</title><p id='wrong-code'>Wrong code</p>");
+      return html(response, `<title>Code</title><p id='wrong-code'>Wrong code</p>${codeForm}`);
     response.writeHead(303, {
       location: "/account",
       "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
@@ -252,6 +264,14 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       cookieOf(request, "shop_session") === signedIn
         ? `<title>Account</title><p id="account">${shopAccount.username}</p>`
         : "<title>Account</title><p id='signed-out'>Please sign in</p>",
+    );
+  // The account's orders, behind the same session as its account page.
+  const orders: Route = (request, response) =>
+    html(
+      response,
+      cookieOf(request, "shop_session") === signedIn
+        ? `<title>Orders</title><p id="account">${shopAccount.username}</p><p id="orders">2 orders</p>`
+        : "<title>Orders</title><p id='signed-out'>Please sign in</p>",
     );
   // The sign-in's query goes on to the password screen: `hidden=N` puts N hidden text fields
   // ahead of its own field, `pad=N` puts N spaces ahead of the identifier its label echoes in
@@ -315,6 +335,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     ["/login", loginPage],
     ["/api/login", postOnly(login)],
     ["/account", account],
+    ["/orders", orders],
     ["/two-factor", twoFactor],
     ["/hang", hang],
   ]);
@@ -344,10 +365,12 @@ export const startShop = async (directory: string): Promise<Shop> => {
   const state: ShopState = {
     searchPageLoads: 0,
     codePageLoads: 0,
+    codePosts: 0,
     apiRequests: 0,
     curlApiRequests: 0,
     cartPosts: 0,
     loginPosts: 0,
+    loginPageLoads: 0,
     sessionPosts: 0,
     api: "ok",
     curl: "ok",
@@ -356,6 +379,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     homeRenderMs: 300,
     loginCode: false,
     signedInLogin: "form",
+    signOutOn: undefined,
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;
@@ -372,6 +396,14 @@ export const startShop = async (directory: string): Promise<Shop> => {
     (request, response) => {
       void (async () => {
         const url = new URL(request.url ?? "/", "https://www.shop.test");
+        if (state.signOutOn === url.pathname && cookieOf(request, "shop_session") === signedIn) {
+          state.signOutOn = undefined;
+          response.setHeader("set-cookie", "shop_session=; Path=/; Max-Age=0; Secure; HttpOnly");
+          request.headers.cookie = (request.headers.cookie ?? "").replace(
+            /(?:^|;\s*)shop_session=[^;]*/u,
+            "",
+          );
+        }
         await (routes.get(url.pathname) ?? notFound)(request, response);
       })().catch(() => {
         response.destroy();

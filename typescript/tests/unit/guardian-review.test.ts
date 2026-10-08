@@ -565,6 +565,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     signIn: "OTHER-SIGN-IN",
     challenges: "OTHER-CHALLENGES waits elsewhere.",
     executor: "OTHER-EXECUTOR",
+    dataVendor: "OTHER-DATA-VENDOR may carry the caller's input.",
   };
 
   // Many sign-in forms enable their submit only once the fields hold input, and the host waits for

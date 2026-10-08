@@ -21,6 +21,12 @@ export const LocalOperationStart = Schema.Struct({
   timeoutMs: Schema.Number.pipe(Schema.positive(), Schema.finite()),
   mode: Schema.Literal("run", "contract"),
   validateInput: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  /** A run with no browser, such as a parser: it never marks a possible dispatch. */
+  offline: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** A mint step: it counts as possibly sent from its first browser call, not from its start. */
+  dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** The host signs the page in again when the script's `ensureSignedIn` finds it signed out. */
+  signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),
@@ -54,6 +60,7 @@ export const LocalOperationMessage = Schema.Union(
   }),
   Schema.Struct({ kind: Schema.Literal("ask"), id: Id, request: InputRequest }),
   Schema.Struct({ kind: Schema.Literal("dialog"), id: Id, report: DialogReport }),
+  Schema.Struct({ kind: Schema.Literal("sign_in"), id: Id }),
   Schema.Struct({ kind: Schema.Literal("cancel"), id: Id }),
   Schema.Struct({ kind: Schema.Literal("journal"), ...JournalFields }),
   Schema.Struct({
@@ -72,6 +79,8 @@ export const LocalOperationMessage = Schema.Union(
     error: Schema.String,
     code: Schema.optionalWith(Schema.String, { exact: true }),
     tag: Schema.optionalWith(Schema.String, { exact: true }),
+    /** The host could not sign the page in again (`ensureSignedIn`). */
+    sessionLoss: Schema.optionalWith(Schema.Literal("session_not_kept"), { exact: true }),
     inputIssues: Schema.optionalWith(
       Schema.Array(InputIssue).pipe(Schema.maxItems(maximumInputIssues)),
       { exact: true },

@@ -2708,13 +2708,15 @@ test("finish_build runs a contract review, then one publication review, and save
       "src/tool.mjs",
     ]);
     // The builder's instructions send it to the publication skill before its first
-    // finish_build, and the skill it reads there describes the local host's publication.
+    // finish_build. The skill it reads there is every host's shared text, and the list on top of
+    // its instructions names the private fallback publication the local host lacks.
     expect(String(requests[0]?.systemInstructions)).toContain(
       "Read .agents/publication/SKILL.md before your first `finish_build`",
     );
+    expect(String(requests[0]?.systemInstructions)).toContain("- Private fallback publication");
     expect(String(skillRead?.["source"])).toContain("# Publishing a build");
     expect(String(skillRead?.["source"]).replace(/\s+/g, " ")).toContain(
-      "After the last round the build ends unpublished with Guardian's findings",
+      "After the last round the host publishes privately and flags it",
     );
   } finally {
     await site.close();

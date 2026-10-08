@@ -10,6 +10,11 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - Its first live step opens the URL you gave, unless that step is one of those resets. Explorations then continue on whatever page the last step left.
 - A build counts as signed in only after a request the page sent during its own sign-in steps carried the login's identifier, and one carried a password or code, or you completed an approval, and the page then shows the account. A code the site sent for that sign-in counts too once the agent asked you for it and an explore made a completed `fill`, `type` or `pressSequentially` call with it on a page, frame, locator or keyboard, in a frame on the site or on one of the sign-in origins you configured. A frame with no address of its own, such as `about:srcdoc`, isn't the site. Keys typed with nothing focused count only when every frame of the page is on the site or one of those origins. Waiting for the code field before typing the code makes sure the field is there when the typing starts. A page that already showed an account proves nothing. Every sign-in step drops the saved session, a check included, and a check after a confirmed sign-in starts a new sign-in.
 - A signed-in build saves its session before its first live step after sign-in, other than another sign-in step. The save passes through the page-code worker, which caps a result at 1 MiB. A larger session, usually from a big IndexedDB, fails the save. Every later live step except a sign-in step then fails too, since each tries the save first. Signing in again hits the same cap.
+- The save also keeps the tab's session storage when the whole save still fits that cap. Otherwise it saves the stored state alone, as before, so it fails only where that save fails. A reset that restores the session puts back what it saved.
+- After a reset that restores the saved session, the host checks the signed-in marker on the root. When the page reads signed out, it signs in again with the login it holds before the step runs, saves the new session and resets once more.
+  - A marker that names a path reads as unknown on the root, so it costs nothing.
+  - A marker with a page to open costs a load of that page and one more reset when the root doesn't show it.
+  - A marker with neither, which the root doesn't show, reads as signed out there. On a site whose sign-in page shows its form to a signed-in browser too, the check that types nothing can't tell, so the host signs in. The reopened root still reads signed out, so the first reset signs in twice and takes the session as one the root's load loses. Each later reset signs in once, and the step starts on the page the sign-in left. The fourth such reset fails with the session not kept.
 - Before it sends a signed-in marker, the minter can test it with `check_signed_in_marker`.
   - The host compares the marker with the pages it saw signed out: the page of the build's first sign-in screen, just before the host types into it, and each page a reset cleared. It reads a page once it loaded, its network went quiet and its document went 1.5 seconds without a change: about 2 seconds after its load, for a fast page. It waits 3 seconds at most, and reads a page still busy then as it is. It keeps only a page on the site's origin that shows something. A page still busy at 3 seconds, or one that showed something only after its document went quiet, counts only where it shows the marker, never to show it absent. The host doesn't see what a page renders after it read it, so a signed-out header that renders more than 1.5 seconds after the page went quiet is missed. Once the host typed a sign-in value in the session, it keeps no sign-in screen's page, since builds in a session share cookies.
   - It then checks the page as it is, the marker's `openPath` or the site's root loaded again, and the newest other page the build explored once its sign-in sent the login. It loads that other page only when the current page shows the marker.
@@ -25,7 +30,8 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - When a value you gave isn't available on the site, such as a sold-out date or an option the site doesn't list, it asks you whether to change it or stop. The question names your value and offers what the site has. It never picks another value for you.
 - A write keeps each native confirm you accept during its act steps on an https page. It saves up to 32 of them in `pomerado.json` as `acceptedConfirms`, each a digest of the message, the origin and the step. No page text is saved.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
-- Its prompts and examples come from `typescript/authoring/`.
+- Its prompts and examples come from `typescript/authoring/`. Every host reads the same text, except at the named sections where a host puts its own.
+- Its `AGENTS.md` starts with a list of features the prompts describe that another host supplies and the local host lacks. The minter ignores them. `typescript/src/hosted-features.ts` holds the list, one line per feature.
 
 ### Failures a build survives
 
@@ -51,6 +57,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - A denied call never reaches the website.
 - Guardian doesn't review a saved integration's runs. It approved the source while minting, so running an integration makes no model request and needs no model key.
 - Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
+- Its execution policy ends with the same list of hosted features, as protections it doesn't count on.
 
 ### Review requests
 
@@ -95,6 +102,8 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
 - `trusted_publication` indexes those files: whether each ships, whether it is current and who wrote it, the host or the minter. A publication review gets 32 turns.
 - Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
 - Any other denial goes back to the minter with Guardian's reason and findings.
+- Before the review, publication refuses a sign-in whose login URL holds a value the build was given, and a name, description or site naming that holds one. The refusal names the part, never the value.
+  - A login URL that is one authorization request, such as an identity provider's authorize URL or one carrying `state`, `nonce` or `SAMLRequest`, is asked about once. The first `finish_build` fails `login_url_one_time` with its one-time parameters, and finishing again with the same URL publishes it.
 - A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
 
 ## The outcome reviewer
@@ -118,6 +127,7 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+  - It serves that schema in one canonical form. A reference is inlined where it can be, and an input that recurses keeps its references, with its definitions at the call schema's root.
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
@@ -153,6 +163,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - It first checks without values, and asks nothing when the session already shows the account. A served call starts in a fresh browser context, so it asks.
   - Otherwise it asks for the login, and for any code, date of birth, ZIP code or security answer a screen needs. It keeps them in memory for that call only.
   - A rejected username or password is asked again at most twice, and a rejected value is never sent again.
+  - When the tool's `ensureSignedIn` finds the page signed out in the middle of the call, the host signs in again on the same page with the login it asked for, at most 3 times per call. The call's deadline pauses meanwhile.
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
@@ -209,8 +220,11 @@ The package has these entry points.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `submitJob` from `pomerado/core/runtime/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
-- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it. Neither adds the list of hosted features. Only `loadStandaloneAuthoring`, the local host's loader, puts it on top of `AGENTS.md`.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
+  - `dataVendor` says when a read may carry the caller's input to the site's own data vendor on another domain, and what evidence shows the site's page making that call.
+  - `absentProtections` is optional. It names protections other hosts supply that this host lacks, as the policy's last line.
+- `executeKernelOperation` from `pomerado/core/runtime/kernel-operation-run` runs an operation's script under the execution context's deadline, capture, events and journal, as the local child process does. A host with its own implementation of an operation passes it as the optional `first` runner, which runs in place of the script and gets the script's run as its fallback.
 - `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. The session sent its write when a step recorded a confirmation, or an act step Guardian labelled a write is `possiblySent` and the outcome review has not found it `not_done`. The local host marks each step its effect journal can't rule out as `possiblySent`.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
@@ -232,11 +246,12 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract, the page each live step starts from, the JobStore hook, the shared retry-key rule and the local job stores |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract, the page each live step starts from, the re-sign-in rules, the JobStore hook, the shared retry-key rule and the local job stores |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
 | `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
 | `typescript/src/standalone/` | Local library, terminal and MCP composition |
+| `typescript/src/hosted-features.ts` | Features another host supplies that the local minter ignores and its Guardian doesn't count on |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |

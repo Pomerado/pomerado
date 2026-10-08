@@ -30,6 +30,7 @@
     "typescript/tests/browser/isolated-locator-page.ts",
     "typescript/tests/support/job-store-contract.ts",
     "typescript/tests/support/mint-fixtures.ts",
+    "typescript/tests/support/session-sign-in-contract.ts",
     "typescript/tests/browser/shop-fixture.ts",
     "typescript/tests/support/tenant-policy.ts"
   ],
