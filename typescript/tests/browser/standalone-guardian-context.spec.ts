@@ -286,6 +286,9 @@ test("Guardian reads the page the build last observed, with private values redac
       ],
     });
     const [first, second] = executions(guardian.reviews);
+    // The minter's own request_input is not a script's question.
+    const asked = guardian.reviews.find((review) => review.kind === "question");
+    expect(asked?.input["question_review"]).not.toHaveProperty("scriptAsk");
     expect(contextOf(first!)).not.toHaveProperty("currentPage");
     expect(contextOf(second!)?.["currentPage"]).toEqual({
       origin: site.origin,
@@ -326,6 +329,8 @@ async ({ ask }) => ({ note: await ask("note") }));`,
     });
     expect(toolResult(last, "ask")).toMatchObject({ status: "completed" });
     const question = guardian.reviews.find((review) => review.kind === "question");
+    // A script's own question, which Guardian judges as one a published tool asks at run time.
+    expect(question?.input["question_review"]).toMatchObject({ scriptAsk: true });
     expect(effectsOf(question)).toEqual([]);
     expect(historyOf(question)).toEqual([
       expect.objectContaining({ purpose: "explore", status: "running", effect: "possible" }),

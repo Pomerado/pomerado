@@ -19,6 +19,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.
+- When a value you gave isn't available on the site, such as a sold-out date or an option the site doesn't list, it asks you whether to change it or stop. The question names your value and offers what the site has. It never picks another value for you.
 - A write keeps each native confirm you accept during its act steps on an https page. It saves up to 32 of them in `pomerado.json` as `acceptedConfirms`, each a digest of the message, the origin and the step. No page text is saved.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
