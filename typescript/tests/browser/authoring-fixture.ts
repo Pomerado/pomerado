@@ -13,6 +13,7 @@ import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.j
 import type { FileChannel } from "../../src/runtime/files.js";
 import { makeRunFiles } from "../../src/runtime/file-transfer.js";
 import { makeLocalFileHook } from "../../src/execution/local-files.js";
+import { makeLocalDownloads } from "../../src/execution/local-downloads.js";
 
 /**
  * The local host's file service on a test page, placing only `references` and keeping downloads
@@ -37,7 +38,10 @@ export const localFiles = (
     );
   return Effect.runPromise(
     Effect.gen(function* () {
-      const hook = yield* makeLocalFileHook({ execute, downloads: options.downloads });
+      const hook = yield* makeLocalFileHook({
+        execute,
+        downloads: makeLocalDownloads(options.downloads),
+      });
       return yield* makeRunFiles({
         hook,
         execute,

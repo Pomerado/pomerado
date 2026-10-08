@@ -993,6 +993,49 @@ test("download example returns the statement as a file object the host keeps", a
   }
 });
 
+test("a download's type comes from its bytes, else the server's type, never its name", async ({
+  page,
+}) => {
+  test.info().annotations.push({ type: "slow", description: "Two downloads Chromium must save" });
+  const site = await documentsSite(page);
+  // Each export names itself one type and is another.
+  const exports = [
+    {
+      filename: "statement.csv",
+      contentType: "text/csv",
+      body: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]),
+    },
+    { filename: "statement.pdf", contentType: "text/csv; charset=utf-8", body: Buffer.from("a,b\n") },
+  ];
+  await page.route(`${site.origin}/statement.csv`, (route) => {
+    const next = exports.shift();
+    return next === undefined
+      ? route.abort()
+      : route.fulfill({
+          contentType: next.contentType,
+          headers: { "Content-Disposition": `attachment; filename="${next.filename}"` },
+          body: next.body,
+        });
+  });
+  try {
+    const files = await localFiles(page, {
+      siteOrigin: site.origin,
+      references: [],
+      downloads: join(site.directory, "downloads"),
+      scope: site.scope,
+    });
+    const typeOf = async () => {
+      const { result } = await runExample(page, downloadStatement, {}, { files });
+      return (Either.getOrUndefined(result) as { statement: { $file: Record<string, unknown> } })
+        .statement.$file;
+    };
+    expect(await typeOf()).toMatchObject({ name: "statement.csv", media_type: "image/png" });
+    expect(await typeOf()).toMatchObject({ name: "statement.pdf", media_type: "text/csv" });
+  } finally {
+    await site.close();
+  }
+});
+
 test("dialog example keeps the confirm open for the host and applies accept in the next call", async ({
   page,
 }) => {

@@ -16,8 +16,9 @@ export interface PomeradoOptions {
   readonly timeoutMs?: number;
   /**
    * Files a run places and collects. A caller names its own file by a `file:` URL in the input.
-   * A run keeps each downloaded file under `downloads` (the system's temporary directory by
-   * default) and returns its `file:` URL. `limits` caps the bytes (`defaultFileLimits`).
+   * A run keeps each downloaded file for 30 minutes and returns its `file:` URL: under
+   * `downloads` when given, else in this process's temporary directory, which is removed when
+   * the process exits. `limits` caps the bytes (`defaultFileLimits`).
    */
   readonly files?: { readonly downloads?: string; readonly limits?: FileLimits };
 }

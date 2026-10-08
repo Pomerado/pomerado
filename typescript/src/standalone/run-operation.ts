@@ -2,11 +2,8 @@ import { Effect } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import { runLocalOperation } from "../execution/local-operation.js";
-import {
-  defaultDownloadDirectory,
-  localFileReferences,
-  makeLocalFileHook,
-} from "../execution/local-files.js";
+import { localFileReferences, makeLocalFileHook } from "../execution/local-files.js";
+import { localDownloads } from "../execution/local-downloads.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { makeRunDialogDecider } from "../inputs/dialog.js";
 import { noIncidents } from "../runtime/incidents.js";
@@ -58,7 +55,7 @@ export const runOperation = (
     const files = yield* makeRunFiles({
       hook: yield* makeLocalFileHook({
         execute: browser.executeResponse,
-        downloads: options.files?.downloads ?? defaultDownloadDirectory(),
+        downloads: localDownloads(options.files?.downloads),
       }),
       execute: browser.executeResponse,
       siteOrigin,

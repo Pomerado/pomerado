@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Effect, Either, Ref, Schema } from "effect";
 import type { BrowserExecute } from "./browser-execution.js";
-import { accepts, bytesMatchType, isProgram, sniffedType, typeOfName } from "./file-types.js";
+import { accepts, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
 import {
   defaultFileLimits,
   FileName,
   FileRefused,
   isFileObject,
+  MediaType,
   type FileChannel,
   type FileLimits,
   type FileObject,
@@ -28,7 +29,12 @@ export interface SourceFile {
 
 /** A finished download a host read back from the browser's machine. */
 export type TakenDownload =
-  | { readonly name: string; readonly bytes: Uint8Array }
+  | {
+      readonly name: string;
+      readonly bytes: Uint8Array;
+      /** The `Content-Type` the server sent with the download, when the host saw it. */
+      readonly media_type?: string;
+    }
   /** The download is larger than the most the host may read. */
   | { readonly tooLarge: true };
 
@@ -57,8 +63,9 @@ export interface FileHostHook {
   readonly armDownloads: () => Effect.Effect<string, Error>;
   /**
    * The first download that finished in the slot, waiting up to `timeoutMs`, with its suggested
-   * name and bytes, never more than `maxBytes` of them; undefined when none finished in time. It
-   * ends the slot's capture either way.
+   * name, its bytes, never more than `maxBytes` of them, and the server's `Content-Type` when the
+   * host saw it; undefined when none finished in time. It ends the slot's capture either way.
+   * The file's type comes from its first bytes, else that `Content-Type`, never its name.
    */
   readonly takeDownload: (
     slot: string,
@@ -91,6 +98,14 @@ const refuse = (reason: FileRefusalReason) => Effect.fail(new FileRefused({ reas
 /** A name a browser can be given: the host's, else a plain fallback. */
 const safeName = (name: string, fallback: string) =>
   Either.isRight(Schema.decodeUnknownEither(FileName)(name)) ? name : fallback;
+
+/** A server's `Content-Type` as a media type without parameters, when it is a valid one. */
+const serverType = (contentType: string | undefined) => {
+  const type = contentType?.split(";")[0]?.trim().toLowerCase();
+  return type !== undefined && Either.isRight(Schema.decodeUnknownEither(MediaType)(type))
+    ? type
+    : undefined;
+};
 
 const FieldFacts = Schema.Union(
   Schema.Struct({ found: Schema.Number }),
@@ -220,7 +235,9 @@ export const makeRunFiles = (options: {
         const name = safeName(taken.name, "download");
         if (isProgram(taken.bytes, name)) return yield* refuse("executable");
         yield* reserve(taken.bytes.byteLength);
-        const media_type = sniffedType(taken.bytes) ?? typeOfName(name);
+        // The bytes decide the type when they prove one, else the server's; never the name.
+        const media_type =
+          sniffedType(taken.bytes) ?? serverType(taken.media_type) ?? "application/octet-stream";
         const sha256 = createHash("sha256").update(taken.bytes).digest("hex");
         const size = taken.bytes.byteLength;
         const kept = yield* options.hook

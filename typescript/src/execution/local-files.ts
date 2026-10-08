@@ -2,19 +2,20 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { Effect, Schema, type Scope } from "effect";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
 import type { FileHostHook, SourceFile } from "../runtime/file-transfer.js";
 import { typeOfName } from "../runtime/file-types.js";
 import { localError, localPromise } from "./local-path.js";
+import type { LocalDownloads } from "./local-downloads.js";
 
 /**
  * The local host's files. A caller names a file on this machine by its `file:` URL; the native
  * browser's Playwright code runs on this machine, so a placed file is written to a run directory
  * here and a download is saved there by the browser's own download event. A collected file is
- * copied into `downloads`, where the caller reads it from its `file:` URL, or kept nowhere when
- * there is no such directory, as during a build, whose files only the run sees.
+ * kept in `downloads`, where the caller reads it from its `file:` URL until it expires, or kept
+ * nowhere when there are none, as during a build, whose files only the run sees.
  */
 
 /** Whether a value is a local file reference: a `file:` URL of an absolute path. */
@@ -54,18 +55,30 @@ export const openLocalFile = (reference: string): Effect.Effect<SourceFile, Erro
   });
 
 const Saved = Schema.Union(
-  Schema.Struct({ saved: Schema.Literal(true), name: Schema.String }),
+  Schema.Struct({
+    saved: Schema.Literal(true),
+    name: Schema.String,
+    contentType: Schema.optional(Schema.String),
+  }),
   Schema.Struct({ saved: Schema.Literal(false) }),
 );
 
-/** Native page code that saves the first download any page of the context starts into `path`. */
+/**
+ * Native page code that saves the first download any page of the context starts into `path`,
+ * noting the `Content-Type` of each response so the download's own is known.
+ */
 const armCode = (slot: string, path: string) => `
 const registry = (globalThis.__pomeradoDownloads ??= new Map());
-const state = { listeners: [] };
+const state = { listeners: [], types: new Map() };
 const capture = (download) => {
   if (state.done !== undefined) return;
   const name = download.suggestedFilename();
-  state.done = download.saveAs(${JSON.stringify(path)}).then(() => ({ saved: true, name }), () => ({ saved: false }));
+  const contentType = state.types.get(download.url());
+  state.done = download.saveAs(${JSON.stringify(path)}).then(() => ({ saved: true, name, ...(contentType === undefined ? {} : { contentType }) }), () => ({ saved: false }));
+};
+const typed = (response) => {
+  const type = response.headers()["content-type"];
+  if (type !== undefined) state.types.set(response.url(), type);
 };
 const watch = (page) => {
   page.on("download", capture);
@@ -73,7 +86,8 @@ const watch = (page) => {
 };
 for (const page of context.pages()) watch(page);
 context.on("page", watch);
-state.listeners.push(() => context.off("page", watch));
+context.on("response", typed);
+state.listeners.push(() => context.off("page", watch), () => context.off("response", typed));
 registry.set(${JSON.stringify(slot)}, state);
 return true;`;
 
@@ -82,10 +96,10 @@ const takeCode = (slot: string, timeoutMs: number) => `
 const registry = globalThis.__pomeradoDownloads;
 const state = registry?.get(${JSON.stringify(slot)});
 if (state === undefined) return { saved: false };
-registry.delete(${JSON.stringify(slot)});
-for (const stop of state.listeners) stop();
 const until = Date.now() + ${timeoutMs};
 while (state.done === undefined && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+registry.delete(${JSON.stringify(slot)});
+for (const stop of state.listeners) stop();
 if (state.done === undefined) return { saved: false };
 return await Promise.race([state.done, new Promise((resolve) => setTimeout(() => resolve({ saved: false }), Math.max(0, until - Date.now())))]);`;
 
@@ -96,7 +110,7 @@ return await Promise.race([state.done, new Promise((resolve) => setTimeout(() =>
 export const makeLocalFileHook = (options: {
   readonly execute: BrowserExecute;
   /** Where collected files are kept for the caller; none keeps no bytes. */
-  readonly downloads?: string;
+  readonly downloads?: LocalDownloads;
 }): Effect.Effect<FileHostHook, Error, Scope.Scope> =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -148,21 +162,15 @@ export const makeLocalFileHook = (options: {
           const status = yield* localPromise(() => lstat(path));
           if (!status.isFile()) return yield* Effect.fail(new Error("Download is not a file"));
           if (status.size > maxBytes) return { tooLarge: true as const };
-          return { name: saved.name, bytes: yield* localPromise(() => readFile(path)) };
+          return {
+            name: saved.name,
+            bytes: yield* localPromise(() => readFile(path)),
+            ...(saved.contentType === undefined ? {} : { media_type: saved.contentType }),
+          };
         }),
       keep: (file) =>
-        Effect.gen(function* () {
-          const id = randomUUID();
-          const downloads = options.downloads;
-          if (downloads === undefined) return { id };
-          const directory = join(downloads, id);
-          yield* localPromise(() => mkdir(directory, { recursive: true }));
-          const path = join(directory, file.name);
-          yield* localPromise(() => writeFile(path, file.bytes, { flag: "wx" }));
-          return { id, download_url: pathToFileURL(path).href };
-        }),
+        options.downloads === undefined
+          ? Effect.succeed({ id: randomUUID() })
+          : options.downloads.keep(file),
     } satisfies FileHostHook;
   });
-
-/** The default directory the local host keeps a run's downloaded files in. */
-export const defaultDownloadDirectory = () => join(tmpdir(), "pomerado-downloads");

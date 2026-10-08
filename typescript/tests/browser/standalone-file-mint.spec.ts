@@ -44,7 +44,7 @@ async ({input,files}) => ({ placed: await files.place(input.receipt, { field: 'p
 test("a write build sees the caller's file as a handle, uploads it in its act step and publishes", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "A recorded build with two live steps and a publication",
+    description: "A recorded build with three live steps, two refused steps and two finish_build calls",
   });
   test.setTimeout(90_000);
   const site = await startFileSite();
