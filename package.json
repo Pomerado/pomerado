@@ -292,6 +292,21 @@
       "import": "./dist/typescript/src/mint/operation-source.js",
       "default": "./dist/typescript/src/mint/operation-source.js"
     },
+    "./core/mint/outcome-review": {
+      "types": "./dist/typescript/src/mint/outcome-review.d.ts",
+      "import": "./dist/typescript/src/mint/outcome-review.js",
+      "default": "./dist/typescript/src/mint/outcome-review.js"
+    },
+    "./core/mint/outcome-review-contracts": {
+      "types": "./dist/typescript/src/mint/outcome-review-contracts.d.ts",
+      "import": "./dist/typescript/src/mint/outcome-review-contracts.js",
+      "default": "./dist/typescript/src/mint/outcome-review-contracts.js"
+    },
+    "./core/mint/outcome-review-openai": {
+      "types": "./dist/typescript/src/mint/outcome-review-openai.d.ts",
+      "import": "./dist/typescript/src/mint/outcome-review-openai.js",
+      "default": "./dist/typescript/src/mint/outcome-review-openai.js"
+    },
     "./core/mint/projection": {
       "types": "./dist/typescript/src/mint/projection.d.ts",
       "import": "./dist/typescript/src/mint/projection.js",

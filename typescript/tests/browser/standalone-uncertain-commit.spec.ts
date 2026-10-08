@@ -105,7 +105,7 @@ test("a failed act step that posted tells the minter to verify before any furthe
   }
 });
 
-test("an unchanged failed act step that only read the page is refused as a blind repeat", async () => {
+test("a failed act step Guardian labelled a write is refused as a repeat while its outcome is unresolved", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -123,9 +123,6 @@ test("an unchanged failed act step that only read the page is refused as a blind
     });
     expect(toolResult(last, "first")).toMatchObject({ status: "failed", effect: "possible" });
     expect(toolResult(last, "again")).toMatchObject({ status: "unsupported" });
-    expect(JSON.stringify(toolResult(last, "again"))).toContain(
-      "This act step is unchanged and just sent state-changing requests",
-    );
     expect(executions(guardian.reviews)).toHaveLength(1);
     expect(fixture.writes()).toBe(0);
   } finally {

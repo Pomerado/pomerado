@@ -5,7 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import type { MintDiagnostics } from "../../src/mint/diagnostics.js";
 import { mintIdleCompactionTokens } from "../../src/mint/idle-compaction.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
-import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
+import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -171,8 +171,8 @@ it("compacts a long history while the minter waits on an execution, without bloc
         : call("finish_build", finish, 30_000);
     },
     {
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.promise(async () => {
               order.push("execution_started");
@@ -230,8 +230,8 @@ it("sends the next turn uncompacted while a compaction is still running, then ap
           : call("finish_build", finish, 40_000);
     },
     {
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.promise(async () => {
               executions++;

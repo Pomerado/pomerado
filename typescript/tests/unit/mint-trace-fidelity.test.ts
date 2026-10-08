@@ -11,7 +11,11 @@ import {
 } from "../../src/mint/openai.js";
 import type { MintDependencies } from "../../src/mint/contracts.js";
 import type { MintDiagnostics } from "../../src/mint/diagnostics.js";
-import { makeMintContinuationFixture, portableJobSession } from "../support/mint-fixtures.js";
+import {
+  makeMintContinuationFixture,
+  readAllow,
+  portableJobSession,
+} from "../support/mint-fixtures.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -81,7 +85,7 @@ const recorded = () => {
       emitted.push({ name, details });
     });
   const reviewAndExecute: MintDependencies["reviewAndExecute"] = (input, beforeDispatch) =>
-    (beforeDispatch ?? Effect.void).pipe(
+    (beforeDispatch?.(readAllow) ?? Effect.void).pipe(
       Effect.zipRight(
         Effect.sync(() => {
           executed.push(input);

@@ -72,6 +72,7 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
                         text: JSON.stringify({
                           outcome: "allow",
                           rationale: "Current source was read",
+                          action: "read",
                         }),
                       },
                     ],
@@ -115,7 +116,10 @@ const message = (outcome: "allow" | "deny" = "allow"): ModelResponse["output"][n
   role: "assistant",
   status: "completed",
   content: [
-    { type: "output_text", text: JSON.stringify({ outcome, rationale: "Fixture verdict" }) },
+    {
+      type: "output_text",
+      text: JSON.stringify({ outcome, rationale: "Fixture verdict", action: "read" }),
+    },
   ],
 });
 const call = (id: string): ModelResponse["output"][number] => ({
@@ -283,6 +287,7 @@ it("keeps a publication's permit wait separate from the mint review holding the 
               return {
                 outcome: "allow" as const,
                 rationale: "Approved synthetic source.",
+                action: "read" as const,
               };
             }),
         },
@@ -429,7 +434,11 @@ it("masks a registered secret in the entrypoint source the request carries", asy
   secrets.register(secret);
   const requests: ModelRequest[] = [];
   provide([[message()]], requests);
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
   const reviewed = await Effect.runPromise(
     guardian.review(
       pending,
@@ -460,7 +469,11 @@ it("carries only the first page of a large entrypoint, and later pages come thro
     ],
     requests,
   );
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
   const reviewed = await Effect.runPromise(
     guardian.review(
       pending,
@@ -618,7 +631,11 @@ it.each(["all_turns", "current_turn", undefined] as const)(
                 content: [
                   {
                     type: "output_text",
-                    text: JSON.stringify({ outcome: "allow", rationale: "Synthetic recovery" }),
+                    text: JSON.stringify({
+                      outcome: "allow",
+                      rationale: "Synthetic recovery",
+                      action: "read",
+                    }),
                     annotations: [],
                   },
                 ],
@@ -631,12 +648,16 @@ it.each(["all_turns", "current_turn", undefined] as const)(
       },
     });
     setDefaultModelProvider(new OpenAIProvider({ openAIClient: client }));
-    const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {
-      reportReasoning: (context) =>
-        Effect.sync(() => {
-          reported.push(context);
-        }),
-    });
+    const guardian = makeGuardian(
+      makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+      undefined,
+      {
+        reportReasoning: (context) =>
+          Effect.sync(() => {
+            reported.push(context);
+          }),
+      },
+    );
     const result = await Effect.runPromise(
       Effect.either(guardian.reviewRecovery(pending, "Synthetic stalled browser", readCurrent)),
     );
@@ -715,16 +736,20 @@ it("a failed source-result checkpoint ends the review before a model can allow w
   const requests: ModelRequest[] = [];
   provide([[call("source")], [message()]], requests);
   let refused = false;
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {
-    save: (snapshot) =>
-      Effect.suspend(() => {
-        if (!refused && JSON.stringify(snapshot.history).includes("function_call_result")) {
-          refused = true;
-          return Effect.fail(new Error("Synthetic source-result checkpoint failure"));
-        }
-        return Effect.void;
-      }),
-  });
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {
+      save: (snapshot) =>
+        Effect.suspend(() => {
+          if (!refused && JSON.stringify(snapshot.history).includes("function_call_result")) {
+            refused = true;
+            return Effect.fail(new Error("Synthetic source-result checkpoint failure"));
+          }
+          return Effect.void;
+        }),
+    },
+  );
   const result = await Effect.runPromise(Effect.either(guardian.review(pending, readCurrent)));
   expect(Either.isLeft(result)).toBe(true);
   expect(requests).toHaveLength(1);
@@ -737,12 +762,16 @@ it("cancelling the final checkpoint leaves the review incomplete", async () => {
         const saving = yield* Deferred.make<void>();
         const requests: ModelRequest[] = [];
         provide([[call("current")], [message()]], requests);
-        const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {
-          save: (snapshot) =>
-            snapshot.incomplete
-              ? Effect.void
-              : Deferred.succeed(saving, undefined).pipe(Effect.zipRight(Effect.never)),
-        });
+        const guardian = makeGuardian(
+          makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+          undefined,
+          {
+            save: (snapshot) =>
+              snapshot.incomplete
+                ? Effect.void
+                : Deferred.succeed(saving, undefined).pipe(Effect.zipRight(Effect.never)),
+          },
+        );
         const reviewing = yield* Effect.forkScoped(guardian.review(pending, readCurrent));
         yield* Deferred.await(saving);
         yield* Fiber.interrupt(reviewing);
@@ -763,7 +792,11 @@ it("preserves a provider quota failure through the Effect session boundary", asy
       },
     }),
   });
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
   const result = await Effect.runPromise(Effect.either(guardian.review(pending, readCurrent)));
   expect(result).toMatchObject({ _tag: "Left", left: { modelQuotaExhausted: true } });
 });

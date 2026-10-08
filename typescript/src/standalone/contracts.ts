@@ -13,6 +13,8 @@ export interface PomeradoOptions {
   readonly browser?: PlaywrightOptions;
   readonly minterProvider?: ModelProvider;
   readonly guardianProvider?: ModelProvider;
+  /** The outcome reviewer's model provider, which judges whether each write took effect. */
+  readonly outcomeReviewerProvider?: ModelProvider;
   readonly policy?: string;
   readonly timeoutMs?: number;
   /**
