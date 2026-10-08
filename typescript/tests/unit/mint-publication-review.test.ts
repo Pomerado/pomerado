@@ -361,18 +361,20 @@ describe("reviewPublication", () => {
     );
     expect(requests).toHaveLength(1);
     const start = Buffer.byteLength(definition.slice(0, definition.indexOf('"inputSchema"')));
+    const rationale =
+      'The example ran with "venue", "seating" in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.';
     expect(failure.review).toEqual({
       outcome: "deny",
       reason: "input_feedback",
       reviewId: "review_1",
-      rationale:
-        'The example ran with "venue", "seating" in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.',
+      rationale,
       findings: [
         {
           path: "publication/definition.json",
           byteStart: start,
           byteEnd: start + '"inputSchema"'.length,
           category: "example_input",
+          explanation: rationale,
         },
       ],
     });
@@ -458,18 +460,20 @@ describe("reviewPublication", () => {
     expect(unlistedExampleInputKeys({ $ref: "#/$defs/Missing" }, { venue: "Corner" })).toEqual([]);
     expect(unlistedExampleInputKeys(candidate.inputSchema, undefined)).toEqual([]);
     const start = Buffer.byteLength(definition.slice(0, definition.indexOf('"inputSchema"')));
+    const rationale =
+      'The write session ran with "venue" in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.';
     expect(exampleInputFeedback({ definition, write: true }, unlisted, "review_9").review).toEqual({
       outcome: "deny",
       reason: "input_feedback",
       reviewId: "review_9",
-      rationale:
-        'The write session ran with "venue" in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.',
+      rationale,
       findings: [
         {
           path: "publication/definition.json",
           byteStart: start,
           byteEnd: start + '"inputSchema"'.length,
           category: "example_input",
+          explanation: rationale,
         },
       ],
     });

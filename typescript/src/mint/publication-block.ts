@@ -51,6 +51,9 @@ const definitionFeedback = (block: PublicationFileBlock) => {
   };
 };
 
+/** Guardian reads the workspace under `operation/`; the minter knows a file by its workspace path. */
+export const workspacePath = (path: string) => path.replace(/^operation\//u, "");
+
 /**
  * The minter's feedback for a publication gate refusal: the file, what matched and where, and what
  * to change. `fixable` is false for a file the minter cannot change: a write session step that
@@ -63,8 +66,7 @@ export const publicationBlockFeedback = (
   readonly fixable: boolean;
   readonly instruction: string;
 } => {
-  // Guardian reads the workspace under `operation/`; the minter knows it by its workspace path.
-  const file = block.file.replace(/^operation\//u, "");
+  const file = workspacePath(block.file);
   const where = [
     block.line === undefined
       ? undefined

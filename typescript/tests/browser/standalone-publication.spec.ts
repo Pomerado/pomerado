@@ -83,6 +83,7 @@ async ({kernel,sessionId}) => {
     path: "operation/src/tool.mjs",
     ...byteRange(tool, "jane.roe@example.com"),
     category: "customer_data",
+    explanation: "The source hard-codes one person's email address; take it from the input.",
   };
   const guardian = recordingGuardian({
     decide: (review) =>
@@ -119,6 +120,95 @@ async ({kernel,sessionId}) => {
         findings: [finding],
       },
     });
+  } finally {
+    await site.close();
+  }
+});
+
+// A blocking denial tells the minter what each finding is, where it is in its own workspace and
+// what fixes it, so one revision fixes them all without running the example again.
+test("a publication denial explains each finding at its workspace path, and the fixed source publishes", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1><p id=stock>In stock</p>"),
+  );
+  const stockTool = (stock: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_fixture",input:Schema.Struct({}),output:Schema.Struct({heading:Schema.String,stock:Schema.NullOr(Schema.String)})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return [await page.locator('h1').textContent(), await page.locator('#stock').textContent()];",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result[0]).trim(),stock:${stock}};
+});`;
+  const constant = stockTool("null");
+  const explanation =
+    "The stock output is always null, but the example page's #stock element shows In stock. Read it from that element.";
+  const guardian = recordingGuardian({
+    decide: (review) => {
+      if (review.kind !== "publication") return "allow";
+      const source = readOf(review, "operation/src/tool.mjs") ?? "";
+      return source.includes("stock:null")
+        ? {
+            outcome: "deny",
+            reason: "source_correction",
+            rationale: "One output is a constant where the page shows the value.",
+            findings: [
+              {
+                path: "operation/src/tool.mjs",
+                ...byteRange(source, "stock:null"),
+                category: "schema_mismatch",
+                explanation,
+              },
+            ],
+          }
+        : { outcome: "allow", reason: "approved", rationale: "Every output is read." };
+    },
+  });
+  try {
+    const { built, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/tool.mjs": constant }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        (request) => finish(request, "finish_1", "example"),
+        () => [
+          {
+            type: "apply_patch_call",
+            callId: "read_stock",
+            status: "completed",
+            operation: {
+              type: "update_file",
+              path: "src/tool.mjs",
+              diff: `@@\n-${constant.split("\n").at(-2)}\n+${stockTool("String(response.result[1]).trim()").split("\n").at(-2)}\n`,
+            },
+          },
+        ],
+        (request) => finish(request, "finish_2", "example"),
+      ],
+    });
+    const denial = toolResult(last, "finish_1");
+    expect(denial).toMatchObject({
+      status: "not_published",
+      code: "ReviewDenied",
+      review: {
+        reason: "source_correction",
+        findings: [
+          {
+            path: "operation/src/tool.mjs",
+            file: "src/tool.mjs",
+            category: "schema_mismatch",
+            explanation,
+          },
+        ],
+      },
+    });
+    expect(String(denial?.["instruction"])).toContain(
+      "Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId.",
+    );
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(publications(guardian.reviews)).toHaveLength(2);
   } finally {
     await site.close();
   }
@@ -195,6 +285,7 @@ test("an account-specific enum Guardian returns as input feedback is fixed and p
                 path: definitionPath,
                 ...byteRange(definition, "acct-4417"),
                 category: "account_specific_enum",
+                explanation: "The account input lists one account's number; make it free-form.",
               },
             ],
           }
@@ -291,7 +382,7 @@ const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 const items=typeof request.input==='string'?[request.input]:request.input;
 const start=items.findLastIndex(item=>objects(item).some(value=>'submitted_call' in value));
 const current=objects(items[start]).find(value=>'submitted_call' in value);
-if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum'}]})]);}
+if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum',explanation:'Make the account input free-form.'}]})]);}
 if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review',...action(current)})]);
 return response([call('read_source',{path:current.submitted_call.entrypoint,offset:0},'read')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};

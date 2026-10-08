@@ -910,6 +910,7 @@ it("still publishes the flagged input-feedback fallback when sign-in is unavaila
                 byteStart: 0,
                 byteEnd: 1,
                 category: "account_specific_enum",
+                explanation: "Correct the indicated input.",
               },
             ],
           },
