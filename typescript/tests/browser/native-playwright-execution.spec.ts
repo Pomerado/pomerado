@@ -1081,6 +1081,11 @@ export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct
     await effectOf(run("browser", { dispatchAtFirstCall: true, callsBrowser: true })),
   ).toBe("possible");
   expect(await effectOf(run("pureFiles"))).toBe("not_sent");
+  // A step with no browser never marks, even when its script tries a browser call.
+  expect(
+    await effectOf(run("pureFiles", { dispatchAtFirstCall: true, callsBrowser: true })),
+  ).toBe("not_sent");
+  expect(await effectOf(run("pureFiles", { callsBrowser: true }))).toBe("not_sent");
 });
 
 test("reports each request the context sends, with its body up to the cap, only while a listener hears", async () => {

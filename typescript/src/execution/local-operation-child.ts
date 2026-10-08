@@ -132,7 +132,8 @@ const journal: typeof baseJournal = {
 const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0]) =>
   Effect.gen(function* () {
     const deadline = Deadline.after(start.timeoutMs);
-    const atFirstCall = start.dispatchAtFirstCall === true;
+    // A run with no browser never marks, whatever its script tries.
+    const atFirstCall = start.dispatchAtFirstCall === true && start.offline !== true;
     const kernel = makeKernelCompatibility(start.sessionId, (code, timeoutSec) =>
       (atFirstCall ? journal.enteringDispatch : Effect.void).pipe(
         Effect.zipRight(

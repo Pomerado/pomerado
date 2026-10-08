@@ -5,7 +5,7 @@
 ### Breaking changes
 
 - A sign-in through a security question is saved in `auth-fill.json` as recipe version 1, or version 2 with a popup or approval, with the question's selector on its field. It was version 3. This version still reads version 3 recipes, so nothing has to be built again.
-  - Every earlier version refuses such a recipe, 0.4.0-canary.45 to 0.4.0-canary.47 included. A run of an integration built this way fails there with `SignInRunFailed` (`MissingRecipe`, `invalid`) before it signs in or runs anything.
+  - 0.3.0 and every later version before this one, 0.4.0-canary.45 to 0.4.0-canary.47 included, refuse such a recipe. A run of an integration built this way fails there with `SignInRunFailed` (`MissingRecipe`, `invalid`) before it signs in or runs anything.
   - Migrate by running such an integration with this version or later, and not rolling back once one is built.
 
 ### Other changes
