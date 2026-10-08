@@ -75,20 +75,27 @@ it("asks the host's sign-in at the runtime's first call and at the script's, wit
 });
 
 it("fails the script as a session the site did not keep when the host refuses, before anything was sent", async () => {
-  const host = recordingSignIn([
-    { outcome: "signed_in", signedInAgain: false },
-    { outcome: "refused", cause: "session_not_kept" },
-  ]);
-  const result = await runEnsuring({ signIn: host.signIn });
-  expect(result).toMatchObject({
+  const refusing = () =>
+    recordingSignIn([
+      { outcome: "signed_in", signedInAgain: false },
+      { outcome: "refused", cause: "session_not_kept" },
+    ]).signIn;
+  const refused = (effect: string) => ({
     _tag: "Left",
     left: {
       name: "LocalOperationFailure",
       tag: "OperationFailure",
       sessionLoss: "session_not_kept",
-      journal: { effect: "not_sent", commits: [] },
+      journal: { effect, commits: [] },
     },
   });
+  // A build's step counts as possibly sent only from its first browser call, which this script
+  // never makes: the host's sign-in is no call of the script's.
+  expect(await runEnsuring({ signIn: refusing(), dispatchAtFirstCall: true })).toMatchObject(
+    refused("not_sent"),
+  );
+  // A run counts as possibly sent from its start, as the shared runner marks it.
+  expect(await runEnsuring({ signIn: refusing() })).toMatchObject(refused("possible"));
 });
 
 it("pauses the operation's deadline while the host signs in", { timeout: 60_000 }, async () => {
