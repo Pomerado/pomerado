@@ -59,7 +59,8 @@ const sentences: {
     remediation: then(outcome, "Sign in with the expected account and run the tool again."),
   }),
   website_sign_in_unavailable: (outcome) => ({
-    message: "Signing in to the website was unavailable, so the run stopped before its task.",
+    message:
+      "The website did not keep the run signed in, and signing in again was unavailable, so the run stopped.",
     remediation: then(outcome, "Run it again in a few minutes."),
   }),
   worker_lost: (outcome) => ({
