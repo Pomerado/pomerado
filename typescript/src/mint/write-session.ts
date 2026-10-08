@@ -1,6 +1,8 @@
 import { Effect } from "effect";
+import { confirmActionUnmatched } from "../browser/dialogs/expected.js";
 import type { CommitEvidence } from "../runtime/run-outcome.js";
 import { MintFailure } from "./contracts.js";
+import { entrypointImportClosure } from "./operation-source.js";
 import { writeContractRefusal } from "./write-contract.js";
 
 // The commit evidence of an act step's runner, shared with the run outcome classifier. This module
@@ -93,12 +95,15 @@ const sessionRefusal = (reason: NonNullable<MintFailure["reason"]>) =>
  * A write session's checks before its composed script publishes, in order: the session sent its
  * write, then the script's contract, which `extract` reads offline only after that, declares a
  * confirmation and the commit marks the session entered, decodes the session's input and matches
- * the confirmation the named step recorded. The composed script is never run.
+ * the confirmation the named step recorded. Last, given `confirms`, the script names each step its
+ * session accepted a confirm popup at. The composed script is never run.
  */
 export const checkWriteSession = <
   Extracted extends {
     readonly contract: { readonly write?: Parameters<typeof writeContractRefusal>[0] };
     readonly inputDecodes: boolean;
+    /** The composed script's files, which the confirm popup check reads. */
+    readonly files?: ReadonlyMap<string, string>;
   },
   E,
   R,
@@ -110,6 +115,12 @@ export const checkWriteSession = <
   /** The act step named for publication. */
   readonly step: { readonly confirmation?: "message" | "readback" };
   readonly extract: Effect.Effect<Extracted, E, R>;
+  /**
+   * The steps the session's act steps accepted confirm popups at, and the composed script's
+   * entrypoint. The entrypoint's import closure must name each step as a literal, or a run could
+   * never match its recorded confirm. A host that runs this check on its own leaves it unset.
+   */
+  readonly confirms?: { readonly steps: Iterable<string>; readonly entrypoint: string };
 }) =>
   Effect.gen(function* () {
     const { session, step } = check;
@@ -122,5 +133,12 @@ export const checkWriteSession = <
     });
     if (refusal !== undefined || declared === undefined)
       return yield* sessionRefusal(refusal ?? "confirmation_undeclared");
+    // A run accepts a confirm popup without asking only at the action the build accepted it at,
+    // so the composed script must run each such action under the session's action id.
+    if (check.confirms !== undefined) {
+      const files = extracted.files ?? new Map<string, string>();
+      const composed = entrypointImportClosure(files, check.confirms.entrypoint);
+      yield* confirmActionUnmatched(check.confirms.steps, [...composed.values()]);
+    }
     return { extracted, declared };
   });

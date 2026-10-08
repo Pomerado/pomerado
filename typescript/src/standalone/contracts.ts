@@ -1,5 +1,6 @@
 import type { ModelProvider } from "@openai/agents";
 import { type Effect, Schema } from "effect";
+import { ExpectedConfirms } from "../browser/dialogs/expected.js";
 import { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
@@ -59,5 +60,7 @@ export const Artifact = Schema.Struct({
   signIn: Schema.optionalWith(Schema.Struct({ recipe: SignInRecipe, entryUrl: PageUrl }), {
     exact: true,
   }),
+  /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
+  acceptedConfirms: Schema.optionalWith(ExpectedConfirms, { exact: true }),
 });
 export type { MintArtifact, MintOutcome };

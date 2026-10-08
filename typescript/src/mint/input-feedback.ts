@@ -1,4 +1,5 @@
 import type { Effect } from "effect";
+import type { ExpectedConfirm } from "../browser/dialogs/contracts.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { PublicationFinding } from "../guardian/review-contracts.js";
 import type { MintFailure, PublicationDiagnosticGap } from "./contracts.js";
@@ -107,6 +108,8 @@ export interface MintArtifact {
   readonly outputSchema: unknown;
   /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
   readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
+  /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
+  readonly acceptedConfirms?: readonly ExpectedConfirm[];
 }
 
 /** Completion uses the same review/receipt loop in each composition. */
