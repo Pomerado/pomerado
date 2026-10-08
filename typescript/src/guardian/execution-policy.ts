@@ -49,7 +49,7 @@ export const nativeExecutionEnvironment: GuardianExecutionEnvironment = {
     "waitPastChallenge is only a passive readiness wait. The native host supplies no automatic CAPTCHA solver. Do not treat a wait, reload or new browser as authority to interact with a challenge or ask the user to solve it; preserve uncertain effects and never automatically replay a write.",
   executor: "executor",
   dataVendor:
-    "The native host keeps no network captures, so nothing here can show the site's own page script making such a call; step results and workspace files are the agent's own output and do not count. A read-only request that carries the caller's input to another registrable domain follows the off-site rule's caller-data escalation.",
+    "The native host keeps no network captures, so nothing here can show a call the site's own page script makes to a third-party data vendor on another registrable domain, and no data-vendor read is exempt here; step results and workspace files are the agent's own output and do not count. A read-only request that carries the caller's input to another registrable domain follows the off-site rule's caller-data escalation.",
   absentProtections: hostedProtectionsLine,
 };
 

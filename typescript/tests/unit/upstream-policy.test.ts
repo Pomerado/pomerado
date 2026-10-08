@@ -18,7 +18,7 @@ const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
 // sha256 of the local host's execution policy. A deliberate policy edit updates it.
-const nativePolicySha256 = "79e847924f4fd4068f742d80fc6231271195c877d54b4825d09b1394cee437ea";
+const nativePolicySha256 = "9988150d42f0cf270a5a64fae49cabf3224b254a7e69c5dc3b37cf98fc938177";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
@@ -151,7 +151,11 @@ describe("Guardian execution environment", () => {
     const native = guardianExecutionPolicy(nativeExecutionEnvironment);
     expect(native).not.toContain("screened captures show");
     expect(native).toContain(
-      "The native host keeps no network captures, so nothing here can show the site's own page script making such a call; step results and workspace files are the agent's own output and do not count. A read-only request that carries the caller's input to another registrable domain follows the off-site rule's caller-data escalation.",
+      "The native host keeps no network captures, so nothing here can show a call the site's own page script makes to a third-party data vendor on another registrable domain, and no data-vendor read is exempt here; step results and workspace files are the agent's own output and do not count. A read-only request that carries the caller's input to another registrable domain follows the off-site rule's caller-data escalation.",
+    );
+    // The off-site rule's "except the data-vendor read above" points at that sentence.
+    expect(native.indexOf("no data-vendor read is exempt here")).toBeLessThan(
+      native.indexOf("except the data-vendor read above"),
     );
     const { absentProtections: _absent, ...withoutAbsent } = nativeExecutionEnvironment;
     expect(

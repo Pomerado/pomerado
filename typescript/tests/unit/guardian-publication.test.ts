@@ -348,6 +348,13 @@ describe("the publication policy", () => {
   // The local host's precheck screens only the build's own caller-supplied values and secret
   // handles, so the policy never tells Guardian the files passed a credential check: Guardian
   // looks for hard-coded keys, tokens and passwords itself.
+  it("names no data-vendor exception the local host cannot evidence", () => {
+    expect(guardianPublicationPolicy).not.toContain("except the data-vendor read");
+    expect(guardianPublicationPolicy).toContain(
+      "sending it to any other off-site origin escalates, with no data-vendor exception on this host.",
+    );
+  });
+
   it("credits no credential precheck the local host does not run", () => {
     const policy = guardianPublicationPolicy;
     expect(policy).not.toContain("passed a deterministic credential precheck");
