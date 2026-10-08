@@ -6,6 +6,7 @@ import {
   MintServices,
   type ExecutionRequest,
   type MintDependencies,
+  type PublicationDecisionLog,
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
@@ -21,6 +22,7 @@ import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
+import { memoryPublicationDecisions } from "./publication-decisions.js";
 /**
  * Steps the local host refuses before review. It keeps no write maintenance, so it has no
  * possible write to inspect or finish. And once a write session started, a sign-in runs only as
@@ -46,7 +48,10 @@ const localStepRefusal = (
             "This write session already started, so it signs in only through a signInStep the host fills: an authenticate step without one would run your own source on the site outside the session's act steps. Nothing was executed.",
         }
       : undefined;
-const mintDependencies = (state: MintState) => {
+const mintDependencies = (
+  state: MintState,
+  publicationDecisions: PublicationDecisionLog,
+) => {
   const { workspace, authoring, deadline, context, request, mintAsk, handles } = state;
   const { projection, options } = state.session;
   const dependencies: MintDependencies = {
@@ -127,6 +132,7 @@ const mintDependencies = (state: MintState) => {
     reviewAndExecute: mintExecution(state),
     checkSignedInMarker: state.markers.check,
     publish: mintPublication(state),
+    publicationDecisions,
   };
   return dependencies;
 };
@@ -137,6 +143,8 @@ export const mintRequest = (
 ) =>
   Effect.gen(function* () {
     const state = yield* mintState(session, context, request);
+    // The request's runs share its publication decisions.
+    const publicationDecisions = memoryPublicationDecisions();
     const mintRequest = {
       mode: "mint",
       intent: request.intent,
@@ -148,11 +156,11 @@ export const mintRequest = (
     // Each run reads the build's read/write state as it stands when the run starts.
     if (context.buildEffect === undefined) {
       const asked = yield* runMint(mintRequest).pipe(
-        Effect.provideService(MintServices, mintDependencies(state)),
+        Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
       );
       if (context.buildEffect === undefined) return asked;
     }
     return yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
-      Effect.provideService(MintServices, mintDependencies(state)),
+      Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
     );
   });

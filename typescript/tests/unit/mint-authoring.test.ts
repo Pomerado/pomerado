@@ -450,8 +450,8 @@ it("renders the pinned standalone authoring", async () => {
     ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
     ["0e4584d71b07af68dc54696c280c853b2eca74d533a3f92356848ae0a19fb860", "writes"],
     ["fbe89bf0980002d81d36dde0d131a412887c55eeb87a0a21502cbf5865a15bc9", "caller-input"],
-    ["b6c17fb7b3bdabea246b4894d341d4812945d059f60cb73efec3cfe272ce0554", "publication"],
-    ["11dec21a63aa019343e176f67089aceceb7b0748f7af579524611e13f25a6af4", "workspace/AGENTS.md"],
+    ["37b6e4ab5edebf9ca43f4436306139c4aaffaea2c1ad8da42782628deed9e79a", "publication"],
+    ["58e09bc78d061bea932547dc2dab783f1adb405248d12b1d3d059e1f0b1fa188", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });

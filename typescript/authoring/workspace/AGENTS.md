@@ -336,8 +336,9 @@ instead, and let them pick another value or change the request. End blocked only
 answer cannot be met either. In maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
-in your own words: Guardian reviews it first, and the caller sees only a fixed sentence when it
-passes on a website's instructions, links or phone numbers.
+in your own words: Guardian reviews it first. When it passes on a website's instructions, links or
+phone numbers, Guardian returns it with a rationale and the build goes on: revise it and report
+again, or withdraw it and continue.
 Never end blocked for anything you can still work on or ask about: a failed execution, review
 feedback you can act on, a sign-in problem, a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
 only the caller knows (ask with `request_input`), or a timeout. A target on another

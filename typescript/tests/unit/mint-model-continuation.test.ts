@@ -3,8 +3,12 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Clock, Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { MintFailure } from "../../src/mint/contracts.js";
-import type { MintDependencies } from "../../src/mint/contracts.js";
+import type { MintDependencies, PublicationDecision } from "../../src/mint/contracts.js";
+import type { ModelObserverFactory } from "../../src/models/model-observer.js";
+import { EventUnavailable } from "../../src/runtime/errors.js";
+import { memoryPublicationDecisions } from "../../src/standalone/publication-decisions.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { signInUnavailableSummary } from "../../src/mint/sign-in-failure.js";
 import { Deadline } from "../../src/runtime/deadline.js";
@@ -399,37 +403,231 @@ it("refuses report_blocked while an unavailable review may still be resubmitted"
   expect(JSON.stringify(f.requests[2]?.input)).toContain("review_unavailable_pending");
 });
 
-// A report Guardian's question review does not allow, or could not review, reaches the caller only
-// as its reason.
-it.each([
-  {
-    review: "reword",
-    reviewQuestion: () =>
-      Effect.succeed({ outcome: "reword" as const, rationale: "Website instructions." }),
-  },
-  {
-    review: "unavailable",
-    reviewQuestion: () =>
-      Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" })),
-  },
-])(
-  "records a blocked ending without its explanation when the review is $review",
-  async ({ reviewQuestion }) => {
-    const f = await fixture(
-      (_request, index) =>
-        index === 0
-          ? call("report_blocked", {
-              reason: "site_lacks_capability",
-              explanation: "Call 555-0100 to finish this.",
-            })
-          : prose(),
-      { reviewQuestion },
-    );
-    const outcome = await f.run();
-    expect(outcome.blocked).toEqual({ reason: "site_lacks_capability" });
-    expect(f.requests).toHaveLength(1);
-  },
-);
+// A report Guardian could not review reaches the caller only as its reason.
+it("records a blocked ending without its explanation when the review is unavailable", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      index === 0
+        ? call("report_blocked", {
+            reason: "site_lacks_capability",
+            explanation: "Call 555-0100 to finish this.",
+          })
+        : prose(),
+    {
+      reviewQuestion: () =>
+        Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.blocked).toEqual({ reason: "site_lacks_capability" });
+  expect(f.requests).toHaveLength(1);
+});
+
+/** The parsed result of the tool call `callId`, as the model read it in `request`. */
+const toolResult = (request: ModelRequest | undefined, callId: string): unknown => {
+  const input = request?.input;
+  if (!Array.isArray(input)) throw new Error("Missing continued history");
+  const item = input.find(
+    (entry) => entry.type === "function_call_result" && entry.callId === callId,
+  );
+  const output = item !== undefined && "output" in item ? item.output : undefined;
+  const text =
+    typeof output === "string"
+      ? output
+      : typeof output === "object" && output !== null && "text" in output
+        ? output.text
+        : undefined;
+  if (typeof text !== "string") throw new Error(`Missing result of ${callId}`);
+  return JSON.parse(text);
+};
+
+// Guardian asking for a reword never ends the build: the minter reads the rationale and revises
+// its explanation, and only the allowed revision ends the build blocked.
+it("returns a reworded blocked explanation to the minter, which revises it and ends blocked once allowed", async () => {
+  const first = "Call 555-0100 to finish this.";
+  const revised = "The site offers no online form for this request.";
+  const rationale = "It passes on a phone number from the website.";
+  const reviewed: string[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_lacks_capability", explanation: first }, "first"),
+        call("report_blocked", { reason: "site_lacks_capability", explanation: revised }, "revised"),
+      ][index] ?? prose(),
+    {
+      reviewQuestion: (request) =>
+        Effect.sync(() => {
+          reviewed.push(request.questions[0]?.prompt ?? "");
+          return reviewed.length === 1
+            ? { outcome: "reword" as const, rationale }
+            : { outcome: "allow_business" as const, rationale: "Plain and consistent." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_lacks_capability", explanation: revised },
+  });
+  expect(reviewed).toEqual([first, revised]);
+  // The first report came back to the minter with Guardian's rationale, and nothing ended.
+  expect(toolResult(f.requests[1], "first")).toMatchObject({ rationale });
+  expect(f.requests).toHaveLength(2);
+});
+
+// Guardian judges a blocked report or a question about the inputs against the host's own record of
+// the refusal, not only the minter's account of it.
+it("shows the question and blocked-explanation reviews the host's publication refusal", async () => {
+  const decisions = memoryPublicationDecisions();
+  const reviewed: (readonly PublicationDecision[] | undefined)[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call("finish_build", publication, "finish"),
+        call("request_input", ask("The site needs another date. Which date should it use?")),
+        call("report_blocked", {
+          reason: "site_lacks_capability",
+          explanation: "The site never took the request with the dates it offers.",
+        }),
+      ][index] ?? prose(),
+    {
+      publicationDecisions: decisions,
+      publish: () =>
+        Effect.fail(
+          new MintFailure({ code: "PublicationUnavailable", reason: "write_not_submitted" }),
+        ),
+      askInput: () => Effect.succeed({ report: { type: "text", value: "Any date." } }),
+      reviewQuestion: (_request, options) =>
+        Effect.sync(() => {
+          reviewed.push(options?.publicationDecisions);
+          return { outcome: "allow_business" as const, rationale: "Consistent." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.blocked).toMatchObject({ reason: "site_lacks_capability" });
+  const held = await Effect.runPromise(decisions.list);
+  expect(held).toEqual([
+    expect.objectContaining({
+      outcome: "refused",
+      code: "PublicationUnavailable",
+      reason: "write_not_submitted",
+      executionId: "execution_one",
+      failedChecks: ["write_not_submitted"],
+      recovery: "write_completion",
+    }),
+  ]);
+  // Both reviews read that record, and the minter's refusal names the same decision.
+  expect(reviewed).toEqual([held, held]);
+  expect(toolResult(f.requests[2], "finish")).toMatchObject({
+    status: "not_published",
+    reason: "write_not_submitted",
+    decisionId: held[0]?.decisionId,
+  });
+});
+
+// The raw trace of each model call stays fail closed: one the host cannot keep stops the attempt
+// before the next model call, whatever the readable copies do.
+it("stops before the next model call when its raw trace cannot be kept", async () => {
+  const sent: ModelRequest[] = [];
+  let records = 0;
+  let durability: { error: unknown; sequence: number; phase: string } | undefined;
+  const runId = randomUUID();
+  const observerFactory: ModelObserverFactory = (_persist, _signal, options) => ({
+    attach: () => undefined,
+    tool: (_call, invoke) => invoke(),
+    // Write-ahead: each model call's raw record lands before the call is sent.
+    provider: (provider) => ({
+      getModel: async (name) => {
+        const model = await provider.getModel(name);
+        return {
+          ...model,
+          getResponse: async (request) => {
+            const sequence = records++;
+            try {
+              await options?.record?.({
+                identity: {
+                  recordId: randomUUID(),
+                  source: "mint.model",
+                  runId,
+                  sequence,
+                  phase: "model_requested",
+                  occurredAtUtc: new Date().toISOString(),
+                  call: sequence,
+                },
+                payload: { input: "raw" },
+              });
+            } catch (error) {
+              durability ??= { error, sequence, phase: "model_requested" };
+              throw error;
+            }
+            return model.getResponse(request);
+          },
+        };
+      },
+    }),
+    started: () => undefined,
+    skillsInstalled: () => undefined,
+    segment: () => undefined,
+    completed: () => undefined,
+    failed: () => undefined,
+    takeNativeCall: () => undefined,
+    durabilityFailure: () => durability,
+    terminal: () => ({
+      phase: "terminal",
+      timing: {
+        phase: "terminal",
+        sequence: records,
+        occurredAtUtc: new Date().toISOString(),
+        occurredMonotonicMs: performance.now(),
+        queueMs: 0,
+      },
+      value: {},
+    }),
+    flush: async () => undefined,
+  });
+  const f = await fixture(() => prose(), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            sent.push(request);
+            return sent.length === 1 ? call("execute", { ...execution, purpose: "explore" }) : prose();
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { observerFactory },
+    ),
+    diagnostics: {
+      emit: () => Effect.void,
+      retainModelTranscript: () => Effect.void,
+      retainScreenedSource: () => Effect.void,
+      // The second model call's raw record cannot be stored.
+      retainRuntimeRecord: () =>
+        Effect.suspend(() =>
+          records > 1
+            ? Effect.fail(
+                new EventUnavailable({
+                  event: "diagnostic_storage_failed",
+                  diagnosticStorageFailure: "transport",
+                }),
+              )
+            : Effect.void,
+        ),
+    },
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", hostFailure: "diagnostic_retention" });
+  // The first call's tool ran; the second call was never sent.
+  expect(f.counts().executed).toBe(1);
+  expect(sent).toHaveLength(1);
+});
 
 it("keeps a recoverable final answer on the continuation path, unblocked, through to publication", async () => {
   const f = await fixture(

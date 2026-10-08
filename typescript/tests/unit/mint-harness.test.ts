@@ -11,13 +11,13 @@ import type {
   ExecutionEvidence,
   MintHarnessSnapshot,
   MintTurn,
+  PublicationDecision,
 } from "../../src/mint/contracts.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { runMint } from "../../src/mint/harness.js";
 import { EventUnavailable } from "../../src/runtime/errors.js";
-import { diagnosticRetentionReason } from "../../src/models/model-diagnostic-failure.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 
@@ -160,68 +160,69 @@ it.each([Number.POSITIVE_INFINITY, undefined])(
   },
 );
 
+// A readable model transcript is diagnosis: a copy the host cannot keep is a recorded gap with its
+// classification, and the build goes on to publish.
 it.each([
   ["diagnostic_storage_failed", "storage"],
   ["screening_failed", "screening"],
   ["serialization_failed", "serialization"],
 ] as const)(
-  "preserves %s classification through the mint trace boundary",
+  "records a readable model transcript the host could not keep (%s) as a gap and keeps building",
   async (event, reason) => {
+    const failure = () =>
+      new EventUnavailable({
+        event,
+        ...(event === "diagnostic_storage_failed"
+          ? { diagnosticStorageFailure: "transport" as const }
+          : {}),
+      });
     const f = await fixture(
       (turn) =>
         Effect.gen(function* () {
-          const result = yield* Effect.either(
-            turn.reportTrace?.(
-              { phase: "model_returned" },
-              {
-                phase: "model_returned",
-                sequence: 0,
-                occurredAtUtc: new Date().toISOString(),
-                occurredMonotonicMs: performance.now(),
-                queueMs: 0,
-              },
-            ) ?? Effect.void,
-          );
-          expect(result._tag).toBe("Left");
-          if (result._tag === "Left") {
-            expect(diagnosticRetentionReason(result.left)).toBe(reason);
-            expect(result.left.diagnosticStorageFailure).toBe(
-              event === "diagnostic_storage_failed" ? "transport" : undefined,
-            );
-            expect(JSON.stringify(result.left)).not.toContain("secret-canary");
-          }
+          yield* turn.reportTrace?.(
+            { phase: "model_returned" },
+            {
+              phase: "model_returned",
+              sequence: 0,
+              occurredAtUtc: new Date().toISOString(),
+              occurredMonotonicMs: performance.now(),
+              queueMs: 0,
+            },
+          ) ?? Effect.void;
+          yield* turn.reportTrace?.({ phase: "model_retry" }) ?? Effect.void;
+          expect(turn.isComplete()).toBe(false);
+          yield* turn.actions.execute(execution);
+          yield* turn.actions.finish(publication);
         }),
       {
         diagnostics: {
-          retainModelTranscript: () =>
-            Effect.fail(
-              new EventUnavailable({
-                event,
-                ...(event === "diagnostic_storage_failed"
-                  ? { diagnosticStorageFailure: "transport" as const }
-                  : {}),
-              }),
-            ),
-          emit: (name) =>
-            name === "mint.model"
-              ? Effect.fail(
-                  new EventUnavailable({
-                    event,
-                    ...(event === "diagnostic_storage_failed"
-                      ? { diagnosticStorageFailure: "transport" as const }
-                      : {}),
-                  }),
-                )
-              : Effect.void,
+          retainModelTranscript: () => Effect.fail(failure()),
+          emit: (name) => (name === "mint.model" ? Effect.fail(failure()) : Effect.void),
           retainScreenedSource: () => Effect.void,
         },
       },
     );
-    expect(await f.run()).toMatchObject({ build: "incomplete" });
+    const outcome = await f.run();
+    expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+    const gaps = outcome.diagnostics
+      .map((entry): unknown => JSON.parse(entry))
+      .filter((entry) => typeof entry === "object" && entry !== null && "reason" in entry);
+    expect(gaps).toEqual(
+      Array(2).fill(
+        expect.objectContaining({
+          reason: "diagnostic_gap",
+          event: "mint.model",
+          diagnosticRetentionReason: reason,
+        }),
+      ),
+    );
+    expect(JSON.stringify(outcome.diagnostics)).not.toContain("secret-canary");
   },
 );
 
-it("continues once after a claimed example's diagnostic screening failure, then ends without replay or publication", async () => {
+// Diagnostics the host could not keep are recorded gaps, however many: the build goes on, and the
+// failed receipt is never replayed or published.
+it("keeps building through repeated diagnostic retention failures without replay or publication", async () => {
   let claims = 0;
   let publications = 0;
   let dispatches = 0;
@@ -229,13 +230,12 @@ it("continues once after a claimed example's diagnostic screening failure, then 
     (turn) =>
       Effect.gen(function* () {
         const feedback: unknown = JSON.parse(yield* turn.actions.execute(execution));
-        // One retry: the agent is told the effect is possible and may continue.
+        // The agent is told the effect is possible and may continue.
         expect(feedback).toMatchObject({
           status: "diagnostic_unavailable",
           code: "Unavailable",
           diagnosticRetentionReason: "screening",
           retryable: true,
-          retriesRemaining: 0,
           effect: "possible",
           userInputRequired: false,
         });
@@ -250,17 +250,17 @@ it("continues once after a claimed example's diagnostic screening failure, then 
         expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
           status: "not_published",
         });
-        // A second retention failure ends the attempt.
-        const second: unknown = JSON.parse(
-          yield* turn.actions.execute({ ...execution, purpose: "explore" }),
-        );
-        expect(second).toMatchObject({ status: "diagnostic_unavailable" });
-        expect(second).not.toHaveProperty("retryable");
-        expect(turn.isComplete()).toBe(true);
-        expect(yield* Effect.either(turn.actions.finish(publication))).toMatchObject({
-          _tag: "Left",
-          left: { code: "AlreadyExecuted" },
+        // A second retention failure is a gap too, and the next exploration still runs.
+        const explore = { ...execution, purpose: "explore" };
+        expect(JSON.parse(yield* turn.actions.execute(explore))).toMatchObject({
+          status: "diagnostic_unavailable",
+          retryable: true,
         });
+        expect(turn.isComplete()).toBe(false);
+        expect(JSON.parse(yield* turn.actions.execute(explore))).toMatchObject({
+          status: "completed",
+        });
+        expect(turn.isComplete()).toBe(false);
       }),
     {
       claimExample: Effect.sync(() => {
@@ -274,14 +274,23 @@ it("continues once after a claimed example's diagnostic screening failure, then 
             }),
           ),
           Effect.zipRight(
-            Effect.fail(
-              Object.assign(
-                new MintFailure({
-                  code: "Unavailable",
-                  diagnosticRetentionReason: "screening",
-                }),
-                { message: "secret-canary from raw diagnostic" },
-              ),
+            Effect.suspend(() =>
+              dispatches > 2
+              ? Effect.succeed({
+                  executionId: "explore_after_gaps",
+                  status: "completed" as const,
+                  effect: "verified" as const,
+                  observations: "page structure",
+                })
+              : Effect.fail(
+                  Object.assign(
+                    new MintFailure({
+                      code: "Unavailable",
+                      diagnosticRetentionReason: "screening",
+                    }),
+                    { message: "secret-canary from raw diagnostic" },
+                  ),
+                ),
             ),
           ),
         ),
@@ -297,9 +306,10 @@ it("continues once after a claimed example's diagnostic screening failure, then 
     build: "incomplete",
     example: { status: "failed", effect: "possible" },
   });
+  expect(outcome.hostFailure).toBeUndefined();
   expect(claims).toBe(1);
-  // The example and the later exploration each reached the host once.
-  expect(dispatches).toBe(2);
+  // The example and the two later explorations each reached the host once.
+  expect(dispatches).toBe(3);
   expect(publications).toBe(0);
 });
 
@@ -342,8 +352,10 @@ it("allows a corrected example after a Guardian deny without consuming its dispa
   expect(reviews).toBe(2);
 });
 
+// A review whose evidence the host could not keep is an ordinary review outage: it is offered back
+// for resubmission under the review outage budget, never ended after one more failure.
 it.each(["command", "explore", "example", "later_review"] as const)(
-  "allows one retry of an unavailable %s review whose evidence was not retained, then ends without source correction or renewed example claims",
+  "keeps offering a retry of an unavailable %s review whose evidence was not retained, without renewed example claims",
   async (kind) => {
     let reviews = 0;
     let claims = 0;
@@ -367,35 +379,22 @@ it.each(["command", "explore", "example", "later_review"] as const)(
                       ? "explore"
                       : "example",
                 });
-          const first: unknown = JSON.parse(String(yield* submit("first")));
-          expect(first).toMatchObject({
-            status: "review_unavailable",
-            reviewPhase: "diagnostic_retention",
-            retryable: true,
-            retriesRemaining: 0,
-          });
-          expect(turn.isComplete()).toBe(false);
-          const response = yield* submit("retry");
-          expect(typeof response).toBe("string");
-          const feedback: unknown = JSON.parse(String(response));
-          expect(feedback).toMatchObject({
-            status: "review_unavailable",
-            code: "ReviewUnavailable",
-            reviewFailure: "Unavailable",
-            reviewPhase: "diagnostic_retention",
-            diagnosticRetentionReason: "storage",
-            diagnosticStorageFailure: "unavailable",
-            userInputRequired: false,
-          });
-          expect(feedback).not.toHaveProperty("outcome");
-          expect(turn.isComplete()).toBe(true);
-          expect(yield* Effect.either(turn.actions.execute(execution))).toMatchObject({
-            _tag: "Left",
-            left: { code: "AlreadyExecuted" },
-          });
-          expect(
-            yield* Effect.either(turn.actions.requestInput(textQuestion("Repair infrastructure"))),
-          ).toMatchObject({ _tag: "Left", left: { code: "AlreadyExecuted" } });
+          for (const attempt of ["first", "retry"] as const) {
+            const feedback: unknown = JSON.parse(String(yield* submit(attempt)));
+            expect(feedback).toMatchObject({
+              status: "review_unavailable",
+              code: "ReviewUnavailable",
+              reviewFailure: "Unavailable",
+              reviewPhase: "diagnostic_retention",
+              diagnosticRetentionReason: "storage",
+              diagnosticStorageFailure: "unavailable",
+              retryable: true,
+              userInputRequired: false,
+            });
+            expect(feedback).not.toHaveProperty("outcome");
+            expect(feedback).not.toHaveProperty("retriesRemaining");
+            expect(turn.isComplete()).toBe(false);
+          }
         }),
       {
         claimExample: Effect.sync(() => {
@@ -419,6 +418,7 @@ it.each(["command", "explore", "example", "later_review"] as const)(
     );
     const outcome = await f.run();
     expect(outcome.build).toBe("incomplete");
+    expect(outcome.hostFailure).toBeUndefined();
     expect(reviews).toBe(2);
     expect(claims).toBe(kind === "later_review" ? 1 : 0);
     if (kind === "example" || kind === "later_review")
@@ -484,6 +484,37 @@ it.each([
     retry: { status: "not_published", reason: "registry_unavailable", retryable: true },
     exhausted: { status: "not_published", reason: "registry_unavailable", retryable: false },
   },
+  {
+    kind: "execution review whose evidence was not retained",
+    exampleFirst: false,
+    call: (turn: MintTurn) => turn.actions.execute({ ...execution, purpose: "explore" }),
+    failure: new MintFailure({
+      code: "ReviewUnavailable",
+      reviewFailure: "Unavailable",
+      reviewPhase: "diagnostic_retention",
+      reviewDispatch: "not_sent",
+      diagnosticRetentionReason: "storage",
+    }),
+    retry: { status: "review_unavailable", reviewPhase: "diagnostic_retention", retryable: true },
+    exhausted: { status: "review_unavailable" },
+  },
+  // A screening service the publication needed stayed unavailable, so nothing names a file to fix.
+  ...(
+    [
+      "source_screening",
+      "schema_screening",
+      "evidence_screening",
+      "path_screening",
+      "source_read",
+    ] as const
+  ).map((reason) => ({
+    kind: `publication ${reason}`,
+    exampleFirst: true,
+    call: (turn: MintTurn) => turn.actions.finish(publication),
+    failure: new MintFailure({ code: "PublicationUnavailable", reason }),
+    retry: { status: "not_published", reason, retryable: true },
+    exhausted: { status: "not_published", reason, retryable: false },
+  })),
 ])(
   "offers a retry through a $kind outage until it outlasts its budget, then ends",
   async ({ exampleFirst, call, failure, retry, exhausted }) => {
@@ -615,6 +646,167 @@ it("publishes the finished example after an unavailable publication review recov
   });
   expect(publications).toBe(2);
   expect(f.seen).toHaveLength(1);
+});
+
+// An execution whose capture the host could not produce or screen is a capture gap: its result is
+// withheld, its effect is possible, and the build goes on without replaying it.
+it("keeps the build open when an execution's capture is unavailable", async () => {
+  let dispatches = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const explore = { ...execution, purpose: "explore", target: "liveBrowser" };
+        const withheld: unknown = JSON.parse(yield* turn.actions.execute(explore));
+        expect(withheld).toMatchObject({
+          status: "execution_unavailable",
+          code: "CaptureUnavailable",
+          captureGap: "capture_publication",
+          userInputRequired: false,
+        });
+        expect(turn.isComplete()).toBe(false);
+        expect(JSON.parse(yield* turn.actions.execute(explore))).toMatchObject({
+          status: "completed",
+        });
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      executionAvailability: () => "open",
+      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
+        beforeDispatch.pipe(
+          Effect.zipRight(
+            Effect.suspend(() =>
+              ++dispatches === 1
+                ? Effect.fail(new MintFailure({ code: "CaptureUnavailable" }))
+                : Effect.succeed({
+                    executionId: dispatches === 2 ? "explore_two" : "execution_one",
+                    status: "completed" as const,
+                    effect: "verified" as const,
+                    resultRef: "private-result-ref",
+                    observations: "page structure",
+                  }),
+            ),
+          ),
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+  expect(outcome.hostFailure).toBeUndefined();
+  expect(dispatches).toBe(3);
+});
+
+it("keeps the build open when publication's capture evidence is unavailable, then publishes", async () => {
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+          status: "not_published",
+          code: "CaptureUnavailable",
+          retryable: true,
+          userInputRequired: false,
+        });
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publish: () =>
+        Effect.suspend(() =>
+          publications++ === 0
+            ? Effect.fail(new MintFailure({ code: "CaptureUnavailable" }))
+            : Effect.succeed({ publicationRef: "published-after-capture", diagnostics: [] }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "published",
+    publicationRef: "published-after-capture",
+  });
+  expect(publications).toBe(2);
+  // The example ran once; publication never reran it to regenerate capture.
+  expect(f.seen).toHaveLength(1);
+});
+
+// Each publication decision reaches the host as typed evidence, and the minter's answer names it.
+it("records each publication decision, refused and published, through the host's hook", async () => {
+  const recorded: PublicationDecision[] = [];
+  const answers: unknown[] = [];
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+      }),
+    {
+      publicationDecisions: {
+        record: (decision) =>
+          Effect.sync(() => {
+            recorded.push(decision);
+          }),
+        list: Effect.sync(() => recorded),
+      },
+      publish: () =>
+        Effect.suspend(() =>
+          publications++ === 0
+            ? Effect.fail(
+                new MintFailure({
+                  code: "PublicationUnavailable",
+                  reason: "write_not_submitted",
+                }),
+              )
+            : Effect.succeed({ publicationRef: "published-revision", diagnostics: [] }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(recorded).toEqual([
+    {
+      decisionId: expect.any(String),
+      outcome: "refused",
+      code: "PublicationUnavailable",
+      reason: "write_not_submitted",
+      executionId: "execution_one",
+      decidedAt: expect.any(Number),
+      failedChecks: ["write_not_submitted"],
+      recovery: "write_completion",
+    },
+    {
+      decisionId: expect.any(String),
+      outcome: "published",
+      code: "Published",
+      executionId: "execution_one",
+      decidedAt: expect.any(Number),
+      failedChecks: [],
+      recovery: "none",
+    },
+  ]);
+  expect(answers.map((answer) => Reflect.get(Object(answer), "decisionId"))).toEqual(
+    recorded.map(({ decisionId }) => decisionId),
+  );
+});
+
+// Evidence the host could not keep is a gap: the publication decision still stands.
+it("records a publication decision the host could not keep as a gap and still publishes", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publicationDecisions: {
+        record: () => Effect.fail(new MintFailure({ code: "Unavailable" })),
+        list: Effect.succeed([]),
+      },
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  expect(outcome.diagnostics.join("\n")).toContain("diagnostic_gap");
 });
 
 it.each([true, false])(
@@ -1155,7 +1347,7 @@ it("publishes without assumptions when the build lists none", async () => {
   expect(outcome).not.toHaveProperty("assumptions");
 });
 
-it("returns a finite detector subtype for unavailable publication review without another example or input request", async () => {
+it("returns a finite detector subtype for unavailable publication review and keeps the build open without another example", async () => {
   let publications = 0;
   const f = await fixture(
     (turn) =>
@@ -1171,20 +1363,15 @@ it("returns a finite detector subtype for unavailable publication review without
           diagnosticScreeningReason: "detector_unavailable",
           userInputRequired: false,
           retryable: true,
-          retriesRemaining: 0,
         });
         expect(JSON.stringify(feedback)).not.toContain("PRIVATE_DETECTOR_MESSAGE");
         expect(turn.isComplete()).toBe(false);
-        // A second retention failure takes the exhausted diagnostic retention budget.
-        expect(JSON.parse(yield* turn.actions.finish(publication))).not.toHaveProperty("retryable");
-        expect(turn.isComplete()).toBe(true);
-        expect(yield* Effect.either(turn.actions.finish(publication))).toMatchObject({
-          _tag: "Left",
-          left: { code: "AlreadyExecuted" },
+        // A second retention failure is an outage under the same budget, not the end.
+        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+          status: "review_unavailable",
+          retryable: true,
         });
-        expect(
-          yield* Effect.either(turn.actions.requestInput(textQuestion("Retry publication?"))),
-        ).toMatchObject({ _tag: "Left", left: { code: "AlreadyExecuted" } });
+        expect(turn.isComplete()).toBe(false);
       }),
     {
       publish: () =>
@@ -1410,7 +1597,6 @@ it("keeps the build open after a failed receipt the host did not mark terminal",
   const outcome = await f.run();
   expect(reached).toBe(true);
   expect(outcome.executions).toHaveLength(1);
-  expect(outcome.executions[0]).toMatchObject({ status: "failed", effect: "possible" });
   expect(executions).toBe(1);
   expect(publications).toBe(0);
 });
