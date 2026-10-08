@@ -197,6 +197,27 @@ it("tells the question review that host sign-in rules are never an owner's prohi
   );
 });
 
+// Without a saved login the host picks no sign-in method, so rewording the minter's question
+// whether to sign in by phone or email left the build on the site's default form, not the owner's
+// login.
+it("allows a question about the sign-in method when the host holds no login", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
+  expect(input.trusted_review.policy).toContain(
+    "When credentialsAvailable is true, the host chooses the sign-in method: reword a question asking which method to use. When it is false, a question asking which sign-in method or identifier to use, such as phone or email, is always allowed, and encouraged when it is ambiguous. Never allow one offering a passkey. A question asking where a code is sent, such as text or email, is allowed when nothing the caller gave names one and its choices match the page. Reword it when it names choices the page does not show.",
+  );
+  expect(input.trusted_review.policy).not.toContain(
+    "reword a question asking which method to use, and never allow one offering a passkey",
+  );
+});
+
 // A repair's report that the caller's value was at fault was reworded as asking the user for
 // something, and the caller lost the reason.
 it("allows a blocked report that names the caller input at fault and why", async () => {
