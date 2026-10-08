@@ -83,9 +83,62 @@ Author each step as a Kernel script under `src/` with the caller's input schema 
 core skill), and keep the flow's calls in a module the composed script will import
 too. Run each step with `execute` purpose `act`, target `liveBrowser`.
 
-<!-- pomerado:section writes.session -->
+- The first `act` step claims the build's write. The host resets the browser to
+  the site origin page first, with fresh page state (a signed-in build
+  keeps the session saved right after sign-in), so that step starts the flow there.
+- Later steps continue on the page exactly as the previous step left it. Keep steps
+  small and read the actual state after each submission. On multi-step forms, a
+  button named Continue, Next or Save may save a draft, persist that page, or finish
+  the task immediately; its label does not establish that another review or final
+  submit follows. A step that saves or advances a form page is part of the task,
+  not a second write.
+- Report a confirm popup to `decideDialog` with a literal `step` name, and keep that
+  literal in the helper the composed script imports. Runs accept a popup without
+  asking only at the step the session accepted it at, so the host refuses to publish
+  a composed script that drops one.
+- Mark every step that can change saved state, including an autosave, a saved form
+  step and a payment submission whose next screen is unknown. Call
+  `enteringCommit("place-order")` right before the execute call that can send that
+  change, and declare the names in order as `write.commits`. Use the same marked
+  helper in the session and the composed script. If the call returns an unexpected
+  page or fails while waiting for an assumed review, read back before another
+  submission: the task may already be complete. The host cannot see a
+  commit sent as a GET link or over a websocket, so the mark is its evidence of
+  whether the commit step ran.
+- The host refuses an `act` step whose source is unchanged since it ran and sent
+  state-changing requests: submitting it again could commit twice.
+- Read `stateChangingRequests` on every step. It lists the commit your step caused
+  and any autosave or draft save. That is the evidence for the `http` version; any
+  other write is unintended and must not be in the script.
+- The step that reads the result back ends the session. Read the site's own proof of this
+  commit: the confirmation it shows (an order, booking or reference number), or the saved
+  state (the orders page, the booking list, the updated profile). Match it to the caller's
+  values, return the number or record in the output, and call `verified()` with no argument
+  just before returning. Declare `write: { confirmation: "readback" }`.
+  Make no execute call after either: a later call reopens the effect. A generic
+  toast or a 200 response is not a confirmation. After the confirming step, further
+  `act` steps are refused.
+- Only if the site offers neither, the write is `unverifiable`: do not call
+  `verified`. It publishes flagged, and its runs report the write as possibly
+  completed. A session in which any step recorded a confirmation is never
+  `unverifiable`; publish against the confirming step.
+- Never repeat a step blindly. If an `act` step fails after the page sent a
+  state-changing request or opened a socket, after it entered a commit mark, or
+  without returning a result at all (its page was lost), the write may already be
+  committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
+  further write, run an `act` step that only reads the page or the account. If the
+  write happened, call `verified()` there and publish against that step, never
+  submitting it again. If nothing happened, do the write with the
+  caller's values and read its confirmation. The host refuses only an unchanged
+  commit step run again straight after it sent state-changing requests, and never
+  resubmits for you. Make the composed script match what actually worked end to end.
+- A failed step that sent no state-changing request changes nothing: the next `act`
+  step reads the page as it is and continues, finishing what is still missing.
+  A step that never calls `verified` does not end a session.
 
-<!-- pomerado:section writes.session-limits -->
+Once the session has started, a live `explore` or `test` is refused, and a write
+build never runs a live `example`. Offline checks stay available: `pureFiles` for
+helpers, `savedDOM` against the session's captures.
 
 ## Compose and publish
 
@@ -135,7 +188,8 @@ or the `exampleInput` the first act step to pass one fixed) decodes against it a
 the named step recorded the declared confirmation, then publishes. A
 `not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
 `contract_input_mismatch` means correct the source and call `finish_build` again;
-never run the write again.<!-- pomerado:section writes.finish --> `write_not_submitted` means no
+never run the write again. So does `input_feedback`, Guardian's findings on the input
+schema; the host re-reads the corrected schema offline. `write_not_submitted` means no
 `act` step recorded a confirmation, sent a non-read request or entered a commit mark;
 an unmarked GET or websocket commit is invisible to that check. Read back first. If
 the write happened, publish with `readback`. If the read-back shows it did not, do the
@@ -154,7 +208,20 @@ tell, never submit again. Guardian reviews every
 
 ## What runs do with it
 
-<!-- pomerado:section writes.run-outcomes -->
+A run of the published write ends one of three ways. A recorded confirmation makes
+it a result. A failure the host can prove sent nothing (its marks show no commit
+step entered and the page sent only reads) may retry on a new browser, and a retry
+that fails too goes to maintenance. Anything
+else, including a run that finished without its confirmation or lost its page
+before reporting its marks, returns <!-- pomerado:section writes.uncertain-status:start
+`may_have_applied`
+pomerado:section writes.uncertain-status:end --> with any unconfirmed
+result, and maintenance reads the site back and finishes the write at most once.
+An `unverifiable` write reports <!-- pomerado:section writes.unverifiable-status:start
+`may_have_applied`
+pomerado:section writes.unverifiable-status:end --> too, and nothing repairs it.
+A script that throws `errors.InvalidInput` (core skill) fails as the caller's input and
+nothing repairs it. Before any commit mark is entered, the run reports that it changed nothing.
 
 See `references/write-session.ts` for two steps and the composed script, and
 `references/write-readback.ts` for a read-back confirmation tied to its submission.
