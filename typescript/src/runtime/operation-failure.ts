@@ -33,8 +33,9 @@ export interface HttpAnswerFailure {
 
 /**
  * The site refused a caller's value, such as a past date or an unknown airport code. It is the
- * caller's to correct, so the run fails as `InvalidInput` and no repair follows. Scripts throw it
- * as `errors.InvalidInput`, never for a page or control that changed.
+ * caller's to correct, so the run fails as `InvalidInput`. A host that repairs may first check the
+ * value and ask the caller. Scripts throw it as `errors.InvalidInput`, never for a page or control
+ * that changed.
  */
 class InputRejected extends Error {
   override readonly name = "InvalidInput";
