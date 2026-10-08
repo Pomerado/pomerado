@@ -381,6 +381,7 @@ const authoredExecution = (
             target: live ? "browser" : "pureFiles",
             ask: scriptAsk,
             decideDialog: makeDialogDecider(mintAsk, secrets.redact),
+            ...(live ? { signIn: state.sessionSignIn.hook() } : {}),
           }),
         );
         if (watch !== undefined && watch.typed().size > 0) {

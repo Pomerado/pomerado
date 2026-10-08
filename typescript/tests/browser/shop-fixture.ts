@@ -141,6 +141,7 @@ const shopRoutes = (
     cookieOf(request, "shop_session") === signedIn ? sessionCookies.slice(1) : sessionCookies;
   const lateHome = (shell: string, ticking: boolean) => `<title>Shop</title><div id="app">${shell}</div>${ticking ? `<p id="tick">0</p>` : ""}
 <script>setTimeout(()=>{document.querySelector('#app').innerHTML='<nav><a id="account" href="/login">Account</a></nav>'},${state.homeRenderMs})${ticking ? `;let ticks=0;setInterval(()=>{document.querySelector('#tick').textContent=String(++ticks)},200)` : ""}</script>`;
+  // The plain home shows the account link, the shop's signed-in marker, to a signed-in session.
   const home: Route = (request, response) => {
     if (state.home === "broken") return void response.destroy();
     if (state.home === "late" || state.home === "splash" || state.home === "ticking")
@@ -151,7 +152,7 @@ const shopRoutes = (
       );
     return html(
       response,
-      `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>
+      `<title>Shop</title><meta name="csrf-token" content="${csrfValue}"><a href='/login'>Sign in</a>${cookieOf(request, "shop_session") === signedIn ? `<a id="account" href="/account">Account</a>` : ""}
 <button id="add">Add to cart</button><p id="added"></p>
 <script>document.querySelector('#add').addEventListener('click',async()=>{const token=document.querySelector('meta[name=csrf-token]').content;const response=await fetch('/api/cart',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':token},body:JSON.stringify({productId:'p-1'})});const data=await response.json();document.querySelector('#added').textContent=data.cartId??'refused'})</script>${state.home === "hang" ? `<img src="/hang" alt="">` : ""}`,
       { "set-cookie": cookiesFor(request) },

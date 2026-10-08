@@ -472,6 +472,11 @@
       "import": "./dist/typescript/src/runtime/schema-issues.js",
       "default": "./dist/typescript/src/runtime/schema-issues.js"
     },
+    "./core/runtime/session-sign-in": {
+      "types": "./dist/typescript/src/runtime/session-sign-in.d.ts",
+      "import": "./dist/typescript/src/runtime/session-sign-in.js",
+      "default": "./dist/typescript/src/runtime/session-sign-in.js"
+    },
     "./core/runtime/script-input": {
       "types": "./dist/typescript/src/runtime/script-input.d.ts",
       "import": "./dist/typescript/src/runtime/script-input.js",
@@ -536,6 +541,11 @@
       "types": "./dist/typescript/tests/browser/shop-fixture.d.ts",
       "import": "./dist/typescript/tests/browser/shop-fixture.js",
       "default": "./dist/typescript/tests/browser/shop-fixture.js"
+    },
+    "./testing/session-sign-in-contract": {
+      "types": "./dist/typescript/tests/support/session-sign-in-contract.d.ts",
+      "import": "./dist/typescript/tests/support/session-sign-in-contract.js",
+      "default": "./dist/typescript/tests/support/session-sign-in-contract.js"
     },
     "./testing/tenant-policy": {
       "types": "./dist/typescript/tests/support/tenant-policy.d.ts",

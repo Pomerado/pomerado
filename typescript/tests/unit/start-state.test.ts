@@ -211,6 +211,11 @@ const modeledBuild = (
     readonly rootLoads?: boolean;
     /** Records the host keeping the page a reset cleared, as the local mint state does. */
     readonly keepsClearedPage?: boolean;
+    /**
+     * Records the host's re-sign-in check after a reset that restored a signed-in session;
+     * `reopen` has it reset the page the same way once more, as after a sign-in.
+     */
+    readonly checksAfterReset?: "check" | "reopen";
   } = {},
 ) => {
   const targetId = "primary-target";
@@ -222,14 +227,17 @@ const modeledBuild = (
   let resetFailures = options.resetFailures ?? 0;
   const execute: HostExecute = (code) =>
     Effect.suspend((): Effect.Effect<unknown, Error> => {
-      if (code === saveSessionCode) {
+      if (code === saveSessionCode(targetId, "https://site.test")) {
         if (saveFailures > 0) {
           saveFailures--;
           calls.push("save failed");
           return Effect.fail(new Error("Save failed"));
         }
         calls.push("save");
-        return Effect.succeed({ cookies: [{ name: "login", value: "member" }], origins: [] });
+        return Effect.succeed({
+          state: { cookies: [{ name: "login", value: "member" }], origins: [] },
+          sessionStorage: [],
+        });
       }
       if (code === stopLoadingCode(targetId)) {
         calls.push("stop");
@@ -263,6 +271,12 @@ const modeledBuild = (
           calls.push("keep signed-out page");
         })
       : undefined,
+    options.checksAfterReset === undefined
+      ? undefined
+      : (reopen) =>
+          Effect.sync(() => {
+            calls.push("signed-in check");
+          }).pipe(Effect.zipRight(options.checksAfterReset === "reopen" ? reopen : Effect.void)),
   );
   const step = (purpose: StepPurpose, target: "liveBrowser" | "pureFiles" = "liveBrowser") =>
     Effect.runPromise(
@@ -408,6 +422,61 @@ describe("makeBuildStart", () => {
       "reset:restore",
       "root",
       "run",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+  });
+
+  it("checks the session after each reset that restored it, never after a clear or a kept session", async () => {
+    const build = modeledBuild({ checksAfterReset: "check" });
+    await build.step("example");
+    await build.signIn();
+    await build.step("example");
+    // A sign-in step opens a new sign-in, unsettled until it verifies: the reset keeps the
+    // browser's session, which the host does not check.
+    await build.step("authenticate");
+    await build.step("example");
+    expect(build.calls).toEqual([
+      "reset:clear",
+      "root",
+      "run",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
+      "run",
+      "run",
+      "reset:keep",
+      "root",
+      "run",
+    ]);
+  });
+
+  it("lets the check reset the page the same way again, with the session saved last", async () => {
+    const build = modeledBuild({ checksAfterReset: "reopen" });
+    await build.signIn();
+    await build.step("test");
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+    // The session the host saves after a sign-in again is the one the reopened page restores.
+    await Effect.runPromise(build.start.saveSession);
+    await build.step("example");
+    expect(build.calls.slice(9)).toEqual([
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
       "reset:restore",
       "root",
       "run",

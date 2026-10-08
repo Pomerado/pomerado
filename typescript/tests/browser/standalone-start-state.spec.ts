@@ -218,6 +218,8 @@ const startSite = async () => {
   ]);
   const visits: string[] = [];
   const probes: Probe[] = [];
+  /** A path whose next signed-in load signs the session out, as an expired session would. */
+  const state: { signOutOn: string | undefined } = { signOutOn: undefined };
   const server = createServer(
     {
       key: await readFile(join(directory, "key.pem")),
@@ -259,6 +261,12 @@ const startSite = async () => {
           return;
         }
         visits.push(path);
+        if (path === state.signOutOn && request.headers.cookie?.includes("member=signed")) {
+          state.signOutOn = undefined;
+          response.setHeader("set-cookie", "member=; Path=/; Max-Age=0; Secure; HttpOnly");
+          request.headers.cookie = request.headers.cookie.replace("member=signed", "");
+        }
+        const signedIn = request.headers.cookie?.includes("member=signed") === true;
         if (path === "/login")
           return page(
             response,
@@ -309,7 +317,12 @@ const startSite = async () => {
               ? `<title>Account</title><p id="account">Signed in</p>`
               : `<title>Account</title><p id="signed-out">Please sign in</p>`,
           );
-        return page(response, `<title>${path}</title><h1>${path}</h1>`);
+        // Every other page shows the signed-in marker to a signed-in session, as a site-wide
+        // account menu would.
+        return page(
+          response,
+          `<title>${path}</title><h1>${path}</h1>${signedIn ? `<p id="account">Signed in</p>` : ""}`,
+        );
       })().catch(() => response.destroy());
     },
   );
@@ -327,6 +340,7 @@ const startSite = async () => {
     origin: `https://${hostname}:${address.port}`,
     elsewhere: `https://${elsewhere}:${address.port}`,
     endpoint: browser.wsEndpoint(),
+    state,
     visits,
     probes,
     probe: (step: string) => {
@@ -482,6 +496,48 @@ test("a signed-in build's example starts at the root with the session saved afte
   });
   // A run keeps the browser's session and loads the root, whatever the request's path.
   expect(run).toMatchObject({ path: "/", cookies: ["member"], token: "member", tabs: 1 });
+});
+
+test("a signed-in build whose reset's load signs it out signs in again before its example, which starts at the root", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite();
+  const [patched, signIn, check, explored, example, finished] = readSteps(true);
+  if (!patched || !signIn || !check || !explored || !example || !finished)
+    throw new Error("Unexpected read steps");
+  const built = await build(site, { url: `${site.origin}/login`, effect: "read" }, [
+    patched,
+    signIn,
+    check,
+    explored,
+    (request) => {
+      // The example's reset loads the root, and that load signs the session out.
+      site.state.signOutOn = "/";
+      return example(request);
+    },
+    finished,
+  ]);
+  expect(built.build).toBe("published");
+  // The host found the root signed out after the reset. Its check that types nothing loaded the
+  // sign-in page, which showed its form, so it signed in again with the login the build holds,
+  // saved that session and reset once more. The root then showed the marker.
+  expect(site.visits).toEqual([
+    "/login",
+    "/account",
+    "/deep",
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    "/",
+  ]);
+  expect(site.probe("example")).toMatchObject({
+    path: "/",
+    cookies: ["member"],
+    explored: null,
+    token: "member",
+    tab: null,
+    tabs: 1,
+  });
 });
 
 test("a write session's first step starts clean at the root, and the next continues", async () => {

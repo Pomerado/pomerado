@@ -1,10 +1,11 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { test, expect, type Page } from "@playwright/test";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { HostExecute } from "../../src/runtime/host-execute.js";
 import {
   localStartHooks,
+  SavedSession,
   saveSessionCode,
   startPage,
   stopLoadingCode,
@@ -63,7 +64,7 @@ const host = async (page: Page) => {
 
 interface Reset {
   readonly reset: (start: PageStart) => Promise<void>;
-  readonly save: () => Promise<unknown>;
+  readonly save: () => Promise<SavedSession>;
   /** Whether a call stopped the primary tab's loading after a failed root load. */
   readonly stopped: () => boolean;
 }
@@ -76,7 +77,12 @@ const withSite = async (page: Page, run: (site: Site, browser: Reset) => Promise
         Effect.runPromise(
           startPage(execute, targetId, site.origin, start, localStartHooks(execute, targetId)),
         ),
-      save: () => Effect.runPromise(execute(saveSessionCode, 60)),
+      save: () =>
+        Effect.runPromise(
+          execute(saveSessionCode(targetId, site.origin), 60).pipe(
+            Effect.flatMap(Schema.decodeUnknown(SavedSession)),
+          ),
+        ),
       stopped: () => calls.includes(stopLoadingCode(targetId)),
     });
   } finally {
@@ -217,7 +223,6 @@ test("a restore puts back the tab's session storage the saved session had", asyn
     const session = await save();
     await page.evaluate(() => sessionStorage.setItem("login", "changed"));
     await reset({ siteData: "restore", session });
-    // The saved session is the context's storage state only: the tab's session storage is lost.
-    expect(await page.evaluate(() => sessionStorage.getItem("login"))).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem("login"))).toBe("member");
   });
 });

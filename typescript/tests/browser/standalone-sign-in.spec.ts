@@ -457,7 +457,7 @@ const ordersReader = (origin: string) =>
     signIn: { recipe: loginRecipe(origin), entryUrl: `${origin}/login` },
   }) as MintArtifact;
 
-test("a run whose site signs it out on a load in the middle of the script goes on signed out", async () => {
+test("a run whose site signs it out on a load in the middle of the script signs in again on the same page and carries on", async () => {
   test.setTimeout(120_000);
   await withShop(async (shop, endpoint) => {
     shop.state.signOutOn = "/orders";
@@ -468,9 +468,10 @@ test("a run whose site signs it out on a load in the middle of the script goes o
       ordersReader(shop.origin),
       `${shop.origin}/orders`,
     );
-    expect(result).toEqual(Either.right({ first: false, signedInAgain: false, second: false }));
+    expect(result).toEqual(Either.right({ first: false, signedInAgain: true, second: true }));
+    // The login the run read before the script, typed once more through the recorded sign-in.
     expect(reasons(asked)).toEqual(["missing_credentials"]);
-    expect(shop.state.loginPosts).toBe(1);
+    expect(shop.state.loginPosts).toBe(2);
   });
 });
 
