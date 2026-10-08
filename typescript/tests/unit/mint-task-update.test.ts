@@ -8,8 +8,10 @@ import type {
   TaskUpdateApplication,
   TaskUpdateCandidate,
 } from "../../src/mint/contracts.js";
+import { MintFailure } from "../../src/mint/contracts.js";
 import type { TaskUpdateDecision } from "../../src/guardian/task-update.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
+import { memoryPublicationDecisions } from "../../src/standalone/publication-decisions.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
@@ -490,8 +492,66 @@ const toSister = {
   recommend: "update",
 };
 
+// Guardian judges a proposed change against the host's own record of the refusal that led to it,
+// not only the minter's account of it.
+it("shows the update review the host's publication refusal", async () => {
+  const updates = updateHost(["allow"]);
+  const decisions = memoryPublicationDecisions();
+  const dateQuestion = {
+    questions: [
+      {
+        id: "date",
+        type: "choice",
+        prompt: "The site does not take notes dated on a weekend. Use Monday instead?",
+        options: [
+          { id: "monday", label: "Yes, use Monday" },
+          { id: "stop", label: "No, stop" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...example, purpose: "act", target: "liveBrowser" }, "act"),
+        call("finish_build", { ...publication, executionId: "execution_1" }, "refused"),
+        call("request_input", dateQuestion, "ask"),
+        call(
+          "mint_update",
+          {
+            summary: "Date the note Monday, since the site refuses weekend dates.",
+            changes: [{ setting: "input", values: { date: "monday" } }],
+            confirmedBy: ["date"],
+            recommend: "update",
+          },
+          "update",
+        ),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ date: "monday" }]),
+      reviewAndExecute: numberedExecutions(),
+      publicationDecisions: decisions,
+      publish: () =>
+        Effect.fail(
+          new MintFailure({ code: "PublicationUnavailable", reason: "write_not_submitted" }),
+        ),
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "refused")).toMatchObject({ reason: "write_not_submitted" });
+  const held = await Effect.runPromise(decisions.list);
+  expect(held).toEqual([
+    expect.objectContaining({ reason: "write_not_submitted", recovery: "write_completion" }),
+  ]);
+  expect(updates.reviews).toHaveLength(1);
+  expect(updates.reviews[0]?.update.publicationDecisions).toEqual(held);
+});
+
 it("publishes after a site change only an example that ran on the new site", async () => {
   const updates = updateHost(["allow"]);
+  const decisions = memoryPublicationDecisions();
   const f = await fixture(
     (_request, index) =>
       [
@@ -507,6 +567,7 @@ it("publishes after a site change only an example that ran on the new site", asy
       askInput: answering([{ site: "move" }]),
       repeatableRead: true,
       reviewAndExecute: numberedExecutions(),
+      publicationDecisions: decisions,
     },
     { effect: "read", siteOrigin: site },
   );
@@ -517,11 +578,22 @@ it("publishes after a site change only an example that ran on the new site", asy
     reason: "example_before_site_change",
   });
   expect(outcome.build).toBe("published");
+  // The stale refusal is host evidence: a fresh example on the current site recovers it.
+  expect(await Effect.runPromise(decisions.list)).toEqual([
+    expect.objectContaining({
+      outcome: "refused",
+      reason: "example_before_site_change",
+      executionId: "execution_1",
+      recovery: "new_observation",
+    }),
+    expect.objectContaining({ outcome: "published", executionId: "execution_2" }),
+  ]);
   expect(f.counts().published).toBe(1);
 });
 
 it("lets a read build that ran its live example become a write, and publishes only the write", async () => {
   const updates = updateHost(["allow"]);
+  const decisions = memoryPublicationDecisions();
   const f = await fixture(
     (_request, index) =>
       [
@@ -536,10 +608,20 @@ it("lets a read build that ran its live example become a write, and publishes on
       askInput: answering([{ save: "save" }]),
       repeatableRead: false,
       reviewAndExecute: numberedExecutions(),
+      publicationDecisions: decisions,
     },
     { effect: "read", siteOrigin: site },
   );
   await f.run();
+  // The read's receipt is refused as host evidence: the write itself is still to do.
+  expect(await Effect.runPromise(decisions.list)).toEqual([
+    expect.objectContaining({
+      outcome: "refused",
+      reason: "example_before_effect_change",
+      executionId: "execution_1",
+      recovery: "write_completion",
+    }),
+  ]);
   expect(resultOf(f.requests, "read")).toMatchObject({ status: "completed" });
   expect(resultOf(f.requests, "update")).toMatchObject({
     status: "updated",
