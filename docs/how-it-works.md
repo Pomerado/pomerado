@@ -118,11 +118,19 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
-- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status and a failed run's commit marks. It never holds the input or the output.
+- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status, and a failed run's outcome and commit marks. It never holds the input or the output.
 - Two servers on one integration folder share those records, so one key starts one job between them.
 - `.jobs` is for servers on one machine. A record names the process that runs its job, and a server on another machine or in another container can't tell whether that process still runs.
-- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status but not its output. A keyed job the restart stopped reads as failed and is never run again.
-- A failed job is never replayed. A website action it already sent may have taken effect.
+- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status and a failed run's outcome, but not its output. A keyed job the restart stopped reads as failed and is never run again.
+- A failed job is never replayed.
+- A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
+  - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
+  - A refused input or login whose declared commit steps were never entered reports `not_applied`, unless the write already recorded its confirmation. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
+  - A read never reports a possible website change.
+  - Only `possible_commit: true` tells the caller to read the site back before any retry.
+  - `retry` is one of four classes. `never`: don't repeat the call as is. `fix_input`: correct the input or the login, then call again. `new_key`: calling again is a new run, after reading the site back when `possible_commit` is true. `same_key`: the request itself may be repeated.
+  - A repeated `idempotency_key` always answers the job it named, even a failed one. To run a failed call again, call with a new key or none.
+- A failed mint's job still warns that a website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
 ## Library and terminal
