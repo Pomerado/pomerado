@@ -1,13 +1,11 @@
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { ReviewFailure } from "../../src/guardian/review.js";
-import { ownerNamedOrigins } from "../../src/guardian/owner-named-origins.js";
 import { failureDetail } from "../../src/runtime/failure-detail.js";
 import {
   allowedEffectsFor,
   contractExtractionNote,
   currentDateObservations,
-  intentWithApproval,
   makeStepResults,
   mintReviewContext,
   pageLocation,
@@ -381,26 +379,5 @@ describe("reviewDenied", () => {
       rationale: "Ask",
       reviewId: "review_2",
     });
-  });
-});
-
-describe("intentWithApproval", () => {
-  it("adds an approved write upgrade's question to the intent, and nothing without one", () => {
-    expect(intentWithApproval("Create a workspace", undefined)).toBe("Create a workspace");
-    expect(intentWithApproval("Create a workspace", "May this build create it?")).toBe(
-      "Create a workspace\nThe owner approved turning this read build into a write build, answering this reviewed question: May this build create it?",
-    );
-  });
-
-  it("never takes an off-site origin in an approved write upgrade's question as owner-named", () => {
-    const requestedIntent = "Create a workspace for the team";
-    const screenedIntent = intentWithApproval(
-      requestedIntent,
-      "May this build create the workspace at https://other.example/new for you?",
-    );
-    expect(screenedIntent).toContain("https://other.example/new");
-    expect(
-      ownerNamedOrigins({ requestedIntent, allowedOrigins: ["https://site.example"] }),
-    ).toEqual([]);
   });
 });
