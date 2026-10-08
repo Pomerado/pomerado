@@ -268,6 +268,9 @@ export const mintPublication =
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
           ...(signIn === undefined ? {} : { signIn }),
+          // Always recorded, so a run falls back to reading the source only for an artifact saved
+          // before builds recorded them.
+          questions: result.schemas.questions ?? {},
           ...(write && writeSession.acceptedConfirms.length > 0
             ? { acceptedConfirms: writeSession.acceptedConfirms.slice(0, expectedConfirmLimit) }
             : {}),
