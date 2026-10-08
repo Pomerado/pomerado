@@ -70,6 +70,10 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
   - It can also give the `labels` its decision may carry and a `private` flag.
   - It returns `{ outcome, rationale, label? }`. The host refuses any other outcome or label.
   - A private kind's evidence, transcript and rationale reach no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder, including after a compaction.
+- **Action label.** An execution review's decision carries `action`: `read`, `write` or `authentication`, by what the code does to the site's persistent state, not by HTTP method or button names. A write includes intermediate changes, such as adding to a cart or saving a draft.
+  - An allow without a label is a malformed review, retried like an outage.
+  - An allowed `write` on a step without `PendingExecution.writeAuthority` becomes a denial, as out of authority. The local host gives write authority only to a write build's live `act` steps.
+  - The host passes the allow and its label to the dispatch fence, `beforeDispatch(allowed)`, and the execution's receipt carries it as `review.action`.
 - **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
   - If the host's read fails, the source is left out and Guardian reads it itself.
   - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.
@@ -102,6 +106,23 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
 - Before the review, publication refuses a sign-in whose login URL holds a value the build was given, and a name, description or site naming that holds one. The refusal names the part, never the value.
   - A login URL that is one authorization request, such as an identity provider's authorize URL or one carrying `state`, `nonce` or `SAMLRequest`, is asked about once. The first `finish_build` fails `login_url_one_time` with its one-time parameters, and finishing again with the same URL publishes it.
 - A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
+
+## The outcome reviewer
+
+- Guardian judges each action before it runs and never sees its result. A separate model session, the outcome reviewer, judges afterwards whether each write Guardian labelled actually changed the site: `done`, `not_done` or `unknown`, with a short explanation and the evidence it rests on.
+- It runs beside the minter as its own continuing conversation, on GPT-6 Luna, with Guardian's session building blocks: provider compaction, and an interrupted turn closed before the next.
+- Its tools only read. It searches and reads the minter's whole history, the turns a compaction replaced in later requests included. It lists and reads the host's records of executions, generated source, screened captures and publication decisions, and reads the original request, the accepted answers and the task's current state. It records an assessment, and it can ask the minter for a readback, which the minter runs through its normal reviewed execution. It has no browser, shell or website access.
+- It wakes when a write returns, fails or loses its result, when a later live execution may hold a readback, when an answer or an applied `mint_update` changes the remaining work (a refused update does not), and when `finish_build` runs with a write unresolved.
+- It takes one turn at a time per mint. Events that arrive during a turn are coalesced into the next. Its turns are not minter activity.
+- A failed turn is retried after a wait, without limit, and never invents an outcome. The newest assessment of a write replaces the older one.
+- The minter keeps working meanwhile. The only step that waits for the reviewer is one that would run an earlier write's step again: the same entrypoint, or the same source under another name (a digest of its import closure's contents). It runs only once the reviewer, caught up without an outage and with no readback it asked for still unanswered, found every such write `not_done`.
+- Guardian's execution review sees the build's earlier writes with the review's newest finding for each (`trusted_execution_context.writes`), and denies a step that would commit the same change again, however its code is written. A host passes them through `OutcomeReviewHost.bindWrites` and `MintReviewHost.writes`.
+- The harness's recovery checkpoint keeps the tracked writes with their entrypoints and digests (`MintHarnessSnapshot.outcomeWrites`), so a takeover tracks them, and refuses their repeats, even when the reviewer's own save failed. A write whose result a takeover recovers is tracked with the entrypoint its call named, from the evidence the host's `recoverTool` returns: a host's execution journal must keep each execution's `review.action`, or a recovered write is not tracked.
+- Publication never waits. When a published build leaves a write unresolved, the reviewer gets one final turn as the attempt ends, and its answer stands. A refused publication leaves the reviewer on its ordinary turns. The outcome's `writes` lists every write with its newest assessment: `applied`, `not_applied`, or `may_have_applied` when the review found it `unknown` or never settled it.
+- Every dispatch carries a label. A sign-in screen the local host fills itself passes the host's own `authentication` allow to the dispatch fence.
+- The local host runs the reviewer and decides whether a write session submitted its write from the labels and assessments. Commit marks and declared confirmations remain the write contract's evidence.
+- The minter's whole history stays readable. The SDK's `RunState.history`, which a new run segment starts from, drops every item before the latest compaction. So before a segment starts, the minter stores those items in a history archive, and its recovery checkpoint records where the run state starts in the whole history (`historyOffset`). After a takeover, the reviewer reads the earlier items from the archive and the later ones from the restored run state.
+- A host supplies the reviewer through `MintDependencies.outcomeReview`: the model (`makeOpenAIOutcomeReviewer` from `pomerado/core/mint/outcome-review-openai`), a `save` hook for the reviewer's state beside the minter's run state, a `recordAssessment` journal hook, and optionally a durable `historyArchive` and its own records around the harness's evidence. Without an archive, the harness keeps the history in memory for the attempt, as the local host does. The archive can grow to millions of tokens, so it is never part of a checkpoint. A range the archive could not store stays in memory, is recorded as a `history_archive_gap` diagnostic and is stored again later; a storage failure never ends the build. A range lost with its attempt reads as explicit gap items, so later offsets stay right and the reviewer sees what is missing. The contracts are in `pomerado/core/mint/outcome-review-contracts`.
 
 ## The runtime
 
@@ -191,7 +212,7 @@ await Effect.runPromise(
 
 - `makeInputAsker` adapts your own chat callback. The callback receives an `InputRequest` and returns raw answers keyed by question ID.
 - `makePomeradoMcp` and `makeIntegrationMcp` expose the two local MCP modes as library functions. Their Effect scopes own cleanup.
-- `minterProvider` and `guardianProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
+- `minterProvider`, `guardianProvider` and `outcomeReviewerProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
 - Importing a core module starts no browser, MCP listener or workspace.
 
 The package has these entry points.
@@ -206,7 +227,7 @@ The package has these entry points.
   - `dataVendor` says when a read may carry the caller's input to the site's own data vendor on another domain, and what evidence shows the site's page making that call.
   - `absentProtections` is optional. It names protections other hosts supply that this host lacks, as the policy's last line.
 - `executeKernelOperation` from `pomerado/core/runtime/kernel-operation-run` runs an operation's script under the execution context's deadline, capture, events and journal, as the local child process does. A host with its own implementation of an operation passes it as the optional `first` runner, which runs in place of the script and gets the script's run as its fallback.
-- `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. It takes the session's non-read request count, which the local host passes as 0. The local host marks each step its effect journal can't rule out as `possiblySent` instead.
+- `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. The session sent its write when a step recorded a confirmation, or an act step Guardian labelled a write is `possiblySent` and the outcome review has not found it `not_done`. The local host marks each step its effect journal can't rule out as `possiblySent`.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
 - `pomerado/testing/confirm-popups-contract` holds a fixture page with eight confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.

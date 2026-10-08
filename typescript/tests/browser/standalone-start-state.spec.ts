@@ -13,6 +13,7 @@ import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
+import { actionFor, quietReviewer } from "./guardian-context-fixture.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 
 // Where each live step of a local build starts: its page, tabs, cookies and storage. A local
@@ -71,7 +72,11 @@ const guardian = () => {
       return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture" }))];
     if (sourcePending) {
       sourcePending = false;
-      return [message(JSON.stringify({ outcome: "allow", rationale: "Fixture review" }))];
+      return [
+        message(
+          JSON.stringify({ outcome: "allow", rationale: "Fixture review", ...actionFor(current) }),
+        ),
+      ];
     }
     sourcePending = true;
     const pending = objects(current).find((item) => typeof item["entrypoint"] === "string");
@@ -319,8 +324,7 @@ const startSite = async () => {
             response,
             `<title>Framed</title><iframe src="https://${elsewhere}:${request.socket.localPort}/code-frame"></iframe>`,
           );
-        if (path === "/code-frame")
-          return page(response, `<title>Code</title><input name="code">`);
+        if (path === "/code-frame") return page(response, `<title>Code</title><input name="code">`);
         if (path === "/account")
           return page(
             response,
@@ -387,6 +391,7 @@ const build = (
           browser: { endpoint: site.endpoint },
           minterProvider: provider((model, index) => steps[index]?.(model) ?? [message("Done.")]),
           guardianProvider: guardian(),
+          outcomeReviewerProvider: quietReviewer,
           ask: makeInputAsker((request) =>
             Effect.sync(() => {
               asked.push(request);
@@ -498,7 +503,16 @@ test("a signed-in build's example starts at the root with the session saved afte
   expect(built.build).toBe("published");
   // The run first checks its sign-in from the entry page. This site shows its form to a signed-in
   // session too, so the run signs in again (the check's load, then the replay's) before the root.
-  expect(site.visits).toEqual(["/login", "/account", "/deep", "/", "/login", "/login", "/account", "/"]);
+  expect(site.visits).toEqual([
+    "/login",
+    "/account",
+    "/deep",
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    "/",
+  ]);
   const [example, run] = site.probes;
   // The sign-in's cookie and storage come back; exploration's do not.
   expect(example).toMatchObject({
@@ -827,12 +841,10 @@ test("a sign-in whose page submits its own form still counts, and the example ke
   test.setTimeout(90_000);
   const site = await startSite();
   const seen: Record<string, unknown>[] = [];
-  const steps = readSteps(true).map(
-    (respond) => (request: ModelRequest) => {
-      seen.push(...objects(request.input).filter((item) => "submit" in item || "signedIn" in item));
-      return respond(request);
-    },
-  );
+  const steps = readSteps(true).map((respond) => (request: ModelRequest) => {
+    seen.push(...objects(request.input).filter((item) => "submit" in item || "signedIn" in item));
+    return respond(request);
+  });
   await build(site, { url: `${site.origin}/login-self`, effect: "read" }, steps);
   // The page sent the login itself, so the host found no submit to click after typing.
   expect(seen).toContainEqual(expect.objectContaining({ outcome: "filled", submit: "refused" }));
@@ -1120,9 +1132,7 @@ test("a code typed into a frame on a configured sign-in origin counts as typed o
       effect: "read",
       authenticationOrigins: [site.elsewhere],
     },
-    passwordlessSteps({ "explore/code.mjs": operation("code", typeInFrame) }, [
-      "explore/code.mjs",
-    ]),
+    passwordlessSteps({ "explore/code.mjs": operation("code", typeInFrame) }, ["explore/code.mjs"]),
   );
   expect(built.build, JSON.stringify({ built, visits: site.visits })).toBe("published");
   // The same explore as the frame above, but that origin is where this site signs in.

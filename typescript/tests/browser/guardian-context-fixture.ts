@@ -124,7 +124,8 @@ export const authorityOf = (review: RecordedReview) =>
  * (and the whole current page's capture when `readPage` is set) before deciding; a publication
  * review reads the first chunk of every file it indexes; a question is allowed. `decide` returns
  * an outcome, or a publication review's whole decision; `decideUpdate` a task update's outcome,
- * allow unless it says otherwise.
+ * allow unless it says otherwise. An execution outcome alone gets the action its step's purpose
+ * implies.
  * `fail` makes a call throw, as a provider outage would.
  */
 export const recordingGuardian = (
@@ -209,7 +210,11 @@ export const recordingGuardian = (
       message(
         JSON.stringify(
           typeof decided === "string"
-            ? { outcome: decided, rationale: "Recorded fixture review" }
+            ? {
+                outcome: decided,
+                rationale: "Recorded fixture review",
+                ...actionFor(review.input),
+              }
             : decided,
         ),
       ),
@@ -217,6 +222,26 @@ export const recordingGuardian = (
   });
   return { provider, reviews, calls: () => calls };
 };
+
+/**
+ * The action label a fixture execution review gives a step by its purpose, as fields to spread
+ * into its decision; other kinds of review get none.
+ */
+export const actionFor = (input: Readonly<Record<string, unknown>> | undefined) => {
+  const review = input?.["trusted_review"] as Readonly<Record<string, unknown>> | undefined;
+  if (review?.["kind"] !== "execution") return {};
+  const context = input?.["trusted_execution_context"] as
+    Readonly<Record<string, unknown>> | undefined;
+  const purpose = (
+    context?.["currentExecution"] as Readonly<Record<string, unknown>> | undefined
+  )?.["purpose"];
+  return {
+    action: purpose === "act" ? "write" : purpose === "authenticate" ? "authentication" : "read",
+  };
+};
+
+/** An outcome reviewer that ends every turn without assessing. */
+export const quietReviewer: ModelProvider = scripted(() => [message("No assessment yet.")]);
 
 /** A local site; `handle` answers each request, and every request line is logged. */
 export const startSite = async (

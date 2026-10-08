@@ -1,7 +1,7 @@
 import type { Effect } from "effect";
 import type { ExpectedConfirm } from "../browser/dialogs/contracts.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
-import type { PublicationFinding } from "../guardian/review-contracts.js";
+import type { GuardianAction, PublicationFinding } from "../guardian/review-contracts.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import type { MintFailure, PublicationDiagnosticGap } from "./contracts.js";
 
@@ -10,6 +10,8 @@ export interface MintReviewFeedback {
   readonly reviewId: string;
   readonly outcome: "allow" | "deny" | "escalate";
   readonly rationale: string;
+  /** An execution review's label of what the step does on the website; see `GuardianAction`. */
+  readonly action?: GuardianAction;
 }
 
 /** A build the registry published: its reference and the publication diagnostics it left. */

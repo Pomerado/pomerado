@@ -4,6 +4,8 @@ import type { CommitEvidence } from "../runtime/run-outcome.js";
 import { MintFailure } from "./contracts.js";
 import { entrypointImportClosure } from "./operation-source.js";
 import { writeContractRefusal } from "./write-contract.js";
+import type { GuardianAction } from "../guardian/review-contracts.js";
+import type { OutcomeAssessment } from "./outcome-review-contracts.js";
 
 // The commit evidence of an act step's runner, shared with the run outcome classifier. This module
 // keeps exporting both names, so its subpath's exports are unchanged.
@@ -47,11 +49,14 @@ export interface WriteSessionMarks {
    */
   readonly streamedMarks?: readonly string[];
   /**
-   * The host's own record shows this step may have sent something to the site, as an effect
-   * journal does once the step called the browser. A host that counts the requests a step sent
-   * passes its count as `nonReadRequests` and leaves this unset.
+   * The host's own record shows this step may have reached the site, as an effect journal does
+   * once the step called the browser, or as a step whose dispatch fence passed does.
    */
   readonly possiblySent?: boolean;
+  /** Guardian's action label for the step: only a `write` is the session's write. */
+  readonly action?: GuardianAction;
+  /** The outcome review's newest finding for this step's write, when it has one. */
+  readonly assessment?: OutcomeAssessment["outcome"];
 }
 
 /**
@@ -73,20 +78,17 @@ export const sessionConfirmed = (steps: readonly WriteSessionMarks[]) =>
 
 /**
  * Whether the session sent its write. A recorded confirmation is that proof, whatever request
- * carried the commit; otherwise (an unverifiable write) an act step must have sent a non-read
- * request, or entered a commit mark, which is the only evidence of a GET or websocket commit.
- * `nonReadRequests` is what the host counted while the session's act steps ran. A host that
- * counts no requests passes 0 and marks each step it cannot rule out as `possiblySent`, so the
- * check fails closed. A socket or an unclassified dispatch only asks the minter to verify.
+ * carried the commit. Otherwise (an unverifiable write) a step Guardian labelled a write must
+ * have possibly reached the site without the outcome review finding it `not_done`: a write whose
+ * outcome is unknown or not yet assessed counts, since publication never waits for the review.
+ * Request counts and commit marks never decide it; they stay the write contract's evidence.
  */
-export const sessionSentWrite = (session: {
-  readonly steps: readonly WriteSessionMarks[];
-  readonly nonReadRequests: number;
-}) =>
+export const sessionSentWrite = (session: { readonly steps: readonly WriteSessionMarks[] }) =>
   sessionConfirmed(session.steps) ||
-  session.nonReadRequests > 0 ||
-  session.steps.some((step) => step.enteredMarks.length > 0) ||
-  session.steps.some((step) => step.possiblySent === true);
+  session.steps.some(
+    (step) =>
+      step.action === "write" && step.possiblySent === true && step.assessment !== "not_done",
+  );
 
 const sessionRefusal = (reason: NonNullable<MintFailure["reason"]>) =>
   new MintFailure({ code: "PublicationUnavailable", reason });
@@ -108,10 +110,7 @@ export const checkWriteSession = <
   E,
   R,
 >(check: {
-  readonly session: {
-    readonly steps: readonly WriteSessionMarks[];
-    readonly nonReadRequests: number;
-  };
+  readonly session: { readonly steps: readonly WriteSessionMarks[] };
   /** The act step named for publication. */
   readonly step: { readonly confirmation?: "message" | "readback" };
   readonly extract: Effect.Effect<Extracted, E, R>;

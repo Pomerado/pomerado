@@ -30,7 +30,20 @@ export interface GuardianSessionOptions {
   readonly reportReasoning?: (context: GuardianReasoningReport) => Effect.Effect<void>;
   readonly initial?: GuardianSessionSnapshot;
   readonly save?: (snapshot: GuardianSessionSnapshot) => Effect.Effect<void, Error>;
+  /**
+   * What the conversation is told after a turn that did not complete: the result of each tool
+   * call it left unanswered, and the message before the next request. Guardian's own by default;
+   * another continuing session, such as the outcome reviewer's, names its own work.
+   */
+  readonly interruption?: { readonly toolResult: string; readonly continuation: string };
 }
+
+const guardianInterruption = {
+  toolResult:
+    "The previous review was interrupted before this source result was retained. No source result or approval is implied. Read the current source again.",
+  continuation:
+    "The preceding review did not complete. Continue in the same conversation and review the following current request afresh; earlier verdicts are not authorization.",
+};
 
 export const guardianContinuityPolicy =
   "This is one continuing Guardian conversation for this mint. Earlier requests, source reads, " +
@@ -44,7 +57,10 @@ export const guardianContinuityPolicy =
 export const guardianCompaction = (): ReturnType<typeof compaction> =>
   compaction({ policy: new StaticCompactionPolicy(240_000) });
 
-const closeInterruptedReview = (items: AgentInputItem[]) => {
+const closeInterruptedReview = (
+  items: AgentInputItem[],
+  interruption: NonNullable<GuardianSessionOptions["interruption"]>,
+) => {
   const answered = new Set(
     items.flatMap((item) => (item.type === "function_call_result" ? [item.callId] : [])),
   );
@@ -55,17 +71,9 @@ const closeInterruptedReview = (items: AgentInputItem[]) => {
         status: "completed",
         name: item.name,
         callId: item.callId,
-        output: {
-          type: "text",
-          text: "The previous review was interrupted before this source result was retained. No source result or approval is implied. Read the current source again.",
-        },
+        output: { type: "text", text: interruption.toolResult },
       });
-  items.push({
-    role: "user",
-    type: "message",
-    content:
-      "The preceding review did not complete. Continue in the same conversation and review the following current request afresh; earlier verdicts are not authorization.",
-  });
+  items.push({ role: "user", type: "message", content: interruption.continuation });
 };
 
 const continuationProvider = ({
@@ -226,7 +234,7 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
       Effect.gen(function* () {
         const items = history();
         if (current.incomplete && !continuing) {
-          closeInterruptedReview(items);
+          closeInterruptedReview(items, options.interruption ?? guardianInterruption);
         }
         items.push({ role: "user", type: "message", content: request });
         yield* save(items, true);
