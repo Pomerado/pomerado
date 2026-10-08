@@ -1,7 +1,7 @@
 import { stageSources } from "./local-operation-stage.js";
 import { serialize } from "node:v8";
 import { fileURLToPath } from "node:url";
-import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Schema } from "effect";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
 import { Deadline } from "../runtime/deadline.js";
 import type { InputAsker } from "../runtime/input-request.js";
@@ -11,6 +11,13 @@ import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { asksAsDeclared } from "./declared-questions.js";
+import {
+  sessionSignInAnswerMs,
+  sessionSignInFillMs,
+  sessionSignInSettleMs,
+  type SessionSignInAnswer,
+  type SessionSignInHook,
+} from "../runtime/session-sign-in.js";
 import { createLocalProcess, type LocalProcess, type LocalProcessResult } from "./local-process.js";
 import { localError, localOutputLimit } from "./local-path.js";
 import { LocalOperationMessage, type LocalOperationResult } from "./local-operation-protocol.js";
@@ -43,6 +50,11 @@ export interface LocalOperationOptions {
    */
   readonly declaredQuestions?: ScriptQuestionDeclarations;
   readonly decideDialog?: DialogDecider;
+  /**
+   * The host's sign-in for a script's `ensureSignedIn`, on the same browser. Absent, the script's
+   * `ensureSignedIn` answers that it did not sign in again.
+   */
+  readonly signIn?: SessionSignInHook;
 }
 export interface LocalOperationJournal {
   readonly effect: "not_sent" | "possible" | "verified";
@@ -51,6 +63,14 @@ export interface LocalOperationJournal {
 }
 export class LocalOperationFailure extends Error {
   override readonly name = "LocalOperationFailure";
+  /**
+   * The child reported this failure with its final journal. False when the host lost the
+   * result, as at a deadline or a child exit: the journal is then the last one the child
+   * streamed as it ran.
+   */
+  readonly reported: boolean;
+  /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
+  readonly sessionLoss?: "session_not_kept";
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -58,14 +78,11 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
-    /**
-     * The child reported this failure with its final journal. False when the host lost the
-     * result, as at a deadline or a child exit: the journal is then the last one the child
-     * streamed as it ran.
-     */
-    readonly reported = true,
+    options: { readonly reported?: boolean; readonly sessionLoss?: "session_not_kept" } = {},
   ) {
     super(message);
+    this.reported = options.reported ?? true;
+    if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -100,6 +117,40 @@ const suspended = <A, E>(deadline: Deadline, run: Effect.Effect<A, E>) =>
     () => run,
     (resume) => Effect.sync(resume),
   );
+/**
+ * One script's `ensureSignedIn`, answered within the sign-in's bounds: no step of the host's
+ * sign-in starts after the filling bound, and past the answer bound the host stops it, waits for
+ * its last step to end and refuses. An interrupted request (the script ended or the child exited)
+ * stops the sign-in the same way.
+ */
+export const answerSessionSignIn = (
+  signIn: SessionSignInHook,
+  bounds: { readonly fillMs: number; readonly answerMs: number; readonly settleMs: number } = {
+    fillMs: sessionSignInFillMs,
+    answerMs: sessionSignInAnswerMs,
+    settleMs: sessionSignInSettleMs,
+  },
+) =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const stop = new AbortController();
+    const signingIn = yield* Effect.forkDaemon(
+      signIn({ untilMs: now + bounds.fillMs, stop: stop.signal }),
+    );
+    // Stop the sign-in at its next step and wait for it to end, so nothing after this shares the
+    // browser with it.
+    const settle = Effect.sync(() => stop.abort()).pipe(
+      Effect.zipRight(Fiber.await(signingIn).pipe(Effect.timeoutOption(bounds.settleMs))),
+      Effect.zipRight(Fiber.interrupt(signingIn)),
+    );
+    const raced = yield* Effect.raceFirst(
+      Fiber.join(signingIn).pipe(Effect.map((answer) => ({ answer }))),
+      Effect.sleep(bounds.answerMs).pipe(Effect.as({ expired: true as const })),
+    ).pipe(Effect.onInterrupt(() => settle));
+    if ("answer" in raced) return raced.answer;
+    yield* settle;
+    return { outcome: "refused", cause: "session_sign_in_failed" } satisfies SessionSignInAnswer;
+  });
 const handleRequest = (
   options: LocalOperationOptions,
   deadline: Deadline,
@@ -115,6 +166,10 @@ const handleRequest = (
         return Effect.fail(new Error("Local operation browser session mismatch"));
       return options.browser.executeResponse(message.body.code, message.body.timeout_sec);
     }
+    if (message.kind === "sign_in")
+      return options.signIn === undefined
+        ? Effect.fail(new Error("Local operation sign-in is unavailable"))
+        : suspended(deadline, answerSessionSignIn(options.signIn));
     if (message.kind === "ask") {
       if (options.ask === undefined)
         return Effect.fail(new Error("Local operation input is unavailable"));
@@ -165,6 +220,7 @@ const handleTerminalMessage = (
           message.code,
           message.tag,
           message.inputIssues,
+          message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss },
         ),
       ),
     );
@@ -356,6 +412,12 @@ export const runLocalOperation = (
         ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
+        ...(options.signIn !== undefined &&
+        options.browser !== undefined &&
+        options.mode !== "contract" &&
+        options.target !== "pureFiles"
+          ? { signIn: true }
+          : {}),
       });
       const result = yield* response.completed.pipe(
         Effect.raceFirst(
@@ -378,7 +440,7 @@ export const runLocalOperation = (
                     failureCode(error),
                     undefined,
                     undefined,
-                    false,
+                    { reported: false },
                   );
             yield* process.close;
             const channels = yield* process.result.pipe(Effect.either);

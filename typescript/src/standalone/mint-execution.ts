@@ -34,6 +34,7 @@ import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import { error, mintError } from "./errors.js";
+import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
 const executeCommand = (
@@ -288,7 +289,11 @@ const failedReceipt = (
       observations: {
         message: secrets.redact(failure.message),
         ...(failure instanceof LocalOperationFailure
-          ? { code: failure.code, tag: failure.tag }
+          ? {
+              code: failure.code,
+              tag: failure.tag,
+              ...(failure.sessionLoss === undefined ? {} : { sessionLoss: failure.sessionLoss }),
+            }
           : {}),
         ...(writeSession === undefined ? {} : { writeSession }),
       },
@@ -418,6 +423,8 @@ const authoredExecution = (
       },
       Effect.gen(function* () {
         yield* start.before(execution);
+        /** Why the host could not sign in again while the script waited, the first time. */
+        let signInFailure: SessionSignInFailed | undefined;
         const executed = yield* Effect.either(
           runLocalOperation({
             workspace,
@@ -443,6 +450,13 @@ const authoredExecution = (
               makeDialogDecider(mintAsk, secrets.redact),
               accepted,
             ),
+            ...(live
+              ? {
+                  signIn: state.sessionSignIn.hook((failure) => {
+                    signInFailure ??= failure;
+                  }),
+                }
+              : {}),
           }),
         );
         if (watch !== undefined && watch.typed().size > 0) {
@@ -481,9 +495,12 @@ const authoredExecution = (
           journal,
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
         };
-        return yield* executed._tag === "Left"
+        const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)
           : completedReceipt(receipt, executed.right);
+        // A sign-in the host could not make while the script waited ends the request with why.
+        if (signInFailure !== undefined) return yield* mintSessionSignInFailure(signInFailure);
+        return evidence;
       }),
     );
   });
