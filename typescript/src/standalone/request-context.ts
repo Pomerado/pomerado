@@ -1,3 +1,4 @@
+import type { WriteOutcome } from "../mint/outcome-review-contracts.js";
 import { randomUUID } from "node:crypto";
 import { DateTime, Effect, Option, Schema } from "effect";
 import {
@@ -185,7 +186,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       undefined,
       {},
     );
+    /** The build's tracked writes, once the harness's outcome reviewer binds them. */
+    let writes: (() => readonly WriteOutcome[]) | undefined;
     const host: MintReviewHost = {
+      writes: () => writes?.() ?? [],
       repeatableRead: () => repeatableReadFor(buildEffect, claimed),
       browser: () => (navigated ? "active" : "not_opened"),
       // The page's place is redacted again on each read, as its capture is.
@@ -513,6 +517,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       },
       /** The handles `askedByAgent` noted, while no sign-in of this attempt is verified. */
       signInCodes: host.signInCodes,
+      /** Gives execution reviews the outcome reviewer's tracked writes. */
+      bindWrites: (read: () => readonly WriteOutcome[]) => {
+        writes = read;
+      },
     };
   });
 export type RequestContext = Effect.Effect.Success<ReturnType<typeof requestContext>>;

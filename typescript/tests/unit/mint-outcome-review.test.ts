@@ -192,8 +192,9 @@ it("keeps a write whose result was lost unknown and never runs it again", async 
   const outcome = await f.run();
 
   expect(dispatched).toBe(1);
-  const again = JSON.stringify(f.requests[2]?.input);
-  expect(again).toContain("may already have changed the site");
+  expect(toolOutput(f.requests[2] as ModelRequest, "again")).toMatchObject({
+    status: "unsupported",
+  });
   expect(outcome.writes).toEqual([
     {
       write: expect.objectContaining({ status: "result_lost", entrypoint: "src/book.ts" }),
@@ -550,6 +551,258 @@ it("finds a confirmation from before a compaction after a takeover", async () =>
     expect.objectContaining({
       status: "applied",
       assessment: expect.objectContaining({ outcome: "done" }),
+    }),
+  ]);
+});
+
+/**
+ * A recovery store as a host keeps one: a checkpoint before each model call and around each tool
+ * call. Restored from `initial`, it replays the saved response and rejoins a tool call that
+ * started but never returned through the host's `recoverTool`.
+ */
+const recoveryStore = () => {
+  const checkpoints: { agent: MintAgentSnapshot; harness: MintHarnessSnapshot }[] = [];
+  const factory =
+    (initial?: MintAgentSnapshot): MintRecoveryFactory =>
+    (store) =>
+      Effect.sync(() => {
+        let replay = initial?.response;
+        let current: MintAgentSnapshot | undefined = initial;
+        const persist = (next: MintAgentSnapshot) =>
+          Effect.suspend(() => {
+            current = next;
+            return store.save(next);
+          });
+        const tools = () => current?.tools ?? [];
+        return {
+          model: (state, counters, invoke) =>
+            Effect.gen(function* () {
+              if (replay !== undefined) {
+                const response = replay as ModelResponse;
+                replay = undefined;
+                return response;
+              }
+              const saved: MintAgentSnapshot = {
+                version: 1,
+                sdkVersion: "0.18.0",
+                sdkState: state(),
+                ...counters,
+                tools: [],
+              };
+              yield* persist(saved);
+              const response = yield* invoke;
+              yield* persist({ ...saved, response });
+              return response;
+            }),
+          tool: (call, invoke) =>
+            Effect.gen(function* () {
+              const prior = tools().find((entry) => entry.callId === call.callId);
+              const returned = (result: unknown) =>
+                persist({
+                  ...(current as MintAgentSnapshot),
+                  tools: [
+                    ...tools().filter((entry) => entry.callId !== call.callId),
+                    { ...call, state: "returned", result },
+                  ],
+                }).pipe(Effect.as(result));
+              if (prior?.state === "returned") return prior.result;
+              if (prior?.state === "started") {
+                const recovered = yield* store.recoverTool?.(call) ?? Effect.succeed(undefined);
+                if (recovered === undefined)
+                  return yield* Effect.fail(new MintFailure({ code: "Unavailable" }));
+                return yield* returned(recovered.result);
+              }
+              yield* persist({
+                ...(current as MintAgentSnapshot),
+                tools: [...tools(), { ...call, state: "started" }],
+              });
+              return yield* returned(yield* invoke);
+            }),
+        };
+      });
+  return {
+    checkpoints,
+    factory,
+    agentRecovery: {
+      save: (agent: MintAgentSnapshot, harness: MintHarnessSnapshot) =>
+        Effect.sync(() => {
+          checkpoints.push({ agent, harness });
+        }),
+    },
+  };
+};
+
+/** A minter on `provider` whose recovery is `store`'s, restored from `initial` when given. */
+const recoverableMinter = (
+  provider: ModelProvider,
+  store: ReturnType<typeof recoveryStore>,
+  initial?: MintAgentSnapshot,
+) => makeOpenAIMinter(provider, "medium", {}, { recoveryFactory: store.factory(initial) });
+
+/** A scripted minter model that answers with `respond`, by its request index. */
+const scriptedMinter = (respondTo: (index: number) => ModelResponse | Promise<ModelResponse>) => {
+  const requests: ModelRequest[] = [];
+  const provider: ModelProvider = {
+    getModel: () => ({
+      getResponse: async (request) => {
+        requests.push(request);
+        return respondTo(requests.length - 1);
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  };
+  return { provider, requests };
+};
+
+/** A booking whose result the host's journal holds, labelled a write by Guardian. */
+const bookingEvidence: ExecutionEvidence = {
+  executionId: "booking_1",
+  status: "completed",
+  effect: "possible",
+  resultRef: "booking_result",
+  observations: { page: "Table booked." },
+  review: {
+    reviewId: "review_src/book.ts",
+    outcome: "allow",
+    rationale: "Synthetic review",
+    action: "write",
+  },
+};
+
+// Fails when a write recovered after a takeover is tracked without its entrypoint: its result was
+// never checkpointed, and the restored minter's repeat of the same step runs it again.
+it("refuses a repeat of a write whose result a takeover recovered", async () => {
+  const store = recoveryStore();
+  let dispatched = 0;
+  const minterModel = scriptedMinter((index) =>
+    index === 0
+      ? minter("execute", step("src/book.ts"), "first")
+      : index === 1
+        ? minter("execute", step("src/book.ts"), "again")
+        : respond(message("Stopped.")),
+  );
+  const stopped = new AbortController();
+  const first = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: recoverableMinter(minterModel.provider, store),
+      // The booking goes out, and the worker is lost before its result is checkpointed.
+      reviewAndExecute: allowedStep(() =>
+        Effect.suspend(() => {
+          dispatched++;
+          return Effect.never;
+        }),
+      ),
+      agentRecovery: store.agentRecovery,
+      outcomeReview: reviewHost(scriptedReviewer(() => respond(message("Waiting."))).provider).host,
+    },
+    { effect: "write" },
+  );
+  const lost = first.run(stopped.signal).catch(() => undefined);
+  await expect.poll(() => dispatched).toBe(1);
+
+  const checkpoint = store.checkpoints.at(-1);
+  if (checkpoint === undefined) throw new Error("No checkpoint");
+  const second = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: recoverableMinter(minterModel.provider, store, checkpoint.agent),
+      reviewAndExecute: allowedStep(() =>
+        Effect.sync(() => {
+          dispatched++;
+          return bookingEvidence;
+        }),
+      ),
+      agentRecovery: {
+        ...store.agentRecovery,
+        initial: checkpoint,
+        // The host's journal holds the booking's result.
+        recoverTool: () =>
+          Effect.succeed({ execution: { purpose: "act", evidence: bookingEvidence } }),
+      },
+      outcomeReview: reviewHost(scriptedReviewer(() => respond(message("Waiting."))).provider).host,
+    },
+    { effect: "write" },
+  );
+  const outcome = await second.run();
+  stopped.abort();
+  await lost;
+
+  expect(dispatched).toBe(1);
+  expect(toolOutput(minterModel.requests.at(-1) as ModelRequest, "again")).toMatchObject({
+    status: "unsupported",
+  });
+  expect(outcome.writes).toEqual([
+    expect.objectContaining({
+      write: expect.objectContaining({ executionId: "booking_1", entrypoint: "src/book.ts" }),
+    }),
+  ]);
+});
+
+// Fails when only the reviewer's own best-effort save tracks a write: that save failed, so after a
+// takeover the write is untracked and its repeat runs.
+it("tracks a write across a takeover when the reviewer's save failed", async () => {
+  const store = recoveryStore();
+  let dispatched = 0;
+  let takenOver = false;
+  const minterModel = scriptedMinter(async (index) => {
+    if (index === 0) return minter("execute", step("src/book.ts"), "first");
+    // The worker is lost while it waits for its next model response.
+    if (!takenOver) return new Promise<never>(() => undefined);
+    if (index <= 2) return minter("execute", step("src/book.ts"), "again");
+    return respond(message("Stopped."));
+  });
+  const failingReview = () => {
+    const review = reviewHost(scriptedReviewer(() => respond(message("Waiting."))).provider);
+    return {
+      ...review.host,
+      save: () => Effect.fail(new MintFailure({ code: "Unavailable" })),
+    } satisfies OutcomeReviewHost;
+  };
+  const book = allowedStep(() =>
+    Effect.sync(() => {
+      dispatched++;
+      return bookingEvidence;
+    }),
+  );
+  const stopped = new AbortController();
+  const first = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: recoverableMinter(minterModel.provider, store),
+      reviewAndExecute: book,
+      agentRecovery: store.agentRecovery,
+      outcomeReview: failingReview(),
+    },
+    { effect: "write" },
+  );
+  const lost = first.run(stopped.signal).catch(() => undefined);
+  await expect.poll(() => minterModel.requests.length).toBe(2);
+
+  takenOver = true;
+  const checkpoint = store.checkpoints.at(-1);
+  if (checkpoint === undefined) throw new Error("No checkpoint");
+  const second = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: recoverableMinter(minterModel.provider, store, checkpoint.agent),
+      reviewAndExecute: book,
+      agentRecovery: { ...store.agentRecovery, initial: checkpoint },
+      outcomeReview: failingReview(),
+    },
+    { effect: "write" },
+  );
+  const outcome = await second.run();
+  stopped.abort();
+  await lost;
+
+  expect(dispatched).toBe(1);
+  expect(outcome.writes).toEqual([
+    expect.objectContaining({
+      write: expect.objectContaining({ executionId: "booking_1" }),
+      status: "may_have_applied",
     }),
   ]);
 });

@@ -29,6 +29,16 @@ import type {
   WriteOutcome,
 } from "./outcome-review-contracts.js";
 
+/** A write's entrypoint and digest, from whichever record has them. */
+const pathOf = (saved: OutcomeWrite | undefined, recovered: OutcomeWrite) => {
+  const entrypoint = saved?.entrypoint ?? recovered.entrypoint;
+  const sourceDigest = saved?.sourceDigest ?? recovered.sourceDigest;
+  return {
+    ...(entrypoint === undefined ? {} : { entrypoint }),
+    ...(sourceDigest === undefined ? {} : { sourceDigest }),
+  };
+};
+
 /** History items one search reads at a time. */
 const searchPage = 200;
 
@@ -38,7 +48,7 @@ export const memoryHistoryArchive = (): MinterHistoryArchive => {
   return {
     append: (offset, appended) =>
       Effect.sync(() => {
-        items.splice(offset, appended.length, ...appended);
+        items.splice(offset, items.length - offset, ...appended);
       }),
     length: Effect.sync(() => items.length),
     read: (offset, limit) => Effect.sync(() => items.slice(offset, offset + limit)),
@@ -53,29 +63,92 @@ export interface MinterHistory {
 
 /**
  * The minter's whole history: the archive up to where the run state starts, and the run state
- * from there. Before the model registers its run state, the archive alone.
+ * from there. Reads wait until the model has registered its run state, so a restored turn never
+ * reads the archive alone; `live` is undefined until then.
  */
 export const minterHistory = (
   archive: MinterHistoryArchive,
-  live: () => LiveMinterHistory,
+  live: () => LiveMinterHistory | undefined,
+  registered: Effect.Effect<void>,
 ): MinterHistory => {
-  const liveStart = (held: LiveMinterHistory) =>
-    held.items.length === 0 ? Number.POSITIVE_INFINITY : held.offset;
+  const held = registered.pipe(
+    Effect.map(() => live() ?? { offset: 0, items: [] as readonly AgentInputItem[] }),
+  );
   return {
-    length: Effect.map(archive.length, (archived) => {
-      const held = live();
-      return Math.max(archived, held.items.length === 0 ? 0 : held.offset + held.items.length);
+    length: Effect.map(held, (current) => current.offset + current.items.length),
+    read: (offset, limit) =>
+      Effect.gen(function* () {
+        const current = yield* held;
+        const end = offset + limit;
+        const archived =
+          offset < current.offset
+            ? yield* archive.read(offset, Math.min(end, current.offset) - offset)
+            : [];
+        const fromLive =
+          end > current.offset
+            ? current.items.slice(Math.max(0, offset - current.offset), end - current.offset)
+            : [];
+        return [...archived, ...fromLive];
+      }),
+  };
+};
+
+/**
+ * A host's durable archive behind an in-memory buffer: a range whose durable append failed stays
+ * readable here, is recorded as a gap and is stored again with the next append or read. A storage
+ * failure never ends the build.
+ */
+export const bufferedHistoryArchive = (
+  durable: MinterHistoryArchive,
+  recordGap: (error: MintFailure) => Effect.Effect<void>,
+): MinterHistoryArchive => {
+  /** Ranges not yet stored durably, oldest first and contiguous. */
+  let pending: { offset: number; items: readonly AgentInputItem[] }[] = [];
+  let failing = false;
+  const flush = Effect.gen(function* () {
+    while (pending.length > 0) {
+      const [next] = pending;
+      if (next === undefined) return;
+      const stored = yield* Effect.either(durable.append(next.offset, next.items));
+      if (stored._tag === "Left") {
+        if (!failing) yield* recordGap(stored.left);
+        failing = true;
+        return;
+      }
+      failing = false;
+      pending = pending.slice(1);
+    }
+  });
+  const pendingStart = () => pending[0]?.offset ?? Number.POSITIVE_INFINITY;
+  return {
+    append: (offset, items) =>
+      Effect.suspend(() => {
+        pending = [...pending.filter((range) => range.offset < offset), { offset, items }].map(
+          (range) =>
+            range.offset + range.items.length > offset && range.offset < offset
+              ? { offset: range.offset, items: range.items.slice(0, offset - range.offset) }
+              : range,
+        );
+        return flush;
+      }),
+    length: Effect.gen(function* () {
+      yield* flush;
+      const last = pending.at(-1);
+      return last === undefined ? yield* durable.length : last.offset + last.items.length;
     }),
     read: (offset, limit) =>
       Effect.gen(function* () {
-        const held = live();
-        const start = liveStart(held);
+        yield* flush;
+        const start = pendingStart();
         const end = offset + limit;
-        const archived =
-          offset < start ? yield* archive.read(offset, Math.min(end, start) - offset) : [];
-        const current =
-          end > start ? held.items.slice(Math.max(0, offset - start), end - start) : [];
-        return [...archived, ...current];
+        const stored =
+          offset < start ? yield* durable.read(offset, Math.min(end, start) - offset) : [];
+        const buffered = pending.flatMap((range) => {
+          const from = Math.max(offset, range.offset);
+          const to = Math.min(end, range.offset + range.items.length);
+          return from < to ? range.items.slice(from - range.offset, to - range.offset) : [];
+        });
+        return [...stored, ...buffered];
       }),
   };
 };
@@ -182,11 +255,19 @@ export interface OutcomeReviewer {
    * The newest assessments of `executionIds` once the reviewer has seen every event so far, or
    * at once while it is in an outage or absent. Only repeating a write waits on this.
    */
-  readonly settle: (
-    executionIds: readonly string[],
-  ) => Effect.Effect<readonly (OutcomeAssessment | undefined)[]>;
+  readonly settle: (executionIds: readonly string[]) => Effect.Effect<{
+    readonly assessments: readonly (OutcomeAssessment | undefined)[];
+    /**
+     * The reviewer saw every event so far without an outage, and no readback it asked for about
+     * these writes is still unanswered: only then may an assessment allow a repeat.
+     */
+    readonly current: boolean;
+  }>;
   /** Readbacks the reviewer asked for since the last call, for the minter's next tool result. */
-  readonly observationRequests: () => readonly ObservationRequest[];
+  readonly observationRequests: () => readonly Pick<
+    ObservationRequest,
+    "executionId" | "request"
+  >[];
   /** Every tracked write, oldest first. */
   readonly tracked: () => readonly OutcomeWrite[];
   /** Every tracked write with its newest assessment. */
@@ -212,6 +293,12 @@ export const makeOutcomeReviewer = (options: {
   readonly evidence: OutcomeEvidence;
   /** The minter's whole history, turns before a compaction included. */
   readonly history: MinterHistory;
+  /**
+   * The writes the harness's own recovery checkpoint tracked. The reviewer's saved state is
+   * best-effort, so a write it lacks is tracked again from here, and one it has keeps the
+   * checkpoint's entrypoint and digest.
+   */
+  readonly recoveredWrites?: readonly OutcomeWrite[];
 }): Effect.Effect<OutcomeReviewer, never, Scope.Scope> =>
   Effect.gen(function* () {
     const { host, evidence } = options;
@@ -221,6 +308,13 @@ export const makeOutcomeReviewer = (options: {
     const writes = new Map<string, OutcomeWrite>(
       (initial?.writes ?? []).map((write) => [write.executionId, write]),
     );
+    /** Recovered writes the reviewer's saved state never saw, each a new event for it. */
+    const unseen: OutcomeWrite[] = [];
+    for (const recovered of options.recoveredWrites ?? []) {
+      const saved = writes.get(recovered.executionId);
+      if (saved === undefined) unseen.push(recovered);
+      writes.set(recovered.executionId, { ...recovered, ...saved, ...pathOf(saved, recovered) });
+    }
     const assessments = new Map<string, OutcomeAssessment>(
       (initial?.assessments ?? []).map((assessment) => [assessment.executionId, assessment]),
     );
@@ -234,6 +328,10 @@ export const makeOutcomeReviewer = (options: {
     let closing = false;
     const report = (event: Readonly<Record<string, unknown>>) =>
       host?.report?.(event) ?? Effect.void;
+    /** Assessments are numbered one at a time, so two calls never share a version. */
+    const assessing = yield* Effect.makeSemaphore(1);
+    for (const write of unseen)
+      events.push({ kind: "write", write, seq: lastSeq() + 1 } as OutcomeReviewEvent);
 
     const snapshot = (): OutcomeReviewSnapshot => ({
       version: 1,
@@ -258,8 +356,18 @@ export const makeOutcomeReviewer = (options: {
             .save(snapshot())
             .pipe(Effect.catchAll((error) => report({ phase: "save_failed", code: error.code }))),
     );
+    /** Saves asked for outside an Effect, run by a fiber of the reviewer's own scope. */
+    const saveRequests = yield* Queue.sliding<void>(1);
+    yield* Effect.forkScoped(Effect.forever(Queue.take(saveRequests).pipe(Effect.zipRight(save))));
     const unresolved = () =>
       [...writes.values()].filter((write) => !settled(assessments.get(write.executionId)));
+    /** A readback the reviewer asked for about `executionId` that no newer assessment answered. */
+    const awaitingReadback = (executionId: string) =>
+      observationRequests.some(
+        (request) =>
+          request.executionId === executionId &&
+          (assessments.get(executionId)?.version ?? 0) <= request.assessedVersion,
+      );
     const notify = (event: OutcomeReviewEventInput) =>
       Effect.gen(function* () {
         // Each event kind's fields are its own; the sequence number is the host's.
@@ -352,35 +460,47 @@ export const makeOutcomeReviewer = (options: {
       readTask: () =>
         evidence.task().pipe(Effect.map((task) => JSON.stringify({ status: "ok", ...task }))),
       submitAssessment: (input) =>
-        Effect.gen(function* () {
-          const request = decoded(SubmitAssessmentInput, input);
-          if (request._tag === "Left")
-            return invalid(
-              "executionId, outcome (done, not_done or unknown), explanation and evidence are required",
-            );
-          const write = writes.get(request.right.executionId);
-          if (write === undefined)
-            return invalid(
-              "executionId names no write this build tracks; list the writes in the turn's message",
-            );
-          const assessment: OutcomeAssessment = {
-            ...request.right,
-            version: (assessments.get(write.executionId)?.version ?? 0) + 1,
-            assessedAt: yield* Clock.currentTimeMillis,
-          };
-          // Recorded before it counts, so no assessment is reported that the journal lacks.
-          yield* host?.recordAssessment(assessment, write) ?? Effect.void;
-          assessments.set(write.executionId, assessment);
-          yield* save;
-          return JSON.stringify({ status: "recorded", version: assessment.version });
-        }),
+        assessing.withPermits(1)(
+          Effect.gen(function* () {
+            const request = decoded(SubmitAssessmentInput, input);
+            if (request._tag === "Left")
+              return invalid(
+                "executionId, outcome (done, not_done or unknown), explanation and evidence are required",
+              );
+            const write = writes.get(request.right.executionId);
+            if (write === undefined)
+              return invalid(
+                "executionId names no write this build tracks; list the writes in the turn's message",
+              );
+            const assessment: OutcomeAssessment = {
+              ...request.right,
+              version: (assessments.get(write.executionId)?.version ?? 0) + 1,
+              assessedAt: yield* Clock.currentTimeMillis,
+            };
+            // Recorded before it counts, so no assessment is reported that the journal lacks.
+            yield* host?.recordAssessment(assessment, write) ?? Effect.void;
+            assessments.set(write.executionId, assessment);
+            // A newer assessment answers the readbacks asked before it.
+            for (let index = observationRequests.length - 1; index >= 0; index--)
+              if (
+                observationRequests[index]?.executionId === write.executionId &&
+                (observationRequests[index]?.assessedVersion ?? 0) < assessment.version
+              )
+                observationRequests.splice(index, 1);
+            yield* save;
+            return JSON.stringify({ status: "recorded", version: assessment.version });
+          }),
+        ),
       requestObservation: (input) =>
         Effect.gen(function* () {
           const request = decoded(RequestObservationInput, input);
           if (request._tag === "Left") return invalid("executionId and request are required");
           if (!writes.has(request.right.executionId))
             return invalid("executionId names no write this build tracks");
-          observationRequests.push(request.right);
+          observationRequests.push({
+            ...request.right,
+            assessedVersion: assessments.get(request.right.executionId)?.version ?? 0,
+          });
           yield* save;
           return JSON.stringify({
             status: "queued",
@@ -503,12 +623,26 @@ export const makeOutcomeReviewer = (options: {
             yield* until(
               (current) => !current.running && (current.cursor >= target || current.outage),
             );
-          return executionIds.map((id) => assessments.get(id));
+          const current = yield* SubscriptionRef.get(status);
+          return {
+            assessments: executionIds.map((id) => assessments.get(id)),
+            current:
+              fiber !== undefined &&
+              !current.outage &&
+              current.cursor >= target &&
+              !executionIds.some(awaitingReadback),
+          };
         }),
       observationRequests: () => {
-        const taken = observationRequests.splice(0);
-        if (taken.length > 0) Effect.runFork(save);
-        return taken;
+        const taken = observationRequests.filter((request) => request.delivered !== true);
+        if (taken.length === 0) return [];
+        for (let index = 0; index < observationRequests.length; index++) {
+          const request = observationRequests[index];
+          if (request !== undefined && request.delivered !== true)
+            observationRequests[index] = { ...request, delivered: true };
+        }
+        Queue.unsafeOffer(saveRequests, undefined);
+        return taken.map(({ executionId, request }) => ({ executionId, request }));
       },
       tracked: () => [...writes.values()],
       outcomes,

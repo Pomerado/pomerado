@@ -345,6 +345,17 @@ export interface PendingExecution {
         readonly effect: "possible" | "verified";
       };
     }[];
+    /**
+     * Execution reviews only: this build's earlier write executions and the outcome review's
+     * newest finding for each, so a step that would commit the same change again is denied.
+     * `unassessed`: no assessment yet.
+     */
+    readonly writes?: readonly {
+      readonly executionId: string;
+      readonly purpose: string;
+      readonly entrypoint?: string;
+      readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
+    }[];
   };
 }
 

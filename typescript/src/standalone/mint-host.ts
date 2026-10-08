@@ -136,6 +136,7 @@ const mintDependencies = (state: MintState) => {
           : { modelProvider: options.outcomeReviewerProvider },
       ),
       save: () => Effect.void,
+      bindWrites: context.bindWrites,
       recordAssessment: (assessment) =>
         Effect.sync(() => {
           state.assessments.set(assessment.executionId, assessment);

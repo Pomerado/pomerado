@@ -196,7 +196,8 @@ export const makeOpenAIOutcomeReviewer = (
             modelSettings: withReasoningContinuity({
               store: false,
               reasoning: { effort: "medium", context: "all_turns" },
-              parallelToolCalls: true,
+              // One call at a time, so assessments of one write are numbered in order.
+              parallelToolCalls: false,
               providerData: guardianCompaction().samplingParams({ model: lunaModel }),
             }),
             instructions: outcomeReviewerInstructions,

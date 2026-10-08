@@ -575,6 +575,59 @@ test("a write build refuses a repeat of a write no outcome review showed did not
   }
 });
 
+// Fails when the repeat guard keys only on the step's path, so a copy of the write under another
+// name runs it again, or when Guardian's execution review does not see the earlier write.
+test("a write build refuses a copy of a write, and Guardian sees the write before a rewrite of it", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  // Guardian denies a step that would commit an unassessed write's change again.
+  const guardian = recordingGuardian({
+    decide: (review) =>
+      currentOf(review)?.["purpose"] === "act" &&
+      Array.isArray(contextOf(review)?.["writes"]) &&
+      (contextOf(review)?.["writes"] as readonly unknown[]).length > 0
+        ? { outcome: "deny", rationale: "It would save the same change again.", action: "write" }
+        : "allow",
+  });
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/act.mjs": saveStep,
+            "src/act-copy.mjs": saveStep,
+            "src/act-rewritten.mjs": `// The same save, rewritten.\n${saveStep}`,
+          }),
+        () => [call("execute", execution("act", "src/act.mjs"), "act_1")],
+        () => [call("execute", execution("act", "src/act-copy.mjs"), "act_copy")],
+        () => [call("execute", execution("act", "src/act-rewritten.mjs"), "act_rewritten")],
+      ],
+    });
+    expect(fixture.writes()).toBe(1);
+    expect(toolResult(last, "act_1")).toMatchObject({ status: "completed" });
+    // The copy is refused before review; the rewrite reaches Guardian, which sees the write.
+    expect(toolResult(last, "act_copy")).toMatchObject({ status: "unsupported" });
+    expect(toolResult(last, "act_rewritten")).not.toMatchObject({ status: "completed" });
+    const acts = executions(guardian.reviews);
+    expect(acts).toHaveLength(2);
+    expect(contextOf(acts[0] as RecordedReview)?.["writes"]).toBeUndefined();
+    expect(contextOf(acts[1] as RecordedReview)?.["writes"]).toEqual([
+      {
+        executionId: expect.any(String) as unknown,
+        purpose: "act",
+        entrypoint: "src/act.mjs",
+        outcome: "unassessed",
+      },
+    ]);
+  } finally {
+    await site.close();
+  }
+});
+
 test("a write session runs the input its first act step read from the request, and publishes against it", async () => {
   test.setTimeout(90_000);
   const fixture = noteSite();

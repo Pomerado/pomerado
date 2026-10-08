@@ -777,9 +777,13 @@ export const makeOpenAIMinter = (
               const items = untrimmedHistory(state);
               const compaction = items.findLastIndex((item) => item.type === "compaction");
               if (compaction <= 0) return;
+              // The harness's archive keeps a range it could not store and records the gap; a
+              // storage failure never ends the attempt.
               if (turn.history !== undefined)
                 await turn.runTool(
-                  turn.history.archive.append(liveOffset, items.slice(0, compaction)),
+                  turn.history.archive
+                    .append(liveOffset, items.slice(0, compaction))
+                    .pipe(Effect.ignore),
                 );
               nextOffset = liveOffset + compaction;
             };

@@ -73,11 +73,12 @@ import {
   PublicationFinding,
   PublicationReason,
 } from "../guardian/review-contracts.js";
-import type {
-  LiveMinterHistory,
-  MinterHistoryArchive,
-  OutcomeReviewHost,
-  WriteOutcome,
+import {
+  OutcomeWrite,
+  type LiveMinterHistory,
+  type MinterHistoryArchive,
+  type OutcomeReviewHost,
+  type WriteOutcome,
 } from "./outcome-review-contracts.js";
 import { CaptureScreeningDiagnostic } from "../runtime/capture-diagnostic.js";
 import type {
@@ -916,7 +917,8 @@ export interface MintTurn {
    * The minter's whole history for the outcome reviewer, turns before a compaction included. The
    * model stores in `archive` the items before a compaction as a new run segment leaves them out,
    * and registers with `live` a reader of what its run state holds, once, before its first
-   * request.
+   * request. The harness's archive buffers a range it could not store durably and records the
+   * gap, so its append never needs to end the attempt.
    */
   readonly history?: {
     readonly archive: MinterHistoryArchive;
@@ -1027,6 +1029,12 @@ export interface ExampleJournal {
 
 export interface MintHarnessSnapshot {
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and
+   * source digests, so a takeover tracks them, and refuses their repeats, even when the
+   * reviewer's own best-effort save failed.
+   */
+  readonly outcomeWrites?: readonly OutcomeWrite[];
   readonly purposes: readonly {
     readonly executionId: string;
     readonly purpose: ExecutionRequest["purpose"] | "command";
@@ -1136,6 +1144,7 @@ const HarnessTerminal = Schema.Struct({
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
+  outcomeWrites: Schema.optionalWith(Schema.Array(OutcomeWrite), { exact: true }),
   purposes: Schema.Array(
     Schema.Struct({
       executionId: Schema.String,

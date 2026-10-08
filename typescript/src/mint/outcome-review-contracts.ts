@@ -72,6 +72,11 @@ export const OutcomeWrite = Schema.Struct({
   purpose: Schema.String,
   /** The submitted entrypoint, so a repeat of the same step can wait for this assessment. */
   entrypoint: Schema.optionalWith(Schema.String, { exact: true }),
+  /**
+   * A digest of the contents of the entrypoint's static import closure when it ran, without
+   * paths, so a copy of the same step under another name is a repeat too.
+   */
+  sourceDigest: Schema.optionalWith(Schema.String, { exact: true }),
   status: WriteExecutionStatus,
   effect: Schema.Literal("not_sent", "possible", "verified"),
   /** The confirmation the step's code recorded, as evidence; never the outcome by itself. */
@@ -119,13 +124,20 @@ export type OutcomeReviewEventInput = Unsequenced<OutcomeReviewEvent>;
 export const ObservationRequest = Schema.Struct({
   executionId: Schema.String,
   request: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(500)),
+  /**
+   * The version of the write's assessment when the reviewer asked, 0 before any. The request is
+   * pending until a newer assessment, and a pending readback keeps the write from repeating.
+   */
+  assessedVersion: Schema.NonNegativeInt,
+  /** The minter was shown the request. */
+  delivered: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export type ObservationRequest = typeof ObservationRequest.Type;
 
 /**
  * The reviewer's recovery state, saved beside the minter's RunState: its conversation, every
  * event with the cursor of the last one a completed turn saw, the writes it tracks, their newest
- * assessments and readbacks it asked for that the minter has not yet been shown.
+ * assessments and the readbacks it asked for that no newer assessment answered yet.
  */
 export const OutcomeReviewSnapshot = Schema.Struct({
   version: Schema.Literal(1),
@@ -336,6 +348,12 @@ export interface OutcomeReviewHost {
   ) => Effect.Effect<void, MintFailure>;
   /** Wraps the harness's evidence, for a host that holds records of its own. */
   readonly evidence?: (base: OutcomeEvidence) => OutcomeEvidence;
+  /**
+   * Receives a reader of the tracked writes and their newest assessments, for the host's
+   * Guardian execution reviews (`MintReviewHost.writes`), so Guardian denies a step that would
+   * commit the same change again.
+   */
+  readonly bindWrites?: (read: () => readonly WriteOutcome[]) => void;
   /** Waits between failed turns, the last repeating; production default 2 s, 5 s, 15 s, 30 s, 60 s. */
   readonly retryDelays?: readonly [Duration.DurationInput, ...Duration.DurationInput[]];
   /**

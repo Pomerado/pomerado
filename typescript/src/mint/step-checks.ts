@@ -179,6 +179,15 @@ export const sourceDigest = (files: ReadonlyMap<string, string>) =>
     .update(JSON.stringify([...files].sort(([left], [right]) => left.localeCompare(right))))
     .digest("hex");
 
+/**
+ * The sha256 digest of what a set of source files holds, without their paths, so the same step
+ * copied under another name has the same digest.
+ */
+export const contentDigest = (files: ReadonlyMap<string, string>) =>
+  createHash("sha256")
+    .update(JSON.stringify([...files.values()].sort()))
+    .digest("hex");
+
 /** Why a write build refuses this step now; undefined when it may run. */
 export const writeSessionBoundary = (
   submitted: ExecutionRequest,
