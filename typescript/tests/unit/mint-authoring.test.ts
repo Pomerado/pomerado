@@ -340,6 +340,34 @@ it("gives the local host and a composing host the same shared guidance", async (
 });
 
 /*
+ * Text only the local host reads stays in host sections a composing host replaces: the core
+ * skill's closing summary of local execution and completion follows the shared paragraph on host
+ * incidents, and a host that composes empty text there keeps that paragraph only.
+ */
+it("keeps the local execution and completion summary in a host section", async () => {
+  const summary =
+    "## Standalone execution and completion Use the ordinary `defineOperation` API and existing Kernel-shaped browser calls above.";
+  const lines = [
+    summary,
+    "It offers no browser replacement or captured replay facility. An invalidated native executor ends this attempt; never use a new browser to repeat an uncertain effect.",
+    "Correct a refused binding by reading the current screen. A rejected credential needs caller correction; do not resubmit it.",
+  ];
+  const shared = "so never repeat it without the read-back above.";
+  const local = ((await renderedTexts("typescript/authoring")).get("core") ?? "").replace(/\s+/g, " ");
+  expect(lines.filter((line) => !local.includes(line))).toStrictEqual([]);
+  expect(local.indexOf(shared)).toBeGreaterThan(0);
+  expect(local.indexOf(summary)).toBeGreaterThan(local.indexOf(shared));
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    const composed = ((await renderedTexts(root)).get("core") ?? "").replace(/\s+/g, " ");
+    expect(composed).toContain(shared);
+    expect(composed).not.toContain("Standalone execution and completion");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
  * the private fallback, the login URL check and recorded confirm popups, which its preamble lists
  * as hosted features. The hosted-only checks (site metadata, the HTTP version, recorded requests,
@@ -523,7 +551,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["38381c48f8a70bbc31c6ab552badbcb407c5f2afa6572d37af4cc83003fd4382", "core"],
+    ["3f841159d3a3eb5d3e4e7080c889475f2c2e15b6dae03c28a5377d125b1591b1", "core"],
     ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
     ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],

@@ -462,3 +462,16 @@ repair, read back whether the write happened first, and do the write only if it 
 or `capture_unavailable`, note it in `finish_build` coverage and keep building. A gap never
 stops a read. A write the gap covers has an unknown outcome, so never repeat it without the
 read-back above.
+<!-- pomerado:section core.standalone-completion:start
+
+## Standalone execution and completion
+
+Use the ordinary `defineOperation` API and existing Kernel-shaped browser calls above. `liveBrowser` is native Playwright and `pureFiles` is local computation. The host retains Guardian review, caller authority, source reads, questions, deadline/cleanup and no-replay rules. It offers no browser replacement or captured replay facility. An invalidated native executor ends this attempt; never use a new browser to repeat an uncertain effect.
+
+Declare explicit input and output schemas, concrete types and bounds for each supported field. Caller choices and account-specific values come from input or reviewed questions, never literals/defaults you invented. A detail read verifies the requested record identity and final page state. Every returned field has observable support; describe missing coverage truthfully.
+
+`finish_build` returns the current integration files and schemas after shared checks. A read needs a successful example using supplied values. A write needs its original confirming act receipt and current source; compose it without running it again. Return the task result and honest evidence, not unsupported success claims.
+
+Only the host asks for website credentials and only during `authenticate`. Give it the observed field selectors, slots, allowed identifier kinds, format and submit. No generated source receives the raw password; follow the same destination, stale field/focus, no-readback and code-handle rules as hosted execution. Correct a refused binding by reading the current screen. A rejected credential needs caller correction; do not resubmit it.
+
+pomerado:section core.standalone-completion:end -->
