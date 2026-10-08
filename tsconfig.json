@@ -27,6 +27,7 @@
     "typescript/tests/support/expect-failure.ts",
     "typescript/tests/support/kernel-run.ts",
     "typescript/tests/browser/isolated-locator-page.ts",
+    "typescript/tests/support/job-store-contract.ts",
     "typescript/tests/support/mint-fixtures.ts",
     "typescript/tests/support/session-sign-in-contract.ts",
     "typescript/tests/browser/shop-fixture.ts",

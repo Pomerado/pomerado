@@ -103,7 +103,11 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - When the tool's `ensureSignedIn` finds the page signed out in the middle of the call, the host signs in again on the same page with the login it asked for, at most 3 times per call. The call's deadline pauses meanwhile.
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
-- Restarting the server loses running jobs and keeps saved integrations.
+- A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
+- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status and a failed run's commit marks. It never holds the input or the output.
+- Two servers on one integration folder share those records, so one key starts one job between them.
+- `.jobs` is for servers on one machine. A record names the process that runs its job, and a server on another machine or in another container can't tell whether that process still runs.
+- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status but not its output. A keyed job the restart stopped reads as failed and is never run again.
 - A failed job is never replayed. A website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
@@ -143,6 +147,7 @@ The package has these entry points.
 - `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
 - Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, let other hosts compose the library. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
+- `submitJob` from `pomerado/core/jobs/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
@@ -170,5 +175,6 @@ The package has these entry points.
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
 | `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
 | `typescript/src/standalone/` | Local library, terminal and MCP composition |
+| `typescript/src/jobs/` | The JobStore hook, the shared retry-key rule and the local job stores |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
