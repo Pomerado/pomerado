@@ -53,6 +53,12 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
+    /**
+     * The child reported this failure with its final journal. False when the host lost the
+     * result, as at a deadline or a child exit: the journal is then the last one the child
+     * streamed as it ran.
+     */
+    readonly reported = true,
   ) {
     super(message);
   }
@@ -361,6 +367,9 @@ export const runLocalOperation = (
                     error.message,
                     yield* response.journal,
                     failureCode(error),
+                    undefined,
+                    undefined,
+                    false,
                   );
             yield* process.close;
             const channels = yield* process.result.pipe(Effect.either);

@@ -42,21 +42,28 @@ const dated = {
 };
 const observationsOf = (review: RecordedReview | undefined) =>
   String(review?.input["untrusted_observations"]).split("\n");
-const upgradeQuestion = {
-  intent: "Ask to change the site",
-  writeUpgrade: true,
+/** The minter's question whether the build may save, and the update it makes once confirmed. */
+const saveQuestion = {
+  intent: "Ask whether the build may save",
   questions: [
     {
-      id: "effect",
+      id: "save",
       type: "choice",
-      prompt: "Saving the note changes the site. Allow it?",
+      prompt: "Saving the note changes the site. May this build save it?",
       options: [
-        { id: "read", label: "Read" },
-        { id: "write", label: "Change" },
+        { id: "save", label: "Yes, save the note" },
+        { id: "look", label: "No, only look" },
       ],
     },
   ],
 };
+const toWrite = (confirmedBy: readonly string[]) => ({
+  intent: "Make the build a write, as the caller confirmed",
+  summary: "Save the note on the site instead of only reading it.",
+  changes: [{ setting: "effect", effect: "write" }],
+  confirmedBy,
+  recommend: "update",
+});
 test("a read build's reviews carry each step's own context", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
@@ -88,7 +95,6 @@ test("a read build's reviews carry each step's own context", async () => {
         () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{}" }), "test")],
         () => [call("execute", execution("example", "src/tool.mjs"), "example_1")],
         () => [call("execute", execution("example", "src/tool.mjs"), "example_2")],
-        () => [call("request_input", upgradeQuestion, "upgrade")],
         (request) => [
           call("finish_build", {
             intent: "Return the fixture integration",
@@ -187,14 +193,10 @@ test("a read build's reviews carry each step's own context", async () => {
       "example:completed",
     ]);
 
-    // A read build may run its example again; once it ran one, it can no longer become a write.
+    // A read build may run its example again.
     expect(toolResult(last, "test")).toMatchObject({ status: "completed" });
     expect(toolResult(last, "example_2")).toMatchObject({ status: "completed" });
     expect(JSON.stringify(objects(last?.input))).not.toContain("AlreadyExecuted");
-    expect(toolResult(last, "upgrade")).toMatchObject({
-      status: "question_refused",
-      reason: "write_upgrade_unavailable",
-    });
   } finally {
     await site.close();
   }
@@ -286,6 +288,9 @@ test("Guardian reads the page the build last observed, with private values redac
       ],
     });
     const [first, second] = executions(guardian.reviews);
+    // The minter's own request_input is not a script's question.
+    const asked = guardian.reviews.find((review) => review.kind === "question");
+    expect(asked?.input["question_review"]).not.toHaveProperty("scriptAsk");
     expect(contextOf(first!)).not.toHaveProperty("currentPage");
     expect(contextOf(second!)?.["currentPage"]).toEqual({
       origin: site.origin,
@@ -326,6 +331,8 @@ async ({ ask }) => ({ note: await ask("note") }));`,
     });
     expect(toolResult(last, "ask")).toMatchObject({ status: "completed" });
     const question = guardian.reviews.find((review) => review.kind === "question");
+    // A script's own question, which Guardian judges as one a published tool asks at run time.
+    expect(question?.input["question_review"]).toMatchObject({ scriptAsk: true });
     expect(effectsOf(question)).toEqual([]);
     expect(historyOf(question)).toEqual([
       expect.objectContaining({ purpose: "explore", status: "running", effect: "possible" }),
@@ -494,7 +501,7 @@ test("a read build runs two live tests on inputs it chose and its example on the
   }
 });
 
-test("an approved write upgrade turns a read build into a write build", async () => {
+test("a confirmed update turns a read build into a write build, and later reviews read it", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -504,73 +511,160 @@ test("an approved write upgrade turns a read build into a write build", async ()
       effect: "read",
       url: site.url,
       guardian,
-      answer: () => ({ effect: "write" }),
+      // The caller picks the option the minter wrote.
+      answer: () => ({ save: "save" }),
       turns: [
         () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
         () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
-        () => [call("request_input", upgradeQuestion, "upgrade")],
+        () => [call("request_input", saveQuestion, "ask")],
+        () => [call("mint_update", toWrite(["save"]), "update")],
         () => [call("execute", execution("act", "src/act.mjs"), "act")],
+        () => [call("execute", execution("act", "src/look.mjs"), "read_back")],
       ],
     });
-    expect(toolResult(last, "upgrade")).toMatchObject({ status: "answered", buildEffect: "write" });
+    expect(toolResult(last, "update")).toMatchObject({
+      status: "updated",
+      task: { revision: 1, effect: "write" },
+    });
     expect(toolResult(last, "act")).toMatchObject({ status: "completed" });
     expect(fixture.writes()).toBe(1);
-    const [explore, act] = executions(guardian.reviews);
+    // Guardian reviewed the update with the caller's pick of the minter's option as confirmation.
+    const update = guardian.reviews.find((review) => review.kind === "update");
+    expect(update?.input["update_review"]).toMatchObject({
+      changes: [{ setting: "effect", effect: "write" }],
+      confirmation: [{ question: saveQuestion.questions[0]?.prompt, answer: "Yes, save the note" }],
+      effect: "read",
+    });
+    const [explore, act, readBack] = executions(guardian.reviews);
     expect(contextOf(explore!)?.["repeatableRead"]).toBe(true);
     expect(contextOf(act!)?.["repeatableRead"]).toBe(false);
     expect(effectsOf(act)[0]).toMatch(/^The caller's requested task, done once/u);
-    expect(authorityOf(act!)["intent"]).toBe(
-      "Read the fixture heading\nThe owner approved turning this read build into a write build, answering this reviewed question: Saving the note changes the site. Allow it?",
-    );
+    // The write is reviewed under the effective task: the intent and the accepted update.
+    expect(authorityOf(act!)["intent"]).toBe("Read the fixture heading");
+    expect(authorityOf(act!)["taskUpdates"]).toEqual([
+      {
+        revision: 1,
+        summary: "Save the note on the site instead of only reading it.",
+        changes: [{ setting: "effect", effect: "write" }],
+        confirmation: [
+          { question: saveQuestion.questions[0]?.prompt, answer: "Yes, save the note" },
+        ],
+      },
+    ]);
+    expect(authorityOf(explore!)).not.toHaveProperty("taskUpdates");
+    // The explore ran under the original request and the write under the update.
+    expect(historyOf(readBack).map((entry) => [entry["purpose"], entry["taskRevision"]])).toEqual([
+      ["explore", undefined],
+      ["act", 1],
+    ]);
   } finally {
     await site.close();
   }
 });
 
-test("an approved write upgrade's question never makes its off-site link the owner's", async () => {
+test("a read build that ran its live example becomes a write and runs the write", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
   const guardian = recordingGuardian();
-  const ownerInstance = "https://acme.tenant.invalid";
-  const pageLink = "https://signup.vendor.invalid";
   try {
     const { last } = await mint({
       effect: "read",
       url: site.url,
-      intent: `Save the note here, as on my own instance at ${ownerInstance}/notes`,
       guardian,
-      answer: () => ({ effect: "write" }),
+      answer: () => ({ save: "save" }),
       turns: [
         () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
-        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
+        () => [call("execute", execution("example", "src/look.mjs"), "example")],
+        () => [call("request_input", saveQuestion, "ask")],
+        () => [call("mint_update", toWrite(["save"]), "update")],
+        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+      ],
+    });
+    expect(toolResult(last, "example")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "update")).toMatchObject({
+      status: "updated",
+      task: { revision: 1, effect: "write" },
+    });
+    // The read example's claim does not block the write session's own.
+    expect(toolResult(last, "act")).toMatchObject({ status: "completed" });
+    expect(fixture.writes()).toBe(1);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a confirmed site change moves the build to the other site", async () => {
+  test.setTimeout(90_000);
+  const original = await startSite((_request, response) =>
+    html(response, "<title>Original</title><h1>Original</h1>"),
+  );
+  const sister = await startSite((_request, response) =>
+    html(response, "<title>Sister</title><h1>Sister</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: original.url,
+      guardian,
+      answer: () => ({ site: "move" }),
+      turns: [
+        () => patch({ "src/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "src/look.mjs"), "before")],
         () => [
           call(
             "request_input",
             {
-              ...upgradeQuestion,
+              intent: "Ask where the notes live",
               questions: [
                 {
-                  ...upgradeQuestion.questions[0],
-                  prompt: `May this build save the note at ${pageLink}/new for you?`,
+                  id: "site",
+                  type: "choice",
+                  prompt: `Your notes live on ${sister.origin}. Build the tool there?`,
+                  options: [
+                    { id: "move", label: `Yes, use ${sister.origin}` },
+                    { id: "stay", label: "No, stay here" },
+                  ],
                 },
               ],
             },
-            "upgrade",
+            "ask",
           ),
         ],
-        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+        () => [
+          call(
+            "mint_update",
+            {
+              intent: "Move the build where the caller's notes live",
+              summary: `Build the tool on ${sister.origin}, where the caller's notes live.`,
+              changes: [{ setting: "site", origin: sister.origin }],
+              confirmedBy: ["site"],
+              recommend: "update",
+            },
+            "update",
+          ),
+        ],
+        () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
       ],
     });
-    expect(toolResult(last, "upgrade")).toMatchObject({ status: "answered", buildEffect: "write" });
-    const [explore, write] = executions(guardian.reviews);
-    // The owner's own words name their instance, before and after the upgrade.
-    expect(authorityOf(explore!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
-    // The approved question joins the intent, but its link is the agent's, never the owner's.
-    expect(String(authorityOf(write!)["intent"])).toContain(`${pageLink}/new`);
-    expect(authorityOf(write!)["ownerNamedOrigins"]).toEqual([ownerInstance]);
+    expect(toolResult(last, "update")).toMatchObject({
+      status: "updated",
+      task: { revision: 1, siteOrigin: sister.origin },
+    });
+    // The build worked on the original site, then entered the new one, and the review after the
+    // change authorizes that site alone.
+    expect(JSON.stringify(toolResult(last, "before"))).toContain("Original");
+    expect(JSON.stringify(toolResult(last, "explore"))).toContain("Sister");
+    const [before, explore] = executions(guardian.reviews);
+    expect(authorityOf(before!)["allowedOrigins"]).toEqual([original.origin]);
+    expect(authorityOf(explore!)["allowedOrigins"]).toEqual([sister.origin]);
+    expect(authorityOf(explore!)["taskUpdates"]).toMatchObject([
+      { revision: 1, changes: [{ setting: "site", origin: sister.origin }] },
+    ]);
   } finally {
-    await site.close();
+    await original.close();
+    await sister.close();
   }
 });
 

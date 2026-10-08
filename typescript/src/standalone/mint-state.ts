@@ -1,9 +1,10 @@
 import { fileURLToPath } from "node:url";
-import { Effect } from "effect";
+import { Effect, Scope } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
+import type { ConfirmSession } from "../browser/dialogs/expected.js";
 import {
   identifierPreference,
   type AutofillSlot,
@@ -14,6 +15,7 @@ import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
 import type { WriteStep } from "../mint/step-checks.js";
+import type { WriteSessionMarks } from "../mint/write-session.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
@@ -186,86 +188,104 @@ export const mintState = (
         readonly journal: LocalOperationJournal;
       }
     >();
-    const signInBrowser = makeSignInBrowser({
-      page: browser,
-      keyboard: browser.keyboard,
-      siteOrigin: context.siteOrigin,
-      authenticationOrigins: request.authenticationOrigins ?? [],
-      onRequest: browser.onRequest,
-      typing: session.signInTyping,
-    });
-    // The site as the owner's questions name it: its host, without `www.`.
-    const site = new URL(context.siteOrigin).hostname.replace(/^www\./u, "");
-    const recorder = yield* makeSignInRecorder<Error>({
-      browser: signInBrowser,
-      login: localSignInLogin({
-        ask: mintAsk,
-        register: secrets.register,
-        siteOrigin: context.siteOrigin,
-      }),
-      values: askingValueHooks({
-        ask: mintAsk,
-        register: secrets.register,
-        site,
-        siteOrigin: context.siteOrigin,
-      }),
-      // The screen may show a value the caller gave, such as the typed email on a password
-      // screen; it reaches Guardian masked. The source check still refuses any value left.
-      review: (step, inspection) =>
-        screenMintText(
-          { projection: session.projection },
-          { step, screen: inspection.screen },
-        ).pipe(
-          Effect.flatMap((source) =>
-            context.review(
-              {
-                entrypoint: "operation/sign-in-step.json",
-                sources: new Map([["operation/sign-in-step.json", source]]),
-                input: {},
-                currentExecution: { purpose: "authenticate", target: "liveBrowser" },
-                note: signInStepNote,
-              },
-              "not_sent",
-            ),
-          ),
-          Effect.asVoid,
-        ),
-      site,
-      carries: secrets.carries,
-      refuseIndicator: (indicator) =>
-        markers.signedOutShows(indicator) ? markerOnSignedOutPage : undefined,
-    });
     /**
      * The build's one write session: whether its first act step dispatched, the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one), and its act steps in order for the blind-repeat guard.
+     * one), its act steps in order for the blind-repeat guard and publication's checks, and the
+     * confirm popups its act steps accepted.
      */
     const writeSession: {
       started: boolean;
       input: Readonly<Record<string, unknown>> | undefined;
-      readonly steps: WriteStep[];
-    } = { started: false, input: undefined, steps: [] };
+      readonly steps: (WriteStep & WriteSessionMarks)[];
+    } & ConfirmSession = {
+      started: false,
+      input: undefined,
+      steps: [],
+      acceptedConfirms: [],
+      confirmSteps: new Set(),
+    };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
-    const markers = makeMarkerChecks({
-      page: browser,
-      siteOrigin: context.siteOrigin,
-      // The live check on the build's screens; it ends no sign-in.
-      check: (indicator) => {
-        const { screens, challengeScreens } = recorder.screens();
-        return signInBrowser.confirm(indicator, screens, challengeScreens);
-      },
-      typing: session.signInTyping,
-      loginSent: () => start.submitted || context.signedIn,
-      writeSessionStarted: () => writeSession.started,
-      observe: context.observe,
-    });
-    const start = makeBuildStart(
-      browser,
-      context.siteOrigin,
-      context.navigate,
-      context.leavePage,
-      markers.afterClear,
-    );
+    /**
+     * Everything bound to the build's site: the sign-in browser and recorder, the marker checks
+     * and the build's start. A task update that moves the build to another site binds them anew.
+     */
+    const bindSite = (siteOrigin: string, authenticationOrigins: readonly string[]) =>
+      Effect.gen(function* () {
+        const signInBrowser = makeSignInBrowser({
+          page: browser,
+          keyboard: browser.keyboard,
+          siteOrigin: siteOrigin,
+          authenticationOrigins,
+          onRequest: browser.onRequest,
+          typing: session.signInTyping,
+        });
+        // The site as the owner's questions name it: its host, without `www.`.
+        const site = new URL(siteOrigin).hostname.replace(/^www\./u, "");
+        const recorder = yield* makeSignInRecorder<Error>({
+          browser: signInBrowser,
+          login: localSignInLogin({
+            ask: mintAsk,
+            register: secrets.register,
+            siteOrigin: siteOrigin,
+          }),
+          values: askingValueHooks({
+            ask: mintAsk,
+            register: secrets.register,
+            site,
+            siteOrigin: siteOrigin,
+          }),
+          // The screen may show a value the caller gave, such as the typed email on a password
+          // screen; it reaches Guardian masked. The source check still refuses any value left.
+          review: (step, inspection) =>
+            screenMintText(
+              { projection: session.projection },
+              { step, screen: inspection.screen },
+            ).pipe(
+              Effect.flatMap((source) =>
+                context.review(
+                  {
+                    entrypoint: "operation/sign-in-step.json",
+                    sources: new Map([["operation/sign-in-step.json", source]]),
+                    input: {},
+                    currentExecution: { purpose: "authenticate", target: "liveBrowser" },
+                    note: signInStepNote,
+                  },
+                  "not_sent",
+                ),
+              ),
+              Effect.asVoid,
+            ),
+          site,
+          carries: secrets.carries,
+          refuseIndicator: (indicator) =>
+            markers.signedOutShows(indicator) ? markerOnSignedOutPage : undefined,
+        });
+        const markers = makeMarkerChecks({
+          page: browser,
+          siteOrigin: siteOrigin,
+          // The live check on the build's screens; it ends no sign-in.
+          check: (indicator) => {
+            const { screens, challengeScreens } = recorder.screens();
+            return signInBrowser.confirm(indicator, screens, challengeScreens);
+          },
+          typing: session.signInTyping,
+          loginSent: () => start.submitted || context.signedIn,
+          writeSessionStarted: () => writeSession.started,
+          observe: context.observe,
+        });
+        const start = makeBuildStart(
+          browser,
+          siteOrigin,
+          context.navigate,
+          context.leavePage,
+          markers.afterClear,
+        );
+        return { recorder, markers, start };
+      });
+    let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
+    // A later binding lives as long as the first: until the request's scope closes.
+    const scope = yield* Effect.scope;
     return {
       session,
       context,
@@ -276,11 +296,28 @@ export const mintState = (
       deadline,
       mintAsk,
       runs,
-      recorder,
       writeSession,
-      start,
       afterSubmit,
-      markers,
+      get recorder() {
+        return bound.recorder;
+      },
+      get markers() {
+        return bound.markers;
+      },
+      get start() {
+        return bound.start;
+      },
+      /**
+       * Binds the build to another site, for a task update the host applies, with no sign-in
+       * origins of its own; nothing switches unless it succeeds.
+       */
+      rebindSite: (siteOrigin: string) =>
+        bindSite(siteOrigin, []).pipe(
+          Scope.extend(scope),
+          Effect.map((rebound) => {
+            bound = rebound;
+          }),
+        ),
     };
   });
 export type MintState = Effect.Effect.Success<ReturnType<typeof mintState>>;

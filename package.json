@@ -62,6 +62,11 @@
       "import": "./dist/typescript/src/browser/dialogs/contracts.js",
       "default": "./dist/typescript/src/browser/dialogs/contracts.js"
     },
+    "./core/browser/dialogs/expected": {
+      "types": "./dist/typescript/src/browser/dialogs/expected.d.ts",
+      "import": "./dist/typescript/src/browser/dialogs/expected.js",
+      "default": "./dist/typescript/src/browser/dialogs/expected.js"
+    },
     "./core/browser/dialogs/service": {
       "types": "./dist/typescript/src/browser/dialogs/service.d.ts",
       "import": "./dist/typescript/src/browser/dialogs/service.js",
@@ -212,6 +217,11 @@
       "import": "./dist/typescript/src/guardian/source.js",
       "default": "./dist/typescript/src/guardian/source.js"
     },
+    "./core/guardian/task-update": {
+      "types": "./dist/typescript/src/guardian/task-update.d.ts",
+      "import": "./dist/typescript/src/guardian/task-update.js",
+      "default": "./dist/typescript/src/guardian/task-update.js"
+    },
     "./core/guardian/upstream-policy": {
       "types": "./dist/typescript/src/guardian/upstream-policy.d.ts",
       "import": "./dist/typescript/src/guardian/upstream-policy.js",
@@ -327,6 +337,11 @@
       "import": "./dist/typescript/src/mint/write-contract.js",
       "default": "./dist/typescript/src/mint/write-contract.js"
     },
+    "./core/mint/write-session": {
+      "types": "./dist/typescript/src/mint/write-session.d.ts",
+      "import": "./dist/typescript/src/mint/write-session.js",
+      "default": "./dist/typescript/src/mint/write-session.js"
+    },
     "./core/models/model-diagnostic-failure": {
       "types": "./dist/typescript/src/models/model-diagnostic-failure.d.ts",
       "import": "./dist/typescript/src/models/model-diagnostic-failure.js",
@@ -432,15 +447,30 @@
       "import": "./dist/typescript/src/runtime/failure-detail.js",
       "default": "./dist/typescript/src/runtime/failure-detail.js"
     },
+    "./core/runtime/fingerprint": {
+      "types": "./dist/typescript/src/runtime/fingerprint.d.ts",
+      "import": "./dist/typescript/src/runtime/fingerprint.js",
+      "default": "./dist/typescript/src/runtime/fingerprint.js"
+    },
     "./core/runtime/host-execute": {
       "types": "./dist/typescript/src/runtime/host-execute.d.ts",
       "import": "./dist/typescript/src/runtime/host-execute.js",
       "default": "./dist/typescript/src/runtime/host-execute.js"
     },
+    "./core/runtime/incidents": {
+      "types": "./dist/typescript/src/runtime/incidents.d.ts",
+      "import": "./dist/typescript/src/runtime/incidents.js",
+      "default": "./dist/typescript/src/runtime/incidents.js"
+    },
     "./core/runtime/input-request": {
       "types": "./dist/typescript/src/runtime/input-request.d.ts",
       "import": "./dist/typescript/src/runtime/input-request.js",
       "default": "./dist/typescript/src/runtime/input-request.js"
+    },
+    "./core/runtime/job-store": {
+      "types": "./dist/typescript/src/runtime/job-store.d.ts",
+      "import": "./dist/typescript/src/runtime/job-store.js",
+      "default": "./dist/typescript/src/runtime/job-store.js"
     },
     "./core/runtime/kernel-operation": {
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
@@ -527,6 +557,11 @@
       "import": "./dist/typescript/tests/support/canary.js",
       "default": "./dist/typescript/tests/support/canary.js"
     },
+    "./testing/confirm-popups-contract": {
+      "types": "./dist/typescript/tests/support/confirm-popups-contract.d.ts",
+      "import": "./dist/typescript/tests/support/confirm-popups-contract.js",
+      "default": "./dist/typescript/tests/support/confirm-popups-contract.js"
+    },
     "./testing/credential-masking-corpus": {
       "types": "./dist/typescript/tests/support/credential-masking-corpus.d.ts",
       "import": "./dist/typescript/tests/support/credential-masking-corpus.js",
@@ -541,6 +576,11 @@
       "types": "./dist/typescript/tests/browser/isolated-locator-page.d.ts",
       "import": "./dist/typescript/tests/browser/isolated-locator-page.js",
       "default": "./dist/typescript/tests/browser/isolated-locator-page.js"
+    },
+    "./testing/job-store-contract": {
+      "types": "./dist/typescript/tests/support/job-store-contract.d.ts",
+      "import": "./dist/typescript/tests/support/job-store-contract.js",
+      "default": "./dist/typescript/tests/support/job-store-contract.js"
     },
     "./testing/mint-fixtures": {
       "types": "./dist/typescript/tests/support/mint-fixtures.d.ts",

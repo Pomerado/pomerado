@@ -78,11 +78,12 @@ export const runMcpCli = (
           ...(values.endpoint === undefined ? {} : { endpoint: values.endpoint }),
         },
       };
+      const directory = values.artifact === undefined ? undefined : resolve(values.artifact);
       const integration =
         mode === "serve"
-          ? yield* values.artifact === undefined
+          ? yield* directory === undefined
               ? Effect.fail(new Error("--artifact is required."))
-              : readIntegration(resolve(values.artifact))
+              : readIntegration(directory)
           : undefined;
       const scope = yield* Effect.scope;
       const create = () =>
@@ -96,7 +97,11 @@ export const runMcpCli = (
                   request,
                 }),
             })
-          : makeIntegrationMcp({ ...integration, pomerado });
+          : makeIntegrationMcp({
+              ...integration,
+              ...(directory === undefined ? {} : { directory }),
+              pomerado,
+            });
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           serveStdio(() => Effect.runPromise(Effect.provideService(create(), Scope.Scope, scope)), {

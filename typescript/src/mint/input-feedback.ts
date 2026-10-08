@@ -1,4 +1,5 @@
 import type { Effect } from "effect";
+import type { ExpectedConfirm } from "../browser/dialogs/contracts.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { PublicationFinding } from "../guardian/review-contracts.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
@@ -114,6 +115,8 @@ export interface MintArtifact {
    * declares as a plain literal.
    */
   readonly questions?: ScriptQuestionDeclarations;
+  /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
+  readonly acceptedConfirms?: readonly ExpectedConfirm[];
 }
 
 /** Completion uses the same review/receipt loop in each composition. */

@@ -16,10 +16,15 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
   - The loads move the tab. The host opens the agent's page again when that page showed the marker and isn't the direct answer to a form. Otherwise the tab stays where the loads left it.
   - Once a write session started, the check loads no page and reports itself unavailable.
   - The `signedIn` step refuses a marker that one of those signed-out pages shows.
+- A failed write step that may have committed tells the minter to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
+- Publishing a write first checks that its session may have sent the write. A step that recorded a confirmation, entered a commit mark or made a browser call counts. Only then is the composed contract read, reviewed and checked against the session.
+- The composed script must then name each step where you accepted a confirm popup. A run matches a recorded confirm by its step, so a renamed step is refused.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.
 - A step's script asks you only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. A declaration held in a variable, imported or computed declares nothing, so its ask fails as `Undeclared` and reaches neither Guardian nor you.
+- When a value you gave isn't available on the site, such as a sold-out date or an option the site doesn't list, it asks you whether to change it or stop. The question names your value and offers what the site has. It never picks another value for you.
+- A write keeps each native confirm you accept during its act steps on an https page. It saves up to 32 of them in `pomerado.json` as `acceptedConfirms`, each a digest of the message, the origin and the step. No page text is saved.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
 
@@ -33,7 +38,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 ### Review requests
 
-Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+Guardian reviews five built-in kinds of request: execution, question, task update, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
 
 - **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
 - **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
@@ -51,6 +56,16 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
   - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
   - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
+
+### Task updates
+
+- The minter changes its task's settings with `mint_update` once the caller confirms the change: input values, a requirement, constraint or prerequisite (added, dropped or revised), the purpose, a read becoming a write, the target site or the login. It asks with `request_input` first unless the request already settles the change, and names the answered questions in `confirmedBy`. The caller's pick of an option the minter wrote confirms what that option says, as do the caller's own words.
+- `recommend` is the minter's own judgment: `update` for the same task and workflow, or `new_mint`, with a `suggestedRequest`, for a different task or another product's workflow. A changed site origin alone decides neither.
+- Guardian reviews the update as an `update` review (`reviewTaskUpdate`), against the effective task and the caller's recorded answers. It allows it, asks for clarification, asks for a reword, or finds that the change belongs in a new build.
+- Results: `updated`; `clarification_required` (from Guardian, or from the host when, for example, the new site needs a login the caller hasn't given); `reword`, which never ends the build; `new_mint_recommended`, which ends the build `blocked` with the summary and suggested request; `review_unavailable`, under the usual review outage budget; `update_refused` when this build can't take the change, such as a site change while a write session is open or once the build can't run another live example, or any change in maintenance, a recommended new build included; and `update_invalid` for a request that doesn't decode or a `new_mint` recommendation without a suggested request. Nothing changes on any result but `updated`. A site, login or effect change widens what the build may do, so it always needs an answer in `confirmedBy`. After a site change, `finish_build` publishes only an execution that ran on the new site. A read build that already ran a live read example may still become a write; the write session runs its own example, and only what it did can be published.
+- The host applies an allowed update through `MintDependencies.applyTaskUpdate`. All or nothing, it stores the harness checkpoint it is given, with the update applied, together with its own bindings, rebinds everything that depends on the site for a site change, reruns intake screening and the duplicate check where it has them, and resolves the login. It may answer `clarification_required` or `refused` instead. A takeover restores the whole update or none of it, and the same `mint_update` again is answered `updated` without another review. The local host has no intake screen, duplicate check, saved logins or checkpoint store: it rebinds the site, the input and the effect, leaves the earlier site's sign-in origins and sign-ins behind, and a sign-in on the new site asks you as any sign-in does.
+- An option the minter wrote is the caller's confirmation of what it says once they pick it or type it back. A link in it names where the caller's work lives (`trusted_authority.ownerNamedOrigins`), as the caller's own words do.
+- Every later review reads the effective task: the original intent and `trusted_authority.taskUpdates`, with the rebound `allowedOrigins`. Each recorded execution keeps the task revision it ran under (`taskRevision`). No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision.
 
 ### Publication review
 
@@ -70,6 +85,9 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
+- A write's run accepts a confirm from its `acceptedConfirms` once, at the same step on the same origin with the same message. Every other popup asks the caller. A read run accepts nothing from the record.
+- A popup whose question's window ends unanswered is dismissed, and the run goes on. A cancel at the terminal still stops the step. Nothing is accepted without an answer or a record.
+- A run reads a popup's origin from the page address the script reports. A frame from another site inside that page counts as the page.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
 - Authored code, offline commands and page-code workers run with your user account's file and network access. Guardian review and file checks are not an operating system sandbox. Clearing a worker's `process.env` hides environment variables from that API but doesn't isolate host credentials.
@@ -101,7 +119,11 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - A rejected username or password is asked again at most twice, and a rejected value is never sent again.
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
-- Restarting the server loses running jobs and keeps saved integrations.
+- A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
+- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status and a failed run's commit marks. It never holds the input or the output.
+- Two servers on one integration folder share those records, so one key starts one job between them.
+- `.jobs` is for servers on one machine. A record names the process that runs its job, and a server on another machine or in another container can't tell whether that process still runs.
+- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status but not its output. A keyed job the restart stopped reads as failed and is never run again.
 - A failed job is never replayed. A website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
@@ -141,10 +163,14 @@ The package has these entry points.
 - `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
 - Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, let other hosts compose the library. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
+- `submitJob` from `pomerado/core/runtime/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
+- `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. It takes the session's non-read request count, which the local host passes as 0. The local host marks each step its effect journal can't rule out as `possiblySent` instead.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
+- `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
+- `pomerado/testing/confirm-popups-contract` holds a fixture page with eight confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.
 
 `npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
 
@@ -162,7 +188,7 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract and the page each live step starts from |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract, the page each live step starts from, the JobStore hook, the shared retry-key rule and the local job stores |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
