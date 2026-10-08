@@ -9,10 +9,8 @@ import {
   stepInput,
   writeSessionBoundary,
   writeStepDigest,
-  writeUpgradeApproval,
   type WriteStep,
 } from "../../src/mint/step-checks.js";
-import { portableMintProjection } from "../support/portable-mint.js";
 
 const request = (overrides: Partial<ExecutionRequest> = {}): ExecutionRequest => ({
   purpose: "example",
@@ -349,33 +347,5 @@ describe("read/write switches", () => {
     expect(repeatableReadFor("read", true)).toBe(false);
     expect(repeatableReadFor("write", false)).toBe(false);
     expect(repeatableReadFor(undefined, false)).toBe(false);
-  });
-
-  it("screens the approved question of a repeatable read's upgrade and refuses any other", async () => {
-    const projection = portableMintProjection(["private-account-7"]);
-    expect(
-      await Effect.runPromise(
-        writeUpgradeApproval(
-          projection,
-          { buildEffect: "read", repeatableRead: true },
-          "Save the note for private-account-7?",
-        ),
-      ),
-    ).toBe("Save the note for [private]?");
-    for (const state of [
-      { buildEffect: "write" as const, repeatableRead: false },
-      { buildEffect: "read" as const, repeatableRead: false },
-    ])
-      expect(
-        await Effect.runPromise(
-          Effect.either(writeUpgradeApproval(projection, state, "Save the note?")),
-        ),
-      ).toMatchObject({
-        _tag: "Left",
-        left: {
-          code: "Unavailable",
-          failureDetail: { context: { check: "not_a_repeatable_read" } },
-        },
-      });
   });
 });

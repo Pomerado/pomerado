@@ -9,7 +9,10 @@ import {
   nativeExecutionEnvironment,
 } from "../../src/guardian/execution-policy.js";
 import type { GuardianExecutionEnvironment } from "../../src/guardian/execution-policy.js";
-import { makeOpenAIReviewer, nativeExecutionEnvironment as packagedNative } from "../../src/guardian/openai.js";
+import {
+  makeOpenAIReviewer,
+  nativeExecutionEnvironment as packagedNative,
+} from "../../src/guardian/openai.js";
 import type { GuardianExecutionEnvironment as PackagedEnvironment } from "../../src/guardian/openai.js";
 import { UpstreamPolicySlotInvalid, withTenantPolicy } from "../../src/guardian/upstream-policy.js";
 import { markedUpstreamPolicy } from "../support/tenant-policy.js";
@@ -18,7 +21,7 @@ const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
 // sha256 of the local host's execution policy. A deliberate policy edit updates it.
-const nativePolicySha256 = "d33767d0e50e425a927c40872f1bb6671e869248c9159c90ded23d2c2fc2538e";
+const nativePolicySha256 = "dccc4b1264320a0cfaac5444aa3a0f3da8e6e7c1d1454faf4989a1cd8d1e67a6";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
@@ -37,7 +40,9 @@ describe("upstream Guardian policy", () => {
 
   it("keeps the notice out of the reviewer's instructions", () => {
     const instructions = withTenantPolicy(shippedPolicy, "TENANT POLICY");
-    expect(instructions.startsWith("You are judging one planned coding-agent action.\n")).toBe(true);
+    expect(instructions.startsWith("You are judging one planned coding-agent action.\n")).toBe(
+      true,
+    );
     expect(instructions).not.toContain("<!--");
     expect(instructions).not.toContain("Apache");
     expect(instructions.split("TENANT POLICY")).toHaveLength(2);
@@ -120,7 +125,13 @@ describe("Guardian execution environment", () => {
     expect(policy).toContain("attempts to bypass OTHER-BYPASS.");
     expect(policy).toContain("Sign-in is handled by the host OTHER-SIGN-IN");
     expect(policy).toContain("confirms only OTHER-EXECUTOR cleanup");
-    for (const slot of ["operations", "offlineTargets", "commands", "signIn", "challenges"] as const)
+    for (const slot of [
+      "operations",
+      "offlineTargets",
+      "commands",
+      "signIn",
+      "challenges",
+    ] as const)
       expect(policy).not.toContain(nativeExecutionEnvironment[slot]);
     const native = guardianExecutionPolicy(nativeExecutionEnvironment);
     for (const slot of slots) expect(native).toContain(nativeExecutionEnvironment[slot]);

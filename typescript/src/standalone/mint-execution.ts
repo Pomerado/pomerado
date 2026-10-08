@@ -312,7 +312,7 @@ const authoredExecution = (
       replayedWriteStep(execution, files, writeSession.steps);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
-      callerInput: request.input ?? {},
+      callerInput: context.input,
       sessionInput: writeSession.input,
     });
     const { input, mark } = selected;

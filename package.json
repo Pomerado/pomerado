@@ -207,6 +207,11 @@
       "import": "./dist/typescript/src/guardian/source.js",
       "default": "./dist/typescript/src/guardian/source.js"
     },
+    "./core/guardian/task-update": {
+      "types": "./dist/typescript/src/guardian/task-update.d.ts",
+      "import": "./dist/typescript/src/guardian/task-update.js",
+      "default": "./dist/typescript/src/guardian/task-update.js"
+    },
     "./core/guardian/upstream-policy": {
       "types": "./dist/typescript/src/guardian/upstream-policy.d.ts",
       "import": "./dist/typescript/src/guardian/upstream-policy.js",

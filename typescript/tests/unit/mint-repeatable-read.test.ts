@@ -81,10 +81,11 @@ const countingHost = () => {
 
 // The shared harness tests cover a repeatable read running its example twice. This one adds
 // what the host sees: one claim request, which a host that lets the read run again answers by
-// claiming nothing, and the example still blocks a later write upgrade.
-it("asks the host to claim a repeatable read's example, and still refuses a later write upgrade", async () => {
+// claiming nothing, and the example still keeps a later update from making the build a write.
+it("asks the host to claim a repeatable read's example, and still refuses a later read to write update", async () => {
   const host = countingHost();
-  let upgrades = 0;
+  let reviews = 0;
+  let applied = 0;
   const f = await fixture(
     (_request, index) =>
       [
@@ -92,35 +93,52 @@ it("asks the host to claim a repeatable read's example, and still refuses a late
         call(
           "request_input",
           {
-            writeUpgrade: true,
             questions: [
               {
                 id: "effect",
                 type: "choice",
                 prompt: "Saving the note changes the site. Allow it?",
                 options: [
-                  { id: "read", label: "Read" },
-                  { id: "write", label: "Change" },
+                  { id: "save", label: "Save the note" },
+                  { id: "look", label: "Only look" },
                 ],
               },
             ],
           },
-          "upgrade",
+          "ask",
+        ),
+        call(
+          "mint_update",
+          {
+            summary: "Save the note instead of only reading it.",
+            changes: [{ setting: "effect", effect: "write" }],
+            confirmedBy: ["effect"],
+            recommend: "update",
+          },
+          "update",
         ),
       ][index] ?? prose(),
     {
       repeatableRead: true,
       ...host.overrides,
-      upgradeToWrite: () =>
+      askInput: () => Effect.succeed({ effect: { type: "choice", value: "save" } }),
+      reviewTaskUpdate: () =>
         Effect.sync(() => {
-          upgrades++;
+          reviews++;
+          return { outcome: "allow" as const, rationale: "Confirmed." };
+        }),
+      applyTaskUpdate: (application) =>
+        Effect.sync(() => {
+          applied++;
+          return { outcome: "applied" as const, state: application.next };
         }),
     },
     { effect: "read", siteOrigin: "https://site.invalid" },
   );
   await f.run();
-  expect(resultOf(f.requests[2], "upgrade")).toContain("write_upgrade_unavailable");
-  expect(upgrades).toBe(0);
+  expect(resultOf(f.requests[3], "update")).toContain("read_example_ran");
+  expect(reviews).toBe(0);
+  expect(applied).toBe(0);
   expect(host.counts.claims).toBe(1);
 });
 

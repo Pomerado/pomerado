@@ -179,14 +179,28 @@ words such as synthetic, sample or test data settle no value or choice. A caller
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field.
 
-An answer can change what is left to do. When the owner's `request_input` answer clarifies that a
-prerequisite the request named, such as a check before the action, is unavailable on the site or
-not needed, drop it from the remaining work and from the tool's contract: it no longer blocks the
-build or publication, and the tool does not promise it. Checking whether an earlier attempt already
-acted is your own reconciliation, not a capability the tool offers. No answer removes the requested
-action itself or the rule against repeating a write that may have committed, adds a capability the
-site lacks, or waives a Guardian decision or a constraint the owner set. A write the session
-already confirmed is done: compose and publish from its evidence, never run it again.
+**Change the task with `mint_update`.** An answer changes nothing by itself. When the caller
+confirms a change to the task, call `mint_update` with it: changed input values, dates or
+options; a requirement, constraint or prerequisite added, dropped or revised (a check before
+the action the site does not offer); the purpose; a read becoming a write; the target site; or
+the login. Ask with `request_input` first unless the request already settles the change, then
+name the answered questions in `confirmedBy`. The caller's pick of an option you wrote confirms
+what that option says, and so do their own words. Guardian reviews the update and the host
+applies it; after `updated`, every later step and the published tool follow the effective
+task. A dropped prerequisite no longer blocks the build or publication, and the tool does not
+promise it. Checking whether an earlier attempt already acted is your own reconciliation, not a
+capability the tool offers.
+
+Use `recommend: "update"` when the purpose and workflow stay the same: other values, dates or
+options, a dropped prerequisite, a read that needs to write, or a sister domain of the same
+product, such as moving from `https://app.example.io` to `https://app.example.cloud`. Use
+`recommend: "new_mint"`, with a `suggestedRequest`, when the caller now wants a different task
+or another product's workflow, such as booking on a different service after asking to list
+opening hours; the build then ends blocked and the caller gets your recommendation. A changed
+site origin alone decides neither. `reword` is feedback: revise and continue. No update removes
+the requested action itself or the rule against repeating a write that may have committed, adds
+a capability the site lacks, or waives a Guardian decision. A write the session already confirmed
+is done: compose and publish from its evidence, never run it again.
 
 ## Authentication
 
@@ -378,7 +392,7 @@ question. The host records that blocked outcome.
 
 Use the same canonical operation SDK and Kernel-shaped browser execute syntax. The host supplies native Playwright; the name `kernel` needs no Kernel account. Author the main operation in `src/tool.mjs` and import the SDK through the workspace README paths. Files returned by `finish_build` are the generated integration, with its input/output schemas.
 
-`read_source` reads source, installed skills and references in bounded ranges. `apply_patch` edits only authored directories. `execute` supports `liveBrowser` and `pureFiles`; every command or live execution receives fresh Guardian review. `exec_command` runs a local process over caller-owned files with an explicit environment; it is not an operating-system or network sandbox. Never use a command, Node fetch or socket to access the website; browser work stays in reviewed Playwright calls. `request_input`, `report_blocked` and `finish_build` use their existing request shapes.
+`read_source` reads source, installed skills and references in bounded ranges. `apply_patch` edits only authored directories. `execute` supports `liveBrowser` and `pureFiles`; every command or live execution receives fresh Guardian review. `exec_command` runs a local process over caller-owned files with an explicit environment; it is not an operating-system or network sandbox. Never use a command, Node fetch or socket to access the website; browser work stays in reviewed Playwright calls. `request_input`, `mint_update`, `report_blocked` and `finish_build` use their existing request shapes.
 
 Inspect the current page with bounded read-only probes. Use only caller-supplied input, answers and observed page choices. Keep observations focused; there are no recorder captures to retain. A timeout or browser loss leaves effects uncertain: read back current state before repeating an action and never replay an uncertain write.
 

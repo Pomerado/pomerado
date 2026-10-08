@@ -32,7 +32,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 ### Review requests
 
-Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+Guardian reviews five built-in kinds of request: execution, question, task update, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
 
 - **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
 - **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
@@ -50,6 +50,15 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - Each attempt is one review with its own ID. Its `guardian.started` and its closing `guardian.completed` or `guardian.failed` carry a `timing` with the attempt number, which counts outage retries from 1, and the interval as `performance.now()` offsets. The started record adds that attempt's session permit wait, and the closing record counts any `followUpRounds`. Follow-up rounds for a skipped entrypoint read stay inside one attempt.
   - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
   - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
+
+### Task updates
+
+- The minter changes its task's settings with `mint_update` once the caller confirms the change: input values, a requirement, constraint or prerequisite (added, dropped or revised), the purpose, a read becoming a write, the target site or the login. It asks with `request_input` first unless the request already settles the change, and names the answered questions in `confirmedBy`. The caller's pick of an option the minter wrote confirms what that option says, as do the caller's own words.
+- The minter recommends `update` for the same task and workflow, or `new_mint`, with a suggested request, for a different task or another product's workflow. A changed site origin alone decides neither.
+- Guardian reviews the update as an `update` review (`reviewTaskUpdate`), against the effective task and the caller's recorded answers. It allows it, asks for clarification, asks for a reword, or finds that the change belongs in a new build.
+- Results: `updated`; `clarification_required` (from Guardian, or from the host when, for example, the new site needs a login the caller hasn't given); `reword`, which never ends the build; `new_mint_recommended`, which ends the build `blocked` with the summary and suggested request; `review_unavailable`, under the usual review outage budget; and `update_refused` when this build can't take the change. A read build that already ran a live read example can't become a write.
+- The host applies an allowed update through `MintDependencies.applyTaskUpdate`. It checkpoints the effective task, rebinds everything that depends on the site for a site change, reruns intake screening and the duplicate check where it has them, and resolves the login. It may answer `clarification_required` or `refused` instead. The local host has no intake screen, duplicate check or saved logins: it rebinds the site, the input and the effect, and a sign-in on the new site asks you as any sign-in does.
+- Every later review reads the effective task: the original intent and `trusted_authority.taskUpdates`, with the rebound `allowedOrigins`. Each recorded execution keeps the task revision it ran under (`taskRevision`). No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision.
 
 ### Publication review
 

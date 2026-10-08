@@ -28,16 +28,16 @@ saves data on the site, save or submit anything; a task that needs that is a wri
 ## When a read build finds it needs to write
 
 When a read build's task turns out to need that (a form that saves each step, a search
-that is really a booking), ask the owner once with `request_input` and `writeUpgrade: true`:
-one `choice` question with the option ids `read` and `write`, whose prompt says in one or
-two plain sentences what the build would change and why the task needs it. Ask as soon as
-exploration shows it, and before any live `example`: a job that ran a live read example
-cannot become a write. The host writes the two answers' labels. Guardian reviews it first.
-A `write` answer makes this a write build in place: every later step is reviewed under
-write authority and the rules below, what you explored stays valid evidence, and the first
-`act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
-can do, or end and say the task needs a write build. An answer in the owner's own words approves
-no write either: follow what they said, and ask again if they asked for the change.
+that is really a booking), ask the caller with `request_input` whether the build may make
+that change, saying in one or two plain sentences what it would change on the site and why
+the task needs it. Ask as soon as exploration shows it, and before any live `example`: a job
+that ran a live read example cannot become a write. Once they confirm, by picking your option
+or in their own words, call `mint_update` with the change `{"setting": "effect", "effect":
+"write"}` and the answered question in `confirmedBy`. Guardian reviews it. An `updated` result
+makes this a write build in place: every later step is reviewed under write authority and the
+rules below, what you explored stays valid evidence, and the first `act` step starts on the
+site origin page. If they keep it read-only, finish what a read can do, or recommend a new
+write build with `mint_update` and `recommend: "new_mint"`.
 
 ## Before the session
 

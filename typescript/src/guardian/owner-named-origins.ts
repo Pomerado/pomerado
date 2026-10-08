@@ -7,8 +7,7 @@ import type { PendingExecution } from "./review.js";
  * registrable domain than its marketing or login site. Guardian reviews work there like work on
  * the site (`trusted_authority.ownerNamedOrigins`).
  *
- * Only text the owner wrote counts: `requestedIntent` (the intent without an approved write
- * upgrade's question), the answers `answersForReview` marks `typed` (a text answer, a choice's own
+ * Only text the owner wrote counts: `requestedIntent` (the intent as the owner submitted it), the answers `answersForReview` marks `typed` (a text answer, a choice's own
  * text or a multiple choice's own option that repeats no offered option, a confirm's text other
  * than the offered default) and every note the owner added beside a pick (`answersForReview`
  * leaves out a note that only repeats an offered option). An

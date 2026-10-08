@@ -18,7 +18,6 @@ import { publicationScope, type PublicationReview } from "../mint/publication-re
 import {
   allowedEffectsFor,
   currentDateObservations,
-  intentWithApproval,
   makeStepResults,
   mintReviewContext,
   pageLocation,
@@ -29,7 +28,13 @@ import {
   type MintReviewHost,
   type ObservedPage,
 } from "../mint/review-context.js";
-import { repeatableReadFor, writeUpgradeApproval } from "../mint/step-checks.js";
+import { repeatableReadFor } from "../mint/step-checks.js";
+import type {
+  TaskUpdateApplication,
+  TaskUpdateCandidate,
+  TaskUpdateHostResult,
+} from "../mint/contracts.js";
+import type { ReviewedTaskUpdate } from "../guardian/task-update.js";
 import type { InputRequest, ValidAnswers } from "../runtime/input-request.js";
 import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
@@ -145,21 +150,25 @@ export interface ReviewStep {
 }
 
 /**
- * The request's Guardian and the facts each review reads: the build's effect and approved
- * upgrade, its browser and the page it last observed, its execution history and step results,
- * and the input schema of its latest example or contract run.
+ * The request's Guardian and the facts each review reads: the effective task (the build's
+ * effect, site, input and accepted updates), its browser and the page it last observed, its
+ * execution history and step results, and the input schema of its latest example or contract run.
  */
 export const requestContext = (session: StandaloneSession, request: PomeradoRequest) =>
   Effect.gen(function* () {
     const { options, policy, secrets, projection, browser } = session;
-    const site = yield* requestSite(session, request);
-    const { url, siteOrigin } = site;
+    let site = yield* requestSite(session, request);
     const invocationId = randomUUID();
     const observations = currentDateObservations(yield* DateTime.now);
     let buildEffect: "read" | "write" | undefined =
       request.effect === "read" || request.effect === "write" ? request.effect : undefined;
     let claimed = false;
-    let approvedChange: string | undefined;
+    /** The effective task: the caller's input and the updates the host applied, oldest first. */
+    let input: unknown = request.input ?? {};
+    const taskUpdates: ReviewedTaskUpdate[] = [];
+    /** The task revision an execution recorded now runs under, once an update applied. */
+    const revision = () =>
+      taskUpdates.length === 0 ? {} : { taskRevision: taskUpdates.at(-1)?.revision ?? 0 };
     let navigated = false;
     let observed: { readonly page: ObservedPage; readonly capture: PageCapture } | undefined;
     /** The address of the page `observed` came from, unredacted, for the host's own loads. */
@@ -210,15 +219,16 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           invocationId,
           attemptId: invocationId,
           entrypoint: step.entrypoint,
-          screenedIntent: intentWithApproval(requestedIntent, approvedChange),
+          screenedIntent: requestedIntent,
           requestedIntent,
+          ...(taskUpdates.length === 0 ? {} : { taskUpdates: [...taskUpdates] }),
           screenedInput: secrets.redact(JSON.stringify(step.input)),
           screenedObservations: [
             JSON.stringify(observations),
             ...(step.note ? [step.note] : []),
           ].join("\n"),
           accountScope: invocationId,
-          allowedOrigins: [url.origin, ...(request.authenticationOrigins ?? [])],
+          allowedOrigins: [site.siteOrigin, ...(request.authenticationOrigins ?? [])],
           allowedEffects:
             step.currentExecution === undefined ? [] : allowedEffectsFor(step.currentExecution),
           answeredQuestions: [...answeredQuestions.values()],
@@ -258,7 +268,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           sources: new Map(
             [...publication.files].map(([path, text]) => [`operation/${path}`, text] as const),
           ),
-          input: request.input ?? {},
+          input,
           note: publication.notes,
           evidence: new Map([
             ...[...(publication.baseline ?? [])].map(
@@ -308,6 +318,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         target: step.target,
         status: evidence.status,
         effect: evidence.effect,
+        ...revision(),
         ...(evidence.authentication === undefined
           ? {}
           : { authentication: evidence.authentication }),
@@ -328,6 +339,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           target: step.target,
           status: "running",
           effect: step.target === "liveBrowser" ? "possible" : "not_sent",
+          ...revision(),
           ...(step.input === undefined ? {} : { input: step.input }),
         });
         return run.pipe(
@@ -419,17 +431,71 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
                       }),
             };
     });
+    /** Guardian's review of a proposed task update, against the task as it stands. */
+    const reviewTaskUpdate = (candidate: TaskUpdateCandidate) =>
+      Effect.gen(function* () {
+        const { turn, readSource } = yield* pending({
+          entrypoint: "task-update",
+          sources: new Map(),
+          input,
+        });
+        return yield* guardian
+          .reviewTaskUpdate(turn, candidate.update, readSource)
+          .pipe(Effect.mapError((failure) => reviewFailureOf(failure)));
+      });
+    /**
+     * Applies an update Guardian allowed. The local host has no intake screen, duplicate check or
+     * saved logins: it rebinds the site, input and effect, and a sign-in on a new site asks the
+     * caller as any sign-in does. `rebind` moves the build's browser bindings to a new site.
+     */
+    const applyTaskUpdate = (
+      application: TaskUpdateApplication,
+      rebind: (siteOrigin: string) => Effect.Effect<void, Error>,
+    ): Effect.Effect<TaskUpdateHostResult, Error> =>
+      Effect.gen(function* () {
+        const { next, update } = application;
+        if (next.effect === "write" && buildEffect !== "write" && !host.repeatableRead())
+          return {
+            outcome: "refused",
+            reason: "change_unsupported",
+            notice: "Only a read build that has not run its live example can become a write.",
+          } as const;
+        if (next.siteOrigin !== undefined && next.siteOrigin !== site.siteOrigin) {
+          site = yield* requestSite(session, { url: `${next.siteOrigin}/` });
+          observed = undefined;
+          observedUrl = undefined;
+          yield* rebind(site.siteOrigin);
+        }
+        input = next.businessInput;
+        if (next.effect === "write") buildEffect = "write";
+        taskUpdates.push({
+          revision: update.revision,
+          summary: update.summary,
+          changes: update.changes,
+          confirmation: update.confirmation,
+        });
+        return { outcome: "applied", state: next } as const;
+      });
     return {
-      siteOrigin,
+      /** The site the build works on now. */
+      get siteOrigin() {
+        return site.siteOrigin;
+      },
+      /** The caller's input as the effective task has it. */
+      get input() {
+        return input;
+      },
       observations,
       review,
+      reviewTaskUpdate,
+      applyTaskUpdate,
       reviewPublication,
       reviewQuestion,
       running,
       recorded,
       observe,
-      /** Opens the request's site, which the build's start does once; the browser is then active. */
-      navigate: site.navigate.pipe(
+      /** Opens the build's site, which the build's start does once; the browser is then active. */
+      navigate: Effect.suspend(() => site.navigate).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
             navigated = true;
@@ -467,18 +533,6 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       setInputSchema: (schema: unknown) => {
         inputSchema = schema;
       },
-      /** Switches a repeatable read to a write once its owner approved `change`. */
-      approveWrite: (change: string) =>
-        writeUpgradeApproval(
-          projection,
-          { buildEffect, repeatableRead: host.repeatableRead() },
-          change,
-        ).pipe(
-          Effect.map((approved) => {
-            approvedChange = approved;
-            buildEffect = "write";
-          }),
-        ),
       answered: (candidate: InputRequest, answers: ValidAnswers) =>
         answersForReview(candidate, answers, projection.text).pipe(
           Effect.tap((entries) =>

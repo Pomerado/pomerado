@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- The minter changes its task with the new `mint_update` tool once the caller confirms the change: input values, a requirement, constraint or prerequisite, the purpose, a read becoming a write, the target site or the login. It replaces the write upgrade and dropping a prerequisite on an answer alone.
+  - Removed: `AgentRequest.writeUpgrade`, `MintDependencies.upgradeToWrite`, the `writeUpgrade` option of `MintDependencies.reviewQuestion` and `PendingQuestion.writeUpgrade`, `MintHarnessSnapshot.writeUpgradeDeclined`, `intentWithApproval` from `pomerado/core/mint/review-context` and `writeUpgradeApproval` from `pomerado/core/mint/step-checks`. An older checkpoint's `writeUpgradeDeclined` is dropped as an excess field.
+  - Migrate by implementing `MintDependencies.reviewTaskUpdate` and `applyTaskUpdate`. `reviewTaskUpdate` runs `makeGuardian(...).reviewTaskUpdate` against the same pending review the host builds for any other review. `applyTaskUpdate` checkpoints the effective task, rebinds everything bound to the site for a site change, reruns intake screening and the duplicate check, and resolves the login, or answers `clarification_required` or `refused`. Without both hooks the minter isn't offered `mint_update`.
+  - Every review after an update must carry `PendingExecution.taskUpdates`, with `allowedOrigins` rebound to a changed site, and each recorded execution its `taskRevision`. `screenedIntent` is the intent as the owner submitted it.
+- Guardian's shared output format adds the outcomes `clarify` and `new_mint`, for the new `update` review kind. `GuardianDiagnostics` correlations add the `update` review kind.
+- `JobBuildBlocked` and `MintOutcome.blocked` add the reason `new_mint_recommended`, with an optional `suggestedRequest`.
+- New exports: `TaskChange`, `TaskUpdateDecision`, `PendingTaskUpdate`, `ReviewedTaskUpdate` and `taskUpdateForReview` from `pomerado/core/guardian/task-update`; `TaskUpdateRequest`, `taskUpdateStatuses`, `TaskUpdateStatus`, `TaskState`, `AcceptedTaskUpdate`, `TaskUpdateCandidate`, `TaskUpdateApplication` and `TaskUpdateHostResult` from `pomerado/core/mint/contracts`.
+
 ### Other changes
 
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.

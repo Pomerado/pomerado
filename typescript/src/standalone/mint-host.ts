@@ -47,7 +47,7 @@ const localStepRefusal = (
         }
       : undefined;
 const mintDependencies = (state: MintState) => {
-  const { workspace, authoring, deadline, context, request, mintAsk, handles } = state;
+  const { workspace, authoring, deadline, context, mintAsk, handles } = state;
   const { projection, options } = state.session;
   const dependencies: MintDependencies = {
     workspace: workspace.session,
@@ -66,7 +66,7 @@ const mintDependencies = (state: MintState) => {
           projection.text,
         );
         const result = yield* context.reviewQuestion(
-          { entrypoint: "question", sources: new Map(), input: request.input ?? {} },
+          { entrypoint: "question", sources: new Map(), input: context.input },
           pendingQuestion,
         );
         return { ...result.decision, reviewId: result.reviewId };
@@ -88,7 +88,15 @@ const mintDependencies = (state: MintState) => {
         Effect.mapError(mintError),
       ),
     recordBuildEffect: (effect) => Effect.sync(() => context.setBuildEffect(effect)),
-    upgradeToWrite: context.approveWrite,
+    reviewTaskUpdate: (candidate) =>
+      context.reviewTaskUpdate(candidate).pipe(
+        Effect.map((result) => ({ ...result.decision, reviewId: result.reviewId })),
+        Effect.mapError(mintError),
+      ),
+    applyTaskUpdate: (application) =>
+      context
+        .applyTaskUpdate(application, (siteOrigin) => state.rebindSite(siteOrigin))
+        .pipe(Effect.mapError(mintError)),
     repeatableRead: context.repeatableRead(),
     // A repeatable read's example claims nothing, so it may run again.
     claimExample: Effect.suspend(() =>
@@ -112,7 +120,7 @@ const mintDependencies = (state: MintState) => {
           preflightTestInput(execution, { buildEffect, executionHistory: context.executions() }) ??
           exampleInputRefusal(execution, {
             buildEffect,
-            callerInput: request.input ?? {},
+            callerInput: context.input,
             writeSession: state.writeSession,
           });
         if (refusal !== undefined) return refusal;
@@ -125,7 +133,7 @@ const mintDependencies = (state: MintState) => {
           : { supported: false as const, reason: boundary };
       }),
     reviewAndExecute: mintExecution(state),
-    checkSignedInMarker: state.markers.check,
+    checkSignedInMarker: (marker) => state.markers.check(marker),
     publish: mintPublication(state),
   };
   return dependencies;

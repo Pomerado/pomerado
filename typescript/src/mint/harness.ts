@@ -38,14 +38,25 @@ import {
   MintServices,
   PublicationRequest,
   SignedInMarkerCheckRequest,
+  TaskUpdateRequest,
   withOwnWords,
 } from "./contracts.js";
+import { answersForReview, type AnsweredQuestion } from "../guardian/question.js";
+import {
+  taskUpdateForReview,
+  type PendingTaskUpdate,
+  type TaskChange,
+} from "../guardian/task-update.js";
+import { siteDomain } from "../runtime/same-site.js";
 import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
 import type {
+  AcceptedTaskUpdate,
   AgentInputRequest,
   BuildAssumption,
+  TaskState,
+  TaskUpdateStatus,
   ExecutionEvidence,
   MintActions,
   MintOutcome,
@@ -53,7 +64,6 @@ import type {
   SpentSignIn,
 } from "./contracts.js";
 import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
-import type { RecoveryToolCall } from "./recovery-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
@@ -76,9 +86,9 @@ const effectQuestionInstruction =
   "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching or filtering does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
 
 /**
- * The host's own labels for the two answers of a read/write choice (the effect question and a
- * write upgrade). The agent writes the prompt, which Guardian reviews, but never what an answer
- * says, so a label cannot present `write` as keeping the build read-only.
+ * The host's own labels for the two answers of the effect question. The agent writes the prompt,
+ * which Guardian reviews, but never what an answer says, so a label cannot present `write` as
+ * keeping the build read-only.
  */
 const effectAnswerLabels: Readonly<Record<string, string>> = {
   read: "Keep it read-only: only look things up",
@@ -129,15 +139,6 @@ const signInOrLoginInUseAnswer = (
     : error.reason === "login_in_use"
       ? loginInUseAnswer
       : undefined;
-
-/** A `request_input` call whose arguments ask for a write upgrade. */
-const isWriteUpgradeCall = (call: RecoveryToolCall): boolean =>
-  call.name === "request_input" &&
-  Option.isSome(
-    Schema.decodeUnknownOption(
-      Schema.parseJson(Schema.Struct({ writeUpgrade: Schema.Literal(true) })),
-    )(call.arguments),
-  );
 
 type AgentQuestion = (typeof AgentRequest.Type)["questions"][number];
 /** The agent's question as its caller reads it, with each caller-visible text redacted. */
@@ -215,8 +216,8 @@ const setsOwnWords = (input: unknown) =>
   );
 
 /**
- * The option the owner picked on a read-or-write choice (the effect question or a write upgrade),
- * undefined when they answered in their own words instead.
+ * The option the owner picked on the effect question, undefined when they answered in their own
+ * words instead.
  */
 const readOrWritePick = (submitted: AgentInputRequest, answers: ValidAnswers) => {
   const given = answers[submitted.questions[0]?.id ?? ""];
@@ -309,6 +310,7 @@ const withHostNotices = (
     finish: wrap(actions.finish),
     requestInput: wrap(actions.requestInput),
     ...(actions.reportBlocked === undefined ? {} : { reportBlocked: wrap(actions.reportBlocked) }),
+    ...(actions.updateTask === undefined ? {} : { updateTask: wrap(actions.updateTask) }),
     ...(actions.captchaState === undefined ? {} : { captchaState: wrap(actions.captchaState) }),
     ...(actions.requestBrowserRecovery === undefined
       ? {}
@@ -608,12 +610,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           : executions.find((entry) => entry.executionId === recovered.exampleId);
       let exampleClaimed =
         (recovered?.exampleClaimed ?? false) || (dependencies.exampleClaimed ?? false);
-      // The build's effect and read authority. A read build's owner may approve a write upgrade
-      // mid-build, which switches both in place.
-      let buildEffect = request.effect;
-      let repeatableRead = dependencies.repeatableRead === true;
-      // A takeover keeps the owner's refusal, so the agent never asks again after it.
-      let writeUpgradeDeclined = recovered?.writeUpgradeDeclined === true;
+      // The effective task: the original request with each update the host applied. A takeover
+      // restores it from the checkpoint.
+      let taskState: TaskState = recovered?.taskState ?? {
+        revision: 0,
+        effect: request.effect === "write" ? "write" : "read",
+        ...(request.siteOrigin === undefined ? {} : { siteOrigin: request.siteOrigin }),
+        businessInput: request.businessInput,
+        updates: [],
+      };
+      // The build's effect and read authority. A `mint_update` the caller confirmed may turn a
+      // read build into a write build mid-build, which switches both in place.
+      let buildEffect = taskState.effect === "write" ? ("write" as const) : request.effect;
+      let repeatableRead = buildEffect !== "write" && dependencies.repeatableRead === true;
+      /** The caller's answers this build may cite as confirmation, by question id. */
+      const answeredQuestions = new Map<string, AnsweredQuestion>(
+        (recovered?.answeredQuestions ?? []).map(({ id, answer }) => [id, answer]),
+      );
       // A write build's one live session: its first act step takes the example claim and the
       // step that records the site's confirmation closes it. A takeover restores this session;
       // an unrelated attempt with an existing claim keeps it closed.
@@ -769,7 +782,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // already retried each review with backoff, so only an outage that outlasts
       // `reviewOutageBudgetMs` with no review completing ends the attempt.
       const reviewUnavailableRetries = {
-        ...(recovered?.reviewUnavailableRetries ?? { execution: 0, publication: 0, question: 0 }),
+        execution: 0,
+        publication: 0,
+        question: 0,
+        update: 0,
+        ...recovered?.reviewUnavailableRetries,
       };
       /** When the current run of review outages began; cleared by any completed review. */
       let reviewOutageStartedAt = recovered?.reviewOutageStartedAt;
@@ -1031,9 +1048,33 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           terminal ??= { build: "incomplete", summary };
           return undefined;
         });
+      /**
+       * Keeps each answered question as Guardian reads it, by id, so a later `mint_update` can cite
+       * the caller's real answer as confirmation. A protected answer is never kept.
+       */
+      const keepAnswers = (submitted: AgentInputRequest, answers: ValidAnswers) =>
+        Effect.forEach(submitted.questions, (question) =>
+          answersForReview(
+            {
+              ...(submitted.notice === undefined ? {} : { notice: submitted.notice }),
+              questions: [question],
+            },
+            answers,
+            (text) => screenMintText(dependencies, text),
+          ).pipe(
+            Effect.tap(([entry]) =>
+              Effect.sync(() => {
+                if (entry === undefined) return;
+                answeredQuestions.delete(question.id);
+                answeredQuestions.set(question.id, entry);
+              }),
+            ),
+          ),
+        );
       const inputResult = (submitted: AgentInputRequest, answers: ValidAnswers) =>
         Effect.gen(function* () {
           const askAgain = yield* recordInputAnswer(submitted, answers);
+          yield* keepAnswers(submitted, answers);
           const visibleAnswers = yield* answersForModel(answers);
           const handles = Object.values(answers).some((answer) => answer.type === "secret");
           if (askAgain !== undefined)
@@ -1267,38 +1308,77 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const purpose = purposes.get(entry.executionId);
           return (purpose === "example" || purpose === "residual") && entry.effect !== "not_sent";
         });
-      /** Why this build cannot ask to become a write now; undefined when it may. */
-      const writeUpgradeUnavailable = () => {
-        if (effectQuestion || dependencies.capabilityQuestion !== undefined)
-          return "This turn only asks the host's own question. Ask it as instructed.";
+      /**
+       * Why the host refuses a task update before review, as its reason and the agent's next step,
+       * or undefined. A recommended new build is never refused here: it changes nothing.
+       */
+      const taskUpdateRefusal = (
+        submitted: TaskUpdateRequest,
+      ): { readonly reason: string; readonly instruction: string } | undefined => {
+        if (submitted.recommend === "new_mint") return undefined;
         if (request.mode === "maintenance")
-          return "Maintenance keeps the published tool's effect, so it cannot become a write. Repair it as it is.";
-        if (buildEffect === "write")
-          return "This build is already a write build. Perform the task through purpose act steps, as .agents/writes/SKILL.md describes.";
-        if (request.siteOrigin === undefined)
-          return "An offline build has no website to change. Finish it as a read.";
-        // The job's one example claim is either reads or the write's; a job that already ran a
-        // live read example can never start a write session.
+          return {
+            reason: "maintenance",
+            instruction:
+              "Maintenance repairs the published tool under its own task, which does not change. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+          };
+        const settings = new Set(submitted.changes.map((change) => change.setting));
+        if (settings.has("effect")) {
+          if (buildEffect === "write")
+            return {
+              reason: "already_write",
+              instruction:
+                "This build is already a write build. Perform the task through purpose act steps, as .agents/writes/SKILL.md describes.",
+            };
+          if (taskState.siteOrigin === undefined)
+            return {
+              reason: "offline_build",
+              instruction: "An offline build has no website to change. Finish it as a read.",
+            };
+          // The job's one example claim is either reads or the write's; a job that already ran a
+          // live read example can never start a write session.
+          if (
+            !repeatableRead ||
+            exampleClaimed ||
+            (dependencies.priorReadExecutions ?? []).length > 0
+          )
+            return {
+              reason: "read_example_ran",
+              instruction:
+                "This build already ran a live read example, so it cannot become a write: its example is a read. Finish what a read can do, or call mint_update with recommend new_mint and a suggestedRequest for a write build. Change the effect before running a live example.",
+            };
+        }
+        if (settings.has("site")) {
+          if (taskState.siteOrigin === undefined)
+            return {
+              reason: "offline_build",
+              instruction: "An offline build has no website to move. Finish it offline.",
+            };
+          if (writeSession === "open")
+            return {
+              reason: "write_session_open",
+              instruction:
+                "This build's write session is open, and its write may have committed on the current site. Finish or read back that write first; the site cannot change under it.",
+            };
+        }
+        const input = taskState.businessInput;
         if (
-          !repeatableRead ||
-          exampleClaimed ||
-          (dependencies.priorReadExecutions ?? []).length > 0
+          settings.has("input") &&
+          (typeof input !== "object" || input === null || Array.isArray(input))
         )
-          return "This build already ran a live read example, so this job cannot become a write: its example is a read. Finish what a read can do, or end the attempt and say in the summary that the task needs a new write build. Ask for a write upgrade before running a live example.";
-        if (writeUpgradeDeclined)
-          return "The owner already kept this build read-only. Finish what a read can do, or end the attempt and say in the summary that the task needs a write build.";
-        if (dependencies.upgradeToWrite === undefined)
-          return "This host cannot switch the build's effect. Finish what a read can do, or end the attempt and say in the summary that the task needs a write build.";
+          return {
+            reason: "input_not_an_object",
+            instruction:
+              "This build's input is not an object of named values, so an input change cannot name what it sets. Change a requirement or the purpose instead.",
+          };
         return undefined;
       };
       /**
-       * Why a request is refused before anyone reviews it, if it is: the effect question and a
-       * write upgrade are each one read-or-write choice, and the capability question is the host's
-       * own text question.
+       * Why a request is refused before anyone reviews it, if it is: the effect question is one
+       * read-or-write choice, and the capability question is the host's own text question.
        */
       const requestShapeRefusal = (
         submitted: AgentInputRequest,
-        upgrade: boolean,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
         const [only] = submitted.questions;
         const readOrWrite = isReadOrWriteChoice(submitted);
@@ -1320,94 +1400,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction:
               "Ask exactly the host's capability question as one text question with that prompt.",
           };
-        if (!upgrade) return undefined;
-        if (!readOrWrite)
-          return {
-            reason: "write_upgrade_shape",
-            instruction:
-              "Ask exactly one choice question whose options have the ids read and write, with no other option and no notice. Its prompt says in one or two plain sentences what the build would change on the website and why the requested task needs it.",
-          };
-        const unavailable = writeUpgradeUnavailable();
-        return unavailable === undefined
-          ? undefined
-          : { reason: "write_upgrade_unavailable", instruction: unavailable };
+        return undefined;
       };
-      /**
-       * Applies the owner's answer to a write upgrade. `write` switches the build to write authority
-       * and the write build rules in place; anything else keeps it a read. A switch the host could
-       * not record leaves the build a read and says exactly why, so the agent can continue. A
-       * takeover applies a recovered answer here too: Guardian reviewed the question before the
-       * owner saw it, and switching changes nothing on the site, so neither is repeated.
-       */
-      const answerWriteUpgrade = (submitted: AgentInputRequest, answers: ValidAnswers) =>
-        Effect.gen(function* () {
-          const choice = readOrWritePick(submitted, answers);
-          const asked = {
-            answers: yield* answersForModel(answers),
-            change: submitted.questions[0]?.prompt ?? "",
-          };
-          const upgradeToWrite = dependencies.upgradeToWrite;
-          // Own words approve no write, but unlike a `read` pick they do not settle the upgrade.
-          if (choice === undefined)
-            return JSON.stringify({
-              status: "answered",
-              answers: asked.answers,
-              buildEffect: "read",
-              instruction:
-                "The owner answered in their own words and approved no write, so this build is still read-only. Do not fill, choose, advance, save or submit anything on the site. Follow what they said: finish what a read can do, ask for the write upgrade again if they asked for the change, or end the attempt and say in the summary that the task needs a write build.",
-            });
-          if (choice !== "write" || upgradeToWrite === undefined) {
-            writeUpgradeDeclined = true;
-            return JSON.stringify({
-              status: "answered",
-              answers: asked.answers,
-              buildEffect: "read",
-              instruction:
-                "The owner kept this build read-only. Do not fill, choose, advance, save or submit anything on the site. Finish what a read can do, or end the attempt and say in the summary that the task needs a write build.",
-            });
-          }
-          const switched = yield* Effect.either(upgradeToWrite(asked.change));
-          if (switched._tag === "Left") {
-            yield* reportFailure(switched.left, {
-              component: "mint",
-              operation: "upgradeToWrite",
-              phase: "write_upgrade",
-              subCause: "mint_host_dependency_failed",
-              correlation: dependencies.reportCorrelation ?? "process",
-            });
-            return JSON.stringify({
-              status: "write_upgrade_failed",
-              answers: asked.answers,
-              buildEffect: "read",
-              code: switched.left.code,
-              ...failureDetailMetadata(switched.left),
-              userInputRequired: false,
-              instruction:
-                "The owner approved the write, but the host could not record the switch, so this build is still a read and nothing on the site may change. failureDetail says which step failed and why. You may ask again once; otherwise end the attempt and say in the summary that the owner approved a write the host could not record.",
-            });
-          }
-          buildEffect = "write";
-          repeatableRead = false;
-          yield* reportBestEffort(
-            dependencies.diagnostics?.emit("mint.effect_upgraded", {
-              priorExecutions: purposes.size,
-              priorLiveExecutions: executions.filter((entry) => entry.effect !== "not_sent").length,
-            }) ?? Effect.void,
-            {
-              component: "mint",
-              operation: "diagnostics.emit",
-              phase: "mint.effect_upgraded",
-              correlation: dependencies.reportCorrelation ?? "process",
-            },
-          );
-          return JSON.stringify({
-            status: "answered",
-            answers: asked.answers,
-            buildEffect: "write",
-            instruction:
-              "The owner approved: this build is now a write build, and every later execution is reviewed under write authority. Read .agents/writes/SKILL.md, and .agents/forms/SKILL.md for a form, before the next step. The write is the whole task the request asks for, done once through purpose act steps; it may take several steps, and drafts, autosaves and step saves along the way are part of it. Before the first act step, ask with request_input for any value the task needs that the input does not settle. The first act step starts with navigation to the site origin (keeping the session saved after sign-in), so it must navigate to any deeper task page it needs; what you observed so far stays valid evidence. From now on a live example or live test is refused, and so is a live explore once the session starts.",
-          });
-        });
       /** The build's owner left a question unanswered: the build ends as no_response. */
       const unanswered = (error: MintFailure, step: string) =>
         Effect.sync(() => {
@@ -1614,6 +1608,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           "Nothing was published. Call finish_build again with the same executionId for a fresh publication review; the retained example is not executed again.",
         question:
           "No question was created. Submit the same request_input again for a fresh question review; do not ask it in prose or invent a clarification.",
+        update:
+          "Nothing changed. Submit the same mint_update again for a fresh review; the task stays as it was until an update applies.",
       };
       const reviewUnavailableFeedback = (error: MintFailure) =>
         Effect.sync(() => {
@@ -2151,6 +2147,238 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }).pipe(Effect.as("unavailable" as const)),
                 ),
               );
+      /** A `mint_update` result for the agent: its status and what the host says. */
+      const taskUpdateAnswer = (
+        status: TaskUpdateStatus,
+        fields: Readonly<Record<string, unknown>>,
+      ): string => JSON.stringify({ status, userInputRequired: false, ...fields });
+      /** The task an update makes: the current one with its changes applied in order. */
+      const nextTaskState = (
+        changes: readonly TaskChange[],
+        accepted: AcceptedTaskUpdate,
+      ): TaskState => {
+        let { effect, siteOrigin, businessInput } = taskState;
+        for (const change of changes) {
+          if (change.setting === "effect") effect = change.effect;
+          else if (change.setting === "site") siteOrigin = change.origin;
+          else if (change.setting === "input") {
+            const values: Record<string, unknown> = { ...(businessInput as object) };
+            for (const [key, value] of Object.entries(change.values))
+              if (value === null) Reflect.deleteProperty(values, key);
+              else
+                Object.defineProperty(values, key, {
+                  value,
+                  enumerable: true,
+                  configurable: true,
+                  writable: true,
+                });
+            businessInput = values;
+          }
+        }
+        return {
+          revision: accepted.revision,
+          effect,
+          ...(siteOrigin === undefined ? {} : { siteOrigin }),
+          businessInput,
+          updates: [...taskState.updates, accepted],
+        };
+      };
+      /**
+       * Ends the build blocked with a recommended new build: the reviewed summary and suggested
+       * request, which its caller reads. Text that screening lengthened past the limit stays out.
+       */
+      const recommendNewMint = (update: PendingTaskUpdate, by: "minter" | "guardian") =>
+        Effect.gen(function* () {
+          const shown = (text: string | undefined) =>
+            text !== undefined && text.length <= blockedExplanationLimit ? text : undefined;
+          const explanation = shown(update.summary);
+          const suggestedRequest = shown(update.suggestedRequest);
+          terminal = {
+            build: "incomplete",
+            blocked: {
+              reason: "new_mint_recommended",
+              ...(explanation === undefined ? {} : { explanation }),
+              ...(suggestedRequest === undefined ? {} : { suggestedRequest }),
+            },
+            summary: `The build is blocked (new_mint_recommended): ${update.summary}`,
+          };
+          yield* diagnose({ phase: "blocked", reason: "new_mint_recommended", recommendedBy: by });
+          return taskUpdateAnswer("new_mint_recommended", {
+            notice:
+              by === "guardian"
+                ? "Guardian found that this change belongs in a new build, so this build ended blocked. Its caller reads your summary and suggested request; nothing more runs in this attempt."
+                : "The build ended blocked with your recommendation of a new build. Its caller reads your summary and suggested request; nothing more runs in this attempt.",
+          });
+        });
+      /** What the agent does after an update the host applied, by what it changed. */
+      const updatedInstruction = (changes: readonly TaskChange[]) => {
+        const settings = new Set(changes.map((change) => change.setting));
+        return [
+          "The host applied the update. Continue in this attempt under the effective task: the original request with this and every earlier accepted update, which every later review reads. Executions already recorded keep the task they ran under, and a write that may have committed is never repeated.",
+          ...(settings.has("site")
+            ? [
+                "The build now targets task.siteOrigin: the host rebound its site, sign-in and publication there. Navigate there yourself; pages, captures and sign-ins from the earlier site are evidence about that site only. Sign in with execute purpose authenticate if the task needs it there.",
+              ]
+            : []),
+          ...(settings.has("input")
+            ? [
+                "The changed input values are the host-bound input from now on: an example or act step runs them, and the tool's input schema takes them.",
+              ]
+            : []),
+          ...(settings.has("effect")
+            ? [
+                "This build is now a write build, and every later execution is reviewed under write authority. Read .agents/writes/SKILL.md, and .agents/forms/SKILL.md for a form, before the next step. The write is the whole task the request asks for, done once through purpose act steps; it may take several steps, and drafts, autosaves and step saves along the way are part of it. Before the first act step, ask with request_input for any value the task needs that the input does not settle. The first act step starts with navigation to the site origin (keeping the session saved after sign-in), so it must navigate to any deeper task page it needs; what you observed so far stays valid evidence. From now on a live example or live test is refused, and so is a live explore once the session starts.",
+              ]
+            : []),
+        ].join(" ");
+      };
+      /** Guardian's review of a confirmed update, then the host's application of an allowed one. */
+      const reviewAndApplyTaskUpdate = (submitted: TaskUpdateRequest) =>
+        Effect.gen(function* () {
+          const review = dependencies.reviewTaskUpdate;
+          const apply = dependencies.applyTaskUpdate;
+          if (review === undefined || apply === undefined)
+            return yield* new MintFailure({ code: "Unavailable" });
+          const confirmation = submitted.confirmedBy.flatMap((id) => {
+            const answer = answeredQuestions.get(id);
+            return answer === undefined ? [] : [answer];
+          });
+          // The caller may read the summary and suggested request, so host-private values go first.
+          const update = yield* taskUpdateForReview(
+            {
+              summary: redactCallerText(submitted.summary),
+              changes: submitted.changes,
+              recommend: submitted.recommend,
+              ...(submitted.suggestedRequest === undefined
+                ? {}
+                : { suggestedRequest: redactCallerText(submitted.suggestedRequest) }),
+            },
+            { confirmation, effect: buildEffect === "write" ? "write" : "read" },
+            {
+              text: (text) => screenMintText(dependencies, text),
+              json: (value) => dependencies.projection.json(value),
+            },
+          );
+          const decision = yield* review({ update, current: taskState });
+          yield* reviewCompleted;
+          yield* active("publication");
+          const rationale = yield* screenRationale(decision.rationale);
+          yield* reportBestEffort(
+            dependencies.diagnostics?.emit("mint.task_update_reviewed", {
+              ...(decision.reviewId === undefined ? {} : { reviewId: decision.reviewId }),
+              outcome: decision.outcome,
+              recommend: submitted.recommend,
+              settings: submitted.changes.map((change) => change.setting),
+              confirmations: confirmation.length,
+            }) ?? Effect.void,
+            {
+              component: "mint",
+              operation: "diagnostics.emit",
+              phase: "mint.task_update_reviewed",
+              correlation: dependencies.reportCorrelation ?? "process",
+            },
+          );
+          if (decision.outcome === "reword")
+            return taskUpdateAnswer("reword", {
+              rationale,
+              instruction:
+                "Nothing changed, and the build continues under the current task. Revise the update using the rationale and call mint_update again, or continue without it.",
+            });
+          if (decision.outcome === "clarify")
+            return taskUpdateAnswer("clarification_required", {
+              source: "guardian",
+              rationale,
+              instruction:
+                "Nothing changed. Ask the caller with request_input about what the rationale says is unconfirmed, naming the change plainly, then call mint_update again naming the questions they answered in confirmedBy.",
+            });
+          if (decision.outcome === "new_mint" || submitted.recommend === "new_mint")
+            return yield* recommendNewMint(
+              update,
+              decision.outcome === "new_mint" ? "guardian" : "minter",
+            );
+          const accepted: AcceptedTaskUpdate = {
+            revision: taskState.revision + 1,
+            summary: update.summary,
+            changes: update.changes,
+            confirmation,
+            ...(decision.reviewId === undefined ? {} : { reviewId: decision.reviewId }),
+          };
+          // The host binds the values the agent gave; reviews read the screened copy in `accepted`.
+          const next = nextTaskState(submitted.changes, accepted);
+          const applied = yield* Effect.either(
+            apply({ current: taskState, next, update: accepted }),
+          );
+          if (applied._tag === "Left") {
+            yield* reportFailure(applied.left, {
+              component: "mint",
+              operation: "applyTaskUpdate",
+              phase: "task_update",
+              subCause: "mint_host_dependency_failed",
+              correlation: dependencies.reportCorrelation ?? "process",
+            });
+            return taskUpdateAnswer("update_refused", {
+              reason: "host_failed",
+              code: applied.left.code,
+              ...failureDetailMetadata(applied.left),
+              instruction:
+                "Guardian allowed the update, but the host could not apply it, so nothing changed. failureDetail says which step failed. You may call mint_update again once; otherwise continue under the current task, or end the attempt and say in the summary that the caller confirmed a change the host could not apply.",
+            });
+          }
+          const result = applied.right;
+          if (result.outcome === "clarification_required")
+            return taskUpdateAnswer("clarification_required", {
+              source: "host",
+              reason: result.reason,
+              notice: yield* screenMintText(dependencies, result.notice),
+              instruction:
+                "Guardian allowed the update, but the host needs something only the caller can give before it applies, so nothing changed yet. Follow the notice, then call mint_update again.",
+            });
+          if (result.outcome === "refused")
+            return taskUpdateAnswer("update_refused", {
+              reason: result.reason,
+              notice: yield* screenMintText(dependencies, result.notice),
+              instruction:
+                "The host cannot apply this update to this build, so nothing changed. Continue under the current task, or call mint_update with recommend new_mint if the caller's change needs a new build.",
+            });
+          const effectChanged = result.state.effect === "write" && buildEffect !== "write";
+          const siteChanged = result.state.siteOrigin !== taskState.siteOrigin;
+          taskState = result.state;
+          if (effectChanged) {
+            buildEffect = "write";
+            repeatableRead = false;
+          }
+          yield* reportBestEffort(
+            dependencies.diagnostics?.emit("mint.task_updated", {
+              revision: taskState.revision,
+              settings: submitted.changes.map((change) => change.setting),
+              effectChanged,
+              siteChanged,
+              priorExecutions: purposes.size,
+              priorLiveExecutions: executions.filter((entry) => entry.effect !== "not_sent").length,
+            }) ?? Effect.void,
+            {
+              component: "mint",
+              operation: "diagnostics.emit",
+              phase: "mint.task_updated",
+              correlation: dependencies.reportCorrelation ?? "process",
+            },
+          );
+          const domain =
+            taskState.siteOrigin === undefined ? undefined : siteDomain(taskState.siteOrigin);
+          return taskUpdateAnswer("updated", {
+            task: {
+              revision: taskState.revision,
+              effect: buildEffect === "write" ? "write" : "read",
+              ...(taskState.siteOrigin === undefined ? {} : { siteOrigin: taskState.siteOrigin }),
+              ...(domain === undefined ? {} : { siteDomain: domain }),
+            },
+            repeatableRead,
+            ...(result.notice === undefined
+              ? {}
+              : { notice: yield* screenMintText(dependencies, result.notice) }),
+            instruction: updatedInstruction(submitted.changes),
+          });
+        });
       const actions: MintActions = {
         retainCapture: (input) =>
           serial.withPermits(1)(
@@ -2904,19 +3132,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   instruction:
                     "Remove allowOther and allowNote from every question and ask again: the host lets the caller answer every choice and multi_choice in their own words.",
                 });
-              const { writeUpgrade, ...proposed } = callerVisibleRequest(
+              const proposed = callerVisibleRequest(
                 yield* decode(AgentRequest, input),
                 redactCallerText,
               );
-              const upgrade = writeUpgrade === true;
               const submitted = {
                 ...proposed,
-                questions: (upgrade || effectQuestion
+                questions: (effectQuestion
                   ? withEffectAnswerLabels(proposed.questions)
                   : proposed.questions
                 ).map(withOwnWords),
               };
-              const refusal = requestShapeRefusal(submitted, upgrade);
+              const refusal = requestShapeRefusal(submitted);
               if (refusal !== undefined)
                 return JSON.stringify({
                   status: "question_refused",
@@ -2941,10 +3168,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     code: "ReviewUnavailable",
                     reviewFailure: "Unavailable",
                   });
-                const review = yield* dependencies.reviewQuestion(submitted, {
-                  requestId,
-                  ...(upgrade ? { writeUpgrade: true as const } : {}),
-                });
+                const review = yield* dependencies.reviewQuestion(submitted, { requestId });
                 yield* reviewCompleted;
                 reviewId = review.reviewId;
                 // When the question came relative to the work before it, without reading the
@@ -2963,7 +3187,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? {}
                       : { lastExecutionPurpose: priorPurposes.at(-1) }),
                     authenticateAttempted: priorPurposes.includes("authenticate"),
-                    ...(upgrade ? { writeUpgrade: true } : {}),
                   }) ?? Effect.void,
                   {
                     component: "mint",
@@ -2974,7 +3197,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 );
                 const rationale = yield* screenMintText(dependencies, review.rationale);
                 // A read-or-write choice never asks for a login, so a login verdict means reword it.
-                if (review.outcome === "authentication" && !upgrade && !effectQuestion) {
+                if (review.outcome === "authentication" && !effectQuestion) {
                   const login = dependencies.requestLogin
                     ? yield* dependencies.requestLogin()
                     : ("unavailable" as const);
@@ -3009,7 +3232,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 requestId,
                 ...(reviewId === undefined ? {} : { reviewId }),
               });
-              if (upgrade) return yield* answerWriteUpgrade(submitted, answers);
               return yield* inputResult(submitted, answers);
             }).pipe(
               Effect.catchIf(
@@ -3103,6 +3325,77 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         : "The build ended blocked. Guardian did not allow your explanation to reach the caller, who reads only the reason's fixed sentence; nothing more runs in this attempt.",
                     });
                   }),
+                ),
+            }),
+        // The minter's change to the task's settings, once the caller confirmed it. It runs
+        // nothing on the site and holds the permit only to order it with the rest.
+        ...(questionOnly ||
+        dependencies.reviewTaskUpdate === undefined ||
+        dependencies.applyTaskUpdate === undefined
+          ? {}
+          : {
+              updateTask: (input: unknown) =>
+                serial.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* active("publication");
+                    const decoded = yield* Effect.either(decode(TaskUpdateRequest, input));
+                    if (decoded._tag === "Left")
+                      return taskUpdateAnswer("update_invalid", {
+                        instruction:
+                          "The update was not valid: give a summary, one to eight changes, the ids of the answered questions that confirm it in confirmedBy (empty when the request already settles the change), and recommend update or new_mint. Correct it and call mint_update again.",
+                      });
+                    const submitted = decoded.right;
+                    if (
+                      submitted.recommend === "new_mint" &&
+                      submitted.suggestedRequest === undefined
+                    )
+                      return taskUpdateAnswer("update_invalid", {
+                        instruction:
+                          "A recommended new build needs suggestedRequest: the request the caller could submit for it, in one or two plain sentences. Add it and call mint_update again.",
+                      });
+                    const refusal = taskUpdateRefusal(submitted);
+                    if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
+                    const unanswered = submitted.confirmedBy.filter(
+                      (id) => !answeredQuestions.has(id),
+                    );
+                    if (unanswered.length > 0)
+                      return taskUpdateAnswer("clarification_required", {
+                        source: "host",
+                        unanswered,
+                        instruction:
+                          "confirmedBy names questions the caller has not answered in this build, so nothing confirms the update and nothing changed. Ask the caller with request_input, then call mint_update again naming the questions they answered.",
+                      });
+                    return yield* reviewAndApplyTaskUpdate(submitted);
+                  }).pipe(
+                    Effect.catchIf(
+                      (error) => error.code === "ReviewUnavailable",
+                      (error) =>
+                        diagnose({
+                          phase: "task_update_review",
+                          code: error.code,
+                          reviewFailure: error.reviewFailure,
+                          reviewPhase: error.reviewPhase,
+                        }).pipe(
+                          Effect.zipRight(
+                            reviewUnavailableRetry("update", () =>
+                              Effect.sync(() => {
+                                terminal ??= {
+                                  build: "incomplete",
+                                  hostFailure: "review_unavailable",
+                                  summary:
+                                    "The proposed task update could not be reviewed, so the task did not change. Prior execution outcomes remain retained.",
+                                };
+                                return taskUpdateAnswer("review_unavailable", {
+                                  code: "ReviewUnavailable",
+                                  instruction:
+                                    "Task update review is unavailable. End this attempt; the task did not change.",
+                                });
+                              }),
+                            )(error),
+                          ),
+                        ),
+                    ),
+                  ),
                 ),
             }),
         // Read-only provider state. It takes no execution permit, dispatches no browser
@@ -3215,7 +3508,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         diagnosticRetentionRetries,
         executionClosed,
         captchaChecks,
-        ...(writeUpgradeDeclined ? { writeUpgradeDeclined: true as const } : {}),
+        ...(taskState.revision === 0 ? {} : { taskState }),
+        ...(answeredQuestions.size === 0
+          ? {}
+          : {
+              answeredQuestions: [...answeredQuestions].map(([id, answer]) => ({ id, answer })),
+            }),
         ...(signInUnavailable === undefined ? {} : { signInUnavailable }),
         ...(publicationDenial === undefined ? {} : { publicationDenial }),
         ...(inputFeedbackReview === undefined ? {} : { inputFeedbackReview }),
@@ -3239,11 +3537,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             if (recoveredTool === undefined) return undefined;
                             if (recoveredTool.input !== undefined) {
                               const { request: asked, answers } = recoveredTool.input;
-                              // The recovered call is the one the model made, so its arguments
-                              // say whether it asked for a write upgrade.
-                              const result = yield* isWriteUpgradeCall(call)
-                                ? answerWriteUpgrade(asked, answers)
-                                : inputResult(asked, answers);
+                              const result = yield* inputResult(asked, answers);
                               return { result: recoveredTool.result ?? result };
                             }
                             if (recoveredTool.publication !== undefined) {
