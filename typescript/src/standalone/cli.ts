@@ -8,6 +8,7 @@ import { Cause, Effect, Exit, Schema } from "effect";
 import { readArtifact, writeArtifact } from "./artifact-files.js";
 import { createPomerado } from "./pomerado.js";
 import type { PomeradoOptions } from "./contracts.js";
+import { RunOutcomeFailure } from "./run-report.js";
 import { makeTerminalAsker } from "../inputs/terminal.js";
 
 const usage = `Pomerado
@@ -116,11 +117,24 @@ const runCli = (
         if (values.artifact === undefined)
           return yield* Effect.fail(new Error("--artifact is required."));
         const artifact = yield* readArtifact(resolve(values.artifact));
-        const output = yield* pomerado.run(artifact, {
-          url: request.url,
-          intent: request.intent,
-          input: request.input,
-        });
+        const output = yield* pomerado
+          .run(artifact, {
+            url: request.url,
+            intent: request.intent,
+            input: request.input,
+          })
+          .pipe(
+            // A write that may have applied still prints what its script returned; the error
+            // that follows says it is unconfirmed.
+            Effect.tapError((failure) =>
+              Effect.sync(() => {
+                if (failure instanceof RunOutcomeFailure && failure.unconfirmed !== undefined)
+                  process.stdout.write(
+                    `${JSON.stringify(failure.unconfirmed.output, null, 2)}\n`,
+                  );
+              }),
+            ),
+          );
         process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
         return;
       }
