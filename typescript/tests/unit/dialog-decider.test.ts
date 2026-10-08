@@ -8,6 +8,7 @@ import {
 } from "../../src/inputs/dialog.js";
 import { expectedConfirmDigest, type ObservedConfirm } from "../../src/browser/dialogs/expected.js";
 import { noIncidents, type DialogIncident } from "../../src/runtime/incidents.js";
+import { OwnerCancelled } from "../../src/inputs/terminal.js";
 import { InputRequestFailure, type InputRequest } from "../../src/runtime/input-request.js";
 import type { DialogReport } from "../../src/runtime/kernel-operation.js";
 
@@ -56,15 +57,37 @@ it("accepts a confirm the caller accepts, and asks a prompt's text after an acce
   expect(prompt.asked).toHaveLength(2);
 });
 
-it("fails the decision when the caller's answer never comes", async () => {
-  const ask = makeInputAsker(() => Effect.fail(new InputRequestFailure({ code: "NoResponse" })));
+const failing = (failure: InputRequestFailure) => makeInputAsker(() => Effect.fail(failure));
+/** Every way a question can fail other than its window ending unanswered. */
+const unusable = [
+  new OwnerCancelled({ code: "NoResponse" }),
+  new InputRequestFailure({ code: "Unavailable" }),
+  new InputRequestFailure({ code: "Refused" }),
+  new InputRequestFailure({ code: "Unauthorized" }),
+  new InputRequestFailure({ code: "Invalid" }),
+];
+
+it("fails as expired when the answer never comes, and as unavailable otherwise", async () => {
   const decided = await Effect.runPromise(
-    Effect.either(makeDialogDecider(ask, String)(report("confirm"))),
+    Effect.either(
+      makeDialogDecider(failing(new InputRequestFailure({ code: "NoResponse" })), String)(
+        report("confirm"),
+      ),
+    ),
   );
   expect(Either.isLeft(decided) && decided.left).toMatchObject({
     _tag: "DialogFailure",
-    reason: "unavailable",
+    reason: "expired",
   });
+  for (const failure of unusable) {
+    const refused = await Effect.runPromise(
+      Effect.either(makeDialogDecider(failing(failure), String)(report("confirm"))),
+    );
+    expect(Either.isLeft(refused) && refused.left, failure.code).toMatchObject({
+      _tag: "DialogFailure",
+      reason: "unavailable",
+    });
+  }
 });
 
 const recorded = expectedConfirmDigest({
@@ -161,6 +184,22 @@ it("dismisses, never accepts, a dialog whose answer never comes", async () => {
   expect(await Effect.runPromise(runDecider(noText)(report("prompt")))).toEqual({
     choice: "dismiss",
   });
+});
+
+it("fails the step, as before, when the owner cancels or the question cannot be asked", async () => {
+  for (const failure of unusable) {
+    const incidents: DialogIncident[] = [];
+    const decided = await Effect.runPromise(
+      Effect.either(
+        runDecider(failing(failure), { incidents })(report("confirm", "Remove this item?")),
+      ),
+    );
+    expect(Either.isLeft(decided) && decided.left, failure.code).toMatchObject({
+      _tag: "DialogFailure",
+      reason: "unavailable",
+    });
+    expect(incidents).toEqual([]);
+  }
 });
 
 it("keeps the confirms the owner accepts while building, as the page showed them", async () => {
