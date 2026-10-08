@@ -70,8 +70,7 @@ pomerado:section core.execute-calls:end -->
   or a party size over its limit, throw `new errors.InvalidInput(message)` saying why. `errors`
   exists only in the script, never in a call's `code`, so when the page shows the refusal,
   return a marker such as `{ refused: "why" }` from the call and throw once it returns. The
-  run then fails as the caller's input. A host that repairs checks the value and asks the
-  caller before it ends that way. A write that throws it before entering a commit mark
+  run then fails as the caller's input. A write that throws it before entering a commit mark
   reports that it changed nothing. A page, control or response that changed is still
   `OperationFailure`.
 - After a write, call `verified()` with no argument just before returning, once a call has
