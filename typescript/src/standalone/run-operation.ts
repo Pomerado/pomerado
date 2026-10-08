@@ -6,6 +6,7 @@ import { localFileReferences, makeLocalFileHook } from "../execution/local-files
 import { localDownloads } from "../execution/local-downloads.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { makeRunDialogDecider } from "../inputs/dialog.js";
+import { draftQuestionDeclarations } from "../mint/draft-questions.js";
 import { noIncidents } from "../runtime/incidents.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { localStartHooks, startPage } from "../runtime/start-state.js";
@@ -72,6 +73,14 @@ export const runOperation = (
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
       timeoutMs: options.timeoutMs ?? 1_200_000,
       ask,
+      // Only the questions publication reviewed; an artifact saved before builds recorded them
+      // asks only what its entrypoint declares as a plain literal.
+      declaredQuestions:
+        artifact.questions ??
+        draftQuestionDeclarations(
+          artifact.entrypoint,
+          sources.find(([path]) => path === artifact.entrypoint)?.[1] ?? "",
+        ),
       decideDialog: makeRunDialogDecider({
         ask,
         project: secrets.redact,

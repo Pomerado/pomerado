@@ -157,7 +157,11 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
           Effect.mapError(
             (error) =>
               new ScriptInputFailure({
-                code: "code" in error && error.code === "NoResponse" ? "NoResponse" : "Unavailable",
+                // Undeclared: the host refused a request beyond the declarations it read.
+                code:
+                  "code" in error && (error.code === "NoResponse" || error.code === "Undeclared")
+                    ? error.code
+                    : "Unavailable",
               }),
           ),
         ),
