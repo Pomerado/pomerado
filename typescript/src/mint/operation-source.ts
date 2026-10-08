@@ -342,6 +342,29 @@ export const entrypointImportClosure = (
 };
 
 /**
+ * The entrypoint's static import closure read one file at a time, for a host that cannot list its
+ * workspace: each file `read` returns, following relative imports. A module that could load a
+ * file its imports do not name contributes only what its imports name.
+ */
+export const readImportClosure = async (
+  read: (path: string) => Promise<string | undefined>,
+  entrypoint: string,
+): Promise<Map<string, string>> => {
+  const included = new Map<string, string>();
+  const pending = [entrypoint];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    if (included.has(path)) continue;
+    const source = await read(path);
+    if (source === undefined) continue;
+    included.set(path, source);
+    if (path.endsWith(".json")) continue;
+    for (const request of relativeModuleRequests(source, path) ?? [])
+      pending.push(posix.normalize(posix.join(posix.dirname(path), request)));
+  }
+  return included;
+};
+
+/**
  * The operation files Guardian is told an execution loads: the entrypoint's static import closure,
  * a lower bound. A module that could load a file its imports do not name (see `moduleRequests`),
  * or a workspace package manifest, which can map a bare or `#` specifier to any file, keeps every

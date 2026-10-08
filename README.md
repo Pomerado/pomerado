@@ -131,7 +131,7 @@ When minting finishes, Pomerado saves the integration as a folder of source code
 ```text
 pomerado-integrations/example_reader/
 ├── src/                 Generated operation modules
-├── pomerado.json        Entrypoint and input and output schemas
+├── pomerado.json        Entrypoint, input and output schemas, and the questions a run may ask
 ├── auth-fill.json       Sign-in screens a build that signed in recorded, with no value
 ├── deployment.json      Tool name, description, URL, task and authority
 ├── mcp.mjs              Launcher for the shared Pomerado runtime

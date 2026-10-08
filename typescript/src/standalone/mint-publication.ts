@@ -185,12 +185,17 @@ export const mintPublication =
         };
       });
       // A write first proves its session may have sent the write, then that its composed contract
-      // matches the session and names each step a confirm popup was accepted at. The local host
-      // counts no requests, so a step whose journal saw a browser call counts as possibly sent,
-      // as do a confirmation and an entered commit mark.
+      // matches the session and names each step a confirm popup was accepted at. A confirmation
+      // proves the write was sent; otherwise an act step Guardian labelled a write that may have
+      // reached the site, unless the outcome review found it did not happen.
       const session = write
         ? yield* checkWriteSession({
-            session: { steps: writeSession.steps, nonReadRequests: 0 },
+            session: {
+              steps: writeSession.steps.map(({ executionId, ...step }) => {
+                const outcome = state.assessments.get(executionId)?.outcome;
+                return outcome === undefined ? step : { ...step, assessment: outcome };
+              }),
+            },
             step: sample.journal,
             extract,
             confirms: { steps: writeSession.confirmSteps, entrypoint: publication.entrypoint },
@@ -268,6 +273,9 @@ export const mintPublication =
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
           ...(signIn === undefined ? {} : { signIn }),
+          // Always recorded, so a run falls back to reading the source only for an artifact saved
+          // before builds recorded them.
+          questions: result.schemas.questions ?? {},
           ...(write && writeSession.acceptedConfirms.length > 0
             ? { acceptedConfirms: writeSession.acceptedConfirms.slice(0, expectedConfirmLimit) }
             : {}),

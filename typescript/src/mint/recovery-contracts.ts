@@ -21,6 +21,11 @@ export const MintAgentSnapshot = Schema.Struct({
   sdkState: Schema.String,
   modelCalls: Schema.NonNegativeInt,
   finalsWithoutTool: Schema.NonNegativeInt,
+  /**
+   * The position in the minter's whole history of the run state's first item; the items before
+   * it are in the outcome review's history archive. Absent means 0.
+   */
+  historyOffset: Schema.optional(Schema.NonNegativeInt),
   response: Schema.optional(Schema.Unknown),
   tools: Schema.Array(ToolResult),
 });
@@ -38,7 +43,12 @@ export interface MintAgentRecovery {
 interface MintRecoveryBoundary {
   readonly model: <E>(
     state: () => string,
-    counters: { readonly modelCalls: number; readonly finalsWithoutTool: number },
+    counters: {
+      readonly modelCalls: number;
+      readonly finalsWithoutTool: number;
+      /** Stored as the snapshot's `historyOffset`. */
+      readonly historyOffset: number;
+    },
     invoke: Effect.Effect<ModelResponse, E>,
   ) => Effect.Effect<ModelResponse, E | MintFailure>;
   readonly tool: <E>(

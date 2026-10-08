@@ -189,12 +189,14 @@ the named step recorded the declared confirmation, then publishes. A
 `not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
 `contract_input_mismatch` means correct the source and call `finish_build` again;
 never run the write again. So does `input_feedback`, Guardian's findings on the input
-schema; the host re-reads the corrected schema offline. `write_not_submitted` means no
-`act` step recorded a confirmation, sent a non-read request or entered a commit mark;
-an unmarked GET or websocket commit is invisible to that check. Read back first. If
-the write happened, publish with `readback`. If the read-back shows it did not, do the
-write once, marking its commit step, and read its confirmation. If no read-back can tell,
-never submit again: publish it as `unverifiable`. Filling a form or an offline example
+schema; the host re-reads the corrected schema offline. `write_not_submitted` means the
+session has not demonstrated the requested write: no step recorded a confirmation, and no
+`act` step Guardian labelled a write reached the site unless the outcome review found it
+did not happen. Continue the remaining authorized work. If a step may already have
+committed, read back first, in a new file. If the write happened, publish with
+`readback`. The host runs a step that may have committed only once, unless the outcome
+review finds it did not happen. If no read-back can tell, never submit again: publish it
+as `unverifiable`. Filling a form or an offline example
 is not the write. An unreadable step output never justifies a run either: the write
 publishes with its output recorded as unavailable.
 
@@ -205,6 +207,14 @@ running a commit again, run an `act` step that only reads the site or the accoun
 whether the earlier commit landed, and never resubmit one that did. If no read-back can
 tell, never submit again. Guardian reviews every
 `act` step and denies one that would repeat a finished commit.
+
+Guardian labels each step it allows `read`, `write` or `authentication`, and every step
+that changes what the site keeps is a write, a draft, a saved field or a cart included.
+A separate outcome reviewer then judges each write from your history and the host's
+records. The host refuses a step that runs an earlier write's entrypoint again until
+that review finds the write did not happen, so write a read-back as a new file. When a
+tool result's `hostNotices` holds an `outcome_review_observation`, the reviewer needs
+that readback: run it in a step that changes nothing when you can.
 
 ## What runs do with it
 

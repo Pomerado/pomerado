@@ -5,11 +5,9 @@ import {
   exampleInputRefusal,
   preflightTestInput,
   repeatableReadFor,
-  replayedWriteStep,
   stepInput,
+  testInputNotJson,
   writeSessionBoundary,
-  writeStepDigest,
-  type WriteStep,
 } from "../../src/mint/step-checks.js";
 
 const request = (overrides: Partial<ExecutionRequest> = {}): ExecutionRequest => ({
@@ -157,6 +155,35 @@ describe("exampleInputRefusal", () => {
       "This write session already runs the exampleInput an earlier act step passed. Repeat it unchanged or omit it.",
     );
   });
+
+  it("refuses exampleInput while a host repairs a published tool, which runs its failing case's input", () => {
+    const repairing = { ...scope("read"), maintenance: true };
+    expect(exampleInputRefusal(request({ exampleInput }), repairing)).toEqual({
+      supported: false,
+      reason:
+        "exampleInput is not for maintenance, which repairs the tool on its failing case's own input. Correct or remove exampleInput and execute again. Nothing was executed.",
+    });
+    expect(
+      exampleInputRefusal(act(), { ...scope("write"), maintenance: true })?.reason,
+    ).toContain("exampleInput is not for maintenance");
+    // The purpose comes first: a test is refused for its purpose, as without the flag.
+    expect(
+      exampleInputRefusal(request({ exampleInput, purpose: "test" }), repairing)?.reason,
+    ).toContain("exampleInput is valid only on a read's example or a write's act step.");
+    // A build that is not a repair runs as before.
+    expect(
+      exampleInputRefusal(request({ exampleInput }), { ...scope("read"), maintenance: false }),
+    ).toBeUndefined();
+  });
+});
+
+describe("testInputNotJson", () => {
+  it("is the refusal a test input that is not JSON text gets", () => {
+    expect(preflightTestInput(agentTest("{x"), { buildEffect: "read", executionHistory: [] })).toEqual({
+      supported: false,
+      reason: testInputNotJson,
+    });
+  });
 });
 
 describe("stepInput", () => {
@@ -244,66 +271,6 @@ describe("stepInput", () => {
       _tag: "Left",
       left: { code: "InvalidRequest" },
     });
-  });
-});
-
-describe("replayedWriteStep", () => {
-  const checkout = "export const fill = `await page.fill('#qty','2');`;";
-  const place = `import { fill } from "./checkout.mjs";\nexport default { code: fill + "await page.click('#place');" };`;
-  const files = new Map([
-    ["src/checkout.mjs", checkout],
-    ["src/place-step.mjs", place],
-    ["src/read-back-step.mjs", "export default { code: 'return document.title;' };"],
-  ]);
-  const act = (entrypoint: string) =>
-    request({ purpose: "act", target: "liveBrowser", entrypoint });
-  const step = (entrypoint: string, stateChanging: boolean, from = files): WriteStep => ({
-    entrypoint,
-    sourceDigest: writeStepDigest(from, entrypoint),
-    stateChanging,
-  });
-
-  it("refuses an unchanged act step straight after it sent state-changing requests", () => {
-    expect(
-      replayedWriteStep(act("src/place-step.mjs"), files, [step("src/place-step.mjs", true)]),
-    ).toContain("could commit the write twice");
-  });
-
-  it("refuses an unchanged commit step again after an unrelated scratch edit", () => {
-    const steps = [step("src/place-step.mjs", true)];
-    const withScope = new Map(files)
-      .set("src/place-step.mjs", `${place}\nexport const scope = 'global';\n`)
-      .set("scratch/notes.mjs", "export const note = 'placed once';\n");
-    const edited = [step("src/place-step.mjs", true, withScope)];
-    withScope.set("scratch/notes.mjs", "export const note = 'still placed once';\n");
-    expect(replayedWriteStep(act("src/place-step.mjs"), withScope, edited)).toBeDefined();
-    expect(replayedWriteStep(act("src/place-step.mjs"), files, steps)).toBeDefined();
-  });
-
-  it("lets the step run again once another act step has read the outcome", () => {
-    expect(
-      replayedWriteStep(act("src/place-step.mjs"), files, [
-        step("src/place-step.mjs", true),
-        step("src/read-back-step.mjs", false),
-      ]),
-    ).toBeUndefined();
-  });
-
-  it("lets a step through that sent nothing state-changing, changed source or is not an act", () => {
-    expect(
-      replayedWriteStep(act("src/place-step.mjs"), files, [step("src/place-step.mjs", false)]),
-    ).toBeUndefined();
-    const changed = new Map(files).set("src/checkout.mjs", `${checkout}\n// quantity 3`);
-    expect(
-      replayedWriteStep(act("src/place-step.mjs"), changed, [step("src/place-step.mjs", true)]),
-    ).toBeUndefined();
-    expect(
-      replayedWriteStep(
-        request({ purpose: "explore", target: "liveBrowser", entrypoint: "src/place-step.mjs" }),
-        files,
-        [step("src/place-step.mjs", true)],
-      ),
-    ).toBeUndefined();
   });
 });
 

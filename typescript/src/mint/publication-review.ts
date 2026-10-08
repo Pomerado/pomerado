@@ -275,6 +275,51 @@ const listedInputKeys = (schema: unknown) => {
 };
 
 /**
+ * The keys of the agent's `exampleInput` that the published input schema does not list: values
+ * the tool fixes itself. None when the schema lists nothing to check against.
+ */
+export const unlistedExampleInputKeys = (
+  inputSchema: unknown,
+  intentDerivedInput: Json | undefined,
+): readonly string[] => {
+  const listed = listedInputKeys(inputSchema);
+  return listed === undefined
+    ? []
+    : Object.keys(intentDerivedInput ?? {}).filter((key) => !listed.has(key));
+};
+
+/**
+ * The host's own input feedback on an allowed candidate whose example or write session ran
+ * `unlisted` keys, as an `example_input` finding at the definition's input schema.
+ */
+export const exampleInputFeedback = (
+  candidate: { readonly definition: string; readonly write: boolean },
+  unlisted: readonly string[],
+  reviewId: string,
+) => {
+  const inputSchemaAt = byteLength(
+    candidate.definition.slice(0, candidate.definition.indexOf('"inputSchema"')),
+  );
+  return new MintFailure({
+    code: "ReviewDenied",
+    review: {
+      outcome: "deny",
+      reason: "input_feedback",
+      reviewId,
+      rationale: `The ${candidate.write ? "write session" : "example"} ran with ${unlisted.map((key) => JSON.stringify(key)).join(", ")} in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.`,
+      findings: [
+        {
+          path: publicDefinitionPath,
+          byteStart: inputSchemaAt,
+          byteEnd: inputSchemaAt + '"inputSchema"'.length,
+          category: "example_input",
+        },
+      ],
+    },
+  });
+};
+
+/**
  * Runs the publication review and returns the allowing review's ID. An intent-derived example
  * input key the published schema does not list is a value the tool fixes itself: once Guardian
  * allows, it comes back as the host's own input feedback on the reviewed candidate, so, like
@@ -282,11 +327,7 @@ const listedInputKeys = (schema: unknown) => {
  */
 export const reviewPublication = (review: PublicationReview, candidate: PublicationCandidate) =>
   Effect.gen(function* () {
-    const listed = listedInputKeys(candidate.inputSchema);
-    const unlisted =
-      listed === undefined
-        ? []
-        : Object.keys(candidate.intentDerivedInput ?? {}).filter((key) => !listed.has(key));
+    const unlisted = unlistedExampleInputKeys(candidate.inputSchema, candidate.intentDerivedInput);
     const reviewId = yield* review({
       entrypoint: candidate.entrypoint,
       files: candidate.files,
@@ -296,24 +337,5 @@ export const reviewPublication = (review: PublicationReview, candidate: Publicat
       evidence: new Map([[publicDefinitionPath, candidate.definition], ...candidate.evidence]),
     });
     if (unlisted.length === 0) return reviewId;
-    const inputSchemaAt = byteLength(
-      candidate.definition.slice(0, candidate.definition.indexOf('"inputSchema"')),
-    );
-    return yield* new MintFailure({
-      code: "ReviewDenied",
-      review: {
-        outcome: "deny",
-        reason: "input_feedback",
-        reviewId,
-        rationale: `The ${candidate.write ? "write session" : "example"} ran with ${unlisted.map((key) => JSON.stringify(key)).join(", ")} in its exampleInput, which the input schema does not list, so the tool fixes that value itself. Make each an input property.`,
-        findings: [
-          {
-            path: publicDefinitionPath,
-            byteStart: inputSchemaAt,
-            byteEnd: inputSchemaAt + '"inputSchema"'.length,
-            category: "example_input",
-          },
-        ],
-      },
-    });
+    return yield* exampleInputFeedback(candidate, unlisted, reviewId);
   });

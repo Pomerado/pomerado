@@ -29,6 +29,7 @@ import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 import {
+  actionFor,
   call as fixtureCall,
   currentOf,
   execution as fixtureExecution,
@@ -37,6 +38,7 @@ import {
   html,
   patch as patchFiles,
   probe,
+  quietReviewer,
   recordingGuardian,
   startSite,
 } from "./guardian-context-fixture.js";
@@ -120,6 +122,7 @@ const guardian = (
           JSON.stringify({
             outcome: reviewedNative(request) ? decided : "deny",
             rationale: "Recorded fixture review",
+            ...actionFor(current),
           }),
         ),
       ];
@@ -305,6 +308,7 @@ for (const [authentication, submitAfterInput] of [
               ...(remote === undefined ? {} : { browser: { endpoint: remote.wsEndpoint() } }),
               minterProvider: minter(mintRequests, authentication),
               guardianProvider: guardian(reviewRequests),
+              outcomeReviewerProvider: quietReviewer,
               ask: makeInputAsker((request) =>
                 Effect.sleep(authentication ? 0 : 11_000).pipe(
                   Effect.zipRight(
@@ -417,6 +421,7 @@ test("a run makes no Guardian or model call and returns the operation's output",
             ask: makeInputAsker(() => Effect.succeed({})),
             minterProvider: unreachableModel(calls, "minter"),
             guardianProvider: unreachableModel(calls, "guardian"),
+            outcomeReviewerProvider: quietReviewer,
             timeoutMs: 10_000,
           });
           return yield* service.run(
@@ -445,6 +450,106 @@ test("a run makes no Guardian or model call and returns the operation's output",
     expect(output).toEqual({ heading: "Run fixture" });
     expect(calls).toEqual([]);
     expect(hits).toBeGreaterThan(0);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("a run asks only the questions its artifact recorded, or that its entrypoint declares as a literal", async () => {
+  // Five runs, each in its own browser session.
+  test.setTimeout(90_000);
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Run fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const note = { type: "text" as const, prompt: "Which note should I keep?" };
+  const asking = (questions: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+const computed = {note:{type:"text",prompt:"Which note should I keep?"}};
+export default defineOperation({name:"ask_note",input:Schema.Struct({}),output:Schema.Struct({note:Schema.String}),questions:${questions}},
+async ({ ask }) => ({ note: await ask("note") }));`;
+  const literal = asking(JSON.stringify({ note }));
+  const calls: string[] = [];
+  const run = (
+    content: string,
+    questions?: Readonly<Record<string, unknown>>,
+    effect?: "read",
+  ) => {
+    const asked: InputRequest[] = [];
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            ask: makeInputAsker((request) =>
+              Effect.sync(() => {
+                asked.push(request);
+                return { note: "kept" };
+              }),
+            ),
+            minterProvider: unreachableModel(calls, "minter"),
+            guardianProvider: unreachableModel(calls, "guardian"),
+            timeoutMs: 10_000,
+          });
+          return yield* Effect.either(
+            service.run(
+              {
+                entrypoint: "src/tool.mjs",
+                files: [{ path: "src/tool.mjs", content }],
+                inputSchema: {},
+                outputSchema: {},
+                ...(questions === undefined ? {} : { questions }),
+              } as Parameters<typeof service.run>[0],
+              {
+                url: `http://127.0.0.1:${address.port}/`,
+                intent: "Read fixture",
+                input: {},
+                ...(effect === undefined ? {} : { effect }),
+              },
+            ),
+          );
+        }),
+      ),
+    ).then((result) => ({ result, asked }));
+  };
+  try {
+    // Publication recorded the question: the run asks it.
+    const recorded = await run(literal, { note });
+    expect(recorded.result._tag === "Right" && recorded.result.right).toEqual({ note: "kept" });
+    expect(recorded.asked).toHaveLength(1);
+    // The script asks something other than what publication recorded: its ask fails as
+    // Undeclared, so the run fails with nobody asked. A run that names no effect can't rule out
+    // a website action, so its outcome is unknown.
+    const differs = await run(literal, { note: { ...note, prompt: "Which note?" } });
+    expect(differs.result._tag === "Left" && differs.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
+    });
+    expect(differs.asked).toEqual([]);
+    // A served read tool names its effect, so the same refused ask fails as a read that changed
+    // nothing.
+    const served = await run(literal, { note: { ...note, prompt: "Which note?" } }, "read");
+    expect(served.result._tag === "Left" && served.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "execution_failed", possibleCommit: false, retry: "never" },
+    });
+    expect(served.asked).toEqual([]);
+    // An artifact saved without its questions asks what its entrypoint declares as a literal.
+    const saved = await run(literal);
+    expect(saved.result._tag).toBe("Right");
+    expect(saved.asked).toHaveLength(1);
+    const computed = await run(asking("computed"));
+    expect(computed.result._tag === "Left" && computed.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
+    });
+    expect(computed.asked).toEqual([]);
+    expect(calls).toEqual([]);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -646,6 +751,7 @@ async ({kernel,sessionId,enteringCommit,verified}) => {
           const service = yield* createPomerado({
             minterProvider: model,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker(() => Effect.succeed({})),
           });
           const built = yield* service.mint({
@@ -808,6 +914,7 @@ async ({kernel,sessionId,input,ask,enteringCommit,verified}) => {
           const service = yield* createPomerado({
             minterProvider: model,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.sync(() => {
                 asked.push(request);
@@ -884,14 +991,16 @@ const receipt=objects(request.input).filter(item=>typeof item.executionId==='str
 if(!receipt)throw new Error('Missing actual execution receipt');
 return response([{type:'function_call',name:'finish_build',callId:'finish',status:'completed',arguments:JSON.stringify({intent:'Return the actual integration',entrypoint:'src/tool.mjs',executionId:receipt.executionId,metadata:{name:'read_fixture',description:'Read local fixture'},coverage:'Actual native example'})}]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
+const action=(current)=>{if(current?.trusted_review?.kind!=='execution')return {};const purpose=current.trusted_execution_context?.currentExecution?.purpose;return {action:purpose==='act'?'write':purpose==='authenticate'?'authentication':'read'};};
+const outcomeReviewerProvider={getModel:()=>({getResponse:async()=>response([{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:'No assessment yet.'}]}]),getStreamedResponse:()=>{throw new Error('Unused stream');}})};
 const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 appendFileSync(${JSON.stringify(ledger)},'guardian\\n');
 const current=objects(request.input).filter(item=>'submitted_call'in item).at(-1);
 if(current&&'question_review'in current)return response([message({outcome:'allow_business',rationale:'Caller answers a fixture question'})]);
-if(sourcePending){sourcePending=false;return response([message({outcome:${JSON.stringify(options.deny ? "deny" : "allow")},rationale:'Original Guardian fixture review'})]);}
+if(sourcePending){sourcePending=false;return response([message({outcome:${JSON.stringify(options.deny ? "deny" : "allow")},rationale:'Original Guardian fixture review',...action(current)})]);}
 sourcePending=true;return response([{type:'function_call',name:'read_source',callId:'source_'+index,status:'completed',arguments:JSON.stringify({path:objects(current).find(item=>typeof item.entrypoint==='string').entrypoint,offset:0})}]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
-export const startMcpCli=(args)=>start(args,{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,timeoutMs:${options.timeoutMs ?? 30_000},browser:${JSON.stringify(options.endpoint === undefined ? {} : { endpoint: options.endpoint })}});
+export const startMcpCli=(args)=>start(args,{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,outcomeReviewerProvider,timeoutMs:${options.timeoutMs ?? 30_000},browser:${JSON.stringify(options.endpoint === undefined ? {} : { endpoint: options.endpoint })}});
 if(process.argv[2]==='mint'||process.argv[2]==='serve')startMcpCli(process.argv.slice(2));
 `,
   );
@@ -1994,6 +2103,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
               rationale: allowed
                 ? "The owner named their tenant for this read"
                 : "The tenant was not named by the owner",
+              ...actionFor(current),
             }),
           ),
         ];
@@ -2031,6 +2141,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
               browser: { endpoint: remote.wsEndpoint() },
               minterProvider: minter,
               guardianProvider: reviewer,
+              outcomeReviewerProvider: quietReviewer,
               ask: makeInputAsker(() => Effect.succeed({})),
               timeoutMs: 10_000,
             });
@@ -2088,6 +2199,7 @@ test("a local mint sends Guardian the native policy and the minter the rendered 
           const service = yield* createPomerado({
             minterProvider: minter(mintRequests),
             guardianProvider: guardian(reviewRequests),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(request.questions.map((question) => [question.id, "read"])),
@@ -2330,6 +2442,7 @@ async ({kernel,sessionId}) => {
             browser: { endpoint: remote.wsEndpoint() },
             minterProvider,
             guardianProvider,
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(
@@ -2473,6 +2586,7 @@ const twoScreenSignIn = async (options: {
             browser: { endpoint: remote.wsEndpoint() },
             minterProvider: minter,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(

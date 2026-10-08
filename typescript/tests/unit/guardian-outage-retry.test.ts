@@ -45,7 +45,13 @@ const flaky = (failure: () => unknown, outages: number, retry?: ReviewRetry) => 
         }
         return turn
           .readSource(turn.pending.entrypoint, 0)
-          .pipe(Effect.as({ outcome: "allow", rationale: "Reads the page title only." }));
+          .pipe(
+            Effect.as({
+              outcome: "allow",
+              rationale: "Reads the page title only.",
+              action: "read",
+            }),
+          );
       }),
     ...(retry === undefined ? {} : { retry }),
   };
@@ -257,7 +263,11 @@ it("keeps the follow-up rounds for a skipped entrypoint read inside one attempt"
       run: (turn) =>
         Effect.gen(function* () {
           runs++;
-          const output = { outcome: "allow", rationale: "Reads the page title only." };
+          const output = {
+            outcome: "allow",
+            rationale: "Reads the page title only.",
+            action: "read",
+          };
           for (let round = 0; round < 2; round++) {
             if (turn.missingRead?.(output) === undefined) break;
             if (readsWhenAsked) yield* turn.readSource(turn.pending.entrypoint, 0);

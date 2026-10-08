@@ -342,6 +342,52 @@ async ({ ask }) => ({ note: await ask("note") }));`,
   }
 });
 
+test("a step asks only what its entrypoint declares as a plain literal", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last, asked } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            // The running module declares the question, but the host reads no literal it can trust.
+            "explore/computed.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+const questions = {note:{type:"text",prompt:"Which note should I keep?"}};
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions},
+async ({ ask }) => ({ note: await ask("note") }));`,
+            "explore/invalid.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{Note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("Note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/computed.mjs"), "computed")],
+        () => [call("execute", execution("explore", "explore/invalid.mjs"), "invalid")],
+      ],
+    });
+    // The computed declaration ran, but its ask reached neither Guardian nor the owner.
+    expect(toolResult(last, "computed")).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(toolResult(last, "computed"))).toContain("Undeclared");
+    expect(guardian.reviews.filter((review) => review.kind === "question")).toEqual([]);
+    expect(asked).toEqual([]);
+    // An invalid literal id is refused before review, and nothing runs.
+    expect(toolResult(last, "invalid")).toMatchObject({
+      status: "unsupported",
+      observations: expect.stringContaining('Invalid script question id: "Note".'),
+    });
+    expect(executions(guardian.reviews)).toHaveLength(1);
+  } finally {
+    await site.close();
+  }
+});
+
 test("a question a step asks after its page reset never shows Guardian the page the last step left", async () => {
   test.setTimeout(90_000);
   const site = await startSite((request, response) =>
@@ -622,7 +668,7 @@ test("a confirmed site change moves the build to the other site", async () => {
   }
 });
 
-test("a write build refuses a blind repeat of a write, and live tests and explores in its session", async () => {
+test("a write build refuses a repeat of a write no outcome review showed did not happen, and live tests and explores in its session", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -639,23 +685,79 @@ test("a write build refuses a blind repeat of a write, and live tests and explor
         () => [call("execute", execution("test", "src/look.mjs"), "test")],
         () => [call("execute", execution("explore", "src/look.mjs"), "explore")],
         () => [call("execute", execution("act", "src/look.mjs"), "read_back")],
+        // A read-back does not license the repeat: only an outcome review that finds the write
+        // did not happen does, and this reviewer never assesses.
         () => [call("execute", execution("act", "src/act.mjs"), "act_3")],
       ],
     });
-    expect(fixture.writes()).toBe(2);
-    for (const id of ["act_1", "read_back", "act_3"])
+    expect(fixture.writes()).toBe(1);
+    for (const id of ["act_1", "read_back"])
       expect(toolResult(last, id), id).toMatchObject({ status: "completed" });
     for (const [id, reason] of [
-      ["act_2", "could commit the write twice"],
+      ["act_2", "repeats a write"],
       ["test", "never as a live example or a live test"],
       ["explore", "live exploration is over"],
+      ["act_3", "repeats a write"],
     ] as const) {
       expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
       expect(JSON.stringify(toolResult(last, id)), id).toContain(reason);
     }
     const acts = executions(guardian.reviews);
-    expect(acts.map((review) => currentOf(review)?.["purpose"])).toEqual(["act", "act", "act"]);
+    expect(acts.map((review) => currentOf(review)?.["purpose"])).toEqual(["act", "act"]);
     expect(effectsOf(acts[0])[0]).toMatch(/^The caller's requested task, done once/u);
+  } finally {
+    await site.close();
+  }
+});
+
+// Fails when the repeat guard keys only on the step's path, so a copy of the write under another
+// name runs it again, or when Guardian's execution review does not see the earlier write.
+test("a write build refuses a copy of a write, and Guardian sees the write before a rewrite of it", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  // Guardian denies a step that would commit an unassessed write's change again.
+  const guardian = recordingGuardian({
+    decide: (review) =>
+      currentOf(review)?.["purpose"] === "act" &&
+      Array.isArray(contextOf(review)?.["writes"]) &&
+      (contextOf(review)?.["writes"] as readonly unknown[]).length > 0
+        ? { outcome: "deny", rationale: "It would save the same change again.", action: "write" }
+        : "allow",
+  });
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/act.mjs": saveStep,
+            "src/act-copy.mjs": saveStep,
+            "src/act-rewritten.mjs": `// The same save, rewritten.\n${saveStep}`,
+          }),
+        () => [call("execute", execution("act", "src/act.mjs"), "act_1")],
+        () => [call("execute", execution("act", "src/act-copy.mjs"), "act_copy")],
+        () => [call("execute", execution("act", "src/act-rewritten.mjs"), "act_rewritten")],
+      ],
+    });
+    expect(fixture.writes()).toBe(1);
+    expect(toolResult(last, "act_1")).toMatchObject({ status: "completed" });
+    // The copy is refused before review; the rewrite reaches Guardian, which sees the write.
+    expect(toolResult(last, "act_copy")).toMatchObject({ status: "unsupported" });
+    expect(toolResult(last, "act_rewritten")).not.toMatchObject({ status: "completed" });
+    const acts = executions(guardian.reviews);
+    expect(acts).toHaveLength(2);
+    expect(contextOf(acts[0] as RecordedReview)?.["writes"]).toBeUndefined();
+    expect(contextOf(acts[1] as RecordedReview)?.["writes"]).toEqual([
+      {
+        executionId: expect.any(String) as unknown,
+        purpose: "act",
+        entrypoint: "src/act.mjs",
+        outcome: "unassessed",
+      },
+    ]);
   } finally {
     await site.close();
   }
