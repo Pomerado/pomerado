@@ -268,7 +268,7 @@ const mintModelCallCapacity = 512;
 const segmentTurns = 128;
 
 /** Input-token threshold for server-side compaction. Set explicitly because the pinned SDK's
- * context-window table has no GPT-6 entry and would silently fall back; 240K also stays
+ * context-window table has no GPT-6.1 entry and would silently fall back; 240K also stays
  * below GPT-6's 272K long-context pricing threshold, where the input price doubles. */
 export const mintCompactionThresholdTokens = 240_000;
 export const mintCompaction = (): ReturnType<typeof compaction> =>
