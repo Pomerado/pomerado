@@ -83,6 +83,15 @@ describe("a write session's marks", () => {
       }),
     ).toBe(true);
   });
+
+  it("sent its write when a host that counts no requests marked a step possibly sent", () => {
+    expect(
+      sessionSentWrite({ steps: [{ enteredMarks: [], possiblySent: true }], nonReadRequests: 0 }),
+    ).toBe(true);
+    expect(
+      sessionSentWrite({ steps: [{ enteredMarks: [], possiblySent: false }], nonReadRequests: 0 }),
+    ).toBe(false);
+  });
 });
 
 describe("a write session's publication check", () => {
@@ -121,6 +130,15 @@ describe("a write session's publication check", () => {
     );
     expect(reason(result)).toBe("write_not_submitted");
     expect(extractions).toBe(0);
+  });
+
+  it("refuses the contract, not the sent check, for a step that may have sent its write", () => {
+    const { result, extractions } = check(
+      [{ enteredMarks: [], possiblySent: true }],
+      contract({ confirmation: "readback", commits: ["place-order"] }),
+    );
+    expect(reason(result)).toBe("commit_marks_unentered");
+    expect(extractions).toBe(1);
   });
 
   it("then refuses a contract that does not match the session", () => {

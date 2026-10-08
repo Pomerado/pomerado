@@ -143,9 +143,9 @@ export const mintPublication =
           inputDecodes: result.inputDecodes === true,
         };
       });
-      // A write first proves its session sent the write, then that its composed contract matches
-      // the session. The local host counts no requests, so only a confirmation or an entered
-      // commit mark shows the write went out.
+      // A write first proves its session may have sent the write, then that its composed contract
+      // matches the session. The local host counts no requests, so a step whose journal saw a
+      // browser call counts as possibly sent, as do a confirmation and an entered commit mark.
       const session = write
         ? yield* checkWriteSession({
             session: { steps: writeSession.steps, nonReadRequests: 0 },

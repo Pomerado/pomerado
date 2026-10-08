@@ -22,6 +22,11 @@ const failEarly = `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
 export default defineOperation({name:"fail_early",input:Schema.Unknown,output:Schema.Unknown},
 async () => { throw new Error("Failed before the page"); });`;
+/** A step that completes without calling the browser. */
+const idle = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"idle",input:Schema.Unknown,output:Schema.Unknown},
+async () => ({ idle: true }));`;
 /** A step that never calls the browser and never returns. */
 const hang = `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
@@ -128,7 +133,7 @@ test("an unchanged failed act step that only read the page is refused as a blind
   }
 });
 
-test("finish_build on a session that never sent its write refuses it before contract review", async () => {
+test("finish_build on a session that only read the page refuses the unentered commit mark after contract review", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -146,8 +151,42 @@ test("finish_build on a session that never sent its write refuses it before cont
       ],
     });
     expect(toolResult(last, "look")).toMatchObject({ status: "completed" });
-    // No step recorded a confirmation or entered a commit mark, so the session never sent its
-    // write: that is refused first, before the contract is read or reviewed.
+    // The step called the browser, so it may have sent the write: the session passes the sent
+    // check, and its contract's unentered commit mark is refused after contract review.
+    expect(toolResult(last, "publish")).toMatchObject({
+      status: "not_published",
+      reason: "commit_marks_unentered",
+    });
+    expect(built.build).not.toBe("published");
+    expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "act",
+      "contract",
+    ]);
+    expect(fixture.writes()).toBe(0);
+  } finally {
+    await site.close();
+  }
+});
+
+test("finish_build on a session that never called the browser refuses the write before contract review", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/idle.mjs": idle, "src/tool.mjs": saveNote }),
+        () => [call("execute", act("src/idle.mjs", { note: "kept" }), "idle")],
+        (request) => [finish("src/tool.mjs", executionIdOf(request, "idle"), "publish")],
+      ],
+    });
+    expect(toolResult(last, "idle")).toMatchObject({ status: "completed", effect: "not_sent" });
+    // No step recorded a confirmation, entered a commit mark or called the browser, so the
+    // session never sent its write: that is refused before the contract is read or reviewed.
     expect(toolResult(last, "publish")).toMatchObject({
       status: "not_published",
       reason: "write_not_submitted",
@@ -259,7 +298,7 @@ test("a step that lost its result after entering its mark publishes once a read-
             "src/check.mjs": readBack,
             "src/tool.mjs": readBack,
           }),
-        () => [call("execute", execution("act", "src/save.mjs", { timeoutSeconds: 3 }), "save")],
+        () => [call("execute", execution("act", "src/save.mjs", { timeoutSeconds: 12 }), "save")],
         () => [call("execute", act("src/check.mjs"), "check")],
         (request) => [finish("src/tool.mjs", executionIdOf(request, "check"), "publish")],
       ],

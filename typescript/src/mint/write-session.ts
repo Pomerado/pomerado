@@ -56,6 +56,12 @@ export interface WriteSessionMarks {
    * the commit marks its runner streamed to the host as it entered them.
    */
   readonly streamedMarks?: readonly string[];
+  /**
+   * The host's own record shows this step may have sent something to the site, as an effect
+   * journal does once the step called the browser. A host that counts the requests a step sent
+   * passes its count as `nonReadRequests` and leaves this unset.
+   */
+  readonly possiblySent?: boolean;
 }
 
 /**
@@ -79,9 +85,9 @@ export const sessionConfirmed = (steps: readonly WriteSessionMarks[]) =>
  * Whether the session sent its write. A recorded confirmation is that proof, whatever request
  * carried the commit; otherwise (an unverifiable write) an act step must have sent a non-read
  * request, or entered a commit mark, which is the only evidence of a GET or websocket commit.
- * `nonReadRequests` is what the host counted while the session's act steps ran; a host that
- * counts no requests passes 0. A socket or an unclassified dispatch only asks the minter to
- * verify.
+ * `nonReadRequests` is what the host counted while the session's act steps ran. A host that
+ * counts no requests passes 0 and marks each step it cannot rule out as `possiblySent`, so the
+ * check fails closed. A socket or an unclassified dispatch only asks the minter to verify.
  */
 export const sessionSentWrite = (session: {
   readonly steps: readonly WriteSessionMarks[];
@@ -89,7 +95,8 @@ export const sessionSentWrite = (session: {
 }) =>
   sessionConfirmed(session.steps) ||
   session.nonReadRequests > 0 ||
-  session.steps.some((step) => step.enteredMarks.length > 0);
+  session.steps.some((step) => step.enteredMarks.length > 0) ||
+  session.steps.some((step) => step.possiblySent === true);
 
 const sessionRefusal = (reason: NonNullable<MintFailure["reason"]>) =>
   new MintFailure({ code: "PublicationUnavailable", reason });

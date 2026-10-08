@@ -189,9 +189,10 @@ const scriptQuestions = (
 
 /**
  * What an act step's effect journal shows about its write. The journal reads `not_sent` only
- * while the step made no browser call, so anything else may have sent the write; the local host
- * counts no requests. A step whose child did not report its own result has `unreported` commit
- * evidence, and the marks it streamed count only once a later step confirms.
+ * while the step made no browser call, so anything else may have sent the write: the step is
+ * `possiblySent`, since the local host counts no requests. A step whose child did not report its
+ * own result has `unreported` commit evidence, and the marks it streamed count only once a later
+ * step confirms.
  */
 const actOutcome = (executed: Either.Either<LocalOperationOutput, Error>) => {
   const failure = Either.isLeft(executed) ? executed.left : undefined;
@@ -211,6 +212,7 @@ const actOutcome = (executed: Either.Either<LocalOperationOutput, Error>) => {
     stateChanging: journal.effect !== "not_sent",
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
+      possiblySent: journal.effect !== "not_sent",
       enteredMarks: reported ? entered : [],
       ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
     },
