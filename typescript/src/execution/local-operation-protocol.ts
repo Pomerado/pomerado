@@ -3,7 +3,7 @@ import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
-import { fileReferenceMaxLength } from "../runtime/files.js";
+import { FileField, fileReferenceMaxLength } from "../runtime/files.js";
 
 const InputIssue = Schema.Struct({
   path: Schema.String.pipe(Schema.maxLength(maximumInputIssuePath)),
@@ -69,7 +69,7 @@ export const LocalOperationMessage = Schema.Union(
     kind: Schema.Literal("file_place"),
     id: Id,
     reference: Schema.String.pipe(Schema.maxLength(fileReferenceMaxLength)),
-    field: Schema.String.pipe(Schema.maxLength(4096)),
+    field: FileField,
     timeoutSec: Schema.Int.pipe(Schema.between(1, 300)),
   }),
   /** `files.collect`, before its trigger: the host starts capturing downloads. */

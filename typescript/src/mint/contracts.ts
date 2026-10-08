@@ -292,6 +292,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "secret_handle"
     /** Source to publish holds a `{{file.…}}` handle, which names a file only in this build. */
     | "file_handle"
+    /** Source to publish sets a file input, handles a download or reads a file back itself. */
+    | "file_readback"
     /** The live page URL the sign-in used carries one-time authorization values; asked once. */
     | "login_url_one_time"
     /** The login URL to publish carries a registered credential; refused every time. */

@@ -17,7 +17,7 @@ import type { WriteDeclaration } from "./operation.js";
 import { kernelTimeoutSec } from "./kernel-execute-client.js";
 import type { KernelExecuteClient } from "./kernel-execute-client.js";
 import { inspectSignInRejection } from "./sign-in-rejection.js";
-import { FileRefused, type FileChannel, type ScriptFiles } from "./files.js";
+import { FileField, FileRefused, type FileChannel, type ScriptFiles } from "./files.js";
 import type { SignInRejectionMarker } from "./sign-in-rejection.js";
 import {
   CredentialsRejected,
@@ -249,17 +249,36 @@ interface ScriptBrowser {
 /** The default wait for a download to finish after its trigger. */
 export const downloadWaitMs = 30_000;
 
-/** A file refusal, or the host's file service failing, as the script's own failure. */
-const fileFailure = (error: unknown, dispatch: Dispatch) =>
-  new OperationFailure(error instanceof FileRefused ? error.message : "The host's file service failed", {
-    cause: error,
-    dispatch,
-  });
+/** Refusals the caller's file causes, which the caller fixes with another file. */
+const callerFileReasons: ReadonlySet<string> = new Set([
+  "too_large",
+  "run_limit",
+  "type_mismatch",
+  "executable",
+  "not_accepted",
+]);
 
 /**
- * The context's `files` over the host's channel. Placing a file reaches the page, so a live run
- * marks a possible dispatch first, as an execute call does; collecting only reads what the
- * trigger's own calls made the page download.
+ * A file refusal, or the host's file service failing, as the script's own failure: the caller's
+ * file refused is `InvalidInput`, naming the reason, and anything else an `OperationFailure`.
+ * Only a refusal after the host set the input, or after a trigger's own calls, may have sent
+ * anything.
+ */
+const fileFailure = (error: unknown, afterCalls = false) => {
+  const refused = error instanceof FileRefused ? error : undefined;
+  if (refused !== undefined && callerFileReasons.has(refused.reason))
+    return new operationErrors.InvalidInput(refused.message);
+  return new OperationFailure(refused?.message ?? "The host's file service failed", {
+    cause: error,
+    dispatch:
+      afterCalls || refused === undefined || refused.dispatched === true ? "unknown" : "not_sent",
+  });
+};
+
+/**
+ * The context's `files` over the host's channel. A live run marks a possible dispatch once a
+ * placement set the file input, or may have, as an execute call does; a refusal before that
+ * reached no page. Collecting only reads what the trigger's own calls made the page download.
  */
 const scriptFiles = (
   options: ScriptBrowser & { readonly deadline: Deadline; readonly journal?: EffectJournal },
@@ -269,16 +288,21 @@ const scriptFiles = (
       throw new OperationFailure("This run has no file service", { dispatch: "not_sent" });
     return options.files;
   };
+  const dispatched = () => {
+    if (options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
+  };
   return {
     place: async (reference, { field, timeoutSec }) => {
       const files = channel();
-      if (typeof reference !== "string" || typeof field !== "string")
-        throw new OperationFailure("files.place takes a file reference and a field locator", {
+      if (typeof reference !== "string")
+        throw new OperationFailure("files.place takes the input's file reference", {
           dispatch: "not_sent",
         });
-      if (options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
+      // A field is data naming one input; anything else, such as page code, names none.
+      if (Either.isLeft(Schema.decodeUnknownEither(FileField)(field)))
+        throw fileFailure(new FileRefused({ reason: "field_not_found" }));
       try {
-        return await settle(
+        const placed = await settle(
           files.place({
             reference,
             field,
@@ -287,8 +311,11 @@ const scriptFiles = (
             ),
           }),
         );
+        dispatched();
+        return placed;
       } catch (error) {
-        throw fileFailure(error, "unknown");
+        if (!(error instanceof FileRefused) || error.dispatched === true) dispatched();
+        throw fileFailure(error);
       }
     },
     collect: async (trigger, collectOptions) => {
@@ -297,7 +324,7 @@ const scriptFiles = (
       try {
         slot = await settle(files.arm());
       } catch (error) {
-        throw fileFailure(error, "not_sent");
+        throw fileFailure(error);
       }
       try {
         await trigger();
@@ -313,7 +340,7 @@ const scriptFiles = (
       try {
         return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
-        throw fileFailure(error, "unknown");
+        throw fileFailure(error, true);
       }
     },
   };

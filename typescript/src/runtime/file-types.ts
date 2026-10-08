@@ -186,15 +186,19 @@ export const bytesMatchType = (bytes: Uint8Array, declared: string) => {
 /**
  * Whether a file input's `accept` attribute takes a file with this name and media type: an
  * empty attribute takes any file; otherwise one entry must match, an extension such as `.pdf`
- * against the name, `image/*` against the type's top level, or a full media type.
+ * against the name, `image/*` against the type's top level, or a full media type. It uses
+ * nothing outside itself, so the host's page code runs this same function (`acceptsSource`).
  */
-export const accepts = (accept: string, file: { readonly name: string; readonly mediaType: string }) => {
+export const accepts = (
+  accept: string,
+  file: { readonly name: string; readonly mediaType: string },
+): boolean => {
   const entries = accept
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => entry !== "");
   if (entries.length === 0) return true;
-  const type = essence(file.mediaType);
+  const type = (file.mediaType.split(";")[0] ?? "").trim().toLowerCase();
   const name = file.name.toLowerCase();
   return entries.some((entry) =>
     entry.startsWith(".")
@@ -204,3 +208,6 @@ export const accepts = (accept: string, file: { readonly name: string; readonly 
         : entry === type,
   );
 };
+
+/** `accepts` as JavaScript source, for page code that checks an input's `accept` itself. */
+export const acceptsSource = accepts.toString();

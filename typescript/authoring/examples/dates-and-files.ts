@@ -69,7 +69,7 @@ export const pickTravelDate = defineOperation(
 
 // Choosing a file can start an upload at once, so this is a write the host must authorize.
 // The bytes never enter the code: the input holds the caller's file reference, and files.place
-// has the host put that file into the one file input the locator names and read it back.
+// has the host put that file into the one file input its label names, as data, never code.
 export default defineOperation(
   {
     name: "attach_document",
@@ -82,10 +82,9 @@ export default defineOperation(
     }),
   },
   async ({ kernel, sessionId, input, files, errors }) => {
-    const field = 'page.getByLabel("Documents", { exact: true })';
     const chosen = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 30,
-      code: `return await ${field}.evaluate((node) => node.files.length);`,
+      code: `return await page.getByLabel("Documents", { exact: true }).evaluate((node) => node.files.length);`,
     });
     if (!chosen.success)
       throw new errors.OperationFailure(String(chosen.error), { stderr: chosen.stderr });
@@ -93,7 +92,7 @@ export default defineOperation(
     if (chosen.result !== 0)
       throw new errors.OperationFailure("already_selected", { dispatch: "not_sent" });
     // Selection is not proof the site accepted the upload; this reads back only the choice.
-    const placed = await files.place(input.document, { field });
+    const placed = await files.place(input.document, { field: { label: "Documents" } });
     return { name: placed.name, size: placed.size };
   },
 );

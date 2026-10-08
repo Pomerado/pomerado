@@ -39,7 +39,7 @@ const removal = (path: string) => ({
 const notesProbe = `import { Schema } from "effect";
 import { defineOperation, FileInput } from "../runtime/index.js";
 export default defineOperation({name:"probe",input:Schema.Struct({receipt:FileInput}),output:Schema.Unknown},
-async ({input,files}) => ({ placed: await files.place(input.receipt, { field: 'page.getByLabel("Notes", { exact: true })' }) }));`;
+async ({input,files}) => ({ placed: await files.place(input.receipt, { field: { label: "Notes" } }) }));`;
 
 test("a write build sees the caller's file as a handle, uploads it in its act step and publishes", async () => {
   test.info().annotations.push({
@@ -148,5 +148,71 @@ async ({kernel,sessionId,files}) => ({ statement: await files.collect(() => kern
     expect(JSON.stringify(built.artifact?.outputSchema)).toContain('"format":"file"');
   } finally {
     await site.close();
+  }
+});
+
+test("a build's step that reads a placed or downloaded file back is refused before it runs", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "A recorded build with two refused steps and one reviewed live step",
+  });
+  test.setTimeout(60_000);
+  const site = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-file-mint-"));
+  const file = join(directory, "receipt.txt");
+  await writeFile(file, receipt);
+  const guardian = recordingGuardian();
+  // Places the receipt, then reads the input's file back as text.
+  const uploadReadback = `import { Schema } from "effect";
+import { defineOperation, FileInput } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({receipt:FileInput}),output:Schema.Unknown},
+async ({kernel,sessionId,input,files}) => { await files.place(input.receipt, { field: { label: "Receipt" } }); return await kernel.browsers.playwright.execute(sessionId,{code:"return await page.evaluate(() => document.querySelector('input[type=file]').files[0].text());",timeout_sec:10}); });`;
+  // Takes the statement's download itself and reads its file.
+  const downloadReadback = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
+async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code:"const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download statement' }).click()]); const { readFile } = await import('node:fs/promises'); return await readFile(await download.path(), 'utf8');",timeout_sec:10}));`;
+  // Only looks at the page, so Guardian reviews it.
+  const look = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"look",input:Schema.Struct({}),output:Schema.Unknown},
+async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code:"return await page.title();",timeout_sec:10}));`;
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      intent: "Upload my receipt and download the statement",
+      input: { receipt: pathToFileURL(file).href },
+      turns: [
+        // The host checks every authored file, so each refused probe is removed before the next.
+        () => patch({ "explore/upload.mjs": uploadReadback }),
+        () => [call("execute", { ...act("explore/upload.mjs"), purpose: "explore" }, "upload")],
+        () => [removal("explore/upload.mjs")],
+        () => patch({ "explore/download.mjs": downloadReadback }),
+        () => [call("execute", { ...act("explore/download.mjs"), purpose: "explore" }, "download")],
+        () => [removal("explore/download.mjs")],
+        () => patch({ "explore/look.mjs": look }),
+        () => [call("execute", { ...act("explore/look.mjs"), purpose: "explore" }, "look")],
+      ],
+    });
+    // Both read-backs were refused by the host before review, and neither file reached the model.
+    expect(JSON.stringify(toolResult(last, "upload"))).toContain("reads an input's files");
+    expect(JSON.stringify(toolResult(last, "download"))).toContain("handles a download");
+    const transcript = JSON.stringify(last?.input);
+    expect(transcript).not.toContain("Receipt 1042");
+    expect(transcript).not.toContain("2026-01-02,12.50");
+    const reviewed = guardian.reviews.map((review) =>
+      String((review.input["submitted_call"] as Record<string, unknown>)["entrypoint"]),
+    );
+    expect(reviewed).toEqual(["operation/explore/look.mjs"]);
+    // Guardian's own rules for the step it reviewed cover file handles and read-backs.
+    const instructions = guardian.reviews[0]?.instructions ?? "";
+    expect(instructions).toContain("{{file.<id>}}");
+    expect(instructions).toContain("files.place");
+    expect(site.received).toEqual([]);
+  } finally {
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });

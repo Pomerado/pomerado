@@ -166,19 +166,32 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
     // The host refuses a file with a `FileRefused:<reason>` code; anything else is unavailable.
     const fileRefusal = (error: Error) => {
       const code = "code" in error && typeof error.code === "string" ? error.code : "";
-      const reason = Schema.decodeUnknownOption(FileRefusalReason)(code.split(":")[1]);
-      return new FileRefused({ reason: reason._tag === "Some" ? reason.value : "unavailable" });
+      const [, named, sent] = code.split(":");
+      const reason = Schema.decodeUnknownOption(FileRefusalReason)(named);
+      return new FileRefused({
+        reason: reason._tag === "Some" ? reason.value : "unavailable",
+        // Only a refusal the host says came before setting the input sent nothing.
+        ...(reason._tag === "Some" && sent !== "dispatched" ? {} : { dispatched: true }),
+      });
     };
     return yield* executeKernelOperation(operation, start.input, {
       kernel,
       ...(start.files === true && start.offline !== true
         ? {
             files: {
+              // A build's step counts as possibly sent once a placement set, or may have set,
+              // the input; a refusal before that reached no page.
               place: (request) =>
-                (atFirstCall ? journal.enteringDispatch : Effect.void).pipe(
-                  Effect.zipRight(call({ kind: "file_place", ...request })),
+                call({ kind: "file_place", ...request }).pipe(
                   Effect.flatMap((value) => Schema.decodeUnknown(PlacedFile)(value)),
                   Effect.mapError((error) => fileRefusal(localError(error))),
+                  Effect.tapBoth({
+                    onSuccess: () => (atFirstCall ? journal.enteringDispatch : Effect.void),
+                    onFailure: (refused) =>
+                      atFirstCall && refused.dispatched === true
+                        ? journal.enteringDispatch
+                        : Effect.void,
+                  }),
                 ),
               arm: () =>
                 call({ kind: "file_arm" }).pipe(

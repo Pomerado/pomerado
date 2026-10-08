@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,27 @@ export const localFileReferences = (value: unknown): ReadonlySet<string> => {
   return found;
 };
 
+/**
+ * A file's bytes, reading at most one more than the `size` it had: a file that grew since is
+ * refused rather than read whole.
+ */
+const readAtMost = async (path: string, size: number) => {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(size + 1);
+    let read = 0;
+    while (read < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, read, buffer.length - read, read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    if (read !== size) throw new Error("The file changed while it was read");
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, size);
+  } finally {
+    await handle.close();
+  }
+};
+
 /** The regular file a local reference names, with the type its name implies. */
 export const openLocalFile = (reference: string): Effect.Effect<SourceFile, Error> =>
   Effect.gen(function* () {
@@ -50,7 +71,7 @@ export const openLocalFile = (reference: string): Effect.Effect<SourceFile, Erro
       name,
       media_type: typeOfName(name),
       size: status.size,
-      read: localPromise(() => readFile(path)),
+      read: localPromise(() => readAtMost(path, status.size)),
     };
   });
 
@@ -164,7 +185,7 @@ export const makeLocalFileHook = (options: {
           if (status.size > maxBytes) return { tooLarge: true as const };
           return {
             name: saved.name,
-            bytes: yield* localPromise(() => readFile(path)),
+            bytes: yield* localPromise(() => readAtMost(path, status.size)),
             ...(saved.contentType === undefined ? {} : { media_type: saved.contentType }),
           };
         }),

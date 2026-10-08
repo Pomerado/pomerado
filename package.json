@@ -307,6 +307,11 @@
       "import": "./dist/typescript/src/mint/file-handles.js",
       "default": "./dist/typescript/src/mint/file-handles.js"
     },
+    "./core/mint/file-readback": {
+      "types": "./dist/typescript/src/mint/file-readback.d.ts",
+      "import": "./dist/typescript/src/mint/file-readback.js",
+      "default": "./dist/typescript/src/mint/file-readback.js"
+    },
     "./core/mint/secret-handles": {
       "types": "./dist/typescript/src/mint/secret-handles.d.ts",
       "import": "./dist/typescript/src/mint/secret-handles.js",

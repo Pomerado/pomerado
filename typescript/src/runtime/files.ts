@@ -125,8 +125,13 @@ export const FileRefusalReason = Schema.Literal(
 );
 export type FileRefusalReason = typeof FileRefusalReason.Type;
 
+/**
+ * The host refused a file. `dispatched` is set when the refusal came after the host set the file
+ * input, or may have, so an upload may have started; every other refusal reached no page.
+ */
 export class FileRefused extends Data.TaggedError("FileRefused")<{
   readonly reason: FileRefusalReason;
+  readonly dispatched?: true;
 }> {
   override get message() {
     return `The host refused the file: ${this.reason}`;
@@ -134,17 +139,33 @@ export class FileRefused extends Data.TaggedError("FileRefused")<{
 }
 
 /**
+ * Which file input `files.place` fills, as data the host turns into a locator on the page: the
+ * input's accessible label (`getByLabel`, exact unless `exact` is false), or a Playwright selector
+ * such as `input[type=file][name=receipt]`. Never code.
+ */
+export type FileField =
+  | { readonly label: string; readonly exact?: boolean }
+  | { readonly selector: string };
+export const FileField = Schema.Union(
+  Schema.Struct({
+    label: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1000)),
+    exact: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  }),
+  Schema.Struct({ selector: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000)) }),
+);
+
+/**
  * The run's file service, as the runner binds it into a script's context. The host implements it
  * outside the script's process (`makeRunFiles`), so bytes never reach the script.
  */
 export interface FileChannel {
   /**
-   * Puts the file `reference` names into the one file input `field` locates, a Playwright
-   * locator expression on Kernel's `page`, and reports what the input now holds.
+   * Puts the file `reference` names into the one file input `field` names, and reports what the
+   * input now holds.
    */
   readonly place: (request: {
     readonly reference: string;
-    readonly field: string;
+    readonly field: FileField;
     readonly timeoutSec: number;
   }) => Effect.Effect<PlacedFile, FileRefused>;
   /** Starts capturing downloads; the returned slot names this capture. */
@@ -160,17 +181,18 @@ export interface FileChannel {
 export interface ScriptFiles {
   /**
    * Puts the caller's file into one file input on the tool's site and returns what the input now
-   * holds. `reference` is the input's `FileInput` value, passed as given. `field` is a Playwright
-   * locator expression on `page` for the `<input type="file">`, such as
-   * `'page.getByLabel("Receipt", { exact: true })'`; a hidden input is fine. The host refuses a
-   * reference that is not one of this run's files, a file over its caps, bytes that are not of
-   * the declared type or that the input's `accept` refuses, a program, a field that is not one
-   * file input, and a page that is not on the tool's site. Choosing a file can start an upload,
-   * so a run that places a file may have sent it.
+   * holds. `reference` is the input's `FileInput` value, passed as given. `field` names the
+   * `<input type="file">` as data, `{ label: "Receipt" }` or `{ selector: "input[name=receipt]" }`;
+   * a hidden input is fine. In one page call the host finds that element, checks it is one file
+   * input whose frame is on the tool's site and whose `accept` takes the file, and only then sets
+   * it. It refuses a reference that is not one of this run's files, a file over its caps, bytes
+   * that are not of the declared type, a program, and each failed check; a refusal the caller's
+   * file caused throws `InvalidInput`, any other `OperationFailure`. Choosing a file can start an
+   * upload, so a run that placed a file may have sent it. Never read a placed file back.
    */
   readonly place: (
     reference: string,
-    options: { readonly field: string; readonly timeoutSec?: number },
+    options: { readonly field: FileField; readonly timeoutSec?: number },
   ) => Promise<PlacedFile>;
   /**
    * Runs `trigger`, the script's own execute calls that make the page start one download (a

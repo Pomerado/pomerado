@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Effect, Either, Ref, Schema } from "effect";
 import type { BrowserExecute } from "./browser-execution.js";
-import { accepts, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
+import { acceptsSource, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
 import {
   defaultFileLimits,
+  FileField,
   FileName,
   FileRefused,
   isFileObject,
@@ -15,7 +16,7 @@ import {
   type FileRefusalReason,
   type PlacedFile,
 } from "./files.js";
-import { sameSite } from "./same-site.js";
+import { siteDomain } from "./same-site.js";
 
 /** A caller's file as the host found it: its metadata now, its bytes when read. */
 export interface SourceFile {
@@ -93,6 +94,7 @@ export interface RunFiles extends FileChannel {
   readonly checkOutput: (output: unknown) => Effect.Effect<void, FileRefused>;
 }
 
+/** A refusal before any page call: nothing reached the page. */
 const refuse = (reason: FileRefusalReason) => Effect.fail(new FileRefused({ reason }));
 
 /** A name a browser can be given: the host's, else a plain fallback. */
@@ -107,42 +109,55 @@ const serverType = (contentType: string | undefined) => {
     : undefined;
 };
 
-const FieldFacts = Schema.Union(
-  Schema.Struct({ found: Schema.Number }),
+const Placement = Schema.Union(
   Schema.Struct({
-    found: Schema.Literal(1),
-    file: Schema.Boolean,
-    accept: Schema.String,
-    url: Schema.String,
+    refused: Schema.Literal("field_not_found", "not_file_input", "other_site", "not_accepted"),
+  }),
+  Schema.Struct({
+    chosen: Schema.Array(Schema.Struct({ name: Schema.String, size: Schema.Number })),
   }),
 );
-const Chosen = Schema.Array(Schema.Struct({ name: Schema.String, size: Schema.Number }));
 
-/** Page code that finds the one element `field` locates and reports what it is and where. */
-const inspectFieldCode = (field: string, timeoutMs: number) => `
-const field = (${field});
-try { await field.first().waitFor({ state: "attached", timeout: ${timeoutMs} }); } catch { return { found: 0 }; }
-const found = await field.count();
-if (found !== 1) return { found };
-return await field.evaluate((node) => ({
-  found: 1,
-  file: node.tagName === "INPUT" && node.type === "file",
-  accept: node.getAttribute("accept") ?? "",
-  url: node.ownerDocument.location.href,
-}));`;
+/** The page locator a field names, written by the host from data, never the script's code. */
+const fieldLocator = (field: FileField) =>
+  "label" in field
+    ? `page.getByLabel(${JSON.stringify(field.label)}, { exact: ${field.exact !== false} })`
+    : `page.locator(${JSON.stringify(field.selector)})`;
 
-/** Page code that sets the file input to the placed file and reads back what it holds. */
-const setFieldCode = (field: string, path: string, timeoutMs: number) => `
-const field = (${field});
-await field.setInputFiles(${JSON.stringify(path)}, { timeout: ${timeoutMs} });
-return await field.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size })));`;
-
-const onSite = (siteOrigin: string | undefined, address: string) => {
-  const url = URL.parse(address);
-  return (
-    siteOrigin !== undefined && url !== null && (url.origin === siteOrigin || sameSite(siteOrigin, url))
-  );
-};
+/**
+ * Page code that finds the one element `field` names and, only when it is a file input whose
+ * frame is on the site and whose `accept` takes the file, sets that same element to `path`, then
+ * reads back the names and sizes it holds. The frame's address comes from Playwright, not from
+ * the page. A frame is on the site at the site's own origin, or on an https host of its
+ * registrable domain.
+ */
+const placeCode = (options: {
+  readonly field: FileField;
+  readonly path: string;
+  readonly file: { readonly name: string; readonly mediaType: string };
+  readonly siteOrigin: string;
+  readonly siteDomain: string | undefined;
+  readonly timeoutMs: number;
+}) => `
+const accepts = ${acceptsSource};
+const field = ${fieldLocator(options.field)};
+try { await field.first().waitFor({ state: "attached", timeout: ${options.timeoutMs} }); } catch { return { refused: "field_not_found" }; }
+if ((await field.count()) !== 1) return { refused: "field_not_found" };
+const element = await field.elementHandle({ timeout: ${options.timeoutMs} });
+try {
+  const facts = await element.evaluate((node) => ({ file: node instanceof HTMLInputElement && node.type === "file", accept: node.getAttribute("accept") ?? "" }));
+  if (!facts.file) return { refused: "not_file_input" };
+  const frame = await element.ownerFrame();
+  const address = (() => { try { return new URL(frame === null ? "" : frame.url()); } catch { return null; } })();
+  const domain = ${JSON.stringify(options.siteDomain ?? null)};
+  const onSite = address !== null && (address.origin === ${JSON.stringify(options.siteOrigin)} || (domain !== null && address.protocol === "https:" && (address.hostname === domain || address.hostname.endsWith("." + domain))));
+  if (!onSite) return { refused: "other_site" };
+  if (!accepts(facts.accept, ${JSON.stringify(options.file)})) return { refused: "not_accepted" };
+  await element.setInputFiles(${JSON.stringify(options.path)}, { timeout: ${options.timeoutMs} });
+  return { chosen: await element.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size }))) };
+} finally {
+  await element.dispose();
+}`;
 
 /**
  * One run's files over a host's hook. A script's reference is resolved by `resolve`, which names
@@ -163,13 +178,17 @@ export const makeRunFiles = (options: {
     const used = yield* Ref.make({ files: 0, bytes: 0 });
     const collected = yield* Ref.make<readonly FileObject[]>([]);
     const slots = new Set<string>();
-    /** Counts a file against the run's caps, or refuses it when it does not fit. */
-    const reserve = (size: number) =>
-      Ref.modify(used, (current) =>
-        current.files + 1 > limits.runFiles || current.bytes + size > limits.runBytes
-          ? [false, current]
-          : [true, { files: current.files + 1, bytes: current.bytes + size }],
-      ).pipe(Effect.flatMap((fits) => (fits ? Effect.void : refuse("run_limit"))));
+    /** Whether one more file of `size` bytes fits the run's caps. */
+    const fits = (size: number) =>
+      Ref.get(used).pipe(
+        Effect.map(
+          (current) =>
+            current.files + 1 <= limits.runFiles && current.bytes + size <= limits.runBytes,
+        ),
+      );
+    /** Counts a placed or collected file against the run's caps. */
+    const count = (size: number) =>
+      Ref.update(used, (current) => ({ files: current.files + 1, bytes: current.bytes + size }));
     const run = (code: string, timeoutSec: number) =>
       options.execute(code, timeoutSec).pipe(
         Effect.flatMap((answer) =>
@@ -178,20 +197,18 @@ export const makeRunFiles = (options: {
       );
     const place: RunFiles["place"] = ({ reference, field, timeoutSec }) =>
       Effect.gen(function* () {
+        // The field is data the host writes into its own locator; anything else is refused.
+        if (Either.isLeft(Schema.decodeUnknownEither(FileField)(field)))
+          return yield* refuse("field_not_found");
         const resolved = options.resolve(reference);
         if (resolved === undefined) return yield* refuse("unknown_reference");
+        const siteOrigin = options.siteOrigin;
+        if (siteOrigin === undefined) return yield* refuse("other_site");
         const source = yield* options.hook
           .open(resolved)
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         if (source.size > limits.fileBytes) return yield* refuse("too_large");
-        const timeoutMs = timeoutSec * 1000;
-        const facts = yield* run(inspectFieldCode(field, timeoutMs), timeoutSec + 5).pipe(
-          Effect.flatMap(Schema.decodeUnknown(FieldFacts)),
-          Effect.mapError(() => new FileRefused({ reason: "field_not_found" })),
-        );
-        if (!("file" in facts)) return yield* refuse("field_not_found");
-        if (!facts.file) return yield* refuse("not_file_input");
-        if (!onSite(options.siteOrigin, facts.url)) return yield* refuse("other_site");
+        if (!(yield* fits(source.size))) return yield* refuse("run_limit");
         const bytes = yield* source.read.pipe(
           Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
         );
@@ -199,18 +216,31 @@ export const makeRunFiles = (options: {
         const name = safeName(source.name, "file");
         if (isProgram(bytes, name)) return yield* refuse("executable");
         if (!bytesMatchType(bytes, source.media_type)) return yield* refuse("type_mismatch");
-        if (!accepts(facts.accept, { name, mediaType: source.media_type }))
-          return yield* refuse("not_accepted");
-        yield* reserve(bytes.byteLength);
         const path = yield* options.hook
           .writeToBrowser({ name, bytes })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
-        const chosen = yield* run(setFieldCode(field, path, timeoutMs), timeoutSec + 5).pipe(
-          Effect.flatMap(Schema.decodeUnknown(Chosen)),
-          Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
+        // From here the page call may set the input, so a failure may have started an upload.
+        const sent = (reason: FileRefusalReason) =>
+          Effect.fail(new FileRefused({ reason, dispatched: true }));
+        const placement = yield* run(
+          placeCode({
+            field,
+            path,
+            file: { name, mediaType: source.media_type },
+            siteOrigin,
+            siteDomain: siteDomain(siteOrigin),
+            timeoutMs: timeoutSec * 1000,
+          }),
+          timeoutSec * 2 + 5,
+        ).pipe(
+          Effect.flatMap(Schema.decodeUnknown(Placement)),
+          Effect.catchAll(() => sent("unavailable")),
         );
-        if (!chosen.some((file) => file.name === name && file.size === bytes.byteLength))
-          return yield* refuse("unavailable");
+        // A check that failed in the page refused before the input was set.
+        if ("refused" in placement) return yield* refuse(placement.refused);
+        if (!placement.chosen.some((file) => file.name === name && file.size === bytes.byteLength))
+          return yield* sent("unavailable");
+        yield* count(bytes.byteLength);
         return {
           name,
           media_type: source.media_type,
@@ -234,7 +264,8 @@ export const makeRunFiles = (options: {
         if ("tooLarge" in taken) return yield* refuse(room < limits.fileBytes ? "run_limit" : "too_large");
         const name = safeName(taken.name, "download");
         if (isProgram(taken.bytes, name)) return yield* refuse("executable");
-        yield* reserve(taken.bytes.byteLength);
+        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuse("run_limit");
+        yield* count(taken.bytes.byteLength);
         // The bytes decide the type when they prove one, else the server's; never the name.
         const media_type =
           sniffedType(taken.bytes) ?? serverType(taken.media_type) ?? "application/octet-stream";

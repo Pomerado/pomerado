@@ -100,6 +100,8 @@ export interface RecordedReview {
   readonly input: Readonly<Record<string, unknown>>;
   readonly kind: "question" | "update" | "execution" | "publication";
   readonly reads: Readonly<Record<string, unknown>>[];
+  /** The reviewer's system instructions. */
+  readonly instructions: string;
 }
 /** A publication review's file index. */
 export const publicationOf = (review: RecordedReview) =>
@@ -159,6 +161,7 @@ export const recordingGuardian = (
         input,
         kind: question ? "question" : update ? "update" : publication ? "publication" : "execution",
         reads: [],
+        instructions: request.systemInstructions ?? "",
       });
     const review = reviews.at(-1);
     if (review === undefined) throw new Error("No review recorded");

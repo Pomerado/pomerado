@@ -182,7 +182,9 @@ const handleRequest = (
       // The refusal's reason crosses to the script as its code; nothing of the file does.
       return answer.pipe(
         Effect.mapError((refused) =>
-          Object.assign(new Error(refused.message), { code: `FileRefused:${refused.reason}` }),
+          Object.assign(new Error(refused.message), {
+            code: `FileRefused:${refused.reason}${refused.dispatched === true ? ":dispatched" : ""}`,
+          }),
         ),
       );
     }

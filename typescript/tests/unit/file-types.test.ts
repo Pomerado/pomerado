@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   accepts,
+  acceptsSource,
   bytesMatchType,
   isProgram,
   sniffedType,
@@ -81,4 +82,14 @@ it("names give a media type, else the generic octet stream", () => {
   expect(typeOfName("statement.CSV")).toBe("text/csv");
   expect(typeOfName("archive")).toBe("application/octet-stream");
   expect(typeOfName(".pdf")).toBe("application/octet-stream");
+});
+
+it("the page code's accept check is the same function", () => {
+  const pageAccepts = new Function(`return (${acceptsSource});`)() as typeof accepts;
+  for (const [accept, name, mediaType] of [
+    [".pdf", "a.PDF", "application/pdf"],
+    ["image/*", "a.pdf", "application/pdf"],
+    ["text/plain", "a.txt", "text/plain; charset=utf-8"],
+  ] as const)
+    expect(pageAccepts(accept, { name, mediaType })).toBe(accepts(accept, { name, mediaType }));
 });

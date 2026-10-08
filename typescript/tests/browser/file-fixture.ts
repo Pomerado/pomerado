@@ -9,8 +9,10 @@ export const statementSha256 = createHash("sha256").update(statement).digest("he
 /**
  * A site with a file input that uploads the chosen file and shows what the server received (its
  * name, size and sha256), and a link that downloads a statement. `received` lists each upload.
+ * Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
+ * embeds that address in an iframe.
  */
-export const startFileSite = async () => {
+export const startFileSite = async (options: { readonly frame?: string } = {}) => {
   const received: { readonly name: string; readonly size: number; readonly sha256: string }[] = [];
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -36,12 +38,24 @@ export const startFileSite = async () => {
         return;
       }
       response.setHeader("Content-Type", "text/html");
+      if (url.pathname === "/drop") {
+        response.end(`<title>Drop</title>
+<label>Drop <input type="file"></label>
+<script>
+document.querySelector("input").addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  fetch("/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+});
+</script>`);
+        return;
+      }
       response.end(`<title>Documents</title>
 <label>Receipt <input type="file" accept=".pdf,.txt,text/plain"></label>
 <button type="button" id="upload">Upload</button>
 <output id="received"></output>
 <label>Notes <input type="text"></label>
 <a href="/statement.csv">Download statement</a>
+${options.frame === undefined ? "" : `<iframe src="${options.frame}"></iframe>`}
 <script>
 document.getElementById("upload").addEventListener("click", async () => {
   const file = document.querySelector("input[type=file]").files[0];
@@ -68,11 +82,9 @@ document.getElementById("upload").addEventListener("click", async () => {
 
 /**
  * A write tool that downloads the statement, then uploads its receipt and reads back what the site
- * received, returning both. `field` is the locator it places the receipt into.
+ * received, returning both. `field` names the input it places the receipt into.
  */
-export const receiptTool = (
-  field = 'page.getByLabel("Receipt", { exact: true })',
-) => `import { Schema } from "effect";
+export const receiptTool = (field: unknown = { label: "Receipt" }) => `import { Schema } from "effect";
 import { defineOperation, FileInput, FileOutput } from "../runtime/index.js";
 export default defineOperation({name:"send_receipt",input:Schema.Struct({receipt:FileInput}),output:Schema.Struct({received:Schema.String,statement:FileOutput}),write:{confirmation:"readback",commits:["upload"]}},
 async ({kernel,sessionId,input,files,enteringCommit,verified,errors}) => {

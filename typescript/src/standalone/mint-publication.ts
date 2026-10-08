@@ -18,6 +18,7 @@ import { contractExtractionNote } from "../mint/review-context.js";
 import { oneTimeLoginUrlParameters, refuseCredentialParts } from "../mint/login-url.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
 import { holdsFileHandle } from "../mint/file-handles.js";
+import { fileReadback } from "../mint/file-readback.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
 import { checkWriteSession } from "../mint/write-session.js";
@@ -161,6 +162,12 @@ export const mintPublication =
         if ([...runnable.values()].some(holdsFileHandle))
           return yield* Effect.fail(
             new MintFailure({ code: "PublicationUnavailable", reason: "file_handle" }),
+          );
+        // Nor code that moves or reads a file outside the host's file service.
+        const readback = fileReadback(runnable, state.fileHandles.files.length > 0);
+        if (readback !== undefined)
+          return yield* Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "file_readback" }),
           );
         yield* context.review({
           entrypoint: `operation/${publication.entrypoint}`,

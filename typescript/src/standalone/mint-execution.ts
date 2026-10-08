@@ -23,6 +23,7 @@ import { keepingAcceptedConfirms, makeDialogDecider } from "../inputs/dialog.js"
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { fileHandleRefusal } from "../mint/file-handles.js";
+import { fileReadbackRefusal } from "../mint/file-readback.js";
 import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
@@ -365,6 +366,7 @@ const authoredExecution = (
     const refusal =
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
       fileHandleRefusal(files, execution) ??
+      fileReadbackRefusal(files, execution, state.fileHandles.files.length > 0) ??
       replayedWriteStep(execution, files, writeSession.steps);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
