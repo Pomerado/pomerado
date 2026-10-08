@@ -1037,7 +1037,6 @@ export interface MintHarnessSnapshot {
   readonly providerUnavailableRetries: number;
   /** When the current run of execution-provider outages began, in epoch milliseconds. */
   readonly providerOutageStartedAt?: number;
-  readonly diagnosticRetentionRetries: number;
   readonly executionClosed: boolean;
   readonly captchaChecks: number;
   /**
@@ -1135,7 +1134,8 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
   inputFeedbackCoverage: Schema.String,
   providerUnavailableRetries: Schema.NonNegativeInt,
   providerOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
-  diagnosticRetentionRetries: Schema.NonNegativeInt,
+  // An older checkpoint may still carry diagnosticRetentionRetries, which nothing
+  // reads any more; decoding drops it as an excess field.
   executionClosed: Schema.Boolean,
   captchaChecks: Schema.NonNegativeInt,
   writeUpgradeDeclined: Schema.optionalWith(Schema.Literal(true), { exact: true }),

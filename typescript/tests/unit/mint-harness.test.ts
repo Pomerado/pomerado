@@ -5,11 +5,15 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Clock, Effect, Either, Fiber, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { MintFailure, MintRequest, MintServices } from "../../src/mint/contracts.js";
+import {
+  MintFailure,
+  MintHarnessSnapshot,
+  MintRequest,
+  MintServices,
+} from "../../src/mint/contracts.js";
 import type {
   AgentInputRequest,
   ExecutionEvidence,
-  MintHarnessSnapshot,
   MintTurn,
   PublicationDecision,
 } from "../../src/mint/contracts.js";
@@ -504,7 +508,6 @@ it.each([
       "source_screening",
       "schema_screening",
       "evidence_screening",
-      "path_screening",
       "source_read",
     ] as const
   ).map((reason) => ({
@@ -515,6 +518,14 @@ it.each([
     retry: { status: "not_published", reason, retryable: true },
     exhausted: { status: "not_published", reason, retryable: false },
   })),
+  {
+    kind: "publication capture",
+    exampleFirst: true,
+    call: (turn: MintTurn) => turn.actions.finish(publication),
+    failure: new MintFailure({ code: "CaptureUnavailable" }),
+    retry: { status: "not_published", code: "CaptureUnavailable", retryable: true },
+    exhausted: { status: "not_published", code: "CaptureUnavailable", retryable: false },
+  },
 ])(
   "offers a retry through a $kind outage until it outlasts its budget, then ends",
   async ({ exampleFirst, call, failure, retry, exhausted }) => {
@@ -554,6 +565,63 @@ it.each([
     expect(calls).toBe(5);
   },
 );
+
+// An older checkpoint still carries the retired retention counter; a takeover restores it.
+it("decodes an older harness checkpoint that still carries its retention counter", () => {
+  const checkpoint = {
+    executions: [],
+    purposes: [],
+    diagnostics: [],
+    exampleClaimed: false,
+    writeSession: "none",
+    unavailableOutputRefusals: 0,
+    unavailableCauseRecorded: false,
+    reviewUnavailableRetries: { execution: 0, publication: 0, question: 0 },
+    destinationEvidenceRefusals: 0,
+    inputFeedbackRounds: 0,
+    inputFeedbackPublicTool: false,
+    inputFeedbackCoverage: "",
+    providerUnavailableRetries: 0,
+    diagnosticRetentionRetries: 1,
+    executionClosed: false,
+    captchaChecks: 0,
+  };
+  const decoded = Schema.decodeUnknownSync(MintHarnessSnapshot)(checkpoint);
+  expect(decoded).not.toHaveProperty("diagnosticRetentionRetries");
+  expect(decoded).toMatchObject({ exampleClaimed: false, writeSession: "none" });
+});
+
+// A source path the host refused to publish, such as one holding a credential, is the minter's to
+// fix: never an outage to retry until its budget ends the build.
+it("keeps a path screening refusal fixable, never a retryable outage", async () => {
+  const time = steppedClock();
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const refused: unknown = JSON.parse(yield* turn.actions.finish(publication));
+          expect(refused).toMatchObject({ status: "not_published", reason: "path_screening" });
+          expect(refused).not.toHaveProperty("retryable", true);
+          expect(turn.isComplete()).toBe(false);
+          time.advance(20 * 60_000);
+        }
+      }).pipe(Effect.withClock(time.clock)),
+    {
+      publish: () =>
+        Effect.suspend(() => {
+          publications++;
+          return Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "path_screening" }),
+          );
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.hostFailure).toBeUndefined();
+  expect(publications).toBe(2);
+});
 
 // A completed review starts the outage budget again; a host refusal that reaches no review does not.
 it("restarts the review outage budget only when a review completes", async () => {
@@ -827,6 +895,118 @@ it.each([
     ]);
   },
 );
+
+// A finish_build the host refuses before publication runs is a decision too.
+it.each([
+  { refusal: "an invalid request", input: { ...publication, metadata: undefined }, code: "InvalidRequest" },
+  { refusal: "an entrypoint outside the workspace", input: { ...publication, entrypoint: "../outside.ts" }, code: "ScopeDenied" },
+] as const)("records $refusal as a refused publication decision", async ({ input, code }) => {
+  const recorded: PublicationDecision[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        expect(yield* Effect.either(turn.actions.finish(input))).toMatchObject({
+          _tag: "Left",
+          left: { code },
+        });
+      }),
+    {
+      publicationDecisions: {
+        record: (decision) =>
+          Effect.sync(() => {
+            recorded.push(decision);
+          }),
+        list: Effect.sync(() => recorded),
+      },
+    },
+  );
+  await f.run();
+  expect(recorded).toEqual([
+    expect.objectContaining({ outcome: "refused", code, recovery: "correct_source" }),
+  ]);
+});
+
+// The host's fallback publication after unresolved input feedback is a decision as well.
+it("records the end-of-run fallback publication of unresolved input feedback", async () => {
+  const recorded: PublicationDecision[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publicationDecisions: {
+        record: (decision) =>
+          Effect.sync(() => {
+            recorded.push(decision);
+          }),
+        list: Effect.sync(() => recorded),
+      },
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "ReviewDenied",
+            review: {
+              outcome: "deny",
+              reason: "input_feedback",
+              rationale: "An account's own value is listed as an option.",
+              findings: [],
+            },
+          }),
+        ),
+      inputFeedbackFallback: {
+        kept: () => true,
+        publish: Effect.succeed({
+          publicationRef: "flagged-private",
+          categories: [],
+          diagnostics: [],
+        }),
+        flagPublished: Effect.void,
+      },
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published", publicationRef: "flagged-private" });
+  expect(recorded.map(({ outcome, recovery }) => [outcome, recovery])).toEqual([
+    ["refused", "guardian_feedback"],
+    ["published", "none"],
+  ]);
+});
+
+// A host hook that throws is a recorded gap too, never a crash of the build.
+it("records a publication decision log that throws as a gap and still publishes", async () => {
+  let reviewed = false;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish({ ...publication, executionId: "missing" });
+        expect(JSON.parse(yield* turn.actions.requestInput(textQuestion("Which report?", "report")))).toMatchObject({
+          status: "answered",
+        });
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publicationDecisions: {
+        record: () => {
+          throw new Error("record crashed");
+        },
+        list: Effect.die(new Error("list crashed")),
+      },
+      reviewQuestion: () =>
+        Effect.sync(() => {
+          reviewed = true;
+          return { outcome: "allow_business" as const, rationale: "Allowed." };
+        }),
+      askInput: () => Effect.succeed({ report: { type: "text", value: "Monthly." } }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  expect(reviewed).toBe(true);
+  expect(outcome.diagnostics.join("\n")).toContain("diagnostic_gap");
+});
 
 // Evidence the host could not keep is a gap: the publication decision still stands.
 it("records a publication decision the host could not keep as a gap and still publishes", async () => {
@@ -1636,6 +1816,7 @@ it("keeps the build open after a failed receipt the host did not mark terminal",
   const outcome = await f.run();
   expect(reached).toBe(true);
   expect(outcome.executions).toHaveLength(1);
+  expect(outcome.executions[0]).toMatchObject({ status: "failed", effect: "possible" });
   expect(executions).toBe(1);
   expect(publications).toBe(0);
 });

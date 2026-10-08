@@ -289,9 +289,10 @@ const hostRefusalDecision = (
   reason: string,
   executionId: string | undefined,
   write: boolean,
+  code: MintFailure["code"] = "PublicationUnavailable",
 ): Omit<PublicationDecision, "decisionId" | "decidedAt"> => ({
   outcome: "refused",
-  code: "PublicationUnavailable",
+  code,
   reason,
   ...(executionId === undefined ? {} : { executionId }),
   failedChecks: [reason],
@@ -870,8 +871,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // outlasts its budget with no execution completing closes live execution.
       let providerUnavailableRetries = recovered?.providerUnavailableRetries ?? 0;
       let providerOutageStartedAt = recovered?.providerOutageStartedAt;
-      // Diagnostic retention gaps so far, recorded for diagnosis only: a gap never ends the build.
-      let diagnosticRetentionRetries = recovered?.diagnosticRetentionRetries ?? 0;
       const reviewOutageBudgetMs = dependencies.reviewOutageBudgetMs ?? 15 * 60_000;
       const unavailableHostTerminal = () => {
         const cause = dependencies.unavailableHostCause?.();
@@ -920,13 +919,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }
         const outcome = yield* Effect.either(fallback.publish);
         if (outcome._tag === "Left") {
+          terminal = { build: "incomplete", summary: unresolvedInputFeedbackSummary(outcome.left) };
+          yield* recordDecision({
+            outcome: "refused",
+            code: outcome.left.code,
+            reason: "input_feedback_unresolved",
+            failedChecks: refusalChecks(outcome.left),
+            recovery: "ended",
+          });
           yield* diagnose({
             phase: "publication",
             reason: "input_feedback_unresolved",
             code: outcome.left.code,
             failureReason: outcome.left.reason,
           });
-          terminal = { build: "incomplete", summary: unresolvedInputFeedbackSummary(outcome.left) };
           return false;
         }
         const published = outcome.right;
@@ -951,6 +957,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           publicationRef: published.publicationRef,
           summary: `${inputFeedbackCoverage} Published for this account only and flagged: Guardian's input feedback (${published.categories.join(", ")}) was not resolved.`,
         };
+        yield* recordDecision({
+          outcome: "published",
+          code: "Published",
+          failedChecks: [],
+          recovery: "none",
+        });
         return true;
       });
       // Publication reads workspace files and retained results, never the browser or executor.
@@ -1275,13 +1287,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ),
           Effect.ignore,
         );
+      /** A host evidence call whose defect, such as a thrown error, is a failure like any other. */
+      const hostEvidence = <A>(evidence: Effect.Effect<A, MintFailure>) =>
+        evidence.pipe(
+          Effect.catchAllDefect((error) =>
+            Effect.fail(
+              new MintFailure({
+                code: "Unavailable",
+                failureDetail: failureDetail("mint_host_dependency_failed", {
+                  operation: "publicationDecisions",
+                  error,
+                }),
+              }),
+            ),
+          ),
+        );
       /**
        * The build's latest publication refusals the host holds, as a question or blocked-explanation
        * review's option, so Guardian reads what the host refused. A list the host could not read is
        * a recorded gap, and the review goes on without it.
        */
-      const publicationRefusals = Effect.suspend(
-        () => dependencies.publicationDecisions?.list ?? Effect.succeed([]),
+      const publicationRefusals = hostEvidence(
+        Effect.suspend(() => dependencies.publicationDecisions?.list ?? Effect.succeed([])),
       ).pipe(
         Effect.map((decisions) =>
           decisions
@@ -1295,6 +1322,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ),
         Effect.map((refusals) => (refusals.length === 0 ? {} : { publicationDecisions: refusals })),
       );
+      /**
+       * Keeps one publication decision through the host's hook. A decision that ended the build
+       * leaves nothing to recover. Evidence the host could not keep, a thrown error included, is a
+       * recorded gap.
+       */
+      const recordDecision = (pending: Omit<PublicationDecision, "decisionId" | "decidedAt">) =>
+        Effect.gen(function* () {
+          const decision: PublicationDecision = {
+            ...pending,
+            decisionId: randomUUID(),
+            decidedAt: yield* Clock.currentTimeMillis,
+            ...(pending.outcome === "refused" && terminal !== undefined
+              ? { recovery: "ended" as const }
+              : {}),
+          };
+          const log = dependencies.publicationDecisions;
+          if (log !== undefined)
+            yield* hostEvidence(Effect.suspend(() => log.record(decision))).pipe(
+              Effect.catchAll(recordDiagnosticGap("publication_decision")),
+            );
+          return decision;
+        });
       /** The decision the running `finish_build` made, recorded once it answers. */
       let pendingDecision: Omit<PublicationDecision, "decisionId" | "decidedAt"> | undefined;
       const takePendingDecision = () => {
@@ -1312,18 +1361,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const settled = yield* Effect.either(answer);
           const pending = takePendingDecision();
           if (pending === undefined) return yield* settled;
-          const decision: PublicationDecision = {
-            ...pending,
-            decisionId: randomUUID(),
-            decidedAt: yield* Clock.currentTimeMillis,
-            // A refusal that ended the build leaves nothing to recover.
-            ...(pending.outcome === "refused" && terminal !== undefined
-              ? { recovery: "ended" as const }
-              : {}),
-          };
-          yield* dependencies.publicationDecisions
-            ?.record(decision)
-            .pipe(Effect.catchAll(recordDiagnosticGap("publication_decision"))) ?? Effect.void;
+          const decision = yield* recordDecision(pending);
           if (settled._tag === "Left") return yield* settled;
           const parsed = decodeJsonObject(settled.right);
           return parsed._tag === "Left"
@@ -1700,7 +1738,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 "Guardian review did not complete and nothing was approved; this execution cannot be resubmitted.",
                 { retention: false, next: { retryable: false } },
               );
-            if (retentionFailure) diagnosticRetentionRetries += 1;
             reviewUnavailableRetries[kind] += 1;
             return reviewUnavailableAnswer(
               error,
@@ -1736,12 +1773,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       /**
        * A publication dependency the host retried and that stayed unavailable: the registry, its
-       * source store, or a screening or source read that named no file to fix.
+       * source store, or a screening or source read that named no file to fix. `path_screening`
+       * stays a refusal: it can mean a source path holds a credential, which the minter fixes.
        */
       const publicationOutage = (error: MintFailure) =>
         error.reason === "registry_unavailable" ||
         error.reason === "source_storage" ||
-        error.reason === "path_screening" ||
         error.reason === "source_read" ||
         (error.publicationBlock === undefined &&
           (error.reason === "evidence_screening" ||
@@ -2012,9 +2049,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * the build goes on. Its observations stay withheld and its effect is possible.
        */
       const diagnosticUnavailableFeedback = (error: MintFailure) =>
-        Effect.sync(() => {
-          diagnosticRetentionRetries += 1;
-          return JSON.stringify({
+        Effect.sync(() =>
+          JSON.stringify({
             status: "diagnostic_unavailable",
             code: "Unavailable",
             diagnosticRetentionReason: diagnosticRetentionReason(error),
@@ -2024,8 +2060,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             userInputRequired: false,
             notice:
               "The host could not safely retain this execution's diagnostics and recorded the gap, so no unscreened observations are available for it. The website action may have completed: treat its effect as possible and reconcile before claiming success; never repeat a claimed example. Continue the build. Site code changes, credentials and user clarification cannot repair this infrastructure failure.",
-          });
-        });
+          }),
+        );
       const reviewedExecution: typeof dependencies.reviewAndExecute = (
         submitted,
         onDispatch = Effect.void,
@@ -2512,7 +2548,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             Effect.gen(function* () {
               if (questionOnly) return yield* new MintFailure({ code: "ScopeDenied" });
               yield* active("publication");
-              const proposed = yield* decode(PublicationRequest, input);
+              const write = buildEffect === "write";
+              const proposed = yield* decode(PublicationRequest, input).pipe(
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    pendingDecision = hostRefusalDecision(
+                      "request_invalid",
+                      undefined,
+                      write,
+                      "InvalidRequest",
+                    );
+                  }),
+                ),
+              );
               yield* Effect.try({
                 try: () => relativeSourcePath(proposed.entrypoint),
                 catch: (error) =>
@@ -2527,7 +2575,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     }),
                     code: "ScopeDenied",
                   }),
-              });
+              }).pipe(
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    pendingDecision = hostRefusalDecision(
+                      "entrypoint_out_of_scope",
+                      undefined,
+                      write,
+                      "ScopeDenied",
+                    );
+                  }),
+                ),
+              );
               const evidence = executions.find(
                 (entry) => entry.executionId === proposed.executionId,
               );
@@ -2739,15 +2798,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     instruction:
                       "Publication infrastructure is unavailable. End this attempt without retrying finish_build or execution. Preserve all existing receipts and protected results; source edits or a fabricated user question cannot restore this dependency.",
                   });
-                // Capture evidence publication needs is a gap, never a reason to end the build or to
-                // run a write again.
-                if (error.code === "CaptureUnavailable")
+                // Capture evidence publication needs is a gap, never a reason to run a write again.
+                // Like any publication dependency, it may be tried again until the outage budget
+                // runs out.
+                if (error.code === "CaptureUnavailable") {
+                  const retryable = !(stopUnavailableHost() || (yield* reviewRetryExhausted()));
+                  if (!retryable)
+                    terminal ??= {
+                      build: "incomplete",
+                      hostFailure: "publication_unavailable",
+                      summary:
+                        "Not published: the capture evidence publication needs stayed unavailable. The existing execution outcomes and protected results remain retained.",
+                    };
                   return notPublished(
                     error.code,
                     error.reason,
-                    { captureGap: screenedCaptureGap(error), retryable: true },
-                    "Not published yet: the capture evidence publication needs is unavailable, and the host recorded the gap. The existing example and result remain recorded. Call finish_build again with the same executionId. If it stays unavailable, gather what publication needs through a new read-only observation; never run a write that may have committed again to regenerate capture.",
+                    { captureGap: screenedCaptureGap(error), retryable },
+                    retryable
+                      ? "Not published yet: the capture evidence publication needs is unavailable, and the host recorded the gap. The existing example and result remain recorded. Call finish_build again with the same executionId. If it stays unavailable, gather what publication needs through a new read-only observation; never run a write that may have committed again to regenerate capture."
+                      : "Not published: the capture evidence publication needs stayed unavailable through the publication outage budget. This attempt ends here; preserve the recorded receipt.",
                   );
+                }
                 if (error.code !== "PublicationUnavailable" && error.code !== "ReviewDenied")
                   return yield* error;
                 // Input feedback never fails the mint at once: the minter gets bounded rounds to
@@ -3384,7 +3455,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         inputFeedbackCoverage,
         providerUnavailableRetries,
         ...(providerOutageStartedAt === undefined ? {} : { providerOutageStartedAt }),
-        diagnosticRetentionRetries,
         executionClosed,
         captchaChecks,
         ...(writeUpgradeDeclined ? { writeUpgradeDeclined: true as const } : {}),

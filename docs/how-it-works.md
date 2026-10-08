@@ -25,16 +25,17 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 ### Failures a build survives
 
 - A diagnostic copy the host can't keep, such as an execution's diagnostics or a readable model transcript, is a recorded gap in the outcome's diagnostics. The build goes on, however many gaps there are.
-- The raw record of each model call is the one required trace. A host that keeps one through `retainRuntimeRecord` must store it before the next model call. If it can't, the attempt stops with `hostFailure: "diagnostic_retention"`.
+- The raw record of each model call is the one required trace. A host that keeps one through `retainRuntimeRecord` must store it before the next model call. If it can't, the attempt stops with `hostFailure: "diagnostic_retention"`. A host without `retainRuntimeRecord`, such as the local host, has no required trace.
 - A review whose evidence the host can't keep is a review outage. The minter may resubmit until reviews have been unavailable for the review outage budget, 15 minutes by default.
-- An execution whose capture the host can't produce or screen comes back as a capture gap: its result is withheld and its effect is possible. A publication whose capture evidence is unavailable comes back `not_published` with `retryable: true`. Neither ends the build or runs a write again.
+- An execution whose capture the host can't produce or screen comes back as a capture gap: its result is withheld and its effect is possible. A publication whose capture evidence is unavailable comes back `not_published` with `retryable: true` until the review outage budget runs out. Neither runs a write again.
 - A publication dependency that stays unavailable, such as the registry, its source store, or a screening step or source read that names no file to fix, comes back with `retryable: true` until the review outage budget runs out.
 - `report_blocked` ends the build only when Guardian allows the explanation, or when its review stays unavailable past the review outage budget, which leaves the caller only the reason's fixed sentence. An unavailable review comes back with `retryable: true` before that. When Guardian asks for a reword, the minter gets the rationale, and may revise the explanation, which Guardian reviews again, or withdraw it and go on.
 - A `contract_input_mismatch` or `contract_output_mismatch` refusal's recovery is `correct_source` in a read build and `write_completion` in a write build.
 
 ### Publication decisions
 
-- Each `finish_build` decision, refused or published, is a `PublicationDecision`: its code, reason, execution, time, failed checks and recovery path. The tool result carries its `decisionId`.
+- `path_screening` stays a refusal the minter fixes, since it can mean a source path holds a credential.
+- Each `finish_build` decision, refused or published, is a `PublicationDecision`: its code, reason, execution, time, failed checks and recovery path. The tool result carries its `decisionId`. The harness's own refusals before publication runs, such as an invalid request, and a host fallback's publication after unresolved input feedback are decisions too.
 - A host keeps them as evidence through `MintDependencies.publicationDecisions`, which records each decision and lists the build's decisions. The local host keeps them in memory for the request.
 - A question review and a blocked-explanation review get the latest refusals as `question_review.publicationDecisions`, so Guardian reads what the host refused, not only the minter's account of it.
 
