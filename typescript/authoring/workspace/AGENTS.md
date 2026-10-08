@@ -474,6 +474,8 @@ question. The host records that blocked outcome.
 
 ## Standalone workspace and tools
 
+On this host, the tool rules below replace the tool list above where they differ.
+
 Use the same canonical operation SDK and Kernel-shaped browser execute syntax. The host supplies native Playwright; the name `kernel` needs no Kernel account. Author the main operation in `src/tool.mjs` and import the SDK through the workspace README paths. Files returned by `finish_build` are the generated integration, with its input/output schemas.
 
 `read_source` reads source, installed skills and references in bounded ranges. `apply_patch` edits only authored directories. `execute` supports `liveBrowser` and `pureFiles`; every command or live execution receives fresh Guardian review. `exec_command` runs a local process over caller-owned files with an explicit environment; it is not an operating-system or network sandbox. Never use a command, Node fetch or socket to access the website; browser work stays in reviewed Playwright calls. `request_input`, `report_blocked` and `finish_build` use their existing request shapes.

@@ -367,6 +367,20 @@ it("keeps the local execution and completion summary in a host section", async (
   }
 });
 
+// The shared tool list describes another host's command sandbox; the local host's own section
+// says which description holds here.
+it("tells the local minter its own exec_command rule replaces the shared one", async () => {
+  const guide = (await renderedTexts("typescript/authoring")).get("workspace/AGENTS.md") ?? "";
+  const text = guide.replace(/\s+/g, " ");
+  const shared = "`exec_command` is offline only";
+  const leadIn =
+    "## Standalone workspace and tools On this host, the tool rules below replace the tool list above where they differ.";
+  const local = "`exec_command` runs a local process over caller-owned files";
+  expect(text.indexOf(shared)).toBeGreaterThan(0);
+  expect(text.indexOf(leadIn)).toBeGreaterThan(text.indexOf(shared));
+  expect(text.indexOf(local)).toBeGreaterThan(text.indexOf(leadIn));
+});
+
 /*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
  * the private fallback, the login URL check and recorded confirm popups, which its preamble lists
@@ -559,7 +573,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a1bdd90588c8f2689d9fd0544fa6107c27ad4aa5107df9b90a84e120d834028a", "writes"],
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
     ["50644bd49a50ca3b856d5c55e6a6ca749bd8edae5515136a9139280b26c3254c", "publication"],
-    ["091810e51d488c58eeeb0032a4e8bd84f6e6439a91727f23e738e89d385be944", "workspace/AGENTS.md"],
+    ["f8198cd04e3055c6d04b565e1f883a584f7c53485d9269da5531cb68e111558f", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });
