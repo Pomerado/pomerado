@@ -586,9 +586,44 @@ it("decodes an older harness checkpoint that still carries its retention counter
     executionClosed: false,
     captchaChecks: 0,
   };
-  const decoded = Schema.decodeUnknownSync(MintHarnessSnapshot)(checkpoint);
-  expect(decoded).not.toHaveProperty("diagnosticRetentionRetries");
-  expect(decoded).toMatchObject({ exampleClaimed: false, writeSession: "none" });
+  expect(Schema.decodeUnknownSync(MintHarnessSnapshot)(checkpoint)).toMatchObject({
+    exampleClaimed: false,
+    writeSession: "none",
+  });
+});
+
+// A takeover can cross releases: an older worker's schema requires the retired counter, so a new
+// checkpoint still carries it, as 0 whatever retention gaps the attempt recorded.
+it("writes the retired retention counter on a new checkpoint for an older worker", async () => {
+  let capture: (() => MintHarnessSnapshot) | undefined;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+      }),
+    {
+      agentRecovery: {
+        bindHarness: (bound) =>
+          Effect.sync(() => {
+            capture = bound;
+          }),
+        save: () => Effect.void,
+      },
+      reviewAndExecute: () =>
+        Effect.fail(new MintFailure({ code: "Unavailable", diagnosticRetentionReason: "storage" })),
+    },
+  );
+  await f.run();
+  const snapshot = capture?.();
+  expect(snapshot?.diagnosticRetentionRetries).toBe(0);
+  // An older worker's decoder, which requires the counter, restores it.
+  const olderDecoder = Schema.Struct({ diagnosticRetentionRetries: Schema.NonNegativeInt });
+  expect(Schema.decodeUnknownSync(olderDecoder)(snapshot)).toEqual({
+    diagnosticRetentionRetries: 0,
+  });
+  expect(Schema.decodeUnknownSync(MintHarnessSnapshot)(snapshot)).toMatchObject({
+    diagnosticRetentionRetries: 0,
+  });
 });
 
 // A source path the host refused to publish, such as one holding a credential, is the minter's to

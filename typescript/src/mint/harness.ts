@@ -3455,6 +3455,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         inputFeedbackCoverage,
         providerUnavailableRetries,
         ...(providerOutageStartedAt === undefined ? {} : { providerOutageStartedAt }),
+        // Deprecated and unread; written only so an older worker can restore this checkpoint.
+        diagnosticRetentionRetries: 0,
         executionClosed,
         captchaChecks,
         ...(writeUpgradeDeclined ? { writeUpgradeDeclined: true as const } : {}),
