@@ -85,3 +85,37 @@ it("hands a repair that loosens its output contract each field and change, and p
   expect(publishes).toBe(2);
   expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
 });
+
+// A write repair never runs its write again: either contract refusal tells it to fix the source
+// from what its session already read, or to change the contract through its owner, and to publish
+// the same execution, never to run the example again.
+it.each(["output_obligation_weakened", "contract_output_mismatch"] as const)(
+  "keeps a write repair refused as %s from running its write again",
+  async (reason) => {
+    const answers: Record<string, unknown>[] = [];
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...example, purpose: "act" });
+          answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({
+              code: "PublicationUnavailable",
+              reason,
+              ...(reason === "output_obligation_weakened"
+                ? { weakenedOutputs: [{ field: "currency", change: "removed" as const }] }
+                : {}),
+            }),
+          ),
+      },
+    );
+    await f.run({ ...repair, effect: "write" });
+    expect(answers[0]).toMatchObject({ status: "not_published", reason });
+    const instruction = String(answers[0]?.["instruction"]);
+    expect(instruction).toContain("never run the write");
+    expect(instruction).not.toContain("run the example again");
+  },
+);

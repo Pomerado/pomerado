@@ -3290,7 +3290,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     { weakenedOutputs: error.weakenedOutputs ?? [] },
-                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId. If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. ${
+                      buildEffect === "write"
+                        ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
+                        : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
+                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
                   );
                 if (error.reason === "tool_name_taken")
                   return notPublished(
@@ -3416,10 +3420,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"
                               ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
-                              : request.mode === "maintenance"
+                              : request.mode === "maintenance" && buildEffect !== "write"
                                 ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
-                                : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
-                      (error.reason === "contract_output_mismatch" && request.mode === "maintenance"
+                                : request.mode === "maintenance"
+                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                  : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
+                      (error.reason === "contract_output_mismatch" &&
+                      request.mode === "maintenance" &&
+                      buildEffect !== "write"
                         ? ""
                         : " The host extracts the contract offline; never run the write or the example again for this."),
                   );
