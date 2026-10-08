@@ -19,7 +19,7 @@ import {
   stopLoadingCode,
   type StepPurpose,
 } from "../../src/runtime/start-state.js";
-import { makeBuildStart } from "../../src/standalone/mint-state.js";
+import { makeBuildStart, saveStateCode } from "../../src/standalone/mint-state.js";
 
 const purposes: readonly StepPurpose[] = [
   "explore",
@@ -206,11 +206,19 @@ describe("makeStartTracker", () => {
 // The build's wiring on a modeled browser that names each call it receives.
 const modeledBuild = (
   options: {
+    /** Saves that fail, the stored state alone included. */
     readonly saveFailures?: number;
+    /** Saves whose stored state and tab storage together fail, as one past a call's result cap. */
+    readonly combinedSaveFailures?: number;
     readonly resetFailures?: number;
     readonly rootLoads?: boolean;
     /** Records the host keeping the page a reset cleared, as the local mint state does. */
     readonly keepsClearedPage?: boolean;
+    /**
+     * Records the host's re-sign-in check after a reset that restored a signed-in session;
+     * `reopen` has it reset the page the same way once more, as after a sign-in.
+     */
+    readonly checksAfterReset?: "check" | "reopen";
   } = {},
 ) => {
   const targetId = "primary-target";
@@ -219,17 +227,31 @@ const modeledBuild = (
   /** How many calls the build had made each time it left the page. */
   const left: number[] = [];
   let saveFailures = options.saveFailures ?? 0;
+  let combinedSaveFailures = options.combinedSaveFailures ?? 0;
   let resetFailures = options.resetFailures ?? 0;
+  const state = { cookies: [{ name: "login", value: "member" }], origins: [] };
   const execute: HostExecute = (code) =>
     Effect.suspend((): Effect.Effect<unknown, Error> => {
-      if (code === saveSessionCode) {
-        if (saveFailures > 0) {
-          saveFailures--;
+      if (code === saveSessionCode(targetId, "https://site.test")) {
+        if (saveFailures > 0 || combinedSaveFailures > 0) {
+          combinedSaveFailures = Math.max(0, combinedSaveFailures - 1);
           calls.push("save failed");
           return Effect.fail(new Error("Save failed"));
         }
         calls.push("save");
-        return Effect.succeed({ cookies: [{ name: "login", value: "member" }], origins: [] });
+        return Effect.succeed({
+          state,
+          sessionStorage: [{ origin: "https://site.test", entries: [["tab", "member"]] }],
+        });
+      }
+      if (code === saveStateCode) {
+        if (saveFailures > 0) {
+          saveFailures--;
+          calls.push("state save failed");
+          return Effect.fail(new Error("Save failed"));
+        }
+        calls.push("state save");
+        return Effect.succeed(state);
       }
       if (code === stopLoadingCode(targetId)) {
         calls.push("stop");
@@ -263,6 +285,12 @@ const modeledBuild = (
           calls.push("keep signed-out page");
         })
       : undefined,
+    options.checksAfterReset === undefined
+      ? undefined
+      : (reopen) =>
+          Effect.sync(() => {
+            calls.push("signed-in check");
+          }).pipe(Effect.zipRight(options.checksAfterReset === "reopen" ? reopen : Effect.void)),
   );
   const step = (purpose: StepPurpose, target: "liveBrowser" | "pureFiles" = "liveBrowser") =>
     Effect.runPromise(
@@ -403,11 +431,67 @@ describe("makeBuildStart", () => {
       "entry",
       "run",
       "save failed",
+      "state save failed",
       "save",
       "run",
       "reset:restore",
       "root",
       "run",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+  });
+
+  it("checks the session after each reset that restored it, never after a clear or a kept session", async () => {
+    const build = modeledBuild({ checksAfterReset: "check" });
+    await build.step("example");
+    await build.signIn();
+    await build.step("example");
+    // A sign-in step opens a new sign-in, unsettled until it verifies: the reset keeps the
+    // browser's session, which the host does not check.
+    await build.step("authenticate");
+    await build.step("example");
+    expect(build.calls).toEqual([
+      "reset:clear",
+      "root",
+      "run",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
+      "run",
+      "run",
+      "reset:keep",
+      "root",
+      "run",
+    ]);
+  });
+
+  it("lets the check reset the page the same way again, with the session saved last", async () => {
+    const build = modeledBuild({ checksAfterReset: "reopen" });
+    await build.signIn();
+    await build.step("test");
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+    // The session the host saves after a sign-in again is the one the reopened page restores.
+    await Effect.runPromise(build.start.saveSession);
+    await build.step("example");
+    expect(build.calls.slice(9)).toEqual([
+      "save",
+      "reset:restore",
+      "root",
+      "signed-in check",
       "reset:restore",
       "root",
       "run",
@@ -611,6 +695,32 @@ describe("makeBuildStart", () => {
     expect(build.calls).toEqual(["reset:clear failed", "reset:clear", "root", "run", "run"]);
   });
 
+  it("saves the stored state alone when it and the tab's storage together fail", async () => {
+    const build = modeledBuild({ combinedSaveFailures: 1 });
+    await build.signIn();
+    expect((await build.step("example"))._tag).toBe("Right");
+    await build.step("example");
+    expect(build.calls).toEqual([
+      "entry",
+      "run",
+      "save failed",
+      "state save",
+      "reset:restore",
+      "root",
+      "run",
+      "reset:restore",
+      "root",
+      "run",
+    ]);
+    // Both resets restore the stored state the second call read, and no tab storage.
+    for (const reset of build.resets) {
+      expect(reset).toContain(
+        'const restored = {"cookies":[{"name":"login","value":"member"}],"origins":[]};',
+      );
+      expect(reset).toContain("const tabStorage = new Map([]);");
+    }
+  });
+
   it("resets a write session's first step again when the save before it failed", async () => {
     const build = modeledBuild({ saveFailures: 1 });
     await build.signIn();
@@ -621,6 +731,7 @@ describe("makeBuildStart", () => {
       "entry",
       "run",
       "save failed",
+      "state save failed",
       "save",
       "reset:restore",
       "root",
