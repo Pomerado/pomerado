@@ -98,6 +98,9 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
+  error for that option over returning results for another one. A repair adds it when a caller
+  needs it.
 - Never derive a format from one sample: not an input format, an element key, a selector, a
   URL path or a label. A key the page showed for the example's value says nothing about the
   next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
@@ -185,9 +188,13 @@ that asks.
 **Output fields.** Decide from the request and the pages which values the request needs: each
 value it names, the record's identifier as the site shows it, and the context those values
 depend on as the page shows it, such as dates, a party size or a location. Make each required
-and non-null (`Schema.NonEmptyString` for text). Make a field optional or nullable only when the
-page can lack it and the result still serves the request, and say in its description when it is
-null.
+and non-null, typed so a value the code could not read fails the output check
+(`Schema.NonEmptyString` for text, `Schema.Int` for a count), never an optional, nullable or
+plain `Schema.Number` field. Make a field optional or nullable only when the page can lack it
+and the result still serves the request, and say in its description when it is null. A run
+whose output fails its schema goes to repair.
+- Prefer parsing what the page shows into typed fields over returning a result row, card or
+  itinerary as one text blob or summary, and keep every result row the page shows.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.

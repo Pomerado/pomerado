@@ -278,10 +278,18 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // A format read from one sample breaks on the next value, so the minter reads it off the page.
+  // An option the code reads no results for yet throws rather than returning another option's
+  // results, and a format read from one sample breaks on the next value, so the minter reads it
+  // off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+  ],
+  // The minter reads typed output, kept rows and required facts before it writes the schema and
+  // the parser, so a fact the code could not read fails the output check.
+  [
+    "core",
+    "**Output fields.** Decide from the request and the pages which values the request needs: each value it names, the record's identifier as the site shows it, and the context those values depend on as the page shows it, such as dates, a party size or a location. Make each required and non-null, typed so a value the code could not read fails the output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never an optional, nullable or plain `Schema.Number` field. Make a field optional or nullable only when the page can lack it and the result still serves the request, and say in its description when it is null. A run whose output fails its schema goes to repair. - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row the page shows. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` only when this record's page lacks the value, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -608,7 +616,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["11f6d3ec38e25ac0a1da2c11605ae4b5b24a0d85460290c3aaf457f38ef2b2b5", "core"],
+    ["7222e0690ba86645ad855af0f17293b6773fafa6f85f4fa3860989c79dad391f", "core"],
     ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
     ["523d44beba9d1d3c7396e7abd2d994f7530e269ae81d9aba0d1535b87f08952c", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
