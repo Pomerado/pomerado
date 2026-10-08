@@ -433,6 +433,144 @@ test("a run corrects a rejected password without sending it again, asking again 
   });
 });
 
+/** Reads the shop's orders, then asks the host to keep it signed in and reads them again if it signed in again. */
+const readOrders = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_orders",input:Schema.Struct({}),output:Schema.Struct({first:Schema.Boolean,signedInAgain:Schema.Boolean,second:Schema.Boolean})},
+async ({kernel,sessionId,ensureSignedIn}) => {
+  const read = async () => {
+    const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/orders', page.url()).href); return (await page.locator('#orders').count()) > 0;",timeout_sec:15});
+    if(!response.success) throw new Error(String(response.error));
+    return response.result === true;
+  };
+  const first = await read();
+  const { signedInAgain } = await ensureSignedIn();
+  const second = signedInAgain ? await read() : first;
+  return { first, signedInAgain, second };
+});`;
+const ordersReader = (origin: string) =>
+  ({
+    entrypoint: "src/tool.mjs",
+    files: [{ path: "src/tool.mjs", content: readOrders }],
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+    signIn: { recipe: loginRecipe(origin), entryUrl: `${origin}/login` },
+  }) as MintArtifact;
+
+test("a run whose site signs it out on a load in the middle of the script signs in again on the same page and carries on", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    shop.state.signOutOn = "/orders";
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, []),
+      ordersReader(shop.origin),
+      `${shop.origin}/orders`,
+    );
+    expect(result).toEqual(Either.right({ first: false, signedInAgain: true, second: true }));
+    // The login the run read before the script, typed once more through the recorded sign-in.
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(shop.state.loginPosts).toBe(2);
+  });
+});
+
+test("a run that stays signed in through the script signs in once and types nothing more", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, []),
+      ordersReader(shop.origin),
+      `${shop.origin}/orders`,
+    );
+    expect(result).toEqual(Either.right({ first: true, signedInAgain: false, second: true }));
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(shop.state.loginPosts).toBe(1);
+  });
+});
+
+/** Signs the page out and reads the orders six times, asking the host to sign in again each time. */
+const signOutEachRound = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_orders",input:Schema.Struct({}),output:Schema.Struct({signIns:Schema.Number})},
+async ({kernel,sessionId,ensureSignedIn}) => {
+  let signIns = 0;
+  for (let round = 0; round < 6; round++) {
+    const response = await kernel.browsers.playwright.execute(sessionId,{code:"await context.clearCookies(); await page.goto(new URL('/orders', page.url()).href); return true;",timeout_sec:15});
+    if(!response.success) throw new Error(String(response.error));
+    const { signedInAgain } = await ensureSignedIn();
+    if (signedInAgain) signIns++;
+  }
+  return { signIns };
+});`;
+
+test("a build's script whose site keeps signing out ends the request with the session not kept once its sign-ins are spent", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const mintRequests: ModelRequest[] = [];
+    const asked: InputRequest[] = [];
+    const minter = provider(
+      (_request, index) =>
+        (
+          [
+            [create("src/tool.mjs", signOutEachRound, "patch_tool")],
+            [
+              signInStep(
+                {
+                  fields: [
+                    { selector: "input[name=username]", accepts: ["username"] },
+                    { selector: "input[name=password]", slot: "password" },
+                  ],
+                  submit: "button",
+                },
+                "sign_in",
+              ),
+            ],
+            [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+            [execute("example", {}, "example")],
+          ] satisfies Output[]
+        )[index] ?? [message("Built.")],
+      mintRequests,
+    );
+    const built = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            minterProvider: minter,
+            guardianProvider: guardian(),
+            ask: answers(asked),
+            timeoutMs: 60_000,
+          });
+          return yield* service.mint({
+            url: `${shop.origin}/login`,
+            intent: "Read the orders",
+            input: {},
+            effect: "read",
+          });
+        }),
+      ),
+    );
+    // The build's sign-in, then the four automatic sign-ins a build allows, each with the login
+    // the build holds. The fifth is refused, which ends the example's request, and the build,
+    // with the session the site did not keep.
+    expect(shop.state.loginPosts).toBe(5);
+    expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(built).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+    expect(built.diagnostics).toContainEqual(
+      JSON.stringify({
+        phase: "sign_in",
+        reason: "sign_in_unavailable",
+        sessionLoss: "session_not_kept",
+      }),
+    );
+    // No turn followed the example's request.
+    expect(mintRequests).toHaveLength(4);
+  });
+});
+
 test("a 0.2.0 folder without a sign-in runs as it always did, asking nothing", async () => {
   await withShop(async (shop, endpoint) => {
     const folder = await mkdtemp(join(tmpdir(), "pomerado-sign-in-artifact-"));

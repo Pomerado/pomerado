@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { Effect, Scope } from "effect";
+import { Effect, Schema, Scope } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
@@ -22,15 +22,25 @@ import { Deadline } from "../runtime/deadline.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { InputAsker } from "../runtime/input-request.js";
 import { askingValueHooks } from "../runtime/sign-in-values.js";
+import { mintSessionSignIns, signedInAtEntry } from "../runtime/session-sign-in.js";
 import {
   localStartHooks,
   makeStartTracker,
+  SavedSession,
   saveSessionCode,
+  savedSessionStorageCapBytes,
   startPage,
+  type StartState,
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
-import { localSignInLogin, makeSignInBrowser } from "./authentication.js";
+import { localSignInLogin, makeSignInBrowser, repeatedLoginFailure } from "./authentication.js";
 import { makeMarkerChecks } from "./signed-in-marker.js";
+import {
+  makeBoundableAsk,
+  makeLocalSessionSignIn,
+  makeRejectableLogin,
+  mintSessionSignInFailure,
+} from "./session-sign-in.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import type { PomeradoRequest } from "./contracts.js";
@@ -51,6 +61,8 @@ const unavailable = (operation: string) => (error: unknown) =>
     code: "Unavailable",
     failureDetail: failureDetail("mint_host_dependency_failed", { operation, error }),
   });
+/** Browser code that returns the context's cookies and site storage, IndexedDB included. */
+export const saveStateCode = "return await context.storageState({ indexedDB: true });";
 /**
  * Where a build's live steps start. The first step that is not reset loads the request's URL once.
  * A live example, a live test and a write session's first step reset the page and load the site
@@ -58,7 +70,10 @@ const unavailable = (operation: string) => (error: unknown) =>
  * check counts the build signed in only once a sign-in step sent the login (see `sent`).
  * `leavePage` runs before each reset, so the page the last step left is never taken for the
  * reset step's page, even when the reset fails. `afterClear` runs once a reset cleared the
- * browser's cookies and site storage, on that signed-out page.
+ * browser's cookies and site storage, on that signed-out page. `afterSignedInReset` runs once a
+ * reset restored the session saved after a verified sign-in, which the reset's load may have
+ * signed out; it may reset the page the same way again with `reopen`. A reset that keeps the
+ * browser's session, while a later sign-in is unsettled, runs neither.
  */
 export const makeBuildStart = (
   browser: Pick<PlaywrightExecutor, "execute" | "targetId">,
@@ -66,9 +81,30 @@ export const makeBuildStart = (
   enterRequest: Effect.Effect<void, Error>,
   leavePage: () => void,
   afterClear: Effect.Effect<void> = Effect.void,
+  afterSignedInReset: (
+    reopen: Effect.Effect<void, MintFailure>,
+  ) => Effect.Effect<void, MintFailure> = () => Effect.void,
 ) => {
-  const tracker = makeStartTracker();
+  const tracker = makeStartTracker<SavedSession>();
   const hooks = localStartHooks(browser.execute, browser.targetId);
+  // The context's storage and the tab's session storage, which is left out past its cap. A
+  // browser call returns at most 1 MiB, so when both together fail, the save reads the stored
+  // state alone, as it did before it kept session storage: it fails only where that read fails.
+  const readSession = browser.execute(saveSessionCode(browser.targetId, siteOrigin), 60).pipe(
+    Effect.flatMap(Schema.decodeUnknown(SavedSession)),
+    Effect.orElse(() =>
+      browser
+        .execute(saveStateCode, 60)
+        .pipe(Effect.map((state): SavedSession => ({ state, sessionStorage: [] }))),
+    ),
+    Effect.map(
+      (saved): SavedSession =>
+        Buffer.byteLength(JSON.stringify(saved.sessionStorage)) <= savedSessionStorageCapBytes
+          ? saved
+          : { ...saved, sessionStorage: [] },
+    ),
+    Effect.mapError(unavailable("standalone.saveSession")),
+  );
   let entered = false;
   const enter = Effect.suspend(() =>
     entered
@@ -84,6 +120,8 @@ export const makeBuildStart = (
   return {
     /** Loads the request's URL, unless a live step already loaded a page. */
     enter,
+    /** Saves the session as it is now, for the next reset that restores one. */
+    saveSession: readSession.pipe(Effect.map(tracker.save)),
     /** A sign-in step; see `makeStartTracker`. */
     signIn: tracker.signIn,
     /**
@@ -128,27 +166,28 @@ export const makeBuildStart = (
         const planned = { purpose: step.purpose, live };
         if (step.purpose === "authenticate") tracker.signIn();
         const plan = tracker.plan(planned);
-        if (plan.save)
-          tracker.save(
-            yield* browser
-              .execute(saveSessionCode, 60)
-              .pipe(Effect.mapError(unavailable("standalone.saveSession"))),
-          );
+        if (plan.save) tracker.save(yield* readSession);
         if (plan.start === "none") {
           if (live) yield* enter;
         } else {
+          const start: Exclude<StartState, "none"> = plan.start;
           leavePage();
-          yield* startPage(
-            browser.execute,
-            browser.targetId,
-            siteOrigin,
-            plan.start === "restore"
-              ? { siteData: "restore", session: tracker.saved }
-              : { siteData: plan.start },
-            hooks,
+          // The saved session as it is when the reset runs: a sign-in after it saves a new one.
+          const reset = Effect.suspend(() =>
+            startPage(
+              browser.execute,
+              browser.targetId,
+              siteOrigin,
+              start === "restore"
+                ? { siteData: "restore", session: tracker.saved }
+                : { siteData: start },
+              hooks,
+            ),
           ).pipe(Effect.mapError(unavailable("standalone.startPage")));
+          yield* reset;
           entered = true;
-          if (plan.start === "clear") yield* afterClear;
+          if (start === "clear") yield* afterClear;
+          else if (start === "restore") yield* afterSignedInReset(reset);
         }
         tracker.dispatched(planned);
       }),
@@ -208,6 +247,9 @@ export const mintState = (
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
+    // The build's automatic sign-ins, counted for the whole attempt: a task update that moves
+    // the build to another site starts no new allowance.
+    const signInsSpent = { attempt: 0, scope: 0 };
     /**
      * Everything bound to the build's site: the sign-in browser and recorder, the marker checks
      * and the build's start. A task update that moves the build to another site binds them anew.
@@ -224,19 +266,29 @@ export const mintState = (
         });
         // The site as the owner's questions name it: its host, without `www.`.
         const site = new URL(siteOrigin).hostname.replace(/^www\./u, "");
+        // One login and one set of value questions for the build's sign-ins, the automatic ones
+        // too, whose questions a script's bound limits.
+        const signInAsks = makeBoundableAsk(mintAsk);
+        // A login value an automatic sign-in sent and the site rejected is not sent again, by any
+        // sign-in.
+        const login = makeRejectableLogin(
+          localSignInLogin({
+            ask: signInAsks.ask,
+            register: secrets.register,
+            siteOrigin: siteOrigin,
+          }),
+          repeatedLoginFailure,
+        );
+        const values = askingValueHooks({
+          ask: signInAsks.ask,
+          register: secrets.register,
+          site,
+          siteOrigin: siteOrigin,
+        });
         const recorder = yield* makeSignInRecorder<Error>({
           browser: signInBrowser,
-          login: localSignInLogin({
-            ask: mintAsk,
-            register: secrets.register,
-            siteOrigin: siteOrigin,
-          }),
-          values: askingValueHooks({
-            ask: mintAsk,
-            register: secrets.register,
-            site,
-            siteOrigin: siteOrigin,
-          }),
+          login: login.login,
+          values,
           // The screen may show a value the caller gave, such as the typed email on a password
           // screen; it reaches Guardian masked. The source check still refuses any value left.
           review: (step, inspection) =>
@@ -276,14 +328,41 @@ export const mintState = (
           writeSessionStarted: () => writeSession.started,
           observe: context.observe,
         });
+        /** Set once the entry page's own load signed a fresh sign-in out again. */
+        const lostOnLoad = { current: false };
         const start = makeBuildStart(
           browser,
           siteOrigin,
           context.navigate,
           context.leavePage,
           markers.afterClear,
+          // A reset reloads the site, which signs out a site that keeps its session only in page
+          // memory: the host signs in again before the step can reach the browser.
+          (reopen) =>
+            signedInAtEntry({
+              ensureSignedIn: sessionSignIn
+                .ensureSignedIn("signed_out_at_start")
+                .pipe(Effect.mapError(mintSessionSignInFailure)),
+              reopen,
+              lostOnLoad,
+            }).pipe(Effect.asVoid),
         );
-        return { recorder, markers, start };
+        // The build's automatic sign-ins with the sign-in it recorded and verified last.
+        const sessionSignIn = makeLocalSessionSignIn({
+          browser: signInBrowser,
+          recorded: recorder.published,
+          login,
+          values,
+          asks: signInAsks,
+          carries: secrets.carries,
+          site,
+          siteOrigin: siteOrigin,
+          limits: mintSessionSignIns,
+          scope: "check",
+          spent: signInsSpent,
+          saveSession: start.saveSession,
+        });
+        return { recorder, markers, start, sessionSignIn };
       });
     let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
     // A later binding lives as long as the first: until the request's scope closes.
@@ -309,6 +388,9 @@ export const mintState = (
       },
       get start() {
         return bound.start;
+      },
+      get sessionSignIn() {
+        return bound.sessionSignIn;
       },
       /**
        * Binds the build to another site, for a task update the host applies, with no sign-in

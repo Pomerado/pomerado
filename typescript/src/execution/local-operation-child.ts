@@ -42,6 +42,7 @@ const { makeScriptInput, ScriptInput, ScriptInputFailure } =
   await import("../runtime/script-input.js");
 const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
+const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -172,6 +173,23 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
           Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
           Effect.mapError(() => new DialogFailure({ reason: "unavailable" })),
         ),
+      // The host checks the page and signs it in again; a refusal fails the script, which the
+      // runtime reports as a session the site did not keep.
+      ...(start.signIn === true
+        ? {
+            signIn: () =>
+              Effect.runPromise(
+                call({ kind: "sign_in" }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(SessionSignInAnswer)(value)),
+                  Effect.flatMap((answer) =>
+                    answer.outcome === "signed_in"
+                      ? Effect.succeed({ signedInAgain: answer.signedInAgain })
+                      : Effect.fail(new Error(`The host did not sign in again: ${answer.cause}`)),
+                  ),
+                ),
+              ),
+          }
+        : {}),
     }).pipe(
       Effect.provideService(ExecutionContext, {
         deadline,
@@ -255,6 +273,9 @@ await Effect.runPromise(
             error: error.message || error.name,
             ...metadata,
             ...("_tag" in error && typeof error._tag === "string" ? { tag: error._tag } : {}),
+            ...("sessionLoss" in error && error.sessionLoss === "session_not_kept"
+              ? { sessionLoss: "session_not_kept" }
+              : {}),
             ...(error instanceof InvalidInput && error.issues !== undefined
               ? { inputIssues: error.issues }
               : {}),
