@@ -99,6 +99,7 @@ export const guardianDecisionFormat: AgentOutputType = {
                     (category) => category !== "example_input",
                   ),
                 },
+                explanation: { type: "string" },
                 route: {
                   anyOf: [
                     { type: "null" },
@@ -115,7 +116,7 @@ export const guardianDecisionFormat: AgentOutputType = {
                   ],
                 },
               },
-              required: ["path", "byteStart", "byteEnd", "category", "route"],
+              required: ["path", "byteStart", "byteEnd", "category", "explanation", "route"],
               additionalProperties: false,
             },
           },

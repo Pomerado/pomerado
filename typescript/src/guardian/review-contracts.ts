@@ -23,12 +23,7 @@ export interface PublicationScope {
  * `example_input` is the host's own check that each key of an intent-derived example's input is
  * a schema input, never Guardian's.
  */
-export const inputFindingCategories = [
-  "account_specific_enum",
-  "input_option",
-  "example_value",
-  "example_input",
-] as const;
+export const inputFindingCategories = ["account_specific_enum", "input_option", "example_input"] as const;
 export const publicationFindingCategories = [
   "private_literal",
   "credential",
@@ -38,6 +33,8 @@ export const publicationFindingCategories = [
   "schema_mismatch",
   "unsupported_claim",
   "confirmation",
+  // An input narrowed to the example's value, which blocks publication like a source correction.
+  "example_value",
   ...inputFindingCategories,
 ] as const;
 export const publicationReasons = [
@@ -73,11 +70,21 @@ export const RoutePointer = Schema.Struct({
 });
 export type RoutePointer = typeof RoutePointer.Type;
 
+/** The characters one finding's explanation may hold; the host cuts a longer one to fit. */
+export const publicationExplanationLimit = 800;
 export const PublicationFinding = Schema.Struct({
   path: Schema.String,
   byteStart: Schema.Int.pipe(Schema.nonNegative()),
   byteEnd: Schema.Int.pipe(Schema.positive()),
   category: Schema.Literal(...publicationFindingCategories),
+  /**
+   * What is wrong, the evidence and the fix, in words the minter acts on without the rest of the
+   * review. It may quote the source, so it reaches the minter screened like the rationale.
+   */
+  explanation: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(publicationExplanationLimit),
+  ),
   /** Only for a finding in a host-generated file; the model sends null for any other. */
   route: Schema.optionalWith(RoutePointer, { exact: true, nullable: true }),
 });

@@ -42,6 +42,7 @@ import {
   withOwnWords,
 } from "./contracts.js";
 import { answersForReview, type AnsweredQuestion } from "../guardian/question.js";
+import type { PublicationFinding } from "../guardian/review-contracts.js";
 import {
   taskUpdateForReview,
   type PendingTaskUpdate,
@@ -70,7 +71,7 @@ import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
-import { publicationBlockFeedback } from "./publication-block.js";
+import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -1061,6 +1062,32 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             ),
           ),
         );
+      /**
+       * A review as the minter reads it: the rationale and each finding's explanation screened
+       * like any Guardian text, and each finding's file as the minter's workspace names it.
+       */
+      const minterReview = <
+        Review extends {
+          readonly rationale: string;
+          readonly findings?: readonly PublicationFinding[] | undefined;
+        },
+      >(
+        review: Review,
+      ) =>
+        Effect.gen(function* () {
+          const rationale = yield* screenRationale(review.rationale);
+          if (review.findings === undefined) return { ...review, rationale };
+          const findings = yield* Effect.forEach(review.findings, (finding) =>
+            screenRationale(finding.explanation).pipe(
+              Effect.map((explanation) => ({
+                ...finding,
+                file: workspacePath(finding.path),
+                explanation,
+              })),
+            ),
+          );
+          return { ...review, rationale, findings };
+        });
       const screenAssumptions = (proposedAssumptions: PublicationRequest["assumptions"] = []) =>
         Effect.gen(function* () {
           // An assumption that screening would change may carry private data: drop it.
@@ -3075,12 +3102,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   destinationEvidenceGap: error.destinationEvidenceGap,
                   ...(error.review === undefined
                     ? {}
-                    : {
-                        review: {
-                          ...error.review,
-                          rationale: yield* screenRationale(error.review.rationale),
-                        },
-                      }),
+                    : { review: yield* minterReview(error.review) }),
                   reviewPhase: error.reviewPhase,
                   reviewFailure: error.reviewFailure,
                   diagnosticRetentionReason: error.diagnosticRetentionReason,
@@ -3145,7 +3167,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   const fallback = dependencies.inputFeedbackFallback;
                   const privateFallback = fallback?.kept() === true;
                   inputFeedbackPublicTool = fallback !== undefined && !privateFallback;
-                  const findings = error.review.findings ?? [];
+                  const { findings = [] } = yield* minterReview(error.review);
                   const inRounds = inputFeedbackRounds <= maximumInputFeedbackRounds;
                   // The minter reads the screened rationale in each round, and a build with no
                   // fallback ends on it; a fallback's last round never reads it.
@@ -3191,7 +3213,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     "host_owned",
                     {
-                      findings: error.review.findings ?? [],
+                      findings: (yield* minterReview(error.review)).findings ?? [],
                       rationale: yield* screenRationale(error.review.rationale),
                       reviewId: error.review.reviewId,
                     },
@@ -3405,19 +3427,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     expectedEntrypoint: error.expectedEntrypoint,
                     ...(error.review === undefined
                       ? {}
-                      : {
-                          review: {
-                            ...error.review,
-                            rationale: yield* screenRationale(error.review.rationale),
-                          },
-                        }),
+                      : { review: yield* minterReview(error.review) }),
                     diagnostic:
                       diagnostic._tag === "Right"
                         ? diagnostic.right
                         : "Publication diagnostic unavailable.",
                     repeatableRead,
                   },
-                  "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable. A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
+                  (error.code === "ReviewDenied" && error.review !== undefined
+                    ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding, then call finish_build again with the same executionId. The existing example and result remain recorded."
+                    : "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable.") +
+                    " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
                 );
               }
               return yield* publicationResult(publication.right, coverage, assumptions);

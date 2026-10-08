@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import {
   inputFindingCategories,
+  publicationExplanationLimit,
   PublicationFinding,
   PublicationReason,
 } from "./review-contracts.js";
@@ -23,12 +24,46 @@ type IndexedFile = PublicationScope["files"][number];
 const isInputFinding = (finding: PublicationFinding) =>
   inputFindingCategories.some((category) => category === finding.category);
 
-/** Findings the decision cannot carry: outside the index, or an empty or overlong range. */
+/** Findings the decision cannot carry: in a file outside the index, or in an empty one. */
 const misplaced = (decision: Decision, files: ReadonlyMap<string, IndexedFile>) =>
-  decision.findings.some((finding) => {
-    const length = files.get(finding.path)?.byteLength;
-    return length === undefined || finding.byteStart >= finding.byteEnd || finding.byteEnd > length;
-  });
+  decision.findings.some((finding) => !files.get(finding.path)?.byteLength);
+
+/**
+ * A finding's range fitted to its file: cut at the file's end, or the whole file when nothing of
+ * the range is left. A denial is a verdict, so a range the model miscounted never discards it.
+ */
+const fitted = (finding: PublicationFinding, length: number): PublicationFinding => {
+  const byteEnd = Math.min(finding.byteEnd, length);
+  return finding.byteStart < byteEnd
+    ? { ...finding, byteEnd }
+    : { ...finding, byteStart: 0, byteEnd: length };
+};
+
+/** Text cut to `limit` characters with an ellipsis, never keeping half of a surrogate pair. */
+const cut = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const high = text.charCodeAt(limit - 2);
+  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? limit - 2 : limit - 1)}…`;
+};
+
+/** Each finding's explanation cut to its limit, rather than failing the whole decision. */
+const boundedExplanations = (raw: unknown): unknown => {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const findings: unknown = Reflect.get(raw, "findings");
+  if (!Array.isArray(findings)) return raw;
+  return {
+    ...raw,
+    findings: findings.map((finding: unknown) => {
+      const explanation: unknown =
+        typeof finding === "object" && finding !== null
+          ? Reflect.get(finding, "explanation")
+          : undefined;
+      return typeof explanation === "string"
+        ? { ...(finding as object), explanation: cut(explanation, publicationExplanationLimit) }
+        : finding;
+    }),
+  };
+};
 
 /** A reason its outcome or findings contradict. */
 const inconsistent = (decision: Decision, files: ReadonlyMap<string, IndexedFile>) => {
@@ -70,7 +105,9 @@ const withNullDefaults = (raw: unknown): unknown => {
 export const decodePublicationDecision = (scope: PublicationScope, raw: unknown) =>
   Effect.gen(function* () {
     const files = new Map(scope.files.map((file) => [file.path, file]));
-    const decision = yield* Schema.decodeUnknown(PublicationDecision)(withNullDefaults(raw)).pipe(
+    const decoded = yield* Schema.decodeUnknown(PublicationDecision)(
+      boundedExplanations(withNullDefaults(raw)),
+    ).pipe(
       Effect.mapError(
         (error) =>
           new ReviewFailure({
@@ -79,8 +116,14 @@ export const decodePublicationDecision = (scope: PublicationScope, raw: unknown)
           }),
       ),
     );
-    if (misplaced(decision, files) || inconsistent(decision, files))
-      return yield* new ReviewFailure({ code: "InvalidDecision" });
+    if (misplaced(decoded, files)) return yield* new ReviewFailure({ code: "InvalidDecision" });
+    const decision = {
+      ...decoded,
+      findings: decoded.findings.map((finding) =>
+        fitted(finding, files.get(finding.path)?.byteLength ?? 0),
+      ),
+    };
+    if (inconsistent(decision, files)) return yield* new ReviewFailure({ code: "InvalidDecision" });
     return {
       outcome: decision.outcome,
       reason: decision.reason,
