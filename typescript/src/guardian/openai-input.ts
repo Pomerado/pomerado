@@ -41,7 +41,6 @@ export const guardianReviewInput = (
         return registrableDomain === undefined ? [] : [{ scheme: "https", registrableDomain }];
       }),
       allowedEffects: turn.pending.allowedEffects,
-      // The `typed` mark is the host's, for ownerNamedOrigins only.
       answeredQuestions: absentWhenEmpty(
         (turn.pending.answeredQuestions ?? []).map(({ question, answer, other, note }) => ({
           question,
@@ -51,6 +50,7 @@ export const guardianReviewInput = (
         })),
       ),
       ownerNamedOrigins: absentWhenEmpty(ownerNamedOrigins(turn.pending)),
+      taskUpdates: absentWhenEmpty(turn.pending.taskUpdates ?? []),
     },
     ...extra,
     ...(turn.pending.questionCandidate === undefined
@@ -64,7 +64,6 @@ export const guardianReviewInput = (
                 : { notice: turn.pending.questionCandidate.notice }),
             },
             credentialsAvailable: turn.pending.questionCandidate.credentialsAvailable,
-            ...(turn.pending.questionCandidate.writeUpgrade === true ? { writeUpgrade: true } : {}),
             ...(turn.pending.questionCandidate.blockedOutcome === true
               ? { blockedOutcome: true }
               : {}),
@@ -74,6 +73,9 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.scriptAsk === true ? { scriptAsk: true } : {}),
           },
         }),
+    ...(turn.pending.updateCandidate === undefined
+      ? {}
+      : { update_review: turn.pending.updateCandidate }),
     ...(turn.pending.hostReview === undefined
       ? {}
       : { host_review: turn.pending.hostReview.evidence }),

@@ -4,7 +4,6 @@ import {
   type InputOption,
   type InputRequest,
   isProtectedQuestion,
-  optionsRepeatedBy,
   publicOptionLabel,
   type Question,
   type ValidAnswers,
@@ -45,8 +44,6 @@ export interface PendingQuestion {
   readonly notice?: string;
   /** Host fact only. No credential values or authentication result are exposed. */
   readonly credentialsAvailable: boolean;
-  /** Host fact: the request asks the owner to turn this read build into a write build. */
-  readonly writeUpgrade?: true;
   /**
    * Host fact: not a question but the agent's report that the task is impossible as asked, which
    * the caller reads as the build's outcome (`report_blocked`); its one prompt is the report.
@@ -88,7 +85,6 @@ export const questionForReview = <E>(
   request: Pick<InputRequest, "notice" | "questions">,
   facts: {
     readonly credentialsAvailable: boolean;
-    readonly writeUpgrade?: true;
     readonly blockedOutcome?: true;
     readonly publicationDecisions?: readonly PublicationDecision[];
     readonly scriptAsk?: true;
@@ -137,7 +133,6 @@ export const questionForReview = <E>(
       questions,
       ...(notice === undefined ? {} : { notice }),
       credentialsAvailable: facts.credentialsAvailable,
-      ...(facts.writeUpgrade === true ? { writeUpgrade: true as const } : {}),
       ...(facts.blockedOutcome === true ? { blockedOutcome: true as const } : {}),
       // Finite host metadata, written by the harness: nothing to screen.
       ...(facts.publicationDecisions === undefined || facts.publicationDecisions.length === 0
@@ -152,12 +147,9 @@ export const questionForReview = <E>(
  * review sees it: the screened prompt and the screened answer. A choice is its option's label (an
  * account-specific option's masked label, as the API shows it) or the owner's own text, a multiple
  * choice its labels with `other`, an option of the owner's own, and either may carry `note`, the
- * owner's clarification of their pick. A confirm is whether the owner confirmed. `typed` marks an
- * answer whose own text the owner wrote: a text answer, a choice's own text or a multiple choice's
- * `other` that repeats no offered option, or a confirm's text other than the offered default. An
- * option label is the minting model's wording even when the owner picks it or types it back, so it
- * never names where the owner's work lives (`ownerNamedOrigins`). A note is the owner's own words;
- * one that only repeats an offered option is left out, as the agent's wording.
+ * owner's clarification of their pick. A confirm is whether the owner confirmed, with any text.
+ * Every answer is the owner's words: an option the minting model wrote, once the owner picks it or
+ * types it back, is their confirmation of what it says (`ownerNamedOrigins`).
  */
 export const AnsweredQuestion = Schema.Struct({
   question: Schema.String,
@@ -171,32 +163,8 @@ export const AnsweredQuestion = Schema.Struct({
   ),
   other: Schema.optionalWith(Schema.String, { exact: true }),
   note: Schema.optionalWith(Schema.String, { exact: true }),
-  typed: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export type AnsweredQuestion = typeof AnsweredQuestion.Type;
-
-/**
- * Whether the owner wrote the answer's text, rather than picking an option the agent wrote.
- * `validateAnswer` already takes own text that repeats one option as that pick; text that repeats
- * several (options sharing a label) stays the owner's text but is still the agent's wording.
- */
-const ownerTyped = (question: Question, given: ValidAnswers[string]) => {
-  const own =
-    given.type === "choice" && typeof given.value !== "string" && "other" in given.value
-      ? given.value.other
-      : given.type === "multi_choice" && "options" in given.value
-        ? given.value.other
-        : undefined;
-  return (
-    given.type === "text" ||
-    (own !== undefined &&
-      ((question.type !== "choice" && question.type !== "multi_choice") ||
-        optionsRepeatedBy(question.options, own).length === 0)) ||
-    (given.type === "confirm" &&
-      given.value.text !== undefined &&
-      (question.type !== "confirm" || given.value.text !== question.followUp?.defaultText))
-  );
-};
 
 /**
  * The answers to one request as Guardian sees them, screening every string through `screen`.
@@ -233,14 +201,7 @@ export const answersForReview = <E>(
               ? { note: given.value.note }
               : {};
         const other = "other" in beside ? beside.other : undefined;
-        // A note that only repeats an offered option is the agent's wording, never the owner's.
-        const note =
-          "note" in beside &&
-          beside.note !== undefined &&
-          (question.type === "choice" || question.type === "multi_choice") &&
-          optionsRepeatedBy(question.options, beside.note).length === 0
-            ? beside.note
-            : undefined;
+        const note = "note" in beside ? beside.note : undefined;
         const answer: AnsweredQuestion["answer"] | undefined =
           given.type === "text"
             ? yield* screen(given.value)
@@ -271,7 +232,6 @@ export const answersForReview = <E>(
                 answer,
                 ...(other === undefined ? {} : { other: yield* screen(other) }),
                 ...(note === undefined ? {} : { note: yield* screen(note) }),
-                ...(ownerTyped(question, given) ? { typed: true as const } : {}),
               },
             ];
       }),

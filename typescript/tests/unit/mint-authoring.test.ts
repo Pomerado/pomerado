@@ -111,9 +111,7 @@ it("reads every skill and guide file through a host's render, with its key", asy
     expect(keys.slice(skills.length)).toEqual(["agents", "guide"]);
     const refused = { _tag: "Left", left: { code: "Unavailable" } };
     expect(
-      await Effect.runPromise(
-        Effect.either(loadAuthoringSkills("typescript/authoring", composed)),
-      ),
+      await Effect.runPromise(Effect.either(loadAuthoringSkills("typescript/authoring", composed))),
     ).toMatchObject(refused);
     expect(
       await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", composed))),
@@ -448,10 +446,10 @@ it("renders the pinned standalone authoring", async () => {
     ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
-    ["0e4584d71b07af68dc54696c280c853b2eca74d533a3f92356848ae0a19fb860", "writes"],
+    ["f1bb59ba57c89091186703a0e48136463c820bf777f675d3d794f4ffa7a87206", "writes"],
     ["604f965786a2b63e39b0fd31ca5b0b79960554b49bd0567709bb9e9c212a908b", "caller-input"],
     ["37b6e4ab5edebf9ca43f4436306139c4aaffaea2c1ad8da42782628deed9e79a", "publication"],
-    ["3003ff4fa15de675609a0acb21eb0c1b0971485da9b331e7df1e92f19630c9b4", "workspace/AGENTS.md"],
+    ["3fc3af599588f5280ba7c57da615c7f97e8127f1aba768bc2a83d95d6ef77394", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });
