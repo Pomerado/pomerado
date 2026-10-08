@@ -49,6 +49,9 @@ const pending: PendingExecution = {
     })),
   },
 };
+const explanation =
+  "The city output is a constant; read it from the page. Evidence: src/tool.mjs sets it.";
+const entrypointLength = Buffer.byteLength(files.get("operation/src/tool.mjs") ?? "");
 const sourcesOf = (sources: ReadonlyMap<string, string>) =>
   makeSourceInspector(
     (path) =>
@@ -120,7 +123,7 @@ describe("a publication decision", () => {
 
   it("returns corrective locations for publication/definition.json and records them in the completion diagnostic", async () => {
     const path = "publication/definition.json";
-    const findings = [{ path, byteStart: 0, byteEnd: 12, category: "private_literal" }];
+    const findings = [{ path, byteStart: 0, byteEnd: 12, category: "private_literal", explanation }];
     const persisted: { name: string; details: unknown }[] = [];
     const diagnostics: GuardianDiagnostics = {
       emit: (name, details) =>
@@ -156,10 +159,16 @@ describe("a publication decision", () => {
   });
 
   it.each([
-    { path: "unknown", byteStart: 0, byteEnd: 1, category: "private_literal" },
-    { path: pending.entrypoint, byteStart: 5, byteEnd: 1, category: "private_literal" },
-    { path: pending.entrypoint, byteStart: 0, byteEnd: 9000, category: "private_literal" },
-    { path: pending.entrypoint, byteStart: 0, byteEnd: 1, category: "PRIVATE_CANARY" },
+    { path: "unknown", byteStart: 0, byteEnd: 1, category: "private_literal", explanation },
+    { path: pending.entrypoint, byteStart: 0, byteEnd: 1, category: "PRIVATE_CANARY", explanation },
+    { path: pending.entrypoint, byteStart: 0, byteEnd: 1, category: "private_literal" },
+    {
+      path: pending.entrypoint,
+      byteStart: 0,
+      byteEnd: 1,
+      category: "private_literal",
+      explanation: "",
+    },
   ])("rejects invalid finding metadata: %j", async (finding) => {
     const reviewer: Reviewer = {
       run: () =>
@@ -177,6 +186,41 @@ describe("a publication decision", () => {
     ).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
   });
 
+  // A denial is a verdict: a finding whose range runs past its file or is empty still reaches the
+  // minter, with its explanation, at the part of the file the range can name.
+  it.each([
+    { byteStart: 3, byteEnd: 9000, kept: { byteStart: 3, byteEnd: entrypointLength } },
+    { byteStart: 5, byteEnd: 1, kept: { byteStart: 0, byteEnd: entrypointLength } },
+  ])("keeps a denial whose only fault is a finding's byte range: %j", async (range) => {
+    const { decision } = await Effect.runPromise(
+      makeGuardian({
+        run: () =>
+          Effect.succeed({
+            outcome: "deny",
+            reason: "source_correction",
+            rationale: "One output is a constant.",
+            findings: [
+              {
+                path: pending.entrypoint,
+                byteStart: range.byteStart,
+                byteEnd: range.byteEnd,
+                category: "schema_mismatch",
+                explanation,
+              },
+            ],
+          }),
+      }).review(pending, sourcesOf(files)),
+    );
+    expect(decision).toEqual({
+      outcome: "deny",
+      reason: "source_correction",
+      rationale: "One output is a constant.",
+      findings: [
+        { path: pending.entrypoint, ...range.kept, category: "schema_mismatch", explanation },
+      ],
+    });
+  });
+
   // A denial that names every problem keeps its findings and its rationale's first 4,000
   // characters, rather than failing as InvalidDecision and losing them.
   it("keeps a denial whose rationale is too long, cut to 4,000 characters", async () => {
@@ -186,6 +230,7 @@ describe("a publication decision", () => {
       byteStart: 0,
       byteEnd: 1,
       category: "private_literal",
+      explanation,
     };
     const { decision } = await Effect.runPromise(
       makeGuardian({
@@ -195,6 +240,34 @@ describe("a publication decision", () => {
     );
     expect(decision).toMatchObject({ outcome: "deny", reason: "privacy", findings: [finding] });
     expect(decision.rationale).toBe(`${rationale.slice(0, 3999)}…`);
+  });
+
+  // An explanation longer than a finding may hold keeps its start rather than failing the denial,
+  // and never ends on half of a character.
+  it.each([
+    { text: "x".repeat(900), kept: `${"x".repeat(799)}…` },
+    { text: `${"x".repeat(798)}😀${"x".repeat(50)}`, kept: `${"x".repeat(798)}…` },
+  ])("cuts an overlong explanation to 800 characters: $kept.length", async ({ text, kept }) => {
+    const { decision } = await Effect.runPromise(
+      makeGuardian({
+        run: () =>
+          Effect.succeed({
+            outcome: "deny",
+            reason: "source_correction",
+            rationale: "One output is a constant.",
+            findings: [
+              {
+                path: pending.entrypoint,
+                byteStart: 0,
+                byteEnd: 1,
+                category: "schema_mismatch",
+                explanation: text,
+              },
+            ],
+          }),
+      }).review(pending, sourcesOf(files)),
+    );
+    expect(decision.findings?.[0]?.explanation).toBe(kept);
   });
 
   // Guardian's shared output format sends null for a field a kind does not use.
@@ -218,6 +291,7 @@ describe("a publication decision", () => {
     byteStart: 0,
     byteEnd: 1,
     category,
+    explanation,
   });
   const decide = (decision: Record<string, unknown>) =>
     Effect.runPromise(
@@ -248,12 +322,9 @@ describe("a publication decision", () => {
   });
 
   it("returns input feedback made only of input findings with its reason", async () => {
-    const findings = [
-      "account_specific_enum",
-      "input_option",
-      "example_value",
-      "example_input",
-    ].map(definitionFinding);
+    const findings = ["account_specific_enum", "input_option", "example_input"].map(
+      definitionFinding,
+    );
     expect(
       await decide({
         outcome: "escalate",
@@ -284,8 +355,10 @@ describe("a publication decision", () => {
     {
       outcome: "escalate",
       reason: "input_feedback",
-      findings: [definitionFinding("example_value"), definitionFinding("private_literal")],
+      findings: [definitionFinding("input_option"), definitionFinding("private_literal")],
     },
+    // An input narrowed to the example's value blocks publication; it is never input feedback.
+    { outcome: "deny", reason: "input_feedback", findings: [definitionFinding("example_value")] },
     { outcome: "allow", reason: "input_feedback", findings: [definitionFinding("input_option")] },
   ])("rejects input feedback that is empty, blocking or approving: %j", async (decision) => {
     expect(await decide(decision)).toMatchObject({
@@ -312,7 +385,7 @@ describe("a publication decision", () => {
     { path: "publication/definition.json", decided: "Left" },
     { path: "operation/src/tool.mjs", decided: "Left" },
   ])("decides a host_owned denial with a finding in $path: $decided", async ({ path, decided }) => {
-    const findings = [{ path, byteStart: 0, byteEnd: 1, category: "private_literal" }];
+    const findings = [{ path, byteStart: 0, byteEnd: 1, category: "private_literal", explanation }];
     expect(await decide({ outcome: "deny", reason: "host_owned", findings })).toMatchObject(
       decided === "Right"
         ? { _tag: "Right", right: { decision: { reason: "host_owned", findings } } }
@@ -332,7 +405,7 @@ describe("a publication decision", () => {
 describe("the publication policy", () => {
   it("is the core text, naming the files the host writes", () => {
     const policy = guardianPublicationPolicy;
-    expect(policy.split("\n")).toHaveLength(12);
+    expect(policy.split("\n")).toHaveLength(15);
     expect(
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
     ).toBe(true);
@@ -570,7 +643,7 @@ describe("the OpenAI publication reviewer", () => {
   it.each([
     { reason: "unsupported_claim", category: "unsupported_claim" },
     { reason: "input_feedback", category: "account_specific_enum" },
-    { reason: "input_feedback", category: "example_value" },
+    { reason: "source_correction", category: "example_value" },
   ])(
     "accepts a $reason decision with a $category finding through the reviewer output schema",
     async ({ reason, category }) => {
@@ -579,7 +652,9 @@ describe("the OpenAI publication reviewer", () => {
           outcome: "deny",
           reason,
           rationale: "The schema encodes a private account-specific choice",
-          findings: [{ path: "publication/definition.json", byteStart: 0, byteEnd: 1, category }],
+          findings: [
+            { path: "publication/definition.json", byteStart: 0, byteEnd: 1, category, explanation },
+          ],
         }),
       ]);
       const result = await Effect.runPromise(

@@ -614,14 +614,14 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["711a74f9578c3089a8a92e8e96ea4397461b02a2fc4369ed674d159674d7fa36", "core"],
+    ["af8c0c23de0b595a9a52166d80fbe2fc81dcde2e7b7a9fbc99780503565dfbf1", "core"],
     ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
     ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["5cafb09c16b4288f7e060cf02dcf7d0fa3ae8a7fd20b1641ca2fe8320a2c4283", "forms"],
     ["53f0f27bc9228966a8e787d95e463efa45e84f1d1a26d92ec9ef5bb162efbe12", "writes"],
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
-    ["114d9fd8e6cf5c260a9d2848f8fe5aa7e13a4ec2ab5e898eaa3c4bcc12544645", "publication"],
+    ["bf0d785607ee404090ffd25614c5e63b631aed9f5660567e8e48ac44dd157197", "publication"],
     ["b4e81f2ec3bb6c3129b901f48b5e909b80014ba5e826f0cfc6324dab890ed3ef", "workspace/AGENTS.md"],
     ["52b250f4fb5820f484eabadb17246852498a159ab8c953fd844560aa531711de", "workspace/README.md"],
   ]);
@@ -641,10 +641,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["7d8808e98d27441c029303a499d4d30fa874b6199fec2dd65a3a90b5a26787f6", "read, 1 left"],
-    ["230ad9c68c6607199a3ee2daf483a8017babb18597d22789aacb84392d1da7e8", "read, 0 left"],
-    ["455b35df112a08a4e6a100a9a54ef810810580cf3d33e9dd2c5279ca299c08e6", "write, 1 left"],
-    ["fb7a6750993e7c9c453ae695165f07036f95c971a475684a916fb5a6ed2fa8df", "write, 0 left"],
+    ["aba44b16df36914a1d988881085b9b43e4d6e0570e0a68423318eecd7abb4cbc", "read, 1 left"],
+    ["bad5f0878c5ecce40c209c1f5e3bd0dac6422c9e42fb0a857c0281e99c6e88eb", "read, 0 left"],
+    ["acf24b4205a7e37c6cfab1f19421d36f26a385bbc7bcaaf8a2799ef29fc77d5e", "write, 1 left"],
+    ["fa380b552c8ddec278fc6d2de4f613a37459d2f9cbf3c9393fe94251ee71511a", "write, 0 left"],
   ]);
 });
 
