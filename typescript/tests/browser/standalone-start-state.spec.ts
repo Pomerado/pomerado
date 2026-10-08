@@ -395,9 +395,11 @@ const build = (
                   question.id,
                   question.type === "credential"
                     ? { ...account, saveLogin: false }
-                    : question.id === "code"
-                      ? signInCode
-                      : account.password,
+                    : question.type === "choice"
+                      ? (question.options[0]?.id ?? "")
+                      : question.id === "code"
+                        ? signInCode
+                        : account.password,
                 ]),
               );
             }),
@@ -636,6 +638,94 @@ test("a marker only the account page shows reads signed out on the root after ea
       sessionLoss: "session_not_kept",
     }),
   );
+});
+
+test("a signed-in build that moves to another site replays nothing of the old site's sign-in there, and starts the new site signed out", async () => {
+  test.setTimeout(150_000);
+  const site = await startSite();
+  const [, signIn, check, explored] = readSteps(true);
+  if (!signIn || !check || !explored) throw new Error("Unexpected read steps");
+  // The probe also reports the site it ran on.
+  const whereProbe = probe("example").replace(
+    "path: location.pathname,",
+    "path: location.pathname,\n  host: location.hostname,",
+  );
+  let visitsAtMove = 0;
+  const asked: InputRequest[] = [];
+  const built = await build(
+    site,
+    { url: `${site.origin}/login`, effect: "read" },
+    [
+      () =>
+        patch({
+          "explore/look.mjs": explore,
+          "src/tool.mjs": operation("probe", whereProbe),
+        }),
+      signIn,
+      check,
+      explored,
+      () => [
+        call(
+          "request_input",
+          {
+            intent: "Ask where the reports live",
+            questions: [
+              {
+                id: "site",
+                type: "choice",
+                prompt: `Your reports live on ${site.elsewhere}. Build the tool there?`,
+                options: [
+                  { id: "move", label: `Yes, use ${site.elsewhere}` },
+                  { id: "stay", label: "No, stay here" },
+                ],
+              },
+            ],
+          },
+          "ask",
+        ),
+      ],
+      () => [
+        call(
+          "mint_update",
+          {
+            intent: "Move the build where the caller's reports live",
+            summary: `Build the tool on ${site.elsewhere}, where the caller's reports live.`,
+            changes: [{ setting: "site", origin: site.elsewhere }],
+            confirmedBy: ["site"],
+            recommend: "update",
+          },
+          "update",
+        ),
+      ],
+      () => {
+        visitsAtMove = site.visits.length;
+        return [execution("example", "src/tool.mjs")];
+      },
+      finish,
+    ],
+    undefined,
+    asked,
+  );
+  // The build signed in on the first site once.
+  expect(site.state.logins).toBe(1);
+  // On the new site, the example started at its root, signed out: no session restored, and no
+  // sign-in of the first site's replayed or asked for.
+  expect(site.visits.slice(visitsAtMove)).toEqual(["/"]);
+  expect(site.probe("example")).toMatchObject({
+    host: new URL(site.elsewhere).hostname,
+    path: "/",
+    token: null,
+    explored: null,
+  });
+  expect(site.probe("example").cookies).not.toContain("member");
+  expect(asked.flatMap(({ questions }) => questions.map(({ id }) => id))).toEqual([
+    "login",
+    "site",
+  ]);
+  expect(built.diagnostics ?? []).not.toContainEqual(expect.stringContaining("session_not_kept"));
+  // The tool it published carries no sign-in: the one it recorded was the first site's.
+  expect(built).toMatchObject({ build: "published" });
+  expect(built.artifact).not.toHaveProperty("signIn");
 });
 
 test("a write session's first step starts clean at the root, and the next continues", async () => {

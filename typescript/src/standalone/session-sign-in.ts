@@ -75,6 +75,9 @@ export const makeBoundableAsk = (base: InputAsker) => {
 };
 export type BoundableAsk = ReturnType<typeof makeBoundableAsk>;
 
+/** The part of a held login the site rejected: its identifier, as the username, or its password. */
+type LoginField = "username" | "password";
+
 /**
  * A login that a sign-in can mark as rejected. The values the site rejected are remembered, and
  * no sign-in sends them again, whether an automatic one or the build's own: while the login held
@@ -117,12 +120,13 @@ export const makeRejectableLogin = <E>(
   };
   return {
     login,
-    /** The site rejected `field` of the login held now. */
-    reject: (field: CredentialRejectedField) => {
+    /** The site rejected the login held now, in `field`, its identifier or its password. */
+    reject: (field: LoginField) => {
       const held = base.held();
       if (held === undefined) return;
-      if (field !== "password") rejectedValues.username.add(held.username);
-      else if (held.password !== undefined) rejectedValues.password.add(held.password);
+      if (field === "username") rejectedValues.username.add(held.username);
+      if (field === "password" && held.password !== undefined)
+        rejectedValues.password.add(held.password);
     },
   };
 };
@@ -130,15 +134,25 @@ export type RejectableLogin<E> = ReturnType<typeof makeRejectableLogin<E>>;
 
 /**
  * The login field a failed sign-in says the site rejected: its corrections ran out, or the
- * correction it asked for went unanswered, with `held` the login it last sent.
+ * correction it asked for went unanswered, with `held` the login it last sent. An identifier of
+ * any kind is the login's username. A rejected code, date of birth, ZIP or recovery code names
+ * no login field: those are asked fresh and never held.
  */
 const rejectedLoginField = (
   failure: unknown,
   held: WebsiteCredentials | undefined,
-): CredentialRejectedField | undefined => {
+): LoginField | undefined => {
   if (!(failure instanceof SignInRunFailed)) return undefined;
-  if (failure.code === "CredentialsRejected")
-    return Schema.is(CredentialRejectedField)(failure.reason) ? failure.reason : undefined;
+  if (failure.code === "CredentialsRejected") {
+    const field = failure.reason;
+    if (field === "password") return "password";
+    return field === "username" ||
+      field === "email" ||
+      field === "phone" ||
+      field === "account_number"
+      ? "username"
+      : undefined;
+  }
   // A login question goes unanswered with a login held only when it asked for a correction: the
   // first question, answered, is what holds one.
   return failure.code === "NeedsInput" && failure.reason === "login" && held !== undefined
@@ -181,11 +195,16 @@ export const makeLocalSessionSignIn = (options: {
   readonly limits: SessionSignInLimits;
   /** Whether each check has its own `perScope` count (a build) or the whole run shares it. */
   readonly scope: "check" | "attempt";
+  /**
+   * The automatic sign-ins spent so far, which the caller may share across its sign-ins of one
+   * attempt; a new count by default.
+   */
+  readonly spent?: { attempt: number; scope: number };
   /** Saves the session the sign-in left, for the resets after it. */
   readonly saveSession: Effect.Effect<void, Error>;
   readonly timing?: SignInReplayTiming;
 }) => {
-  const spent = { attempt: 0, scope: 0 };
+  const spent = options.spent ?? { attempt: 0, scope: 0 };
   const replayBrowser = (bound: SessionSignInBound | undefined) =>
     bound === undefined
       ? options.browser

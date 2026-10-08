@@ -26,6 +26,8 @@ interface ShopState {
   searchPageLoads: number;
   /** Loads of the code screen, by GET, that `loginCode` puts after the one-screen sign-in. */
   codePageLoads: number;
+  /** Codes posted to the code screen. */
+  codePosts: number;
   apiRequests: number;
   curlApiRequests: number;
   cartPosts: number;
@@ -238,18 +240,18 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
       JSON.stringify(state.loginCode ? { ok: true, next: "/two-factor" } : { ok: true }),
     );
   };
-  // The code screen: a GET shows its form, and the form's post with the code signs in.
+  // The code screen: a GET shows its form, and the form's post with the code signs in. A wrong
+  // code shows the form again under the error.
+  const codeForm = `<form method="post" action="/two-factor"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>`;
   const twoFactor: Route = async (request, response) => {
     if (request.method !== "POST") {
       state.codePageLoads += 1;
-      return html(
-        response,
-        `<title>Code</title><form method="post" action="/two-factor"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>`,
-      );
+      return html(response, `<title>Code</title>${codeForm}`);
     }
+    state.codePosts += 1;
     const code = new URLSearchParams(await readBody(request)).get("code");
     if (code !== shopCode || cookieOf(request, "shop_pending") !== pending)
-      return html(response, "<title>Code</title><p id='wrong-code'>Wrong code</p>");
+      return html(response, `<title>Code</title><p id='wrong-code'>Wrong code</p>${codeForm}`);
     response.writeHead(303, {
       location: "/account",
       "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
@@ -363,6 +365,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
   const state: ShopState = {
     searchPageLoads: 0,
     codePageLoads: 0,
+    codePosts: 0,
     apiRequests: 0,
     curlApiRequests: 0,
     cartPosts: 0,

@@ -245,6 +245,9 @@ export const mintState = (
       confirmSteps: new Set(),
     };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
+    // The build's automatic sign-ins, counted for the whole attempt: a task update that moves
+    // the build to another site starts no new allowance.
+    const signInsSpent = { attempt: 0, scope: 0 };
     /**
      * Everything bound to the build's site: the sign-in browser and recorder, the marker checks
      * and the build's start. A task update that moves the build to another site binds them anew.
@@ -354,6 +357,7 @@ export const mintState = (
           siteOrigin: siteOrigin,
           limits: mintSessionSignIns,
           scope: "check",
+          spent: signInsSpent,
           saveSession: start.saveSession,
         });
         return { recorder, markers, start, sessionSignIn };
