@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   call,
   currentOf,
+  execution,
   executionIdOf,
   patch,
   probe,
@@ -16,6 +17,45 @@ const saveThenFail = probe(
 );
 /** A step that reads the page title, then fails. */
 const readThenFail = probe("await page.title(); throw new Error('Failed after the read');");
+/** A step that fails before it calls the browser. */
+const failEarly = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"fail_early",input:Schema.Unknown,output:Schema.Unknown},
+async () => { throw new Error("Failed before the page"); });`;
+/** A step that never calls the browser and never returns. */
+const hang = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"hang",input:Schema.Unknown,output:Schema.Unknown},
+async () => { await new Promise(() => undefined); });`;
+/** A write step that enters its commit mark, saves, then never returns. */
+const saveThenHang = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"save",input:Schema.Unknown,output:Schema.Unknown,write:{confirmation:"readback",commits:["save"]}},
+async ({kernel,sessionId,enteringCommit}) => {
+  enteringCommit("save");
+  await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#save').click(); await page.waitForFunction(() => document.title === 'Saved'); return true;",timeout_sec:5});
+  await new Promise(() => undefined);
+});`;
+/** A write step that only reads the save back and records it. */
+const readBack = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"save",input:Schema.Unknown,output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"readback",commits:["save"]}},
+async ({kernel,sessionId,verified}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return await page.title();",timeout_sec:5});
+  if(response.result !== "Saved") throw new Error("Not saved");
+  verified();
+  return {saved:true};
+});`;
+/** A receipt's observations, which reach the minter as JSON text. */
+const observationsOf = (receipt: Readonly<Record<string, unknown>> | undefined) => {
+  const observations = receipt?.["observations"];
+  return (typeof observations === "string" ? JSON.parse(observations) : observations) as
+    | { readonly writeSession?: { readonly verifyFirst: boolean; readonly notice: string } }
+    | undefined;
+};
+/** The start of the notice a failed act step carries when it may have committed. */
+const verifyFirst = (reason: string) =>
+  `This act step did not complete after ${reason}, so the write may already be committed. Before any further write, verify:`;
 
 const finish = (entrypoint: string, executionId: string, callId: string) =>
   call(
@@ -30,7 +70,7 @@ const finish = (entrypoint: string, executionId: string, callId: string) =>
     callId,
   );
 
-test("a failed act step that posted reports a possible effect and nothing else about its commit", async () => {
+test("a failed act step that posted tells the minter to verify before any further write", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -47,11 +87,14 @@ test("a failed act step that posted reports a possible effect and nothing else a
     });
     expect(fixture.writes()).toBe(1);
     const receipt = toolResult(last, "save");
+    // The journal saw a browser call, so the step may have sent its write: the receipt says to
+    // read back first. The host counts no requests, so it lists none.
     expect(receipt).toMatchObject({ status: "failed", effect: "possible" });
-    const text = JSON.stringify(receipt);
-    expect(text).not.toContain("writeSession");
-    expect(text).not.toContain("verifyFirst");
-    expect(text).not.toContain("stateChangingRequests");
+    const notice = observationsOf(receipt)?.writeSession?.notice;
+    expect(observationsOf(receipt)?.writeSession?.verifyFirst).toBe(true);
+    expect(notice).toContain(verifyFirst("the page sent requests the host could not count"));
+    expect(notice).toContain("The host never resubmits a write for you.");
+    expect(JSON.stringify(receipt)).not.toContain("stateChangingRequests");
   } finally {
     await site.close();
   }
@@ -85,7 +128,7 @@ test("an unchanged failed act step that only read the page is refused as a blind
   }
 });
 
-test("finish_build on a session that only read the page refuses the unentered commit mark after contract review", async () => {
+test("finish_build on a session that never sent its write refuses it before contract review", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
   const site = await fixture.start();
@@ -103,14 +146,15 @@ test("finish_build on a session that only read the page refuses the unentered co
       ],
     });
     expect(toolResult(last, "look")).toMatchObject({ status: "completed" });
+    // No step recorded a confirmation or entered a commit mark, so the session never sent its
+    // write: that is refused first, before the contract is read or reviewed.
     expect(toolResult(last, "publish")).toMatchObject({
       status: "not_published",
-      reason: "commit_marks_unentered",
+      reason: "write_not_submitted",
     });
     expect(built.build).not.toBe("published");
     expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([
       "act",
-      "contract",
     ]);
     expect(fixture.writes()).toBe(0);
   } finally {
@@ -141,6 +185,95 @@ test("a completed act step that posted carries no list of state-changing request
     expect(fixture.writes()).toBe(1);
     expect(toolResult(last, "save")).toMatchObject({ status: "completed" });
     expect(JSON.stringify(toolResult(last, "save"))).not.toContain("stateChangingRequests");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a failed act step that never called the browser carries no read-back notice", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/early.mjs": failEarly }),
+        () => [call("execute", act("src/early.mjs"), "early")],
+      ],
+    });
+    const receipt = toolResult(last, "early");
+    expect(receipt).toMatchObject({ status: "failed", effect: "not_sent" });
+    expect(JSON.stringify(receipt)).not.toContain("writeSession");
+    expect(fixture.writes()).toBe(0);
+  } finally {
+    await site.close();
+  }
+});
+
+test("an act step that returned no result tells the minter to verify, though it never called the browser", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/hang.mjs": hang }),
+        () => [call("execute", execution("act", "src/hang.mjs", { timeoutSeconds: 2 }), "hang")],
+      ],
+    });
+    const receipt = toolResult(last, "hang");
+    expect(receipt).toMatchObject({ status: "failed", effect: "not_sent" });
+    expect(observationsOf(receipt)?.writeSession?.verifyFirst).toBe(true);
+    expect(observationsOf(receipt)?.writeSession?.notice).toContain(
+      verifyFirst(
+        "it returned no result, as when its page was lost or its runner stopped, so the host cannot tell which commit steps it entered",
+      ),
+    );
+  } finally {
+    await site.close();
+  }
+});
+
+test("a step that lost its result after entering its mark publishes once a read-back confirms the write", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/save.mjs": saveThenHang,
+            "src/check.mjs": readBack,
+            "src/tool.mjs": readBack,
+          }),
+        () => [call("execute", execution("act", "src/save.mjs", { timeoutSeconds: 3 }), "save")],
+        () => [call("execute", act("src/check.mjs"), "check")],
+        (request) => [finish("src/tool.mjs", executionIdOf(request, "check"), "publish")],
+      ],
+    });
+    expect(fixture.writes()).toBe(1);
+    const lost = toolResult(last, "save");
+    expect(lost).toMatchObject({ status: "failed", effect: "possible" });
+    expect(observationsOf(lost)?.writeSession?.verifyFirst).toBe(true);
+    expect(toolResult(last, "check"), JSON.stringify(toolResult(last, "check"))).toMatchObject({
+      status: "completed",
+      confirmation: "readback",
+    });
+    // The mark the lost step streamed counts because the read-back confirmed the write.
+    expect(built.build, JSON.stringify(toolResult(last, "publish"))).toBe("published");
   } finally {
     await site.close();
   }

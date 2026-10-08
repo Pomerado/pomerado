@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Effect, Either } from "effect";
 import {
   runLocalOperation,
   LocalOperationFailure,
@@ -18,6 +18,12 @@ import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
+import {
+  commitEvidenceOf,
+  commitUncertain,
+  verifyFirstNotice,
+  type CommitEvidence,
+} from "../mint/write-session.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -181,6 +187,40 @@ const scriptQuestions = (
   };
 };
 
+/**
+ * What an act step's effect journal shows about its write. The journal reads `not_sent` only
+ * while the step made no browser call, so anything else may have sent the write; the local host
+ * counts no requests. A step whose child did not report its own result has `unreported` commit
+ * evidence, and the marks it streamed count only once a later step confirms.
+ */
+const actOutcome = (executed: Either.Either<LocalOperationOutput, Error>) => {
+  const failure = Either.isLeft(executed) ? executed.left : undefined;
+  const journal: LocalOperationJournal = Either.isRight(executed)
+    ? executed.right
+    : failure instanceof LocalOperationFailure
+      ? failure.journal
+      : { effect: "possible", commits: [] };
+  const reported =
+    Either.isRight(executed) || (failure instanceof LocalOperationFailure && failure.reported);
+  const entered = journal.commits
+    .filter((mark) => mark.state !== "not_sent")
+    .map(({ name }) => name);
+  const sent = journal.effect === "not_sent" ? 0 : undefined;
+  const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
+  return {
+    stateChanging: journal.effect !== "not_sent",
+    marks: {
+      ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
+      enteredMarks: reported ? entered : [],
+      ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
+    },
+    writeSession:
+      failure !== undefined && commitUncertain(sent, commit)
+        ? { verifyFirst: true as const, notice: verifyFirstNotice(sent, commit) }
+        : undefined,
+  };
+};
+
 type Journal = Parameters<MintDependencies["reviewAndExecute"]>[2];
 interface ReceiptInput {
   readonly state: MintState;
@@ -197,6 +237,8 @@ interface ReceiptInput {
     };
   };
   readonly journal: Journal;
+  /** A failed act step that may have committed its write: read back before writing again. */
+  readonly writeSession?: { readonly verifyFirst: true; readonly notice: string };
 }
 const failedReceipt = (
   receipt: ReceiptInput,
@@ -211,6 +253,7 @@ const failedReceipt = (
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
+    const { writeSession } = receipt;
 
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
@@ -240,6 +283,7 @@ const failedReceipt = (
         ...(failure instanceof LocalOperationFailure
           ? { code: failure.code, tag: failure.tag }
           : {}),
+        ...(writeSession === undefined ? {} : { writeSession }),
       },
       review: { reviewId: reviewed.reviewId, ...reviewed.decision },
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
@@ -392,16 +436,13 @@ const authoredExecution = (
           yield* context.observe;
           if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
-        if (execution.purpose === "act")
+        const act = execution.purpose === "act" ? actOutcome(executed) : undefined;
+        if (act !== undefined)
           writeSession.steps.push({
             entrypoint: execution.entrypoint,
             sourceDigest: writeStepDigest(files, execution.entrypoint),
-            stateChanging:
-              (executed._tag === "Left"
-                ? executed.left instanceof LocalOperationFailure
-                  ? executed.left.journal.effect
-                  : "possible"
-                : executed.right.effect) !== "not_sent",
+            stateChanging: act.stateChanging,
+            ...act.marks,
           });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
@@ -414,6 +455,7 @@ const authoredExecution = (
           ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
           reviewed,
           journal,
+          ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
         };
         return yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

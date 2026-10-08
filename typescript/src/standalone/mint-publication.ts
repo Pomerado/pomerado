@@ -17,8 +17,8 @@ import { contractExtractionNote } from "../mint/review-context.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
+import { checkWriteSession } from "../mint/write-session.js";
 import type { MintState } from "./mint-state.js";
-import { validateStandaloneWrite } from "./write-completion.js";
 import { publicationError } from "./errors.js";
 
 type Run = MintState["runs"] extends Map<string, infer Value> ? Value : never;
@@ -94,96 +94,117 @@ export const mintPublication =
       // when the caller sent none, as the first act step that passed one fixed it, even when the
       // named step ran before it; else the caller's own.
       const input = write ? (writeSession.input ?? sample.input) : sample.input;
-      // What the operation can load ships: all of src/, the entrypoint and the probes it imports.
-      const snapshot = new Map(yield* workspace.snapshot);
-      const files = savedOperationFiles(snapshot, publication.entrypoint);
-      const sources = [...files];
-      for (const [, text] of sources) yield* secrets.assertAbsent(text);
-      const signIn = yield* screenedSignIn(state.recorder.published(), secrets.assertAbsent);
-      // Published code never holds a handle: no saved file the operation could run may hold one,
-      // whatever its extension. That is every saved file when Node could load one its imports
-      // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only
-      // because the workspace has a package manifest, is not checked.
-      const runnable = runnableOperationFiles(snapshot, publication.entrypoint);
-      if ([...runnable.values()].some(holdsSecretHandle))
-        return yield* Effect.fail(
-          new MintFailure({
-            code: "PublicationUnavailable",
-            reason: "secret_handle",
-          }),
-        );
-      yield* context.review({
-        entrypoint: `operation/${publication.entrypoint}`,
-        sources: new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
-        input,
-        currentExecution: { purpose: "contract", target: "pureFiles" },
-        note: contractExtractionNote,
+      // The composed contract, read offline: the files that ship, screened for secrets and
+      // handles, reviewed by Guardian and run in contract mode on the input.
+      const extract = Effect.gen(function* () {
+        // What the operation can load ships: all of src/, the entrypoint and the probes it imports.
+        const snapshot = new Map(yield* workspace.snapshot);
+        const files = savedOperationFiles(snapshot, publication.entrypoint);
+        const sources = [...files];
+        for (const [, text] of sources) yield* secrets.assertAbsent(text);
+        const signIn = yield* screenedSignIn(state.recorder.published(), secrets.assertAbsent);
+        // Published code never holds a handle: no saved file the operation could run may hold one,
+        // whatever its extension. That is every saved file when Node could load one its imports
+        // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only
+        // because the workspace has a package manifest, is not checked.
+        const runnable = runnableOperationFiles(snapshot, publication.entrypoint);
+        if ([...runnable.values()].some(holdsSecretHandle))
+          return yield* Effect.fail(
+            new MintFailure({
+              code: "PublicationUnavailable",
+              reason: "secret_handle",
+            }),
+          );
+        yield* context.review({
+          entrypoint: `operation/${publication.entrypoint}`,
+          sources: new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
+          input,
+          currentExecution: { purpose: "contract", target: "pureFiles" },
+          note: contractExtractionNote,
+        });
+        const result = yield* runLocalOperation({
+          workspace,
+          entrypoint: publication.entrypoint,
+          sources,
+          input,
+          validateInput: true,
+          ...(write ? {} : { retainedOutput: { value: sample.output } }),
+          browser,
+          mode: "contract",
+          target: "pureFiles",
+        });
+        context.setInputSchema(result.schemas.input);
+        return {
+          files,
+          sources,
+          signIn,
+          result,
+          contract: result,
+          inputDecodes: result.inputDecodes === true,
+        };
       });
-      const result = yield* runLocalOperation({
-        workspace,
-        entrypoint: publication.entrypoint,
-        sources,
-        input,
-        validateInput: true,
-        ...(write ? {} : { retainedOutput: { value: sample.output } }),
-        browser,
-        mode: "contract",
-        target: "pureFiles",
-      });
-      context.setInputSchema(result.schemas.input);
+      // A write first proves its session sent the write, then that its composed contract matches
+      // the session. The local host counts no requests, so only a confirmation or an entered
+      // commit mark shows the write went out.
+      const session = write
+        ? yield* checkWriteSession({
+            session: { steps: writeSession.steps, nonReadRequests: 0 },
+            step: sample.journal,
+            extract,
+          })
+        : undefined;
+      const { files, sources, signIn, result } = session?.extracted ?? (yield* extract);
       const acts = [...runs].filter(([, run]) => run.purpose === "act");
       // A write is judged against the act session that performed it, since its composed script
       // never ran; a read against the example that ran, whose source Guardian reads as executed.
-      const judged = write
-        ? {
-            note: publicationEvidenceNote({
-              kind: "write",
-              writeConfirmation: yield* validateStandaloneWrite(result, {
-                named: sample.journal,
-                steps: acts.map(([, run]) => run.journal),
-              }),
-              intentDerived: writeSession.input !== undefined,
-            }),
-            files: new Map([
-              [
-                sessionOutputPath,
-                (yield* outputEvidence(state, sample, {
-                  kind: "write_session_output",
-                  executionId: evidence.executionId,
-                  executedEntrypoint: sessionStepPath(
-                    acts.findIndex(([id]) => id === evidence.executionId),
-                    sample.entrypoint,
-                  ),
-                })).text,
-              ],
-              ...sessionEvidenceFiles(
-                acts.map(([, run]) => ({
-                  entrypoint: run.entrypoint,
-                  files: new Map(run.sources),
-                })),
-              ),
-            ]),
-            intentDerivedInput: writeSession.input,
-          }
-        : yield* Effect.gen(function* () {
-            const baseline = savedOperationFiles(new Map(sample.sources), sample.entrypoint);
-            const output = yield* outputEvidence(state, sample, {
-              executionId: evidence.executionId,
-              executedEntrypoint: `executed/${sample.entrypoint}`,
-              executedSourceDigest: sourceDigest(baseline),
-            });
-            return {
+      const judged =
+        session !== undefined
+          ? {
               note: publicationEvidenceNote({
-                kind: "read",
-                entrypoint: sample.entrypoint,
-                completed: evidence.status === "completed",
-                schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
+                kind: "write",
+                writeConfirmation: session.declared,
+                intentDerived: writeSession.input !== undefined,
               }),
-              files: new Map([[exampleOutputPath, output.text]]),
-              baseline,
-              intentDerivedInput: sample.intentDerivedInput,
-            };
-          });
+              files: new Map([
+                [
+                  sessionOutputPath,
+                  (yield* outputEvidence(state, sample, {
+                    kind: "write_session_output",
+                    executionId: evidence.executionId,
+                    executedEntrypoint: sessionStepPath(
+                      acts.findIndex(([id]) => id === evidence.executionId),
+                      sample.entrypoint,
+                    ),
+                  })).text,
+                ],
+                ...sessionEvidenceFiles(
+                  acts.map(([, run]) => ({
+                    entrypoint: run.entrypoint,
+                    files: new Map(run.sources),
+                  })),
+                ),
+              ]),
+              intentDerivedInput: writeSession.input,
+            }
+          : yield* Effect.gen(function* () {
+              const baseline = savedOperationFiles(new Map(sample.sources), sample.entrypoint);
+              const output = yield* outputEvidence(state, sample, {
+                executionId: evidence.executionId,
+                executedEntrypoint: `executed/${sample.entrypoint}`,
+                executedSourceDigest: sourceDigest(baseline),
+              });
+              return {
+                note: publicationEvidenceNote({
+                  kind: "read",
+                  entrypoint: sample.entrypoint,
+                  completed: evidence.status === "completed",
+                  schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
+                }),
+                files: new Map([[exampleOutputPath, output.text]]),
+                baseline,
+                intentDerivedInput: sample.intentDerivedInput,
+              };
+            });
       yield* reviewPublication(context.reviewPublication, {
         entrypoint: publication.entrypoint,
         files,
