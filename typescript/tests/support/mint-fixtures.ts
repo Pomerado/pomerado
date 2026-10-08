@@ -7,7 +7,12 @@ import type { SandboxSession } from "@openai/agents/sandbox";
 import { Cause, Effect, Exit } from "effect";
 import type { Clock } from "effect";
 import { MintFailure, MintServices } from "../../src/mint/contracts.js";
-import type { AgentInputRequest, MintDependencies, MintTurn } from "../../src/mint/contracts.js";
+import type {
+  AgentInputRequest,
+  AllowedExecution,
+  MintDependencies,
+  MintTurn,
+} from "../../src/mint/contracts.js";
 import { runMint } from "../../src/mint/harness.js";
 import type { makeOpenAIMinter as OpenAIMinterFactory } from "../../src/mint/openai.js";
 import { Deadline } from "../../src/runtime/deadline.js";
@@ -16,6 +21,16 @@ import { portableMintProjection } from "./portable-mint.js";
 type WorkspaceFactory<W extends SandboxSession & { close: () => Promise<void> }> = (
   entries: Readonly<Record<string, string>>,
 ) => W | Promise<W>;
+/**
+ * The allow a scripted host's fence passes: the label a Guardian review of a typical step of
+ * this purpose gives. An act step writes, an authenticate step signs in and the rest read.
+ */
+export const fixtureAllow = (purpose: string): AllowedExecution => ({
+  reviewId: `review_${purpose}`,
+  action: purpose === "act" ? "write" : purpose === "authenticate" ? "authentication" : "read",
+});
+/** A Guardian read allow, for scripted steps whose label a test does not depend on. */
+export const readAllow: AllowedExecution = { reviewId: "review_fixture", action: "read" };
 const unanswered = (possibleCommit = false) =>
   new MintFailure({ code: "Unavailable", noResponse: { possibleCommit } });
 export const makeMintHarnessFixture = <W extends SandboxSession & { close: () => Promise<void> }>(
@@ -81,16 +96,17 @@ export const makeMintHarnessFixture = <W extends SandboxSession & { close: () =>
     const scripted = scriptedDependencies.reviewAndExecute;
     const dependencies: MintDependencies = {
       ...scriptedDependencies,
-      reviewAndExecute: (input, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (input, beforeDispatch = () => Effect.void) =>
         Effect.gen(function* () {
           let crossed = false;
-          const dispatch = beforeDispatch.pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                crossed = true;
-              }),
-            ),
-          );
+          const dispatch = (allowed: AllowedExecution) =>
+            beforeDispatch(allowed).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  crossed = true;
+                }),
+              ),
+            );
           const result = yield* Effect.exit(scripted(input, dispatch));
           const rejected =
             Exit.isFailure(result) &&
@@ -98,7 +114,7 @@ export const makeMintHarnessFixture = <W extends SandboxSession & { close: () =>
             (result.cause.error.code === "ReviewDenied" ||
               (result.cause.error.code === "ReviewUnavailable" &&
                 result.cause.error.reviewDispatch === "not_sent"));
-          if (!rejected && !crossed) yield* dispatch;
+          if (!rejected && !crossed) yield* dispatch(fixtureAllow(input.purpose));
           return yield* result;
         }),
     };
@@ -179,8 +195,8 @@ export const makeMintContinuationFixture = <
       authorizeResidual: Effect.fail(
         new MintFailure({ code: "ReconciliationRequired", reconciliationStage: "intent_input" }),
       ),
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(fixtureAllow(input.purpose)).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               executed++;

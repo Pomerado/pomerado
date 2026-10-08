@@ -10,10 +10,14 @@ import type {
 } from "../../src/mint/contracts.js";
 import { MintFailure } from "../../src/mint/contracts.js";
 import type { TaskUpdateDecision } from "../../src/guardian/task-update.js";
+import type {
+  OutcomeReviewHost,
+  OutcomeReviewSnapshot,
+} from "../../src/mint/outcome-review-contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { memoryPublicationDecisions } from "../../src/standalone/publication-decisions.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
-import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
+import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -455,7 +459,7 @@ it("asks the minter to confirm an update that cites no answered question", async
 const numberedExecutions = () => {
   let count = 0;
   const reviewAndExecute: MintDependencies["reviewAndExecute"] = (_input, beforeDispatch) =>
-    (beforeDispatch ?? Effect.void).pipe(
+    (beforeDispatch?.(readAllow) ?? Effect.void).pipe(
       Effect.zipRight(
         Effect.sync(() => {
           count++;
@@ -695,4 +699,62 @@ it("asks for the caller's confirmation before a change that widens what the buil
       reason: "confirmation_required",
     });
   expect(updates.reviews).toEqual([]);
+});
+
+// Fails when an applied update leaves the outcome reviewer unaware that the remaining work changed,
+// or when a refused one tells it the work changed.
+it("tells the outcome reviewer about an applied update, never a refused one", async () => {
+  const updates = updateHost(["reword", "allow"]);
+  const saved: OutcomeReviewSnapshot[] = [];
+  const review: OutcomeReviewHost = {
+    // A reviewer that takes its turns and never assesses, so the write stays unresolved.
+    model: { turn: () => Effect.void },
+    save: (snapshot) =>
+      Effect.sync(() => {
+        saved.push(snapshot);
+      }),
+    recordAssessment: () => Effect.void,
+  };
+  const dropCheck = {
+    summary: "Save the note without checking its history first.",
+    changes: [{ setting: "requirement", change: "drop", text: "Check the note's history first." }],
+    confirmedBy: [],
+    recommend: "update",
+  };
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...example, purpose: "act", target: "liveBrowser" }, "save"),
+        call("mint_update", dropCheck, "refused"),
+        call("mint_update", dropCheck, "applied"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      outcomeReview: review,
+      reviewAndExecute: (_input, beforeDispatch) =>
+        (beforeDispatch?.({ reviewId: "review_save", action: "write" }) ?? Effect.void).pipe(
+          Effect.as({
+            executionId: "save_1",
+            status: "completed" as const,
+            effect: "possible" as const,
+            resultRef: "save_result",
+            observations: { page: "Saved." },
+            review: {
+              reviewId: "review_save",
+              outcome: "allow" as const,
+              rationale: "Scripted review.",
+              action: "write" as const,
+            },
+          }),
+        ),
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "refused")).toMatchObject({ status: "reword" });
+  expect(resultOf(f.requests, "applied")).toMatchObject({ status: "updated" });
+  const events = saved.at(-1)?.events ?? [];
+  expect(events.filter((event) => event.kind === "task_updated")).toEqual([
+    expect.objectContaining({ change: expect.stringContaining(dropCheck.summary) as unknown }),
+  ]);
 });

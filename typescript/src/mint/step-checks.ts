@@ -3,13 +3,11 @@ import { isDeepStrictEqual } from "node:util";
 import { Effect, Option, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { type ExecutionRequest, MintFailure, type MintRequest } from "./contracts.js";
-import { entrypointImportClosure } from "./operation-source.js";
 
 /**
  * The checks a host runs on one submitted step before Guardian reviews it, and the read/write
- * state they read: which input the step runs, whether a write build's session admits it, whether
- * it would blindly repeat a write, and whether a read build may run its example again or become
- * a write. Each answers from facts the host passes in.
+ * state they read: which input the step runs, whether a write build's session admits it, and
+ * whether a read build may run its example again or become a write. Each answers from facts the host passes in.
  */
 
 /** A host's refusal of a step, which runs nothing. */
@@ -184,43 +182,20 @@ export const stepInput = (
   );
 };
 
-/** One act step of a write session, as the blind-repeat guard reads it. */
-export interface WriteStep {
-  readonly entrypoint: string;
-  /** `writeStepDigest` of the step's source when it ran. */
-  readonly sourceDigest: string;
-  /** The step sent state-changing requests, or may have. */
-  readonly stateChanging: boolean;
-}
-
 /** The sha256 digest of a set of source files, whatever order they come in. */
 export const sourceDigest = (files: ReadonlyMap<string, string>) =>
   createHash("sha256")
     .update(JSON.stringify([...files].sort(([left], [right]) => left.localeCompare(right))))
     .digest("hex");
 
-/** The digest of an act step's own source: its entrypoint and the files it imports. */
-export const writeStepDigest = (files: ReadonlyMap<string, string>, entrypoint: string) =>
-  sourceDigest(entrypointImportClosure(files, entrypoint));
-
 /**
- * Why an act step is refused before review as a blind repeat: it is unchanged and runs straight
- * after itself, and that run sent state-changing requests, so it could commit the write twice.
- * Once another act step has run, as a read-back does, the agent has verified and may run it again.
+ * The sha256 digest of what a set of source files holds, without their paths, so the same step
+ * copied under another name has the same digest.
  */
-export const replayedWriteStep = (
-  submitted: ExecutionRequest,
-  files: ReadonlyMap<string, string>,
-  steps: readonly WriteStep[],
-): string | undefined => {
-  if (submitted.purpose !== "act") return undefined;
-  const last = steps.at(-1);
-  return last?.stateChanging === true &&
-    last.entrypoint === submitted.entrypoint &&
-    last.sourceDigest === writeStepDigest(files, submitted.entrypoint)
-    ? "This act step is unchanged and just sent state-changing requests, so running it again blindly could commit the write twice. First run an act step that reads the page or the account and learns whether the write happened; if it did not, you may run this step again."
-    : undefined;
-};
+export const contentDigest = (files: ReadonlyMap<string, string>) =>
+  createHash("sha256")
+    .update(JSON.stringify([...files.values()].sort()))
+    .digest("hex");
 
 /** Why a write build refuses this step now; undefined when it may run. */
 export const writeSessionBoundary = (

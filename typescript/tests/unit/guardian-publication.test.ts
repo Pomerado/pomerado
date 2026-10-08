@@ -482,7 +482,7 @@ describe("the OpenAI publication reviewer", () => {
     const requests = scripted((index) =>
       index === 0
         ? [read(pending.entrypoint)]
-        : [message({ outcome: "allow", rationale: "Fine." })],
+        : [message({ outcome: "allow", rationale: "Fine.", action: "read" })],
     );
     const { publication: _publication, ...execution } = pending;
     await Effect.runPromise(
@@ -585,10 +585,7 @@ describe("the OpenAI publication reviewer", () => {
       const result = await Effect.runPromise(
         makeGuardian(
           makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
-        ).review(
-          pending,
-          sourcesOf(files),
-        ),
+        ).review(pending, sourcesOf(files)),
       );
       expect(result.decision).toMatchObject({
         outcome: "deny",
@@ -628,10 +625,7 @@ describe("the OpenAI publication reviewer", () => {
       Effect.either(
         makeGuardian(
           makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
-        ).review(
-          request,
-          sourcesOf(new Map([[path, source]])),
-        ),
+        ).review(request, sourcesOf(new Map([[path, source]]))),
       ),
     );
     expect(result).toMatchObject({ _tag: "Right", right: { decision: { outcome: "allow" } } });
