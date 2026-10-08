@@ -318,7 +318,9 @@ describe("a run that failed in its operation", () => {
   });
 });
 
-describe("a run whose sign-ins were spent", () => {
+// The host refused a sign-in the script waited for in `ensureSignedIn`: its sign-ins were spent,
+// or the sign-in failed. Either way the operation reports the session not kept.
+describe("a run that can't sign in again", () => {
   const fail = (declared: "read" | "write" | undefined, journal: LocalOperationJournal) =>
     runOutcomeFailure(declared, "operation")(
       new LocalOperationFailure(
@@ -349,8 +351,15 @@ describe("a run whose sign-ins were spent", () => {
   });
 
   // A write counts as unapplied only when its journal shows no commit step entered, as for a
-  // refused input or login. Any other write may have applied, so a retry could repeat it.
+  // refused input or login. Any other write may have applied, so a retry could repeat it, and a
+  // commit step the journal shows entered keeps a run labelled a read from that retry too.
   it.each([
+    {
+      case: "a run labelled a read whose journal shows a commit step entered",
+      declared: "read",
+      journal: commitSent,
+      outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false, retry: "never" },
+    },
     {
       case: "a write that entered none of its declared commit steps",
       declared: "write",
