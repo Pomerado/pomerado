@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import type { MintDependencies } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
-import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
+import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -60,8 +60,8 @@ const countingHost = () => {
     claimExample: Effect.sync(() => {
       counts.claims++;
     }),
-    reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-      beforeDispatch.pipe(
+    reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+      beforeDispatch(readAllow).pipe(
         Effect.zipRight(
           Effect.sync(() => {
             counts.executions++;

@@ -11,7 +11,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
-import { recordingGuardian } from "./guardian-context-fixture.js";
+import { actionFor, quietReviewer, recordingGuardian } from "./guardian-context-fixture.js";
 import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in, on the shop's one-screen and two-screen sign-ins: what the host
@@ -76,7 +76,11 @@ const guardian = () => {
       return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture" }))];
     if (sourcePending) {
       sourcePending = false;
-      return [message(JSON.stringify({ outcome: "allow", rationale: "Fixture review" }))];
+      return [
+        message(
+          JSON.stringify({ outcome: "allow", rationale: "Fixture review", ...actionFor(current) }),
+        ),
+      ];
     }
     sourcePending = true;
     const pending = objects(current).find((item) => typeof item["entrypoint"] === "string");
@@ -248,6 +252,7 @@ test("a local build asks for its login once and publishes its sign-in without a 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -783,6 +788,7 @@ test("a login URL that holds the login's email is refused at publication, naming
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -849,6 +855,7 @@ test("a second sign-in screen whose form posts to a URL holding the password is 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -919,6 +926,7 @@ test("a later build in the same session refuses a password screen before its own
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -981,6 +989,7 @@ test("a password screen that shows the typed email signs in, and Guardian reads 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: reviewer.provider,
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -1097,6 +1106,7 @@ const markerSession = async (
     readonly effect?: "read" | "write";
     readonly steps: readonly (Output | (() => Output))[];
   }[],
+  outcomeReviewer: ModelProvider = quietReviewer,
 ) => {
   const requests: ModelRequest[][] = builds.map(() => []);
   let build = 0;
@@ -1113,6 +1123,7 @@ const markerSession = async (
           browser: { endpoint },
           minterProvider: minter,
           guardianProvider: guardian(),
+          outcomeReviewerProvider: outcomeReviewer,
           ask: answers([]),
           timeoutMs: 45_000,
         });
@@ -1362,6 +1373,65 @@ test("the local minter's marker check loads no page once the write session start
     expect(shop.state.searchPageLoads).toBe(1);
     expect(objects(toolResult(build, "account"))).toContainEqual(
       expect.objectContaining({ status: "tool_failed", code: "Unavailable" }),
+    );
+  });
+});
+
+// Catches a host-filled sign-in screen reaching the outcome reviewer without its action label:
+// the dispatch fence must carry the host's own `authentication` allow, not nothing.
+test("a sign-in screen the host fills while a write is unresolved reaches the outcome reviewer labelled authentication", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, an act step, a host sign-in and an outcome review turn",
+  });
+  test.setTimeout(60_000);
+  await withShop(async (shop, endpoint) => {
+    const reviewerRequests: ModelRequest[] = [];
+    const reviewer = provider(() => [message("No assessment yet.")], reviewerRequests);
+    const [build] = await markerSession(
+      endpoint,
+      [
+        {
+          url: `${shop.origin}/login`,
+          effect: "write",
+          steps: [
+            [create("src/login.mjs", openPage("open_login", "/login"), "patch_login")],
+            // Guardian labels the act step a write, which stays unresolved: the reviewer never
+            // assesses.
+            [
+              execute(
+                "act",
+                { entrypoint: "src/login.mjs", intent: "Open the sign-in page" },
+                "act_login",
+              ),
+            ],
+            [signInFields()],
+            // A repeat of the write waits for the reviewer to take every event so far.
+            [
+              execute(
+                "act",
+                { entrypoint: "src/login.mjs", intent: "Open the sign-in page" },
+                "act_again",
+              ),
+            ],
+          ],
+        },
+      ],
+      reviewer,
+    );
+    if (build === undefined) throw new Error("No build");
+    expect(objects(toolResult(build, "act_login"))).toContainEqual(
+      expect.objectContaining({ status: "completed" }),
+    );
+    expect(shop.state.loginPosts).toBe(1);
+    const events = objects(reviewerRequests.map((request) => request.input))
+      .flatMap((value) => {
+        const turn = value["outcome_review_turn"] as { readonly events?: unknown } | undefined;
+        return turn === undefined ? [] : objects(turn.events);
+      })
+      .filter((event) => event["kind"] === "execution");
+    expect(events).toContainEqual(
+      expect.objectContaining({ purpose: "authenticate", action: "authentication" }),
     );
   });
 });
