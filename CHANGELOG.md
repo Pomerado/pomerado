@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- The minter's prompts are one text for every host. These 33 named authoring sections are now shared text, so a host that composes its own text into the sections drops them: `core.example-input`, `core.schema-coverage`, `core.stale-session`, `core.testing-reference`, `core.completion`, `auth.login-url`, `auth.signed-out-flow`, `auth.partial-flow`, `auth.step-fields`, `auth.code-rejection`, `auth.next-screen`, `auth.signed-in-evidence`, `auth.sign-in-check`, `caller-input.declare`, `forms.saved-steps`, `pagination.no-recreated-writes`, `writes.session`, `writes.session-limits`, `writes.finish`, `writes.run-outcomes`, `publication.description-reader`, `publication.login-url`, `publication.confirm-steps`, `publication.input-feedback-end`, `publication.confirm-action`, `agents.workspace-map`, `agents.tools`, `agents.guardian-records`, `agents.guardian-view`, `agents.repeatable-reads`, `agents.write-builds`, `agents.tests` and `agents.capacity`. The other 69 sections stay.
+- The package adds a `testing` skill, loaded after `auth`. Its sections `testing.offline-fixtures`, `testing.saved-targets`, `testing.capture-evidence` and `testing.later-cases` have no standalone text. A host that ships its own `testing/SKILL.md` drops it and composes its text into those sections instead.
+
 ### Other changes
+
+- The local minter reads the shared text where its own sections were empty or different, and the testing skill. That covers the write session's steps, declared questions, sign-in screen fields, the login URL rules, the workspace map, the tool list and how Guardian sees the build. Where that text describes a feature the local host lacks, the list on top of `AGENTS.md` tells the minter to ignore it.
 
 - The local minter's `AGENTS.md` starts with the features the shared prompts describe that another host supplies and the local host lacks, which the minter ignores. The local Guardian's execution policy ends with the same list, as protections it doesn't count on. `typescript/src/hosted-features.ts` holds the list, one line per entry, and a change that brings a feature to the local host deletes its entry. `GuardianExecutionEnvironment` gains an optional `absentProtections`, the policy's last line. A host that leaves it out gets the policy unchanged.
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.

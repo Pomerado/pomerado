@@ -135,7 +135,8 @@ that asks.
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The
   first act step that passes it fixes it, and later steps repeat it unchanged or omit it. Make
-  each of its keys a schema input, required where the request needs it<!-- pomerado:section core.example-input -->. An optional input plus a declared
+  each of its keys a schema input, required where the request needs it; publication returns a
+  key the schema lacks as an `example_input` input feedback. An optional input plus a declared
   question is only for a value the request leaves open.
 - Callers and Guardian see the JSON Schema form, so write every constraint in one it
   shows: a `Schema.filter` shows nothing, its description included, so use
@@ -167,7 +168,17 @@ that asks.
   `Schema.between(0, Number.MAX_SAFE_INTEGER, { title: "Safe integer", description:
 "Nonnegative safe integer amount" })` keeps the bound with public prose. Return a
   supplied currency value from the validated input instead of embedding it in source.
-  Only host-approved standard enums and origins are recognized as public.<!-- pomerado:section core.schema-coverage -->
+  Only host-approved standard enums and origins are recognized as public.
+- Guardian's publication review checks the schema and the code that fills it. A
+  `not_published` result with reason `input_feedback` lists `account_specific_enum`,
+  `input_option` and `example_value` findings. They are feedback, on a read or a write:
+  correct the source (make the value free-form, add the option as an input, or widen the
+  input and the code that sets it) and call `finish_build` again with the same
+  `executionId`. The host reads the schemas offline from current source and checks that the
+  example's or session's own input, and a read example's output, still decode. Never run a
+  write again for it. After two such rounds, or if you stop
+  without fixing them, the host publishes the last reviewed version privately to the
+  caller's account and flags it.
 
 Typed output, where the site makes it easy:
 - Prefer numbers for prices, amounts and counts, with the currency or unit in its own field.
@@ -241,10 +252,11 @@ A live example, a live read `test`, and a write session's first `act` step are
 different: the host resets
 the browser to the site origin before it runs,
 and clears exploration cookies and site storage. A signed-in build gets back the session
-saved right after sign-in instead<!-- pomerado:section core.stale-session:start
-, so a stale session shows up as a login wall that a new
-sign-in fixes. That source must perform the flow from its input,
-pomerado:section core.stale-session:end -->
+saved right after sign-in instead. When the page is signed out after that reset, or after a
+full page load your source asks about with `ensureSignedIn`, the host signs in again by itself;
+do not call `authenticate` for it. When the host cannot keep the site signed in, the step fails with
+`session_not_kept`: report that cause instead of signing in again. That source must perform
+the flow from its input,
 never rely on a page an exploration left open. So a read iterates from a clean start,
 and re-running its example or live test is normal. A live test stays read-only. A write
 session's later `act` steps continue on the page the previous step left.
@@ -310,7 +322,7 @@ Never recreate a write or login to recover an observation. See
 
 The tools and the files you may edit are in `AGENTS.md`. The host binds the caller's actual input/account; no tool
 argument selects another account or private reference. A live read test's `testInput` is
-the one input you choose, with public values only<!-- pomerado:section core.testing-reference -->. Every new
+the one input you choose, with public values only (.agents/testing/SKILL.md). Every new
 command/probe/execution gets Guardian review<!-- pomerado:section core.tools-and-files -->.
 Nested Playwright actions do not each trigger review. A probe operation still receives the host-bound business
 input. Its declared schema must accept that input even when the bounded observation
@@ -441,16 +453,12 @@ host's own entry-page load. The mint continued past each listed gap.
 
 <!-- pomerado:section core.incident-kinds -->
 
-<!-- pomerado:section core.completion:start
-
-## Standalone execution and completion
-
-Use the ordinary `defineOperation` API and existing Kernel-shaped browser calls above. `liveBrowser` is native Playwright and `pureFiles` is local computation. The host retains Guardian review, caller authority, source reads, questions, deadline/cleanup and no-replay rules. It offers no browser replacement or captured replay facility. An invalidated native executor ends this attempt; never use a new browser to repeat an uncertain effect.
-
-Declare explicit input and output schemas, concrete types and bounds for each supported field. Caller choices and account-specific values come from input or reviewed questions, never literals/defaults you invented. A detail read verifies the requested record identity and final page state. Every returned field has observable support; describe missing coverage truthfully.
-
-`finish_build` returns the current integration files and schemas after shared checks. A read needs a successful example using supplied values. A write needs its original confirming act receipt and current source; compose it without running it again. Return the task result and honest evidence, not unsupported success claims.
-
-Only the host asks for website credentials and only during `authenticate`. Give it the observed field selectors, slots, allowed identifier kinds, format and submit. No generated source receives the raw password; follow the same destination, stale field/focus, no-readback and code-handle rules as hosted execution. Correct a refused binding by reading the current screen. A rejected credential needs caller correction; do not resubmit it.
-
-pomerado:section core.completion:end -->
+Unclear means possible. `websiteEffect: may_have_dispatched` makes that execution's
+effect possible: reconcile current state before claiming success, and never repeat
+a claimed example or an uncertain write blindly: in a write session or a maintenance
+repair, read back whether the write happened first, and do the write only if it did not.
+`hostBug: true` marks a suspected Pomerado defect, which the host has reported. On a
+`dialog`, report it in your diagnostics and do not work around it. On an `observation_gap`
+or `capture_unavailable`, note it in `finish_build` coverage and keep building. A gap never
+stops a read. A write the gap covers has an unknown outcome, so never repeat it without the
+read-back above.

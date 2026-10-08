@@ -31,7 +31,51 @@ already asked for, or to solve a CAPTCHA.
 
 ## Declare, read, ask
 
-<!-- pomerado:section caller-input.declare -->
+1. Declare every question the run may ask in the contract,
+   `defineOperation({ name, input, output, questions }, ...)`, by id, with its `type`
+   and a short `prompt`. The publication review reads these declarations once, so the
+   prompt names the choice or value, never a private value. Write `questions` as a plain
+   literal inside the entrypoint's own `defineOperation` call: during the build the host
+   reads it from that source, not from the running script, and a computed or imported
+   declaration declares nothing, so every question is refused as `Undeclared`. Each question
+   the example asks is also reviewed before the build's owner sees it. An id starts with a
+   lowercase letter and holds only lowercase letters, digits and underscores, up to 64
+   characters (`page_title`, not `pageTitle`); the host refuses an invalid id before the
+   script runs, and each `ask` uses the declared id exactly.
+   - `{ type: "choice", prompt, allowOther? }`: one option; `allowOther` lets the caller
+     type their own answer, returned as `{ other }`. Own text that repeats exactly one
+     offered option's label (or its listed form entry, `id (label)`) returns that option.
+   - `{ type: "multi_choice", prompt, minSelections?, maxSelections? }`: several options,
+     at least one unless `minSelections` says otherwise, at most the options offered.
+   - `{ type: "text", prompt, maxLength? }`: free text.
+   - `{ type: "confirm", prompt, followUp? }`: yes or no, returned as `{ confirmed }`.
+   - `{ type: "secret", secretKind, prompt, maxLength? }`: a code the site sent to
+     confirm an action after sign-in (`one_time_code`; a code that is part of signing
+     in is a `code` field of the `authenticate` step, never a question), an
+     authenticator code (`totp`, which a saved login's TOTP fills without asking) or
+     other private text (`private_text`). It stays out of traces,
+     logs and the minting model. A secret you ask during the build with `request_input`
+     comes back to you as a handle such as `{{secret.s1}}`, which the host fills in only
+     when your explore, test or `act` source runs live, and only where it is the whole
+     string passed to `fill`, `type` or `pressSequentially` or a field of a request to this
+     site (core skill); the published script never holds a handle and asks for the value
+     with `ask` instead.
+2. For a choice, read the options in the execute call that reaches it and return them as
+   plain JSON. Each option has a `value` the script acts on and a `label` the caller
+   reads. Values are unique within a question. Offer only options the page will accept:
+   skip taken seats, disabled slots and sold-out items. The value never leaves the run;
+   the caller sees only the label.
+3. Mark an option taken from the caller's own account (a saved traveler, address, card
+   or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
+   recognizable without its numbers or email, such as `"Jane D. •••• 7890"`. The API
+   and MCP show the masked label with a notice; only the owner's protected page shows
+   the full label. A masked label that still shows five or more digits or an email
+   address is replaced by the label's last four digits or a numbered placeholder.
+4. Ask once for everything the step needs, between two execute calls:
+   - `await ask("code")` returns that question's answer;
+   - `await ask(["seat", "note"])` returns one answer per id;
+   - `await ask({ seat: { options: seats }, code: {} })` passes a choice's options, and
+     nothing for the other types.
 
    One ask takes up to eight questions, with up to 50 options per choice. A choice
    returns the chosen `value`, a multi-choice an array of values. Write answers into

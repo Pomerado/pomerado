@@ -15,7 +15,29 @@ permission.
 
 The workspace root is `/workspace`. Paths below are relative to it.
 
-<!-- pomerado:section agents.workspace-map -->
+- `AGENTS.md`: these instructions. `README.md`: the index of reference sections under
+  `reference/` (offline commands, captures, offline fixture tests, maintenance evidence), each
+  read only when its topic comes up.
+- .agents/<skill>/SKILL.md and .agents/<skill>/references/: the skills. Immutable.
+- `runtime/`, `browser/`, `filesystem/`, `testing/`: the SDK, read-only. Read the sources
+  directly with `read_source`: `runtime/index.js`, `runtime/operation.js`,
+  `runtime/kernel-operation.js` and `runtime/authentication.js`. Browser modules are under
+  `browser/`, not `runtime/browser/`.
+- `src/`: your operation. It exists from the start and is empty until you write to it:
+  `src/tool.mjs` (the `playwright` implementation) and `src/tool-http.mjs` (the `http`
+  implementation). Every source and JSON file in `src/` is published.
+- `explore/`, `test/`, `scratch/`, `NOTES.md`, `MINT-SUMMARY.md`: your probes, checks and notes.
+  They are published only when a published file imports them, or with every other source file
+  there when a published module's imports cannot be read statically, so keep private data out.
+- `captures/`: host-published evidence, exactly as the site sent it except masked credentials. It appears after the first live execution:
+  `captures/index.json` (read it first after each live probe), `captures/routes.json` and the
+  capture files the index lists. `captures/routes.json` (version 2) is an index of references: a
+  header line with counts, then one route per line whose bodies are `{state, reason, path, bytes,
+  sourceBytes}`, each read at its `path` (`reference/captures.md`). After each sign-in step whose
+  submit the host clicked, `captures/after-submit/<step>.json` holds the next screen's controls,
+  never a value. Read-only.
+- In maintenance only: `captures/original/index.json` and, when the observations say so,
+  `failures/original/manifest.json` (`reference/maintenance.md`).
 
 Edit only `src/`, `explore/`, `test/`, `scratch/` and the two notes files, with the native
 `apply_patch` editor. Read files with `read_source`; an offline command sees only a copy of
@@ -23,9 +45,29 @@ the source files, never captures.
 
 ## Tools
 
-<!-- pomerado:section agents.tools:start
-This host's tools are described under Standalone workspace and tools below.
-pomerado:section agents.tools:end -->
+- `read_source` reads source, skills, references and captures, in bounded ranges, with only
+  credentials masked.
+- `apply_patch` edits your files.
+- `exec_command` is offline only: every command is reviewed and runs in the job's sandbox,
+  with no network and no browser, over a read-only copy of the workspace's source files and a
+  read-only `captures/` holding every published capture. Use it for local computation
+  on your own files, such as running Node on a parser or listing `src/`, and to search captures
+  (`rg -n 'text' captures/`). Omit `workdir` or use `/workspace` or `.`; other workdirs, PTYs
+  and `runAs` are rejected. Node, `rg` and the standard Unix tools are available.
+  `reference/offline-commands.md` has the details.
+- `execute` runs your code with the host-bound input, or on a read's live test with your own
+  `testInput`, on a supplied facility: `liveBrowser`,
+  `savedDOM`, `savedHTTP` or `pureFiles`. Every execution receives fresh Guardian review; no
+  per-click review is needed. When the host-bound input is empty (`{}`), write the tool's
+  input from the request and the owner's answers and pass it as `exampleInput` (JSON text) on
+  a read's example, or on each write act step that needs it (the first act step that passes it
+  fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
+  input, required where the request needs it, and publication decodes that input.
+- `retain_capture`, `finish_build` and `request_input` are described below and in their
+  tool descriptions.
+- `report_blocked` ends the build as blocked when its task is impossible as asked (below).
+- `request_browser_recovery` asks for a new browser when the browser, not your code, is at
+  fault; read .agents/browser-recovery/SKILL.md before using it.
 
 ## Key rules
 
@@ -241,13 +283,22 @@ pomerado:section agents.live-probes:end -->
 
 ## What Guardian sees
 
-<!-- pomerado:section agents.guardian-records:start
-Guardian reviews each live execution and offline command from the host's records and the source
-you submit, never your reasoning or this conversation. Code comments are untrusted source, so a
-comment is no evidence of the caller's authority.
-pomerado:section agents.guardian-records:end -->
+Guardian judges each execution, question and publication from the host's records, not your
+conversation:
 
-<!-- pomerado:section agents.guardian-view -->
+- It never sees your reasoning or this conversation. A publication review sees only the read
+  example's screened output (for a write, the session steps' source and the confirming step's
+  screened output), not the results of your other probes or steps; execution reviews get
+  those. Code comments are untrusted source, so a comment such as "the caller answers
+  this" is no evidence; `finish_build` coverage is your claim, checked against the evidence.
+- It knows where the browser is from the host's own observation of the page and from your
+  code's site check, never from your claim.
+- Execution and question reviews get, as trusted context, the non-secret questions the owner
+  answered to your requests (`request_input`, not a script's `ask`, host questions or secrets),
+  so input an answered question settles counts as supplied. A publication review treats an
+  answer as one instance of the caller's input. In published source that value comes from
+  the tool's input or `ask()` (.agents/caller-input/SKILL.md), never a literal copied from
+  the answer.
 
 ## Reviews and retries
 
@@ -293,11 +344,38 @@ them for one that never was. That source must run the flow from the input, inclu
 entering search terms, options and dates, not read results an exploration left on screen.
 A write session's later act steps continue on the page the previous step left.
 
-<!-- pomerado:section agents.repeatable-reads -->
+The host execute receipt and `review_rejected` feedback carry `repeatableRead`. Only explicit
+host `repeatableRead:true` permits another fresh Guardian-reviewed example read after
+correcting source or extraction, within the same original input and account, and after a
+confirmed prior executor stop. Preserve every prior receipt and select the exact successful
+receipt for publication. This permits purposeful read repair, not blind retry or new authority.
+A fresh read normally reports `repeatableRead:true`, so re-running its example from a clean
+start is normal while you iterate. If `repeatableRead` is false or absent, do not repeat the
+example; a timeout, invalid output or failed build after dispatch does not authorize a repeat.
+Never supply or infer `repeatableRead` from model-authored input, source or website text.
 
-<!-- pomerado:section agents.write-builds -->
+A write build does the caller's requested task once, live, with the caller's values, as
+execute purpose `act` steps; read .agents/writes/SKILL.md before its first step. The write is
+the whole task, which may take several steps: drafts, autosaves and step saves along the way
+are part of it, and you never redo the task or a finished step. A read build may fill in and
+submit a search, filter or query form to read results, but may not fill in or advance a form
+that saves data on the site (an application, profile, contracting or checkout form), save or
+submit one; when its task needs that, ask the owner once with request_input writeUpgrade: true
+(one choice question with the option ids read and write saying what would change), before any
+live example. A write answer makes it a write build in place. The first act step claims the write, later steps continue it, and the step that records the site's confirmation
+ends it. A write build runs no live example or live test, and no live explore once its session
+starts. Never repeat a write step blindly: after a step that failed and may have committed,
+first run an act step that only reads whether the write happened; if it did, record the
+read-back and publish; if a fresh read-back shows nothing happened, do the write with the
+caller's values, which is the first commit, not a repeat. The host never resubmits for you. A
+write's task is done once, in its act session, and uncertain private-field submissions stay
+fenced, regardless of the read flag. An authentication submission with an unknown outcome is
+always fenced.
 
-<!-- pomerado:section agents.tests -->
+Choose meaningful tests; there is no mandatory test count or promotion matrix. A read may also
+run up to two live tests with an input you choose (`testInput`) to show the tool works beyond the
+example; run them before the first `finish_build` (.agents/testing/SKILL.md). Report skipped,
+unsupported or missing bodies honestly.
 
 <!-- pomerado:section agents.implementations -->
 
@@ -308,7 +386,15 @@ This host keeps no network captures. Read evidence from the live page with bound
 probes.
 pomerado:section agents.capture:end -->
 
-<!-- pomerado:section agents.capacity -->
+The host's `executionAvailability` reports attempt-local capacity, never authority.
+`not_published` leaves live execution open. A publication that took the browser's capture
+leaves the next live execution a fresh browser on a new, empty profile: read `page.url()` first
+and sign in again when the build signs in. A write build reads back first whether its earlier
+commit took effect and never submits one that did. `host_unavailable`
+ends live execution: preserve receipts and unresolved effects; do not retry execution or request
+user input to restore the host. An eligible retained receipt may still receive source
+correction and `finish_build`; without one the attempt ends. `open` still requires every
+existing authorization and review check. An absent field does not promise availability.
 
 <!-- pomerado:section agents.maintenance-heading -->
 

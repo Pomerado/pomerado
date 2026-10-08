@@ -39,9 +39,33 @@ it("loads modular skill references and keeps auth discovery outside managed logi
   expect(skill("forms")?.references).toHaveProperty("custom-selection.ts");
   expect(skill("forms")?.references).toHaveProperty("dialog-picker.ts");
   expect(skill("caller-input")?.references).toHaveProperty("caller-choice.ts");
+  // The testing skill is shared text; its capture reference is another host's.
+  expect(skills.map((entry) => entry.name)).toStrictEqual([
+    "core",
+    "auth",
+    "testing",
+    "pagination",
+    "forms",
+    "writes",
+    "caller-input",
+    "publication",
+  ]);
+  expect(skill("testing")?.references).toStrictEqual({});
 });
 
-it("names only skills that load and workspace sections that install", async () => {
+/*
+ * The shared text names a few skills and reference sections only another host installs, for
+ * features the local minter's preamble tells it to ignore: browser recovery, offline commands,
+ * captures and maintenance. Every other name loads or installs locally.
+ */
+const hostedOnlyGuides = new Set([
+  ".agents/browser-recovery/SKILL.md",
+  "reference/offline-commands.md",
+  "reference/captures.md",
+  "reference/maintenance.md",
+]);
+
+it("names only skills that load and workspace sections that install, or hosted-only ones", async () => {
   const skills = new Set(
     (await Effect.runPromise(loadAuthoringSkills("typescript/authoring"))).map(
       (skill) => skill.name,
@@ -49,11 +73,20 @@ it("names only skills that load and workspace sections that install", async () =
   );
   const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
   expect(guide.files.get("AGENTS.md")).toBe(guide.instructions);
+  const hostedNamed = new Set<string>();
   for (const text of guide.files.values()) {
-    for (const [, name] of text.matchAll(/\.agents\/([a-z-]+)\/SKILL\.md/gu))
-      expect(skills).toContain(name);
+    for (const [path, name = ""] of text.matchAll(/\.agents\/([a-z-]+)\/SKILL\.md/gu))
+      if (hostedOnlyGuides.has(path)) hostedNamed.add(path);
+      else expect(skills).toContain(name);
     for (const [path] of text.matchAll(/reference\/[a-z-]+\.md/gu))
-      expect(guide.files.has(path)).toBe(true);
+      if (hostedOnlyGuides.has(path)) hostedNamed.add(path);
+      else expect(guide.files.has(path)).toBe(true);
+  }
+  // A hosted-only name that loads locally, or that no shared text names, is a stale entry.
+  expect([...hostedNamed].sort()).toStrictEqual([...hostedOnlyGuides].sort());
+  for (const path of hostedOnlyGuides) {
+    expect(guide.files.has(path)).toBe(false);
+    expect(skills.has(/^\.agents\/([a-z-]+)\//u.exec(path)?.[1] ?? "")).toBe(false);
   }
 });
 
@@ -257,6 +290,25 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
 ];
 
+/*
+ * Text both hosts now read word for word, from places that were host sections before: one line
+ * from each, with its whitespace collapsed.
+ */
+const formerSections: readonly (readonly [string, string])[] = [
+  ["core", "Unclear means possible. `websiteEffect: may_have_dispatched` makes that execution's effect possible"],
+  ["auth", "The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to sign in."],
+  ["auth", "A run can begin partway through that flow because its bound profile or remembered device omitted an earlier stage."],
+  ["caller-input", "1. Declare every question the run may ask in the contract, `defineOperation({ name, input, output, questions }, ...)`, by id, with its `type` and a short `prompt`."],
+  ["forms", "Filling in or advancing a form that saves data on the site (an application, a profile, a contracting or checkout form) is a write, even when nothing is submitted yet"],
+  ["pagination", "A mint question keeps the live browser for up to 10 minutes; that is not cursor expiry."],
+  ["writes", "- The first `act` step claims the build's write."],
+  ["publication", "- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens it."],
+  ["workspace/AGENTS.md", "Choose meaningful tests; there is no mandatory test count or promotion matrix."],
+  ["workspace/AGENTS.md", "- `src/`: your operation. It exists from the start and is empty until you write to it"],
+  ["testing", "Choose cases that catch actual risk: applied filters, account scope, IDs, units"],
+  ["testing", "A read may run up to two live tests per attempt with an input you choose instead of the caller's"],
+];
+
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
   const skills = await Effect.runPromise(loadAuthoringSkills(directory, render));
   const guide = await Effect.runPromise(loadWorkspaceGuide(directory, render));
@@ -278,7 +330,7 @@ it("gives the local host and a composing host the same shared guidance", async (
     ];
     for (const texts of hosts)
       expect(
-        sharedGuidance.filter(
+        [...sharedGuidance, ...formerSections].filter(
           ([name, line]) => !(texts.get(name) ?? "").replace(/\s+/g, " ").includes(line),
         ),
       ).toStrictEqual([]);
@@ -288,17 +340,20 @@ it("gives the local host and a composing host the same shared guidance", async (
 });
 
 /*
- * A local build that still has input feedback after its rounds ends unpublished, and the local
- * host has no site metadata, login URL, HTTP version, recorded requests, session tokens or
- * private fallback, so its builder reads none of them. It saves every file under the four
- * folders when Node could load one the operation's imports do not name.
+ * The publication skill is one text for both hosts. The local builder reads the shared lines about
+ * the private fallback, the login URL check and recorded confirm popups, which its preamble lists
+ * as hosted features. The hosted-only checks (site metadata, the HTTP version, recorded requests,
+ * session tokens, protected results) stay in host sections it never reads. It saves every file
+ * under the four folders when Node could load one the operation's imports do not name.
  */
-it("tells the local builder what its own publication checks and how it ends", async () => {
+it("gives the local builder the shared publication text and no hosted-only check", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const publication = (texts.get("publication") ?? "").replace(/\s+/g, " ");
   expect(publication).toContain(
-    "Never run the write again. After the last round the build ends unpublished with Guardian's findings |",
+    "Never run the write again. After the last round the host publishes privately and flags it |",
   );
+  expect(publication).toContain("- **Login URL.** A signed-in tool publishes the `loginUrl`");
+  expect(publication).toContain("`confirmation_unrecorded`, `confirm_action_unmatched`,");
   expect(publication).toContain(
     "`finish_build`'s metadata names the tool and describes it in the public definition Guardian reviews (`publication/definition.json`):",
   );
@@ -306,16 +361,13 @@ it("tells the local builder what its own publication checks and how it ends", as
     "module they import, or every file under those four folders when Node could load a saved file those imports do not name, or the workspace has a `package.json`.",
   );
   for (const hosted of [
-    "publishes privately",
     "siteName",
-    "loginUrl",
     "routes.json",
     "tool-http.mjs",
     "recorded-requests",
     "session token",
     "issuing response",
     "integration",
-    "confirm_action_unmatched",
     "missing_protected_result",
   ])
     expect(publication).not.toContain(hosted);
@@ -334,23 +386,20 @@ it("leaves no heading, list or skill header of the local host's authoring empty"
 });
 
 /*
- * The local host restores the session saved right after sign-in and never signs in again by
- * itself, so a stale session shows up as a login wall that the minter's own sign-in fixes. A host
- * whose sessions behave otherwise replaces that sentence, and the text around it stays shared.
+ * The stale-session rule is one text for both hosts: the host signs in again by itself when a reset
+ * or a page load leaves the site signed out, and a step it cannot keep signed in fails with
+ * `session_not_kept`. The local minter's preamble lists mid-run re-sign-in as a hosted feature until
+ * the local host does it.
  */
-it("lets a host replace the stale-session sentence", async () => {
+it("gives both hosts the same stale-session rule", async () => {
   const sentence =
-    "A signed-in build gets back the session saved right after sign-in instead, so a stale session shows up as a login wall that a new sign-in fixes. That source must perform the flow from its input, never rely on a page an exploration left open.";
+    "A signed-in build gets back the session saved right after sign-in instead. When the page is signed out after that reset, or after a full page load your source asks about with `ensureSignedIn`, the host signs in again by itself; do not call `authenticate` for it. When the host cannot keep the site signed in, the step fails with `session_not_kept`: report that cause instead of signing in again. That source must perform the flow from its input, never rely on a page an exploration left open.";
   const local = (await renderedTexts("typescript/authoring")).get("core") ?? "";
   expect(local.replace(/\s+/g, " ")).toContain(sentence);
-  expect(local).not.toContain("session_not_kept");
   const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
   try {
     const composed = (await renderedTexts(root)).get("core")?.replace(/\s+/g, " ") ?? "";
-    expect(composed).toContain(
-      "A signed-in build gets back the session saved right after sign-in instead never rely on a page an exploration left open.",
-    );
-    expect(composed).not.toContain("stale session");
+    expect(composed).toContain(sentence);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -444,14 +493,15 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["9d25055c9445a8ba8bc250081471fed224530b0370e5d3358d254f509aad5ae7", "core"],
-    ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
-    ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
-    ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
-    ["0e4584d71b07af68dc54696c280c853b2eca74d533a3f92356848ae0a19fb860", "writes"],
-    ["fbe89bf0980002d81d36dde0d131a412887c55eeb87a0a21502cbf5865a15bc9", "caller-input"],
-    ["b6c17fb7b3bdabea246b4894d341d4812945d059f60cb73efec3cfe272ce0554", "publication"],
-    ["11dec21a63aa019343e176f67089aceceb7b0748f7af579524611e13f25a6af4", "workspace/AGENTS.md"],
+    ["38381c48f8a70bbc31c6ab552badbcb407c5f2afa6572d37af4cc83003fd4382", "core"],
+    ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
+    ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
+    ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
+    ["10b42b68c447e9134b3b038537b4ce7abdee0a93d62fb44da737bcf70a077f5a", "forms"],
+    ["a1bdd90588c8f2689d9fd0544fa6107c27ad4aa5107df9b90a84e120d834028a", "writes"],
+    ["97c6c8bcd789e017bf344b99191ed5028a24d247a1969af37e6be194c85f349d", "caller-input"],
+    ["50644bd49a50ca3b856d5c55e6a6ca749bd8edae5515136a9139280b26c3254c", "publication"],
+    ["7b2e3943fa5c62f8a48a94c2e98fba5309d227f666b03d5ee33c6b34c5fe184b", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });

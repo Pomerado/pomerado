@@ -24,6 +24,11 @@ const catalog = [
     references: ["auth-entry.ts"],
   },
   {
+    name: "testing",
+    description: "Meaningful offline/live checks and honest missing evidence",
+    references: [],
+  },
+  {
     name: "pagination",
     description: "Warm state and fresh reconstruction for scoped read cursors",
     references: ["pagination.ts"],
