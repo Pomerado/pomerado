@@ -35,6 +35,8 @@
 
 ### Other changes
 
+- `SpentSignIn` adds `sign_in_retry_spent`: a host refuses another sign-in once the attempt's one retry of a sign-in that submitted the login but never verified, and was not rejected, is spent. The agent and the build's owner read why. `relogin_spent` now reads as the attempt's one extra sign-in, which a host may also run on a recovery's new profile.
+
 - A script's `ensureSignedIn` now signs in again on a local run or build when the page reads signed out. Before, the local host always answered that it didn't sign in again.
   - The host checks the recorded signed-in marker on the current page without moving it. A marker that names a path reads signed out only on that path.
   - On a page that reads signed out, it first checks without typing anything. It then replays the recorded sign-in on the same browser and page, with the login it already holds, and asks only for what the screens need.
