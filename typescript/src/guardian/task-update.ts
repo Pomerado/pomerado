@@ -27,6 +27,9 @@ const SiteOrigin = Schema.String.pipe(
  * - `effect`: a read build becomes a write build. Nothing turns a write back into a read.
  * - `site`: the build moves to another site origin of the same product's workflow.
  * - `login`: the task now needs a sign-in, or a different login than the one it has.
+ * - `output`: in maintenance only, one output field of the published tool's registered contract
+ *   loosened, for an output the site no longer offers: made optional or nullable, removed, or its
+ *   type widened. `field` names it by path, such as `price.amount` or `items[].currency`.
  */
 export const TaskChange = Schema.Union(
   Schema.Struct({
@@ -45,6 +48,12 @@ export const TaskChange = Schema.Union(
     setting: Schema.Literal("login"),
     change: Schema.Literal("sign_in", "different_login"),
     text: Schema.optional(UpdateText),
+  }),
+  Schema.Struct({
+    setting: Schema.Literal("output"),
+    field: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)),
+    change: Schema.Literal("optional", "nullable", "remove", "widen"),
+    text: UpdateText,
   }),
 );
 export type TaskChange = typeof TaskChange.Type;
@@ -85,6 +94,11 @@ export interface PendingTaskUpdate {
    * proposed after one is judged against the refusal itself. Absent when there are none.
    */
   readonly publicationDecisions?: readonly PublicationDecision[];
+  /**
+   * Host fact, in maintenance only: the update changes a published tool's registered contract,
+   * and the host checked that the person who answers the build's questions is the tool's owner.
+   */
+  readonly maintenance?: { readonly confirmer: "owner" };
 }
 
 /**
@@ -101,8 +115,11 @@ export interface ReviewedTaskUpdate {
 
 /** Projects a proposed update for review, screening every string and input value. */
 export const taskUpdateForReview = <E>(
-  update: Omit<PendingTaskUpdate, "confirmation" | "effect">,
-  facts: Pick<PendingTaskUpdate, "confirmation" | "effect" | "publicationDecisions">,
+  update: Omit<PendingTaskUpdate, "confirmation" | "effect" | "maintenance">,
+  facts: Pick<
+    PendingTaskUpdate,
+    "confirmation" | "effect" | "publicationDecisions" | "maintenance"
+  >,
   screen: {
     readonly text: (value: string) => Effect.Effect<string, E>;
     readonly json: (value: unknown) => Effect.Effect<unknown, E>;
@@ -121,9 +138,13 @@ export const taskUpdateForReview = <E>(
                   : {},
             })),
           )
-        : "text" in change && change.text !== undefined
-          ? text(change.text).pipe(Effect.map((screened) => ({ ...change, text: screened })))
-          : Effect.succeed(change),
+        : change.setting === "output"
+          ? Effect.all({ field: text(change.field), text: text(change.text) }).pipe(
+              Effect.map((screened): TaskChange => ({ ...change, ...screened })),
+            )
+          : "text" in change && change.text !== undefined
+            ? text(change.text).pipe(Effect.map((screened) => ({ ...change, text: screened })))
+            : Effect.succeed(change),
     );
     return {
       summary: yield* text(update.summary),
@@ -138,5 +159,6 @@ export const taskUpdateForReview = <E>(
       ...(facts.publicationDecisions === undefined || facts.publicationDecisions.length === 0
         ? {}
         : { publicationDecisions: facts.publicationDecisions }),
+      ...(facts.maintenance === undefined ? {} : { maintenance: facts.maintenance }),
     };
   });
