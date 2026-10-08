@@ -25,7 +25,7 @@ import {
   diagnosticStorageFailure,
 } from "../models/model-diagnostic-failure.js";
 import { createHash, randomUUID } from "node:crypto";
-import { Cause, Clock, Effect, Exit, FiberSet, Option, Schema, Scope } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, FiberSet, Option, Schema, Scope } from "effect";
 import {
   AgentRequest,
   blockedExplanationLimit,
@@ -53,6 +53,7 @@ import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
 import type {
   AcceptedTaskUpdate,
+  AllowedExecution,
   AgentInputRequest,
   BuildAssumption,
   TaskState,
@@ -64,8 +65,22 @@ import type {
   PublicationDecision,
   PublicationRecovery,
   SpentSignIn,
+  WeakenedOutput,
 } from "./contracts.js";
 import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
+import {
+  bufferedHistoryArchive,
+  makeOutcomeReviewer,
+  memoryHistoryArchive,
+  minterHistory,
+} from "./outcome-review.js";
+import { readImportClosure } from "./operation-source.js";
+import { contentDigest } from "./step-checks.js";
+import type {
+  LiveMinterHistory,
+  OutcomeEvidence,
+  WriteExecutionStatus,
+} from "./outcome-review-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
@@ -83,6 +98,22 @@ import {
   relativeSourcePath,
   screenMintText,
 } from "./workspace.js";
+
+/** Each loosened field and how, for the minter; a host refusal that names none reads as a sentence. */
+const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
+  weakened.length === 0
+    ? ""
+    : `: ${weakened
+        .map(({ field, change }) =>
+          change === "removed"
+            ? `${field} was removed`
+            : change === "optional"
+              ? `${field} became optional`
+              : change === "nullable"
+                ? `${field} became nullable`
+                : `${field} admits more values than before`,
+        )
+        .join("; ")}`;
 
 const effectQuestionInstruction =
   "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching or filtering does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
@@ -356,6 +387,14 @@ const VisibleReceipt = Schema.Struct({
 const decodeJsonObject = Schema.decodeUnknownEither(
   Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
 );
+
+/** The entrypoint a recovered execute call's arguments name, if any. */
+const submittedEntrypoint = (args: string): string | undefined => {
+  const parsed = decodeJsonObject(args);
+  if (parsed._tag === "Left") return undefined;
+  const entrypoint = parsed.right["entrypoint"];
+  return typeof entrypoint === "string" ? entrypoint : undefined;
+};
 
 const withHostNotices = (
   actions: MintActions,
@@ -1167,6 +1206,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const askAgain = yield* recordInputAnswer(submitted, answers);
           yield* keepAnswers(submitted, answers);
           const visibleAnswers = yield* answersForModel(answers);
+          acceptedAnswers.push({
+            questions: submitted.questions.map((question) => question.prompt),
+            answers: visibleAnswers,
+          });
+          yield* reviewer.taskUpdated("The caller answered a question.");
           const handles = Object.values(answers).some((answer) => answer.type === "secret");
           if (askAgain !== undefined)
             return JSON.stringify({
@@ -1301,6 +1345,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const recoveredExecutionResult = (
         evidence: ExecutionEvidence,
         purpose: ExecutionRequest["purpose"] | "command",
+        entrypoint: string | undefined,
       ) =>
         Effect.gen(function* () {
           if (
@@ -1310,6 +1355,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             exampleClaimed = true;
             if (purpose === "act" && writeSession === "none") writeSession = "open";
           }
+          // A write that ran before a takeover, which the restored reviewer does not yet track.
+          // The recovered call's arguments name its entrypoint, so its repeat is refused too.
+          if (
+            evidence.review?.action === "write" &&
+            !reviewer.tracked().some((write) => write.executionId === evidence.executionId)
+          )
+            yield* reviewer.write(
+              yield* trackedWrite(
+                evidence.executionId,
+                evidence.review.reviewId,
+                purpose,
+                entrypoint,
+                evidence.status,
+                evidence,
+              ),
+            );
           return yield* executionResult(evidence, purpose);
         });
       /** A diagnostic copy that could not be written, kept as a gap in the outcome. */
@@ -1501,14 +1562,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const taskUpdateRefusal = (
         submitted: TaskUpdateRequest,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
-        if (request.mode === "maintenance")
+        const settings = new Set(submitted.changes.map((change) => change.setting));
+        // A repair keeps the published tool's task. Only a change to its contract, which the
+        // tool's owner confirms, may apply: a requirement, the purpose or an output field.
+        if (
+          request.mode === "maintenance" &&
+          (submitted.recommend === "new_mint" ||
+            [...settings].some(
+              (setting) =>
+                setting !== "requirement" && setting !== "purpose" && setting !== "output",
+            ))
+        )
           return {
-            reason: "maintenance",
+            reason: "maintenance_setting",
             instruction:
-              "Maintenance repairs the published tool under its own task, which does not change. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change the tool's owner confirms; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+          };
+        if (request.mode !== "maintenance" && settings.has("output"))
+          return {
+            reason: "output_outside_maintenance",
+            instruction:
+              "An output change loosens a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
           };
         if (submitted.recommend === "new_mint") return undefined;
-        const settings = new Set(submitted.changes.map((change) => change.setting));
         if (settings.has("effect")) {
           if (buildEffect === "write")
             return {
@@ -2084,30 +2160,154 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "The host could not safely retain this execution's diagnostics and recorded the gap, so no unscreened observations are available for it. The website action may have completed: treat its effect as possible and reconcile before claiming success; never repeat a claimed example. Continue the build. Site code changes, credentials and user clarification cannot repair this infrastructure failure.",
           }),
         );
+      /** The entrypoint each execution ran, so a repeat of a write's step can be recognized. */
+      const entrypoints = new Map<string, string>();
+      /** Every finish_build result as the minter received it, for the outcome reviewer. */
+      const publications: string[] = [];
+      /** The caller's accepted answers and approved changes, in order, for the outcome reviewer. */
+      const acceptedAnswers: unknown[] = [];
+      /**
+       * The digest of what `entrypoint`'s import closure holds in the workspace now, without
+       * paths; undefined when it cannot be read.
+       */
+      const stepDigest = (entrypoint: string) =>
+        Effect.promise(async () => {
+          try {
+            const files = await readImportClosure(async (path) => {
+              if ((await session.pathExists?.(path)) === false) return undefined;
+              const text: unknown = await session.readFile?.({ path });
+              return typeof text === "string" ? text : undefined;
+            }, entrypoint);
+            return files.size === 0 ? undefined : contentDigest(files);
+          } catch {
+            return undefined;
+          }
+        });
+      /** A write Guardian labelled, as the outcome reviewer tracks it. */
+      const trackedWrite = (
+        executionId: string,
+        reviewId: string | undefined,
+        purpose: string,
+        entrypoint: string | undefined,
+        status: WriteExecutionStatus,
+        evidence: ExecutionEvidence,
+      ) =>
+        Effect.gen(function* () {
+          const sourceDigest = entrypoint === undefined ? undefined : yield* stepDigest(entrypoint);
+          return {
+            executionId,
+            ...(reviewId === undefined ? {} : { reviewId }),
+            purpose,
+            ...(entrypoint === undefined ? {} : { entrypoint }),
+            ...(sourceDigest === undefined ? {} : { sourceDigest }),
+            status,
+            effect: evidence.effect,
+            ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
+          };
+        });
+      /**
+       * Tells the outcome reviewer about an execution that ran: a write Guardian labelled is
+       * tracked and wakes it, and a later live execution wakes it while a write is unresolved,
+       * since it may hold a readback.
+       */
+      const observeExecution = (
+        submitted: Parameters<typeof dependencies.reviewAndExecute>[0],
+        evidence: ExecutionEvidence,
+        allowed: AllowedExecution | undefined,
+        status: WriteExecutionStatus,
+      ) =>
+        Effect.gen(function* () {
+          if (evidence.status === "unsupported") return;
+          if (submitted.purpose !== "command")
+            entrypoints.set(evidence.executionId, submitted.entrypoint);
+          const action = evidence.review?.action ?? allowed?.action;
+          const reviewId =
+            evidence.review?.reviewId ??
+            (allowed !== undefined && "reviewId" in allowed ? allowed.reviewId : undefined);
+          if (action === "write" && submitted.purpose !== "command")
+            return yield* reviewer.write(
+              yield* trackedWrite(
+                evidence.executionId,
+                reviewId,
+                submitted.purpose,
+                submitted.entrypoint,
+                status,
+                evidence,
+              ),
+            );
+          if (submitted.target === "liveBrowser")
+            yield* reviewer.execution({
+              executionId: evidence.executionId,
+              purpose: submitted.purpose,
+              ...(action === undefined ? {} : { action }),
+              status,
+            });
+        });
+      /**
+       * Why a step is refused as a repeat of a write: it runs an earlier write's entrypoint, or
+       * the same source under another name, after that write may have reached the site, and the
+       * outcome reviewer, caught up with no readback outstanding, has not assessed every such
+       * write `not_done`. This is the one place the minter waits for the reviewer, and an outage
+       * leaves the write unresolved, so it is not repeated.
+       */
+      const repeatedWriteRefusal = (
+        submitted: Parameters<typeof dependencies.reviewAndExecute>[0],
+      ) =>
+        Effect.gen(function* () {
+          if (submitted.purpose === "command" || submitted.target !== "liveBrowser")
+            return undefined;
+          const sent = reviewer.tracked().filter((write) => write.effect !== "not_sent");
+          if (sent.length === 0) return undefined;
+          const digest = yield* stepDigest(submitted.entrypoint);
+          const earlier = sent.filter(
+            (write) =>
+              write.entrypoint === submitted.entrypoint ||
+              (digest !== undefined && write.sourceDigest === digest),
+          );
+          if (earlier.length === 0) return undefined;
+          const settled = yield* reviewer.settle(earlier.map((write) => write.executionId));
+          if (
+            settled.current &&
+            settled.assessments.every((assessment) => assessment?.outcome === "not_done")
+          )
+            return undefined;
+          const applied = settled.assessments.some((assessment) => assessment?.outcome === "done");
+          // A read-back that reuses the write's file is refused as this same repeat.
+          const newFile = earlier.some((write) => write.entrypoint === submitted.entrypoint)
+            ? ` Write a read-back as a new file: any step that runs ${submitted.entrypoint} again is refused as this repeat.`
+            : "";
+          return (
+            (applied
+              ? `This step repeats a write that already changed the site (${earlier.map((write) => write.executionId).join(", ")}), as the outcome review found. Never run it again: continue with the next step, read back the result, or publish. Nothing was executed.`
+              : `This step repeats a write that may already have changed the site (${earlier.map((write) => write.executionId).join(", ")}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the account or page in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`) +
+            newFile
+          );
+        });
       const reviewedExecution: typeof dependencies.reviewAndExecute = (
         submitted,
-        onDispatch = Effect.void,
+        onDispatch = () => Effect.void,
       ) =>
         dependencies
           .reviewAndExecute(
             submitted,
             submitted.purpose === "example" ||
               (submitted.purpose === "act" && writeSession === "none")
-              ? Effect.uninterruptible(
-                  dependencies.claimExample.pipe(
-                    Effect.tap(() =>
-                      Effect.sync(() => {
-                        exampleClaimed = true;
-                        if (submitted.purpose === "act") writeSession = "open";
-                      }),
+              ? (allowed) =>
+                  Effect.uninterruptible(
+                    dependencies.claimExample.pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          exampleClaimed = true;
+                          if (submitted.purpose === "act") writeSession = "open";
+                        }),
+                      ),
+                      Effect.zipRight(onDispatch(allowed)),
                     ),
-                    Effect.zipRight(onDispatch),
-                  ),
-                )
+                  )
               : submitted.purpose === "act"
                 ? // Later steps continue the session's started claim; the journal never claims again.
-                  Effect.uninterruptible(onDispatch)
-                : Effect.void,
+                  (allowed) => Effect.uninterruptible(onDispatch(allowed))
+                : onDispatch,
           )
           .pipe(
             // A refusal the host returned before any review or dispatch shows neither Guardian
@@ -2424,6 +2624,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction: updatedInstruction(changes),
           });
         });
+      /** Who may confirm a maintenance contract change; a failure or no hook means nobody. */
+      const maintenanceConfirmer = (
+        dependencies.taskUpdateConfirmer?.() ?? Effect.succeed("none" as const)
+      ).pipe(
+        Effect.catchAll((error) =>
+          reportFailure(error, {
+            component: "mint",
+            operation: "taskUpdateConfirmer",
+            phase: "task_update",
+            subCause: "mint_host_dependency_failed",
+            correlation: dependencies.reportCorrelation ?? "process",
+          }).pipe(Effect.as("none" as const)),
+        ),
+      );
       /** Guardian's review of a confirmed update, then the host's application of an allowed one. */
       const reviewAndApplyTaskUpdate = (submitted: TaskUpdateRequest) =>
         Effect.gen(function* () {
@@ -2449,6 +2663,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               confirmation,
               effect: buildEffect === "write" ? "write" : "read",
               ...(yield* publicationRefusals),
+              // The harness reviews a maintenance update only once the owner may confirm it.
+              ...(request.mode === "maintenance"
+                ? { maintenance: { confirmer: "owner" as const } }
+                : {}),
             },
             {
               text: (text) => screenMintText(dependencies, text),
@@ -2547,6 +2765,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const effectChanged = next.effect === "write" && buildEffect !== "write";
           const siteChanged = next.siteOrigin !== taskState.siteOrigin;
           taskState = next;
+          // An applied update changes the remaining work, which may settle an unresolved write.
+          yield* reviewer.taskUpdated(
+            `The caller confirmed a task update (revision ${next.revision}): ${accepted.summary}`,
+          );
           if (effectChanged) {
             buildEffect = "write";
             repeatableRead = false;
@@ -2695,11 +2917,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (writeSession === "closed" || (writeSession === "none" && exampleClaimed))
               )
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
-              const availability = yield* dependencies
-                .preflight(submitted)
-                .pipe(
-                  Effect.tapError((error) => diagnoseExecution(submitted, { code: error.code })),
-                );
+              const repeated = yield* repeatedWriteRefusal(submitted);
+              const availability =
+                repeated === undefined
+                  ? yield* dependencies
+                      .preflight(submitted)
+                      .pipe(
+                        Effect.tapError((error) =>
+                          diagnoseExecution(submitted, { code: error.code }),
+                        ),
+                      )
+                  : { supported: false as const, reason: repeated };
               if (!availability.supported) {
                 const evidence: ExecutionEvidence = {
                   executionId: randomUUID(),
@@ -2728,61 +2956,67 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 submitted.purpose === "act" ||
                 submitted.purpose === "residual";
               let crossedDispatchBoundary = false;
-              const evidence = yield* reviewedExecution(
-                submitted,
+              /** The allow the host's dispatch fence followed, with Guardian's action label. */
+              let allowed: AllowedExecution | undefined;
+              const evidence = yield* reviewedExecution(submitted, (fenced) =>
                 Effect.sync(() => {
                   crossedDispatchBoundary = true;
+                  allowed = fenced;
                 }),
               ).pipe(
                 Effect.onExit((result) =>
-                  Effect.sync(() => {
+                  Effect.suspend(() => {
                     if (
                       (!effectful && submitted.purpose !== "authenticate") ||
                       Exit.isSuccess(result)
                     )
-                      return;
+                      return Effect.void;
                     // A defect or interruption can occur after dispatch just like a typed failure.
                     const reviewPreventedExecution =
                       Cause.isFailType(result.cause) &&
                       (result.cause.error.code === "ReviewDenied" ||
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
-                    record(
-                      {
-                        executionId: `unresolved_${randomUUID()}`,
-                        status: "failed",
-                        effect:
-                          submitted.purpose === "example" || submitted.purpose === "act"
-                            ? crossedDispatchBoundary
-                              ? "possible"
-                              : "not_sent"
-                            : reviewPreventedExecution || submitted.purpose === "authenticate"
-                              ? "not_sent"
-                              : "possible",
-                        ...(submitted.purpose === "authenticate" && !reviewPreventedExecution
-                          ? {
-                              authentication: {
-                                state: "failed" as const,
-                                // Possible only while the sign-in's outcome is unknown.
-                                effect:
-                                  Cause.isFailType(result.cause) &&
-                                  (result.cause.error.code === "CredentialsRejected" ||
-                                    (result.cause.error.authentication !== undefined &&
-                                      signInFailureFeedback(result.cause.error.authentication)
-                                        .signInOutcome === "signed_out"))
-                                    ? ("verified" as const)
-                                    : ("possible" as const),
-                              },
-                            }
-                          : {}),
-                        observations:
-                          "Execution did not produce a result. Reconcile using the host's durable execution journal.",
-                      },
-                      submitted.purpose,
-                    );
+                    const lost: ExecutionEvidence = {
+                      executionId: `unresolved_${randomUUID()}`,
+                      status: "failed",
+                      effect:
+                        submitted.purpose === "example" || submitted.purpose === "act"
+                          ? crossedDispatchBoundary
+                            ? "possible"
+                            : "not_sent"
+                          : reviewPreventedExecution || submitted.purpose === "authenticate"
+                            ? "not_sent"
+                            : "possible",
+                      ...(submitted.purpose === "authenticate" && !reviewPreventedExecution
+                        ? {
+                            authentication: {
+                              state: "failed" as const,
+                              // Possible only while the sign-in's outcome is unknown.
+                              effect:
+                                Cause.isFailType(result.cause) &&
+                                (result.cause.error.code === "CredentialsRejected" ||
+                                  (result.cause.error.authentication !== undefined &&
+                                    signInFailureFeedback(result.cause.error.authentication)
+                                      .signInOutcome === "signed_out"))
+                                  ? ("verified" as const)
+                                  : ("possible" as const),
+                            },
+                          }
+                        : {}),
+                      observations:
+                        "Execution did not produce a result. Reconcile using the host's durable execution journal.",
+                    };
+                    record(lost, submitted.purpose);
+                    // Only an execution that crossed its dispatch fence ran; a write whose result
+                    // was lost is exactly what the outcome reviewer settles.
+                    return crossedDispatchBoundary
+                      ? observeExecution(submitted, lost, allowed, "result_lost")
+                      : Effect.void;
                   }),
                 ),
               );
+              yield* observeExecution(submitted, evidence, allowed, evidence.status);
               return yield* executionResult(evidence, submitted.purpose);
             }).pipe(
               // The owner never answered a sign-in request: the build ends as no_response.
@@ -3233,6 +3467,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       "Not published: the source this repair would publish is byte for byte the registered revision's, so there is nothing to publish. A new name or description alone is not a repair. The registered revision stays current and this repair ends here; do not call finish_build again.",
                   });
                 }
+                // Deterministic, before any review: the minter fixes the extraction, or the owner
+                // confirms a contract change. It is neither a review nor an outage.
+                if (error.reason === "output_obligation_weakened")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    { weakenedOutputs: error.weakenedOutputs ?? [] },
+                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. ${
+                      buildEffect === "write"
+                        ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
+                        : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
+                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+                  );
                 if (error.reason === "tool_name_taken")
                   return notPublished(
                     error.code,
@@ -3331,7 +3578,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     {},
-                    "Not published: this build has not demonstrated the requested write. Continue the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in an act step that reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it; if it did not, submit it once with the caller's values, marking its commit step, and read its confirmation. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.",
+                    "Not published: this build has not demonstrated the requested write. Continue the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.",
                   );
                 if (
                   error.reason === "confirmation_undeclared" ||
@@ -3357,8 +3604,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"
                               ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
-                              : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
-                      " The host extracts the contract offline; never run the write or the example again for this.",
+                              : request.mode === "maintenance" && buildEffect !== "write"
+                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                : request.mode === "maintenance"
+                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                  : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
+                      (error.reason === "contract_output_mismatch" &&
+                      request.mode === "maintenance" &&
+                      buildEffect !== "write"
+                        ? ""
+                        : " The host extracts the contract offline; never run the write or the example again for this."),
                   );
                 if (error.reason === "destination_validation") {
                   // Publication uses the route evidence the host recorded while the example ran.
@@ -3693,6 +3948,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
+                    if (request.mode === "maintenance") {
+                      // Only the tool's owner confirms a change to its registered contract.
+                      const confirmer = yield* maintenanceConfirmer;
+                      if (confirmer !== "owner")
+                        return taskUpdateAnswer("update_refused", {
+                          reason: "owner_unavailable",
+                          instruction:
+                            "No one who owns this tool can confirm a contract change now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field, or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
+                        });
+                      if (submitted.confirmedBy.length === 0)
+                        return taskUpdateAnswer("clarification_required", {
+                          source: "host",
+                          reason: "confirmation_required",
+                          instruction:
+                            "A change to the published tool's contract needs its owner's confirmation, and nothing changed. Ask with request_input, naming the change and what the site no longer shows, then call mint_update again naming the questions answered in confirmedBy.",
+                        });
+                    }
                     if (
                       submitted.recommend === "update" &&
                       submitted.confirmedBy.length === 0 &&
@@ -3833,6 +4105,206 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ),
             }),
       };
+      /** The minter's history from before a compaction, which its run state no longer holds. */
+      const historyArchive =
+        dependencies.outcomeReview?.historyArchive === undefined
+          ? memoryHistoryArchive()
+          : bufferedHistoryArchive(dependencies.outcomeReview.historyArchive, (error) =>
+              Effect.sync(() => {
+                diagnostics.push(
+                  JSON.stringify({
+                    phase: "diagnostics",
+                    reason: "history_archive_gap",
+                    code: error.code,
+                  }),
+                );
+              }),
+            );
+      /** What the minter's run state holds, which the model registers before its first request. */
+      let liveHistory: (() => LiveMinterHistory) | undefined;
+      /** Done once the model registered its run state, or ended without doing so. */
+      const historyRegistered = yield* Deferred.make<void>();
+      /** Each piece of the harness's evidence as the outcome reviewer reads it. */
+      const recordChunk = (ref: string, text: string, range: { offset: number; limit: number }) => {
+        const end = Math.min(text.length, range.offset + range.limit);
+        return {
+          ref,
+          text: text.slice(range.offset, end),
+          offset: range.offset,
+          total: text.length,
+          nextOffset: end < text.length ? end : null,
+        };
+      };
+      /** A workspace file through the minter's own screened source read. */
+      const workspaceChunk = (
+        ref: string,
+        path: string,
+        range: { offset: number; limit: number },
+      ) =>
+        actions
+          .readSource(path, { offset: range.offset, limit: Math.min(range.limit, 64_000) })
+          .pipe(
+            Effect.map((read) => {
+              const chunk = decodeJsonObject(read);
+              if (chunk._tag === "Left") return undefined;
+              const source = chunk.right["source"];
+              const total = chunk.right["total"];
+              const next = chunk.right["nextOffset"];
+              return typeof source !== "string" || typeof total !== "number"
+                ? undefined
+                : {
+                    ref,
+                    text: source,
+                    offset: range.offset,
+                    total,
+                    nextOffset: typeof next === "number" ? next : null,
+                  };
+            }),
+            // A file the workspace does not hold is a record the reviewer cannot read, not a failure.
+            Effect.catchAll(() => Effect.succeed(undefined)),
+          );
+      const executionRecord = (entry: ExecutionEvidence) => ({
+        ...entry,
+        purpose: purposes.get(entry.executionId),
+        ...(entrypoints.has(entry.executionId)
+          ? { entrypoint: entrypoints.get(entry.executionId) }
+          : {}),
+        note: "The screened result the minter received is in its history: search_history for this executionId.",
+      });
+      const baseEvidence: OutcomeEvidence = {
+        list: (kind) =>
+          Effect.gen(function* () {
+            if (kind === "execution")
+              return executions.map((entry) => ({
+                ref: `execution:${entry.executionId}`,
+                kind,
+                summary: JSON.stringify({
+                  purpose: purposes.get(entry.executionId),
+                  action: entry.review?.action,
+                  status: entry.status,
+                  effect: entry.effect,
+                  confirmation: entry.confirmation,
+                }),
+              }));
+            if (kind === "source")
+              return [...new Set(entrypoints.values())].map((path) => ({
+                ref: `source:${path}`,
+                kind,
+                summary:
+                  "An entrypoint an execution ran; read any other workspace path the same way.",
+              }));
+            if (kind === "capture") {
+              const index = yield* workspaceChunk(
+                "capture:captures/index.json",
+                "captures/index.json",
+                {
+                  offset: 0,
+                  limit: 1,
+                },
+              );
+              return index === undefined
+                ? []
+                : [
+                    {
+                      ref: "capture:captures/index.json",
+                      kind,
+                      summary: "The capture index; read it for the screened captures it lists.",
+                    },
+                  ];
+            }
+            return publications.map((_publication, index) => ({
+              ref: `publication:${index + 1}`,
+              kind,
+              summary: "A finish_build result as the minter received it.",
+            }));
+          }),
+        read: (ref, range) =>
+          Effect.suspend(() => {
+            const separator = ref.indexOf(":");
+            const kind = ref.slice(0, separator);
+            const id = ref.slice(separator + 1);
+            if (separator < 1 || id === "") return Effect.succeed(undefined);
+            if (kind === "execution") {
+              const entry = executions.find((candidate) => candidate.executionId === id);
+              return Effect.succeed(
+                entry === undefined
+                  ? undefined
+                  : recordChunk(ref, JSON.stringify(executionRecord(entry)), range),
+              );
+            }
+            if (kind === "publication") {
+              const publication = publications[Number(id) - 1];
+              return Effect.succeed(
+                publication === undefined ? undefined : recordChunk(ref, publication, range),
+              );
+            }
+            if (kind === "source" || (kind === "capture" && id.startsWith("captures/")))
+              return workspaceChunk(ref, id, range);
+            return Effect.succeed(undefined);
+          }),
+        task: () =>
+          Effect.succeed({
+            request: initialPrompt,
+            answers: [...acceptedAnswers],
+            state: {
+              // The effective task after confirmed updates, in its screened form.
+              task: {
+                revision: taskState.revision,
+                effect: taskState.effect,
+                ...(taskState.siteOrigin === undefined ? {} : { siteOrigin: taskState.siteOrigin }),
+                updates: taskState.updates,
+              },
+              buildEffect,
+              writeSession,
+              exampleClaimed,
+              executionClosed,
+              published: terminal?.build === "published",
+            },
+          }),
+      };
+      const reviewer = yield* makeOutcomeReviewer({
+        host: dependencies.outcomeReview,
+        evidence: dependencies.outcomeReview?.evidence?.(baseEvidence) ?? baseEvidence,
+        history: minterHistory(
+          historyArchive,
+          () => liveHistory?.(),
+          Deferred.await(historyRegistered),
+        ),
+        ...(recovered?.outcomeWrites === undefined
+          ? {}
+          : { recoveredWrites: recovered.outcomeWrites }),
+      });
+      dependencies.outcomeReview?.bindWrites?.(reviewer.outcomes);
+      /** The outcome reviewer's readback requests, beside the host's own notices. */
+      const drainNotices = () => {
+        const notices = [
+          ...(dependencies.drainHostNotices?.() ?? []),
+          ...reviewer.observationRequests().map((observation) => ({
+            kind: "outcome_review_observation",
+            ...observation,
+            instruction:
+              "The outcome reviewer asks for this readback to settle whether that write changed the site. When it can be read without changing anything, run it as a read step; never repeat the write to answer it.",
+          })),
+        ];
+        return notices.length === 0 ? undefined : notices;
+      };
+      const published = () => terminal?.build === "published";
+      const reviewedActions: MintActions = {
+        ...actions,
+        // A published build with a write unresolved gives the reviewer its last turn;
+        // publication itself never waits for it.
+        finish: (input) =>
+          actions.finish(input).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                publications.push(result);
+              }),
+            ),
+            // Only a published build gives the reviewer its final turn; a refused publication
+            // leaves the minter working and the reviewer on its ordinary turns.
+            Effect.tap(() => (published() ? reviewer.finishing : Effect.void)),
+          ),
+      };
       const hostIncidentsBeforeStart = yield* dependencies.drainStartIncidents?.() ??
         Effect.succeed(undefined);
       const retainRuntimeRecord = dependencies.diagnostics?.retainRuntimeRecord;
@@ -3840,6 +4312,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** The harness checkpoint, with `task` as its effective task. */
       const captureHarness = (task: TaskState = taskState): MintHarnessSnapshot => ({
         executions: [...executions],
+        ...(reviewer.tracked().length === 0 ? {} : { outcomeWrites: reviewer.tracked() }),
         purposes: [...purposes].map(([executionId, purpose]) => {
           const taskRevision = revisions.get(executionId);
           return { executionId, purpose, ...(taskRevision === undefined ? {} : { taskRevision }) };
@@ -3915,6 +4388,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             const result = yield* recoveredExecutionResult(
                               execution.evidence,
                               execution.purpose,
+                              submittedEntrypoint(call.arguments),
                             );
                             return { result: recoveredTool.result ?? result };
                           }),
@@ -3960,10 +4434,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             : { hostToolDescriptions: dependencies.hostToolDescriptions }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
-              ? (({ retainCapture: _capture, ...available }) => available)(actions)
-              : actions,
-            dependencies.drainHostNotices,
+              ? (({ retainCapture: _capture, ...available }) => available)(reviewedActions)
+              : reviewedActions,
+            drainNotices,
           ),
+          history: {
+            archive: historyArchive,
+            live: (read) => {
+              liveHistory = read;
+              Deferred.unsafeDone(historyRegistered, Exit.void);
+            },
+          },
           screen: (value) => screenMintText(dependencies, value),
           isComplete: () =>
             stopUnavailableHost() ||
@@ -4038,7 +4519,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               );
             }),
         })
-        .pipe(Effect.exit, Effect.ensuring(Scope.close(toolScope, Exit.void)));
+        .pipe(
+          Effect.exit,
+          Effect.ensuring(Scope.close(toolScope, Exit.void)),
+          // A model that ended before registering its run state leaves the archive to read.
+          Effect.ensuring(Deferred.done(historyRegistered, Exit.void)),
+        );
       const modelFailure = Exit.isFailure(modelResult)
         ? Option.getOrUndefined(Cause.failureOption(modelResult.cause))
         : undefined;
@@ -4107,6 +4593,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           Effect.mapError(diagnosticUnavailable),
           Effect.catchAll(recordDiagnosticGap("mint.model_finished")),
         ) ?? Effect.void;
+      // The reviewer's final turn, when finish_build left a write unresolved, ends here; whatever
+      // it decided stands, and an unresolved write is reported as possibly applied.
+      const writes = yield* reviewer.close;
       const currentInvocation = dependencies.currentInvocation?.();
       finished.build = terminal?.build ?? "incomplete";
       // An unpublished build whose last publication Guardian denied says so, with its reason.
@@ -4129,6 +4618,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(example ? { example } : {}),
         ...(currentInvocation === undefined ? {} : { currentInvocation }),
         executions,
+        ...(writes.length === 0 ? {} : { writes }),
         diagnostics,
       };
     }),

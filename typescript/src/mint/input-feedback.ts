@@ -1,7 +1,8 @@
 import type { Effect } from "effect";
 import type { ExpectedConfirm } from "../browser/dialogs/contracts.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
-import type { PublicationFinding } from "../guardian/review-contracts.js";
+import type { GuardianAction, PublicationFinding } from "../guardian/review-contracts.js";
+import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import type { MintFailure, PublicationDiagnosticGap } from "./contracts.js";
 
 /** Credential-screened Guardian feedback for a completed model decision. */
@@ -9,6 +10,8 @@ export interface MintReviewFeedback {
   readonly reviewId: string;
   readonly outcome: "allow" | "deny" | "escalate";
   readonly rationale: string;
+  /** An execution review's label of what the step does on the website; see `GuardianAction`. */
+  readonly action?: GuardianAction;
 }
 
 /** A build the registry published: its reference and the publication diagnostics it left. */
@@ -108,6 +111,12 @@ export interface MintArtifact {
   readonly outputSchema: unknown;
   /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
   readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
+  /**
+   * The questions publication reviewed, the only ones a run asks its caller, and `{}` when there
+   * are none. An artifact saved before builds recorded them asks only what its entrypoint
+   * declares as a plain literal.
+   */
+  readonly questions?: ScriptQuestionDeclarations;
   /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
   readonly acceptedConfirms?: readonly ExpectedConfirm[];
 }

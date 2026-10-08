@@ -10,6 +10,7 @@ import {
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
+import { makeOpenAIOutcomeReviewer } from "../mint/outcome-review-openai.js";
 import {
   exampleInputRefusal,
   preflightTestInput,
@@ -48,10 +49,7 @@ const localStepRefusal = (
             "This write session already started, so it signs in only through a signInStep the host fills: an authenticate step without one would run your own source on the site outside the session's act steps. Nothing was executed.",
         }
       : undefined;
-const mintDependencies = (
-  state: MintState,
-  publicationDecisions: PublicationDecisionLog,
-) => {
+const mintDependencies = (state: MintState, publicationDecisions: PublicationDecisionLog) => {
   const { workspace, authoring, deadline, context, mintAsk, handles } = state;
   const { projection, options } = state.session;
   const dependencies: MintDependencies = {
@@ -140,6 +138,20 @@ const mintDependencies = (
     reviewAndExecute: mintExecution(state),
     checkSignedInMarker: (marker) => state.markers.check(marker),
     publish: mintPublication(state),
+    // The local host keeps no recovery checkpoint; its write completion reads the assessments.
+    outcomeReview: {
+      model: makeOpenAIOutcomeReviewer(
+        options.outcomeReviewerProvider === undefined
+          ? {}
+          : { modelProvider: options.outcomeReviewerProvider },
+      ),
+      save: () => Effect.void,
+      bindWrites: context.bindWrites,
+      recordAssessment: (assessment) =>
+        Effect.sync(() => {
+          state.assessments.set(assessment.executionId, assessment);
+        }),
+    },
     publicationDecisions,
   };
   return dependencies;

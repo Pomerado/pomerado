@@ -47,6 +47,16 @@ const finish = (request: Parameters<typeof executionIdOf>[0], callId: string, ex
   ),
 ];
 
+/** A read of the fixture's heading that takes no input and declares no questions. */
+const headingTool = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_fixture",input:Schema.Struct({}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return await page.locator('h1').textContent();",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {heading:String(response.result).trim()};
+});`;
+
 /** A read whose input `account` is fixed to one account's value. */
 const accountTool = (account: string) => `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
@@ -118,14 +128,6 @@ test("finish_build refuses a saved file of any extension that holds a secret han
   test.setTimeout(60_000);
   const site = await headingSite();
   const guardian = recordingGuardian();
-  const tool = `import { Schema } from "effect";
-import { defineOperation } from "../runtime/index.js";
-export default defineOperation({name:"read_fixture",input:Schema.Struct({}),output:Schema.Struct({heading:Schema.String})},
-async ({kernel,sessionId}) => {
-  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return await page.locator('h1').textContent();",timeout_sec:5});
-  if(!response.success) throw new Error(String(response.error));
-  return {heading:String(response.result).trim()};
-});`;
   try {
     const { built, last } = await mint({
       effect: "read",
@@ -134,7 +136,7 @@ async ({kernel,sessionId}) => {
       turns: [
         () =>
           patch({
-            "src/tool.mjs": tool,
+            "src/tool.mjs": headingTool,
             "src/query.graphql": 'query { account(code: "{{secret.s1}}") { name } }',
           }),
         () => [call("execute", execution("example", "src/tool.mjs"), "example")],
@@ -149,6 +151,28 @@ async ({kernel,sessionId}) => {
       reason: "secret_handle",
     });
     expect(publications(guardian.reviews)).toHaveLength(0);
+  } finally {
+    await site.close();
+  }
+});
+
+// A tool saved with no questions recorded is one saved before builds recorded them, which a run
+// reads from its source. A new tool that declares none records an empty set instead.
+test("a published read that declares no questions records an empty question set", async () => {
+  const site = await headingSite();
+  try {
+    const { built } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian: recordingGuardian(),
+      turns: [
+        () => patch({ "src/tool.mjs": headingTool }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        (request) => finish(request, "finish", "example"),
+      ],
+    });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.questions).toEqual({});
   } finally {
     await site.close();
   }
@@ -261,15 +285,17 @@ if(index===1)return response([call('execute',{purpose:'example',target:'liveBrow
 if(index<=4){if(index>2)appendFileSync(ledger,'finish '+JSON.stringify(resultOf(request,'finish_'+(index-1)))+'\\n');return response([call('finish_build',{intent:'Return the fixture integration',entrypoint:'src/tool.mjs',executionId:resultOf(request,'example').executionId,metadata:{name:'read_fixture',description:'Read the fixture heading'},coverage:'One live example'},'finish_'+index)]);}
 return response([message('Done.')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
+const action=(current)=>{if(current?.trusted_review?.kind!=='execution')return {};const purpose=current.trusted_execution_context?.currentExecution?.purpose;return {action:purpose==='act'?'write':purpose==='authenticate'?'authentication':'read'};};
+const outcomeReviewerProvider={getModel:()=>({getResponse:async()=>response([message('No assessment yet.')]),getStreamedResponse:()=>{throw new Error('Unused stream');}})};
 const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 const items=typeof request.input==='string'?[request.input]:request.input;
 const start=items.findLastIndex(item=>objects(item).some(value=>'submitted_call' in value));
 const current=objects(items[start]).find(value=>'submitted_call' in value);
 if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum'}]})]);}
-if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review'})]);
+if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review',...action(current)})]);
 return response([call('read_source',{path:current.submitted_call.entrypoint,offset:0},'read')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
-startCli(process.argv.slice(2),{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider});
+startCli(process.argv.slice(2),{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,outcomeReviewerProvider});
 `,
   );
   return { file, ledger };

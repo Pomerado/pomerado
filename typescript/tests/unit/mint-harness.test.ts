@@ -1,4 +1,4 @@
-import { makeMintHarnessFixture, portableJobSession } from "../support/mint-fixtures.js";
+import { makeMintHarnessFixture, readAllow, portableJobSession } from "../support/mint-fixtures.js";
 import { portableMintProjection } from "../support/portable-mint.js";
 import { solModel } from "../../src/models/models.js";
 import { writeFile } from "node:fs/promises";
@@ -270,8 +270,8 @@ it("keeps building through repeated diagnostic retention failures without replay
       claimExample: Effect.sync(() => {
         claims++;
       }),
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               dispatches++;
@@ -909,8 +909,8 @@ it("keeps the build open when an execution's capture is unavailable", async () =
       }),
     {
       executionAvailability: () => "open",
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.suspend(() =>
               ++dispatches === 1
@@ -2310,8 +2310,8 @@ it.each(["example", "command"] as const)(
           return yield* new MintFailure({ code: "Unavailable" });
         }),
       {
-        reviewAndExecute: (_input, dispatch = Effect.void) =>
-          dispatch.pipe(
+        reviewAndExecute: (_input, dispatch = () => Effect.void) =>
+          dispatch(readAllow).pipe(
             Effect.zipRight(Effect.sync(() => started.resolve())),
             Effect.zipRight(Effect.never),
             Effect.ensuring(
@@ -2355,8 +2355,8 @@ it("parent cancellation waits for an independently invoked SDK execution tool to
         return yield* Effect.never;
       }),
     {
-      reviewAndExecute: (_input, dispatch = Effect.void) =>
-        dispatch.pipe(
+      reviewAndExecute: (_input, dispatch = () => Effect.void) =>
+        dispatch(readAllow).pipe(
           Effect.zipRight(Effect.sync(() => started.resolve())),
           Effect.zipRight(Effect.never),
           Effect.ensuring(
@@ -3768,8 +3768,8 @@ it.each(["metadata_free", "host_poison"] as const)(
     const f = await fixture(() => Effect.void, {
       skills: [{ name: "core", description: "Synthetic SDK fixture", content: "Use execute." }],
       ...(kind === "host_poison" ? { executionAvailability: () => availability } : {}),
-      reviewAndExecute: (_request, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_request, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               executions++;
@@ -4442,7 +4442,8 @@ it.each(["read_back", "fallback"] as const)(
             yield* finish("act_1", "The site shows the confirmation once and keeps no record");
             return;
           }
-          yield* turn.actions.execute(act);
+          // The read-back is its own step: running the write's step again would repeat it.
+          yield* turn.actions.execute({ ...act, entrypoint: "src/read-back.ts" });
           responses.push(JSON.parse(yield* finish("act_1", "Not needed")));
           yield* finish("act_2");
         }),

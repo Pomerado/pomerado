@@ -3,13 +3,11 @@ import { isDeepStrictEqual } from "node:util";
 import { Effect, Option, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { type ExecutionRequest, MintFailure, type MintRequest } from "./contracts.js";
-import { entrypointImportClosure } from "./operation-source.js";
 
 /**
  * The checks a host runs on one submitted step before Guardian reviews it, and the read/write
- * state they read: which input the step runs, whether a write build's session admits it, whether
- * it would blindly repeat a write, and whether a read build may run its example again or become
- * a write. Each answers from facts the host passes in.
+ * state they read: which input the step runs, whether a write build's session admits it, and
+ * whether a read build may run its example again or become a write. Each answers from facts the host passes in.
  */
 
 /** A host's refusal of a step, which runs nothing. */
@@ -21,7 +19,9 @@ const refused = (reason: string): Refusal => ({ supported: false, reason });
 
 /** Live read tests an attempt may run on an input the agent chose. */
 const maximumAgentTestInputs = 2;
-const testInputNotJson = "testInput must be the tool's input as JSON text. Nothing was executed.";
+/** Why an agent-chosen test input that is not JSON text never runs. */
+export const testInputNotJson =
+  "testInput must be the tool's input as JSON text. Nothing was executed.";
 const JsonText = Schema.parseJson();
 
 /**
@@ -73,14 +73,27 @@ interface SessionInput {
   readonly input: InputObject | undefined;
 }
 
+/** The build an `exampleInput` would run in. */
+interface ExampleInputScope {
+  readonly buildEffect: MintRequest["effect"] | undefined;
+  readonly callerInput: unknown;
+  /**
+   * Set by a host while it repairs a published tool, which runs on its failing case's own input.
+   * The local host never repairs one, so it never sets it.
+   */
+  readonly maintenance?: boolean;
+}
+
 /** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
 const exampleInputPlaceRefusal = (
   purpose: ExecutionRequest["purpose"],
-  scope: { readonly buildEffect: MintRequest["effect"] | undefined; readonly callerInput: unknown },
+  scope: ExampleInputScope,
 ) => {
   const act = purpose === "act";
   if (purpose !== "example" && !act)
     return "exampleInput is valid only on a read's example or a write's act step.";
+  if (scope.maintenance === true)
+    return "exampleInput is not for maintenance, which repairs the tool on its failing case's own input.";
   if (scope.buildEffect !== (act ? "write" : "read"))
     return act
       ? "exampleInput is valid on act steps only in a write build."
@@ -110,11 +123,7 @@ const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
-  scope: {
-    readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly callerInput: unknown;
-    readonly writeSession: SessionInput;
-  },
+  scope: ExampleInputScope & { readonly writeSession: SessionInput },
 ): Refusal | undefined => {
   if (submitted.exampleInput === undefined) return undefined;
   const decoded = intentDerivedInput(submitted);
@@ -173,43 +182,20 @@ export const stepInput = (
   );
 };
 
-/** One act step of a write session, as the blind-repeat guard reads it. */
-export interface WriteStep {
-  readonly entrypoint: string;
-  /** `writeStepDigest` of the step's source when it ran. */
-  readonly sourceDigest: string;
-  /** The step sent state-changing requests, or may have. */
-  readonly stateChanging: boolean;
-}
-
 /** The sha256 digest of a set of source files, whatever order they come in. */
 export const sourceDigest = (files: ReadonlyMap<string, string>) =>
   createHash("sha256")
     .update(JSON.stringify([...files].sort(([left], [right]) => left.localeCompare(right))))
     .digest("hex");
 
-/** The digest of an act step's own source: its entrypoint and the files it imports. */
-export const writeStepDigest = (files: ReadonlyMap<string, string>, entrypoint: string) =>
-  sourceDigest(entrypointImportClosure(files, entrypoint));
-
 /**
- * Why an act step is refused before review as a blind repeat: it is unchanged and runs straight
- * after itself, and that run sent state-changing requests, so it could commit the write twice.
- * Once another act step has run, as a read-back does, the agent has verified and may run it again.
+ * The sha256 digest of what a set of source files holds, without their paths, so the same step
+ * copied under another name has the same digest.
  */
-export const replayedWriteStep = (
-  submitted: ExecutionRequest,
-  files: ReadonlyMap<string, string>,
-  steps: readonly WriteStep[],
-): string | undefined => {
-  if (submitted.purpose !== "act") return undefined;
-  const last = steps.at(-1);
-  return last?.stateChanging === true &&
-    last.entrypoint === submitted.entrypoint &&
-    last.sourceDigest === writeStepDigest(files, submitted.entrypoint)
-    ? "This act step is unchanged and just sent state-changing requests, so running it again blindly could commit the write twice. First run an act step that reads the page or the account and learns whether the write happened; if it did not, you may run this step again."
-    : undefined;
-};
+export const contentDigest = (files: ReadonlyMap<string, string>) =>
+  createHash("sha256")
+    .update(JSON.stringify([...files.values()].sort()))
+    .digest("hex");
 
 /** Why a write build refuses this step now; undefined when it may run. */
 export const writeSessionBoundary = (

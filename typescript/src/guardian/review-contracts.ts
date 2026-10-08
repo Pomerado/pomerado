@@ -19,6 +19,16 @@ export interface PublicationScope {
 }
 
 /**
+ * The business meaning of an execution, as Guardian's execution review labels it: `read`
+ * observes without changing persistent business state; `write` changes it, an intermediate
+ * change such as adding to a cart or saving a draft included; `authentication` signs in. Every
+ * allowed execution carries one, and a host records it against the execution.
+ */
+export const guardianActions = ["read", "write", "authentication"] as const;
+export const GuardianAction = Schema.Literal(...guardianActions);
+export type GuardianAction = typeof GuardianAction.Type;
+
+/**
  * Input findings are feedback for the minter; they never block a publication on their own.
  * `example_input` is the host's own check that each key of an intent-derived example's input is
  * a schema input, never Guardian's.

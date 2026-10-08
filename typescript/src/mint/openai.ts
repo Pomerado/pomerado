@@ -261,6 +261,23 @@ const parameters = <A, I>(schema: Schema.Schema<A, I>) => ({
   },
 });
 
+/**
+ * Every item a run state holds, oldest first. The SDK's `history` starts at the latest
+ * compaction, as each request does; the state itself keeps the items before it.
+ */
+const untrimmedHistory = (
+  state: Pick<RunState<unknown, never>, "_originalInput" | "_generatedItems">,
+): AgentInputItem[] => [
+  ...(typeof state._originalInput === "string"
+    ? [{ role: "user" as const, type: "message" as const, content: state._originalInput }]
+    : state._originalInput),
+  ...state._generatedItems.flatMap((item) =>
+    item.type === "tool_approval_item" || item.rawItem === undefined
+      ? []
+      : [item.rawItem as AgentInputItem],
+  ),
+];
+
 /** Ordinary work ends through completion, cancellation, authority or time limits. This
  * in-memory backstop is far above normal use and is never persisted as a remaining budget. */
 const mintModelCallCapacity = 512;
@@ -268,7 +285,7 @@ const mintModelCallCapacity = 512;
 const segmentTurns = 128;
 
 /** Input-token threshold for server-side compaction. Set explicitly because the pinned SDK's
- * context-window table has no GPT-6 entry and would silently fall back; 240K also stays
+ * context-window table has no GPT-6.1 entry and would silently fall back; 240K also stays
  * below GPT-6's 272K long-context pricing threshold, where the input price doubles. */
 export const mintCompactionThresholdTokens = 240_000;
 export const mintCompaction = (): ReturnType<typeof compaction> =>
@@ -646,7 +663,7 @@ export const makeOpenAIMinter = (
                 : tool({
                     ...hostTool(
                       "mint_update",
-                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write (effect), the target site or the login. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why), update_invalid (correct the request and call again). A site, login or effect change always names the caller's confirming answers in confirmedBy. No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision. intent states the evidence for the change.",
+                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write (effect), the target site or the login; in maintenance, only a requirement, the purpose or an output field (output) of the published tool's contract, which its owner confirms. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why), update_invalid (correct the request and call again). A site, login or effect change always names the caller's confirming answers in confirmedBy. No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision. intent states the evidence for the change.",
                       "The task was not updated. Inspect the finite failure; correct the request or continue under the current task.",
                       (request) => updateTask(request),
                     ),
@@ -764,7 +781,34 @@ export const makeOpenAIMinter = (
             });
             let modelCalls = turn.recovery?.initial?.modelCalls ?? 0;
             let finalsWithoutTool = turn.recovery?.initial?.finalsWithoutTool ?? 0;
-            let activeState: { toString(): string } | undefined;
+            let activeState: RunState<unknown, typeof agent> | undefined;
+            /**
+             * The history offset of the run state's first item. A new segment starts from the SDK's
+             * history, which starts at the latest compaction; the items before it go to the
+             * history archive first, and the offset moves with the segment's state.
+             */
+            let liveOffset = turn.recovery?.initial?.historyOffset ?? 0;
+            let nextOffset = liveOffset;
+            type HeldState = Parameters<typeof untrimmedHistory>[0];
+            /** Archives what the next segment's input leaves out: the items before `state`'s compaction. */
+            const archiveBeforeSegment = async (state: HeldState) => {
+              const items = untrimmedHistory(state);
+              const compaction = items.findLastIndex((item) => item.type === "compaction");
+              if (compaction <= 0) return;
+              // The harness's archive keeps a range it could not store and records the gap; a
+              // storage failure never ends the attempt.
+              if (turn.history !== undefined)
+                await turn.runTool(
+                  turn.history.archive
+                    .append(liveOffset, items.slice(0, compaction))
+                    .pipe(Effect.ignore),
+                );
+              nextOffset = liveOffset + compaction;
+            };
+            turn.history?.live(() => ({
+              offset: liveOffset,
+              items: activeState === undefined ? [] : untrimmedHistory(activeState),
+            }));
             const totalUsage = new Usage();
             /** Finite per-call counts, so the host can store the cache hit rate per call. */
             const reportUsage = (
@@ -876,7 +920,11 @@ export const makeOpenAIMinter = (
                             throw new MintFailure({ code: "Unavailable" });
                           return activeState.toString();
                         },
-                        { modelCalls: modelCalls + 1, finalsWithoutTool },
+                        {
+                          modelCalls: modelCalls + 1,
+                          finalsWithoutTool,
+                          historyOffset: liveOffset,
+                        },
                         Effect.tryPromise({
                           try: invoke,
                           catch: sdkFailure,
@@ -909,9 +957,12 @@ export const makeOpenAIMinter = (
                   terminationReason = "inherited_deadline";
                   throw new MintFailure({ code: "Unavailable" });
                 }
-                if (recovery !== undefined && !(input instanceof RunState))
+                // Always a RunState: it holds the whole history, which recovery saves and the
+                // outcome reviewer reads, including the items a compaction replaced in the request.
+                if (!(input instanceof RunState))
                   input = new RunState(new RunContext(), input, agent, turnsPerSegment);
-                activeState = input instanceof RunState ? input : undefined;
+                activeState = input;
+                liveOffset = nextOffset;
                 const segment: { readonly value: SegmentResult } | { readonly error: unknown } =
                   await runSegment(input).then(
                     (value) => ({ value }),
@@ -922,6 +973,7 @@ export const makeOpenAIMinter = (
                   if (!(error instanceof MaxTurnsExceededError) || error.state === undefined)
                     throw error;
                   const history: AgentInputItem[] = error.state.history;
+                  await archiveBeforeSegment(error.state);
                   if (turn.isComplete()) {
                     totalUsage.add(error.state.usage);
                     diagnostics?.completed(history, totalUsage);
@@ -980,6 +1032,7 @@ export const makeOpenAIMinter = (
                     modelCalls,
                   }) ?? Effect.void,
                 );
+                await archiveBeforeSegment(result.state);
                 input = [
                   ...result.history,
                   {

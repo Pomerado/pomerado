@@ -74,7 +74,18 @@ import type {
   MintCompletion,
   MintReviewFeedback,
 } from "./input-feedback.js";
-import { PublicationFinding, PublicationReason } from "../guardian/review-contracts.js";
+import {
+  GuardianAction,
+  PublicationFinding,
+  PublicationReason,
+} from "../guardian/review-contracts.js";
+import {
+  OutcomeWrite,
+  type LiveMinterHistory,
+  type MinterHistoryArchive,
+  type OutcomeReviewHost,
+  type WriteOutcome,
+} from "./outcome-review-contracts.js";
 import { CaptureScreeningDiagnostic } from "../runtime/capture-diagnostic.js";
 import type {
   diagnosticRetentionReason,
@@ -90,14 +101,27 @@ export interface RunnerChannels {
 }
 
 /**
- * What spent an attempt's sign-ins: its one sign-in again on the same browser, the sign-ins it
- * allows on a recovery's new profile, or the host's identical refusals in a row while typing into
+ * What spent an attempt's sign-ins: its one extra sign-in after a verified one, the sign-ins it
+ * allows on a recovery's new profile, its one retry of a sign-in that submitted the login but
+ * never verified and was not rejected, or the host's identical refusals in a row while typing into
  * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
  */
 export type SpentSignIn =
-  "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
+  | "relogin_spent"
+  | "fresh_profile_sign_ins_spent"
+  | "sign_in_retry_spent"
+  | "host_refusals_repeated";
 
 export type { SessionLoss };
+
+/**
+ * One registered output field a repair loosens and how, by path (`items[].price.amount`; the
+ * root is `output`, its items `output[]`). The host that publishes repairs compares the schemas.
+ */
+export interface WeakenedOutput {
+  readonly field: string;
+  readonly change: "removed" | "optional" | "nullable" | "widened";
+}
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
@@ -304,7 +328,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
-    | "capture_not_saved";
+    | "capture_not_saved"
+    /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
+    | "output_obligation_weakened";
+  /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
+  readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
   readonly publicationFeedback?: {
     readonly oneTimeParameters?: readonly string[];
@@ -578,6 +606,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
       reviewId: Schema.String,
       outcome: Schema.Literal("allow", "deny", "escalate"),
       rationale: Schema.String,
+      action: Schema.optionalWith(GuardianAction, { exact: true }),
     }),
     { exact: true },
   ),
@@ -921,6 +950,11 @@ export type MintOutcome = {
   readonly example?: ExecutionEvidence;
   readonly currentInvocation?: CurrentInvocation;
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * Every execution Guardian labelled `write`, with the outcome reviewer's newest assessment.
+   * A write the reviewer never settled is `may_have_applied`; publication never waited for it.
+   */
+  readonly writes?: readonly WriteOutcome[];
   readonly summary: string;
   readonly diagnostics: readonly string[];
 };
@@ -1015,6 +1049,17 @@ export interface HostToolDescriptions {
 
 export interface MintTurn {
   readonly recovery?: MintAgentRecovery;
+  /**
+   * The minter's whole history for the outcome reviewer, turns before a compaction included. The
+   * model stores in `archive` the items before a compaction as a new run segment leaves them out,
+   * and registers with `live` a reader of what its run state holds, once, before its first
+   * request. The harness's archive buffers a range it could not store durably and records the
+   * gap, so its append never needs to end the attempt.
+   */
+  readonly history?: {
+    readonly archive: MinterHistoryArchive;
+    readonly live: (read: () => LiveMinterHistory) => void;
+  };
   /** Attempt-scoped bridge for SDK Promise callbacks; closes and joins before returning an outcome. */
   readonly runTool: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   readonly input: string;
@@ -1120,6 +1165,12 @@ export interface ExampleJournal {
 
 export interface MintHarnessSnapshot {
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and
+   * source digests, so a takeover tracks them, and refuses their repeats, even when the
+   * reviewer's own best-effort save failed.
+   */
+  readonly outcomeWrites?: readonly OutcomeWrite[];
   readonly purposes: readonly {
     readonly executionId: string;
     readonly purpose: ExecutionRequest["purpose"] | "command";
@@ -1269,6 +1320,7 @@ const HarnessTerminal = Schema.Struct({
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
+  outcomeWrites: Schema.optionalWith(Schema.Array(OutcomeWrite), { exact: true }),
   purposes: Schema.Array(
     Schema.Struct({
       executionId: Schema.String,
@@ -1389,6 +1441,11 @@ export interface MintDependencies {
   readonly agentRecovery?: {
     readonly initial?: { readonly agent: MintAgentSnapshot; readonly harness: MintHarnessSnapshot };
     readonly bindHarness?: (capture: () => MintHarnessSnapshot) => Effect.Effect<void, MintFailure>;
+    /**
+     * Rejoins or reads a tool call a takeover found started but not returned. A recovered
+     * execution's evidence must carry the `review` the host journaled, `action` included: a write
+     * is tracked, and its repeat refused, only when its evidence says Guardian labelled it one.
+     */
     readonly recoverTool?: (call: RecoveryToolCall) => Effect.Effect<
       | {
           readonly execution?: {
@@ -1535,6 +1592,13 @@ export interface MintDependencies {
   readonly applyTaskUpdate?: (
     application: TaskUpdateApplication,
   ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
+  /**
+   * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
+   * `owner` when the person the repair's questions reach may manage the tool, otherwise `none`.
+   * The harness asks it before review; `none`, a failure or an absent hook refuses the update as
+   * `owner_unavailable`, so a repair without the owner keeps the registered contract.
+   */
+  readonly taskUpdateConfirmer?: () => Effect.Effect<"owner" | "none", MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;
@@ -1609,7 +1673,10 @@ export interface MintDependencies {
   >;
   /** Each call MUST perform fresh Guardian review, await beforeDispatch after approval,
    * and only then allocate execution resources/import authored code. Never swallow a
-   * failed dispatch fence or invoke it before the initial review succeeds. */
+   * failed dispatch fence or invoke it before the initial review succeeds. Pass the fence the
+   * allow it follows, so every dispatch carries an action label: Guardian's review and label,
+   * or the host's own authentication allow for a sign-in screen the host fills itself. A
+   * successful result carries Guardian's allow, label included, as `review`. */
   readonly reviewAndExecute: (
     request:
       | ExecutionRequest
@@ -1618,7 +1685,7 @@ export interface MintDependencies {
           readonly target: "pureFiles";
           readonly command: string;
         },
-    beforeDispatch?: Effect.Effect<void, MintFailure>,
+    beforeDispatch?: (allowed: AllowedExecution) => Effect.Effect<void, MintFailure>,
     exampleJournal?: ExampleJournal,
   ) => Effect.Effect<ExecutionEvidence, MintFailure>;
   /**
@@ -1637,9 +1704,25 @@ export interface MintDependencies {
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;
+  /**
+   * The outcome reviewer's model, persistence and journal. Absent, writes are never assessed:
+   * each stays unresolved, is never repeated and is reported `may_have_applied`.
+   */
+  readonly outcomeReview?: OutcomeReviewHost;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
 }
+
+/**
+ * The allow a dispatch fence follows, so every dispatch carries an action label: a Guardian
+ * execution review and its label, or the host's own allow for a sign-in screen it fills itself
+ * after its own review, which is always `authentication`.
+ */
+export type AllowedExecution =
+  | { readonly reviewId: string; readonly action: GuardianAction }
+  | { readonly host: true; readonly action: "authentication" };
+/** The host's allow for a sign-in screen it fills itself. */
+export const hostAuthentication: AllowedExecution = { host: true, action: "authentication" };
 
 /** What a browser recovery request did, as the agent reads it. */
 export type MintBrowserRecoveryResult =
