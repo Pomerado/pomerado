@@ -2,7 +2,8 @@ import { Effect } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import { runLocalOperation } from "../execution/local-operation.js";
-import { makeDialogDecider } from "../inputs/dialog.js";
+import { makeRunDialogDecider } from "../inputs/dialog.js";
+import { noIncidents } from "../runtime/incidents.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { localStartHooks, startPage } from "../runtime/start-state.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
@@ -53,7 +54,15 @@ export const runOperation = (
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
       timeoutMs: options.timeoutMs ?? 1_200_000,
       ask,
-      decideDialog: makeDialogDecider(ask, secrets.redact),
+      decideDialog: makeRunDialogDecider({
+        ask,
+        project: secrets.redact,
+        // The request's effect is enough here: only a write's build publishes acceptedConfirms,
+        // so a read tool has no record to accept from even when the request names no effect.
+        readOnly: request.effect === "read",
+        expectedConfirms: artifact.acceptedConfirms,
+        incidents: noIncidents,
+      }),
       ...(signIn === undefined ? {} : { signIn: signIn.hook() }),
     });
     return result.output;

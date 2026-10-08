@@ -50,6 +50,14 @@ export interface LocalOperationJournal {
 }
 export class LocalOperationFailure extends Error {
   override readonly name = "LocalOperationFailure";
+  /**
+   * The child reported this failure with its final journal. False when the host lost the
+   * result, as at a deadline or a child exit: the journal is then the last one the child
+   * streamed as it ran.
+   */
+  readonly reported: boolean;
+  /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
+  readonly sessionLoss?: "session_not_kept";
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -57,10 +65,11 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
-    /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
-    readonly sessionLoss?: "session_not_kept",
+    options: { readonly reported?: boolean; readonly sessionLoss?: "session_not_kept" } = {},
   ) {
     super(message);
+    this.reported = options.reported ?? true;
+    if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -190,7 +199,7 @@ const handleTerminalMessage = (
           message.code,
           message.tag,
           message.inputIssues,
-          message.sessionLoss,
+          message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss },
         ),
       ),
     );
@@ -404,6 +413,9 @@ export const runLocalOperation = (
                     error.message,
                     yield* response.journal,
                     failureCode(error),
+                    undefined,
+                    undefined,
+                    { reported: false },
                   );
             yield* process.close;
             const channels = yield* process.result.pipe(Effect.either);

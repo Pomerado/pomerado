@@ -4,6 +4,7 @@ import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
+import type { ConfirmSession } from "../browser/dialogs/expected.js";
 import {
   identifierPreference,
   type AutofillSlot,
@@ -14,6 +15,7 @@ import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
 import type { WriteStep } from "../mint/step-checks.js";
+import type { WriteSessionMarks } from "../mint/write-session.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
@@ -285,13 +287,20 @@ export const mintState = (
     /**
      * The build's one write session: whether its first act step dispatched, the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one), and its act steps in order for the blind-repeat guard.
+     * one), its act steps in order for the blind-repeat guard and publication's checks, and the
+     * confirm popups its act steps accepted.
      */
     const writeSession: {
       started: boolean;
       input: Readonly<Record<string, unknown>> | undefined;
-      readonly steps: WriteStep[];
-    } = { started: false, input: undefined, steps: [] };
+      readonly steps: (WriteStep & WriteSessionMarks)[];
+    } & ConfirmSession = {
+      started: false,
+      input: undefined,
+      steps: [],
+      acceptedConfirms: [],
+      confirmSteps: new Set(),
+    };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     const markers = makeMarkerChecks({
       page: browser,
