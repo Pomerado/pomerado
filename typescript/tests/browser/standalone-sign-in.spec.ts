@@ -370,13 +370,19 @@ const runInNewSession = (
   ask: ReturnType<typeof makeInputAsker>,
   artifact: MintArtifact,
   url: string,
+  effect?: "read" | "write",
 ) =>
   Effect.runPromise(
     Effect.either(
       Effect.scoped(
         Effect.gen(function* () {
           const service = yield* createPomerado({ browser: { endpoint }, ask, timeoutMs: 30_000 });
-          return yield* service.run(artifact, { url, intent: "Read the account", input: {} });
+          return yield* service.run(artifact, {
+            url,
+            intent: "Read the account",
+            input: {},
+            ...(effect === undefined ? {} : { effect }),
+          });
         }),
       ),
     ),
@@ -568,6 +574,33 @@ test("a build's script whose site keeps signing out ends the request with the se
     );
     // No turn followed the example's request.
     expect(mintRequests).toHaveLength(4);
+  });
+});
+
+test("a served read whose site keeps signing out reports the sign-in unavailable once its sign-ins are spent", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, []),
+      { ...ordersReader(shop.origin), files: [{ path: "src/tool.mjs", content: signOutEachRound }] },
+      `${shop.origin}/orders`,
+      "read",
+    );
+    // The run's sign-in, then the three automatic sign-ins a run allows. The fourth is refused,
+    // and the read reports the sign-in unavailable, to run again with the same request.
+    expect(shop.state.loginPosts).toBe(4);
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(Either.isLeft(result) && result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: {
+        code: "website_sign_in_unavailable",
+        writeStatus: null,
+        possibleCommit: false,
+        retry: "same_key",
+      },
+    });
   });
 });
 
