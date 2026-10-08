@@ -37,6 +37,10 @@
 - Guardian's shared output format adds the outcomes `clarify` and `new_mint`, for the new `update` review kind. `GuardianDiagnostics` correlations add the `update` review kind.
 - `JobBuildBlocked` and `MintOutcome.blocked` add the reason `new_mint_recommended`, with an optional `suggestedRequest`.
 - New exports: `TaskChange`, `TaskUpdateDecision`, `PendingTaskUpdate`, `ReviewedTaskUpdate` and `taskUpdateForReview` from `pomerado/core/guardian/task-update`; `TaskUpdateRequest`, `taskUpdateStatuses`, `TaskUpdateStatus`, `TaskState`, `AcceptedTaskUpdate`, `TaskUpdateCandidate`, `TaskUpdateApplication` and `TaskUpdateHostResult` from `pomerado/core/mint/contracts`.
+- A local build's step asks only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. An ask whose id, prompt or bounds differ fails as `Undeclared` before Guardian's question review, and nobody is asked. A declaration held in a variable, imported or computed declares nothing.
+  - Migrate by writing `questions` as an object literal inside the entrypoint's `defineOperation` call.
+- A step whose literal `questions` names an invalid id is refused before review, with each id it names.
+- A run asks only the questions publication reviewed. A published artifact keeps them as `questions`, an empty object when there are none, and `pomerado.json` saves them. An artifact saved by an earlier release has no `questions`, so it asks only what its entrypoint declares as a plain literal.
 
 ### Other changes
 
@@ -102,6 +106,13 @@
 - `mint_update` gains an `output` change, `{ setting: "output", field, change, text }`, which loosens one output field of a published tool's contract: optional, nullable, removed or widened. Only maintenance accepts it, together with `requirement` and `purpose` changes. Maintenance refuses input, effect, site and login changes, and a recommended new build, before review. The new optional `taskUpdateConfirmer` hook on `MintDependencies` says whether the person answering a repair's questions owns the tool. Without it, or when it answers `none`, a maintenance update is refused as `owner_unavailable`, so the local host still refuses every maintenance update. Guardian reviews an owner's update with the host fact `maintenance: { confirmer: "owner" }`.
 - `MintFailure` gains the publication reason `output_obligation_weakened` with `weakenedOutputs`, each `{ field, change }` with `change` one of `removed`, `optional`, `nullable` or `widened`. `finish_build` hands both to the minter, not as a review or an outage. After an extraction fix a read repair runs the example again and publishes that execution, and a write repair publishes the same execution without running the write again; after an applied output change either publishes the same execution again. In maintenance, `contract_output_mismatch` now tells the minter to keep a registered field and fix the extraction, or to propose the output change, not to make the field optional.
 - A host that publishes repairs adopts this by implementing `taskUpdateConfirmer`, keeping applied output changes with the rest of the task state, and comparing the registered output schema with the repair's at publication. It refuses a loosening as `output_obligation_weakened`, exempting only the field and change an applied output change names. Core ships no comparison, because the local host publishes no repairs.
+- A misplaced secret handle's refusal now tells the minter to write the handle as the whole string literal in the Playwright code of a `kernel.browsers.playwright.execute` call.
+- `exampleInputRefusal` takes an optional `maintenance` flag. A host sets it while it repairs a published tool, which runs its failing case's own input, so `exampleInput` is refused. The local host never sets it.
+- New exports let other hosts drop their copies of these checks.
+  - `pomerado/core/mint/step-checks` exports `testInputNotJson`.
+  - `pomerado/core/mint/publication-review` exports `unlistedExampleInputKeys` and `exampleInputFeedback`.
+  - `pomerado/core/mint/draft-questions` exports `draftQuestionDeclarations` and `draftQuestionDeclarationFailure`.
+  - `pomerado/core/execution/declared-questions` exports `asksAsDeclared`.
 
 ## 0.3.0
 
