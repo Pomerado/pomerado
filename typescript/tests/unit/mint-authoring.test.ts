@@ -20,7 +20,7 @@ import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.j
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { offlineKernel } from "../support/offline-kernel.js";
-import { runKernelOperation } from "../support/kernel-run.js";
+import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
@@ -578,8 +578,8 @@ it("renders the pinned standalone authoring", async () => {
     ["10b42b68c447e9134b3b038537b4ce7abdee0a93d62fb44da737bcf70a077f5a", "forms"],
     ["5e9a79a86966ad3ca0f5021f5aa60f640d6b0e2348e22785ab5068d847e602e8", "writes"],
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
-    ["50644bd49a50ca3b856d5c55e6a6ca749bd8edae5515136a9139280b26c3254c", "publication"],
-    ["edc27f08040487d76a35536056ffab2e082143500576a193ea42e8c2c08fa682", "workspace/AGENTS.md"],
+    ["114d9fd8e6cf5c260a9d2848f8fe5aa7e13a4ec2ab5e898eaa3c4bcc12544645", "publication"],
+    ["1e66be13f564cf110a5b8a066da4effb6f01856c2c7e4fda40adb5095e2c2731", "workspace/AGENTS.md"],
     ["52b250f4fb5820f484eabadb17246852498a159ab8c953fd844560aa531711de", "workspace/README.md"],
   ]);
 });
@@ -668,7 +668,7 @@ it("accepts authoritative empty invoices and rejects absent/invalid bodies", asy
     return Effect.runPromise(
       Effect.either(
         Effect.scoped(
-          runKernelOperation(
+          executeKernelOperation(
             parser,
             { body },
             { kernel: offlineKernel, sessionId: "offline" },
@@ -800,7 +800,7 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   const journal = await Effect.runPromise(makeEffectJournal);
   const result = await Effect.runPromise(
     Effect.scoped(
-      runKernelOperation(
+      executeKernelOperation(
         authEntry,
         {},
         {

@@ -21,6 +21,10 @@ export const LocalOperationStart = Schema.Struct({
   timeoutMs: Schema.Number.pipe(Schema.positive(), Schema.finite()),
   mode: Schema.Literal("run", "contract"),
   validateInput: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  /** A run with no browser, such as a parser: it never marks a possible dispatch. */
+  offline: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** A mint step: it counts as possibly sent from its first browser call, not from its start. */
+  dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),

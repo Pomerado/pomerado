@@ -3,6 +3,7 @@ import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "nod
 import { basename, dirname, join } from "node:path";
 import { Clock, Effect, Schema, type Scope } from "effect";
 import { localPromise } from "../execution/local-path.js";
+import { runOutcomeCodes } from "./run-outcome.js";
 import { fingerprint } from "./fingerprint.js";
 import type { JobStore, RetrySubmission } from "./job-store.js";
 
@@ -10,9 +11,18 @@ const CommitMark = Schema.Struct({
   name: Schema.String,
   state: Schema.Literal("not_sent", "sent", "confirmed"),
 });
+/** A failed run's outcome, as its job answers it: code, write status, possible commit, retry. */
+const RecordedOutcome = Schema.Struct({
+  code: Schema.Literal(...runOutcomeCodes),
+  writeStatus: Schema.NullOr(
+    Schema.Literal("not_attempted", "may_have_applied", "applied", "not_applied"),
+  ),
+  possibleCommit: Schema.Boolean,
+  retry: Schema.Literal("never", "fix_input", "same_key", "new_key"),
+});
 /**
- * What the local host keeps of a job: its key, request fingerprint, ID and status, and the commit
- * marks and confirmation its failed run reported. It keeps no input and no output.
+ * What the local host keeps of a job: its key, request fingerprint, ID and status, and the
+ * outcome, commit marks and confirmation its failed run reported. It keeps no input and no output.
  */
 export const LocalJobRecord = Schema.Struct({
   version: Schema.Literal(1),
@@ -30,6 +40,7 @@ export const LocalJobRecord = Schema.Struct({
   effect: Schema.optionalWith(Schema.Literal("not_sent", "possible", "verified"), { exact: true }),
   commits: Schema.optionalWith(Schema.Array(CommitMark), { exact: true }),
   confirmation: Schema.optionalWith(Schema.Literal("message", "readback"), { exact: true }),
+  outcome: Schema.optionalWith(RecordedOutcome, { exact: true }),
   /** The process ID and store instance that started the job, as `pid:instance`. */
   owner: Schema.String,
 });
@@ -37,7 +48,14 @@ export type LocalJobRecord = typeof LocalJobRecord.Type;
 export type LocalJobUpdate = Partial<
   Pick<
     LocalJobRecord,
-    "status" | "finishedAt" | "error" | "beforeOperation" | "effect" | "commits" | "confirmation"
+    | "status"
+    | "finishedAt"
+    | "error"
+    | "beforeOperation"
+    | "effect"
+    | "commits"
+    | "confirmation"
+    | "outcome"
   >
 >;
 

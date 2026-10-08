@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type { PublicationDecision } from "../mint/contracts.js";
 import type { AnsweredQuestion } from "./question.js";
 
 /** Text a task update carries, which its caller may read. */
@@ -79,6 +80,11 @@ export interface PendingTaskUpdate {
   readonly confirmation: readonly AnsweredQuestion[];
   /** Host fact: the build's current effect. */
   readonly effect: "read" | "write";
+  /**
+   * Host evidence: the build's latest publication refusals, as the host recorded them, so a change
+   * proposed after one is judged against the refusal itself. Absent when there are none.
+   */
+  readonly publicationDecisions?: readonly PublicationDecision[];
 }
 
 /**
@@ -96,7 +102,7 @@ export interface ReviewedTaskUpdate {
 /** Projects a proposed update for review, screening every string and input value. */
 export const taskUpdateForReview = <E>(
   update: Omit<PendingTaskUpdate, "confirmation" | "effect">,
-  facts: Pick<PendingTaskUpdate, "confirmation" | "effect">,
+  facts: Pick<PendingTaskUpdate, "confirmation" | "effect" | "publicationDecisions">,
   screen: {
     readonly text: (value: string) => Effect.Effect<string, E>;
     readonly json: (value: unknown) => Effect.Effect<unknown, E>;
@@ -128,5 +134,9 @@ export const taskUpdateForReview = <E>(
         : { suggestedRequest: yield* text(update.suggestedRequest) }),
       confirmation: facts.confirmation,
       effect: facts.effect,
+      // Finite host metadata, written by the harness: nothing to screen.
+      ...(facts.publicationDecisions === undefined || facts.publicationDecisions.length === 0
+        ? {}
+        : { publicationDecisions: facts.publicationDecisions }),
     };
   });

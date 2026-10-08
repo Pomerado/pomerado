@@ -13,7 +13,7 @@ import {
   operationErrors,
 } from "../../src/runtime/kernel-operation.js";
 import { offlineKernel } from "../support/offline-kernel.js";
-import { runKernelOperation } from "../support/kernel-run.js";
+import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js";
 import type { ScriptQuestionHandler } from "../../src/runtime/script-input.js";
@@ -111,7 +111,7 @@ return { title: await page.title() };`,
         makeEffectJournalWith({ settledCommits: ["save-address", "confirm-terms"] }),
       );
       const outcome = await run(
-        runKernelOperation(write(step), {}, { kernel: kernel.client, sessionId: "s" }),
+        executeKernelOperation(write(step), {}, { kernel: kernel.client, sessionId: "s" }),
         Deadline.after(60_000),
         Effect.succeed(journal),
       );
@@ -165,7 +165,7 @@ return { title: await page.title() };`,
     const effect = async (calls: "mark" | "mark_then_call" | "none") => {
       const kernel = fakeKernel(() => ({ success: true, result: null }));
       const { exit, websiteEffect } = await run(
-        runKernelOperation(write(calls), {}, { kernel: kernel.client, sessionId: "session-1" }),
+        executeKernelOperation(write(calls), {}, { kernel: kernel.client, sessionId: "session-1" }),
       );
       expect(exit).toEqual(Exit.succeed("saved"));
       return websiteEffect;
@@ -180,7 +180,7 @@ return { title: await page.title() };`,
     const stderr = "Error: locator not found\n    at call (kernel-call.js:2:7)";
     const kernel = fakeKernel(() => ({ success: false, error: "locator not found", stderr }));
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         { query: "x" },
         {
@@ -213,7 +213,7 @@ return { title: await page.title() };`,
       result: { cleared: false, waitedMs: 30_004 },
     }));
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         waiting,
         {},
         {
@@ -273,7 +273,7 @@ return { title: await page.title() };`,
       },
     };
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         defineOperation(published, async () => "account page"),
         {},
         {
@@ -298,7 +298,7 @@ return { title: await page.title() };`,
     );
     const kernel = fakeKernel(() => ({ success: true, result: { cleared: true, waitedMs: 5 } }));
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         waiting,
         {},
         {
@@ -332,7 +332,7 @@ it.each([
       },
     );
     const { exit } = await run(
-      runKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
+      executeKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
     );
     expect(failureOf(exit)).toMatchObject({ _tag: "Some", value: { _tag: tag } });
   },
@@ -352,7 +352,7 @@ it("does not retain a handled Kernel timeout after a later successful call", asy
     },
   );
   const { exit } = await run(
-    runKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
+    executeKernelOperation(operation, {}, { kernel: kernel.client, sessionId: "session-1" }),
   );
   expect(failureOf(exit)).toMatchObject({ _tag: "Some", value: { _tag: "OperationFailure" } });
 });
@@ -389,7 +389,7 @@ it.each([
       },
     );
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         operation,
         {},
         {
@@ -415,7 +415,7 @@ it("retains a provider exception as the marker inspection failure's cause", asyn
   );
   const cause = new Error("synthetic provider disconnected");
   const { exit } = await run(
-    runKernelOperation(
+    executeKernelOperation(
       operation,
       {},
       {
@@ -558,7 +558,7 @@ return await shown;`),
         return { choice: "accept" as const };
       });
     const exit = await runAsking(
-      runKernelOperation(script, {}, { kernel: kernel.client, sessionId: "session-1", dialogs }),
+      executeKernelOperation(script, {}, { kernel: kernel.client, sessionId: "session-1", dialogs }),
       Deadline.after(60_000),
       () =>
         Effect.sync(() => {
@@ -591,7 +591,7 @@ return await shown;`),
         return answer;
       });
     const exit = await runAsking(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {
@@ -645,7 +645,7 @@ describe("a signed-in session kept across page loads", () => {
   it("leaves the page alone when the host keeps no session, or the run is offline", async () => {
     const withoutHook = tracked();
     const unbound = await run(
-      runKernelOperation(
+      executeKernelOperation(
         reloading,
         {},
         { kernel: withoutHook.kernel.client, sessionId: "session-1" },
@@ -662,7 +662,7 @@ describe("a signed-in session kept across page loads", () => {
       async ({ ensureSignedIn }) => (await ensureSignedIn()).signedInAgain,
     );
     const offline = await run(
-      runKernelOperation(
+      executeKernelOperation(
         parser,
         {},
         {
@@ -686,7 +686,7 @@ describe("a signed-in session kept across page loads", () => {
     // The page loaded signed in, and the script's full page load signed it out.
     const signedOut = [false, true];
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         reloading,
         {},
         {
@@ -713,7 +713,7 @@ describe("a signed-in session kept across page loads", () => {
     // Refused at the start, the script never runs and nothing was sent.
     const atStart = tracked();
     const start = await run(
-      runKernelOperation(
+      executeKernelOperation(
         reloading,
         {},
         { kernel: atStart.kernel.client, sessionId: "session-1", signIn: refusing },
@@ -732,7 +732,7 @@ describe("a signed-in session kept across page loads", () => {
     let signIns = 0;
     const midway = tracked();
     const later = await run(
-      runKernelOperation(
+      executeKernelOperation(
         reloading,
         {},
         {
@@ -756,7 +756,7 @@ describe("a signed-in session kept across page loads", () => {
 
     // A value the site refused during the host's sign-in stays the rejected credential.
     const rejected = await run(
-      runKernelOperation(
+      executeKernelOperation(
         reloading,
         {},
         {
@@ -840,7 +840,7 @@ describe("browser calls while the host signs in", () => {
     );
     let duringSignIn: string[] | undefined;
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {
@@ -886,7 +886,7 @@ describe("browser calls while the host signs in", () => {
       started,
     );
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {
@@ -913,7 +913,7 @@ describe("browser calls while the host signs in", () => {
         (await Promise.all([ensureSignedIn(), ensureSignedIn()])).map((r) => r.signedInAgain),
     );
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {
@@ -949,7 +949,7 @@ describe("browser calls while the host signs in", () => {
     );
     let duringSignIn: string[] | undefined;
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {
@@ -995,7 +995,7 @@ describe("browser calls while the host signs in", () => {
       },
     );
     const { exit } = await run(
-      runKernelOperation(
+      executeKernelOperation(
         script,
         {},
         {

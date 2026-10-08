@@ -190,7 +190,7 @@ To use the integration, follow the steps in the README's [Use your integration](
 2. Skip the key setup. Running an integration makes no model request, so only minting needs `OPENAI_API_KEY`.
 3. Reload your client and ask your agent to use `example_reader`.
 
-The call returns JSON that matches the output schema in `example_reader/pomerado.json`.
+The call returns JSON that matches the output schema in `example_reader/pomerado.json`. A call that fails returns a job with `"status": "failed"`, a `code`, `write_status`, `possible_commit` and `retry`. When `possible_commit` is true, read the site back before calling again.
 
 ## Answer questions and sign in
 

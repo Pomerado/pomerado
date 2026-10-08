@@ -28,6 +28,23 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - Its prompts and examples come from `typescript/authoring/`. Every host reads the same text, except at the named sections where a host puts its own.
 - Its `AGENTS.md` starts with a list of features the prompts describe that another host supplies and the local host lacks. The minter ignores them. `typescript/src/hosted-features.ts` holds the list, one line per feature.
 
+### Failures a build survives
+
+- A diagnostic copy the host can't keep, such as an execution's diagnostics or a readable model transcript, is a recorded gap in the outcome's diagnostics. The build goes on, however many gaps there are.
+- The raw record of each model call is the one required trace. A host that keeps one through `retainRuntimeRecord` must store it before the next model call. If it can't, the attempt stops with `hostFailure: "diagnostic_retention"`. A host without `retainRuntimeRecord`, such as the local host, has no required trace.
+- A review whose evidence the host can't keep is a review outage. The minter may resubmit until reviews have been unavailable for the review outage budget, 15 minutes by default.
+- An execution whose capture the host can't produce or screen comes back as a capture gap: its result is withheld and its effect is possible. A publication whose capture evidence is unavailable comes back `not_published` with `retryable: true` until the review outage budget runs out. Neither runs a write again.
+- A publication dependency that stays unavailable, such as the registry, its source store, or a screening step or source read that names no file to fix, comes back with `retryable: true` until the review outage budget runs out.
+- `report_blocked` ends the build only when Guardian allows the explanation, or when its review stays unavailable past the review outage budget, which leaves the caller only the reason's fixed sentence. An unavailable review comes back with `retryable: true` before that. When Guardian asks for a reword, the minter gets the rationale, and may revise the explanation, which Guardian reviews again, or withdraw it and go on.
+- A `contract_input_mismatch` or `contract_output_mismatch` refusal's recovery is `correct_source` in a read build and `write_completion` in a write build.
+
+### Publication decisions
+
+- `path_screening` stays a refusal the minter fixes, since it can mean a source path holds a credential.
+- Each `finish_build` decision, refused or published, is a `PublicationDecision`: its code, reason, execution, time, failed checks and recovery path. The tool result carries its `decisionId`. The harness's own refusals before publication runs, such as an invalid request, and a host fallback's publication after unresolved input feedback are decisions too.
+- A host keeps them as evidence through `MintDependencies.publicationDecisions`, which records each decision and lists the build's decisions. The local host keeps them in memory for the request.
+- A question review and a blocked-explanation review get the latest refusals as `question_review.publicationDecisions`, and a task update review as `update_review.publicationDecisions`, so Guardian reads what the host refused, not only the minter's account of it.
+
 ## Guardian
 
 - Guardian is a second model that reviews the minter's work before it takes effect.
@@ -76,12 +93,15 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
 - `trusted_publication` indexes those files: whether each ships, whether it is current and who wrote it, the host or the minter. A publication review gets 32 turns.
 - Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
 - Any other denial goes back to the minter with Guardian's reason and findings.
+- Before the review, publication refuses a sign-in whose login URL holds a value the build was given, and a name, description or site naming that holds one. The refusal names the part, never the value.
+  - A login URL that is one authorization request, such as an identity provider's authorize URL or one carrying `state`, `nonce` or `SAMLRequest`, is asked about once. The first `finish_build` fails `login_url_one_time` with its one-time parameters, and finishing again with the same URL publishes it.
 - A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
 
 ## The runtime
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+  - It serves that schema in one canonical form. A reference is inlined where it can be, and an input that recurses keeps its references, with its definitions at the call schema's root.
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
@@ -120,11 +140,19 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
-- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status and a failed run's commit marks. It never holds the input or the output.
+- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status, and a failed run's outcome and commit marks. It never holds the input or the output.
 - Two servers on one integration folder share those records, so one key starts one job between them.
 - `.jobs` is for servers on one machine. A record names the process that runs its job, and a server on another machine or in another container can't tell whether that process still runs.
-- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status but not its output. A keyed job the restart stopped reads as failed and is never run again.
-- A failed job is never replayed. A website action it already sent may have taken effect.
+- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status and a failed run's outcome, but not its output. A keyed job the restart stopped reads as failed and is never run again.
+- A failed job is never replayed.
+- A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
+  - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
+  - A refused input or login whose declared commit steps were never entered reports `not_applied`, unless the write already recorded its confirmation. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
+  - A read never reports a possible website change.
+  - Only `possible_commit: true` tells the caller to read the site back before any retry.
+  - `retry` is one of four classes. `never`: don't repeat the call as is. `fix_input`: correct the input or the login, then call again. `new_key`: calling again is a new run, after reading the site back when `possible_commit` is true. `same_key`: the request itself may be repeated.
+  - A repeated `idempotency_key` always answers the job it named, even a failed one. To run a failed call again, call with a new key or none.
+- A failed mint's job still warns that a website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
 ## Library and terminal
@@ -169,6 +197,7 @@ The package has these entry points.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
   - `dataVendor` says when a read may carry the caller's input to the site's own data vendor on another domain, and what evidence shows the site's page making that call.
   - `absentProtections` is optional. It names protections other hosts supply that this host lacks, as the policy's last line.
+- `executeKernelOperation` from `pomerado/core/runtime/kernel-operation-run` runs an operation's script under the execution context's deadline, capture, events and journal, as the local child process does. A host with its own implementation of an operation passes it as the optional `first` runner, which runs in place of the script and gets the script's run as its fallback.
 - `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. It takes the session's non-read request count, which the local host passes as 0. The local host marks each step its effect journal can't rule out as `possiblySent` instead.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.

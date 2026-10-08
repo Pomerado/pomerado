@@ -29,16 +29,17 @@ if (import.meta.url.endsWith(".ts"))
   });
 const { LocalOperationStart, LocalOperationReply } = await import("./local-operation-protocol.js");
 const { localError, localOutputLimit } = await import("./local-path.js");
-const { isKernelOperation, runKernelScript } = await import("../runtime/kernel-operation.js");
-const { decodeKernelOperationInput, validateKernelOperationOutput } =
-  await import("../runtime/kernel-operation-validation.js");
+const { isKernelOperation } = await import("../runtime/kernel-operation.js");
+const { executeKernelOperation } = await import("../runtime/kernel-operation-run.js");
+const { decodeKernelOperationInput } = await import("../runtime/kernel-operation-validation.js");
 const { contractJsonSchema } = await import("../runtime/operation.js");
-const { makeEffectJournal } = await import("../runtime/context.js");
+const { ExecutionContext, makeEffectJournal } = await import("../runtime/context.js");
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
 const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
-const { makeScriptInput, ScriptInputFailure } = await import("../runtime/script-input.js");
+const { makeScriptInput, ScriptInput, ScriptInputFailure } =
+  await import("../runtime/script-input.js");
 const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
@@ -122,11 +123,19 @@ const journal: typeof baseJournal = {
   declareCommits: (names) =>
     baseJournal.declareCommits(names).pipe(Effect.tap(() => publishJournal)),
 };
-const runAuthoredOperation = (operation: Parameters<typeof runKernelScript>[0]) =>
+/**
+ * One run of the script through the runtime's runner: each execute call goes to the host, which
+ * owns the browser, once it is marked as a possible dispatch. The runner marks a live run from its
+ * start. A mint step is marked only here, at each browser call, so one that stopped before any call
+ * reads not sent. Capture and events are the host's, so the child's are empty.
+ */
+const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0]) =>
   Effect.gen(function* () {
     const deadline = Deadline.after(start.timeoutMs);
+    // A run with no browser never marks, whatever its script tries.
+    const atFirstCall = start.dispatchAtFirstCall === true && start.offline !== true;
     const kernel = makeKernelCompatibility(start.sessionId, (code, timeoutSec) =>
-      journal.enteringDispatch.pipe(
+      (atFirstCall ? journal.enteringDispatch : Effect.void).pipe(
         Effect.zipRight(
           call({
             kind: "execute",
@@ -152,25 +161,30 @@ const runAuthoredOperation = (operation: Parameters<typeof runKernelScript>[0]) 
         ),
       deadline,
     );
-    yield* journal.declareCommits(operation.write?.commits ?? []);
-    const input = yield* decodeKernelOperationInput(operation, start.input);
-    return yield* runKernelScript(operation, input, {
+    return yield* executeKernelOperation(operation, start.input, {
       kernel,
       sessionId: start.sessionId,
-      deadline,
-      journal,
-      scriptInput,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
+      ...(start.offline === true ? { offline: true } : {}),
       dialogs: (report) =>
         call({ kind: "dialog", report }).pipe(
           Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
           Effect.mapError(() => new DialogFailure({ reason: "unavailable" })),
         ),
-    }).pipe(Effect.flatMap((result) => validateKernelOperationOutput(operation, result)));
+    }).pipe(
+      Effect.provideService(ExecutionContext, {
+        deadline,
+        journal: atFirstCall ? { ...journal, enteringDispatch: Effect.void } : journal,
+        events: { emit: () => Effect.void },
+        capture: { start: Effect.void, finish: Effect.void },
+      }),
+      Effect.provideService(ScriptInput, scriptInput),
+      Effect.scoped,
+    );
   });
 const extractCurrentContract = (
-  operation: Parameters<typeof runKernelScript>[0],
+  operation: Parameters<typeof executeKernelOperation>[0],
   schemas: { inputSchema: unknown; outputSchema: unknown },
 ) =>
   Effect.gen(function* () {
@@ -220,7 +234,7 @@ await Effect.runPromise(
       outputSchema: contractJsonSchema(operation.output),
     };
     if (start.mode === "contract") return yield* extractCurrentContract(operation, schemas);
-    const output = yield* runAuthoredOperation(operation);
+    const output = yield* executeLocally(operation);
     const confirmation = yield* journal.confirmation;
     yield* send({
       kind: "result",

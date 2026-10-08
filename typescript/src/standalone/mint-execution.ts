@@ -23,12 +23,8 @@ import { keepingAcceptedConfirms, makeDialogDecider } from "../inputs/dialog.js"
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
-import {
-  commitEvidenceOf,
-  commitUncertain,
-  verifyFirstNotice,
-  type CommitEvidence,
-} from "../mint/write-session.js";
+import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
+import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -432,6 +428,7 @@ const authoredExecution = (
             timeoutMs: execution.timeoutSeconds * 1000,
             mode: "run",
             target: live ? "browser" : "pureFiles",
+            dispatchAtFirstCall: true,
             ask: scriptAsk,
             decideDialog: keepingAcceptedConfirms(
               makeDialogDecider(mintAsk, secrets.redact),
