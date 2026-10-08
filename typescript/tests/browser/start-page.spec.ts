@@ -209,3 +209,15 @@ test("restores the session saved after sign-in and drops what exploration added"
     ).toEqual({ token: "member-1", recent: null, session: null });
   });
 });
+
+test("a restore puts back the tab's session storage the saved session had", async ({ page }) => {
+  await withSite(page, async (site, { reset, save }) => {
+    await page.goto(`${site.origin}/claims`);
+    await page.evaluate(() => sessionStorage.setItem("login", "member"));
+    const session = await save();
+    await page.evaluate(() => sessionStorage.setItem("login", "changed"));
+    await reset({ siteData: "restore", session });
+    // The saved session is the context's storage state only: the tab's session storage is lost.
+    expect(await page.evaluate(() => sessionStorage.getItem("login"))).toBeNull();
+  });
+});

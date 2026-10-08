@@ -433,6 +433,63 @@ test("a run corrects a rejected password without sending it again, asking again 
   });
 });
 
+/** Reads the shop's orders, then asks the host to keep it signed in and reads them again if it signed in again. */
+const readOrders = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_orders",input:Schema.Struct({}),output:Schema.Struct({first:Schema.Boolean,signedInAgain:Schema.Boolean,second:Schema.Boolean})},
+async ({kernel,sessionId,ensureSignedIn}) => {
+  const read = async () => {
+    const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/orders', page.url()).href); return (await page.locator('#orders').count()) > 0;",timeout_sec:15});
+    if(!response.success) throw new Error(String(response.error));
+    return response.result === true;
+  };
+  const first = await read();
+  const { signedInAgain } = await ensureSignedIn();
+  const second = signedInAgain ? await read() : first;
+  return { first, signedInAgain, second };
+});`;
+const ordersReader = (origin: string) =>
+  ({
+    entrypoint: "src/tool.mjs",
+    files: [{ path: "src/tool.mjs", content: readOrders }],
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+    signIn: { recipe: loginRecipe(origin), entryUrl: `${origin}/login` },
+  }) as MintArtifact;
+
+test("a run whose site signs it out on a load in the middle of the script goes on signed out", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    shop.state.signOutOn = "/orders";
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, []),
+      ordersReader(shop.origin),
+      `${shop.origin}/orders`,
+    );
+    expect(result).toEqual(Either.right({ first: false, signedInAgain: false, second: false }));
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(shop.state.loginPosts).toBe(1);
+  });
+});
+
+test("a run that stays signed in through the script signs in once and types nothing more", async () => {
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const asked: InputRequest[] = [];
+    const result = await runInNewSession(
+      endpoint,
+      loginAnswers(asked, []),
+      ordersReader(shop.origin),
+      `${shop.origin}/orders`,
+    );
+    expect(result).toEqual(Either.right({ first: true, signedInAgain: false, second: true }));
+    expect(reasons(asked)).toEqual(["missing_credentials"]);
+    expect(shop.state.loginPosts).toBe(1);
+  });
+});
+
 test("a 0.2.0 folder without a sign-in runs as it always did, asking nothing", async () => {
   await withShop(async (shop, endpoint) => {
     const folder = await mkdtemp(join(tmpdir(), "pomerado-sign-in-artifact-"));
