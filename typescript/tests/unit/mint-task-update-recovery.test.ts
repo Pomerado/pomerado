@@ -148,27 +148,3 @@ it("applies nothing when the host refuses, so a takeover restores the task as it
   expect(snapshots[0]?.answeredQuestions).toHaveLength(1);
 });
 
-it("refuses every update in maintenance, a recommended new build included", async () => {
-  const reviews: TaskUpdateCandidate[] = [];
-  const results: Record<string, unknown>[] = [];
-  const f = await fixture(
-    (turn) =>
-      Effect.gen(function* () {
-        results.push(
-          JSON.parse(
-            yield* turn.actions.updateTask!({
-              ...toNovemberTwo,
-              confirmedBy: [],
-              recommend: "new_mint",
-              suggestedRequest: "Read the notes from November 2.",
-            }),
-          ),
-        );
-      }),
-    { reviewTaskUpdate: allowing(reviews), applyTaskUpdate: () => Effect.die("never applied") },
-  );
-  const outcome = await f.run({ ...request, mode: "maintenance" });
-  expect(results[0]).toMatchObject({ status: "update_refused", reason: "maintenance" });
-  expect(reviews).toEqual([]);
-  expect(outcome).not.toHaveProperty("blocked");
-});

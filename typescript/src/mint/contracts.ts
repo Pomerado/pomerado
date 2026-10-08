@@ -114,6 +114,15 @@ export type SpentSignIn =
 
 export type { SessionLoss };
 
+/**
+ * One registered output field a repair loosens and how, by path (`items[].price.amount`; the
+ * root is `output`, its items `output[]`). The host that publishes repairs compares the schemas.
+ */
+export interface WeakenedOutput {
+  readonly field: string;
+  readonly change: "removed" | "optional" | "nullable" | "widened";
+}
+
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
@@ -319,7 +328,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
-    | "capture_not_saved";
+    | "capture_not_saved"
+    /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
+    | "output_obligation_weakened";
+  /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
+  readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
   readonly publicationFeedback?: {
     readonly oneTimeParameters?: readonly string[];
@@ -1579,6 +1592,13 @@ export interface MintDependencies {
   readonly applyTaskUpdate?: (
     application: TaskUpdateApplication,
   ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
+  /**
+   * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
+   * `owner` when the person the repair's questions reach may manage the tool, otherwise `none`.
+   * The harness asks it before review; `none`, a failure or an absent hook refuses the update as
+   * `owner_unavailable`, so a repair without the owner keeps the registered contract.
+   */
+  readonly taskUpdateConfirmer?: () => Effect.Effect<"owner" | "none", MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;
