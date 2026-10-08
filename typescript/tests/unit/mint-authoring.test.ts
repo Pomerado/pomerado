@@ -412,6 +412,17 @@ it("names the local host's own status for a run's uncertain write", async () => 
   }
 });
 
+// A read build becomes a write through `mint_update`; `request_input` takes no write upgrade.
+it("asks for no write upgrade through request_input anywhere in the shared text", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect(
+    [...texts].filter(([, text]) => /writeUpgrade|write upgrade/iu.test(text)).map(([name]) => name),
+  ).toStrictEqual([]);
+  expect((texts.get("workspace/AGENTS.md") ?? "").replace(/\s+/g, " ")).toContain(
+    "ask the caller with request_input what would change, then change the task to a write with mint_update",
+  );
+});
+
 /*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
  * the private fallback, which its preamble lists as a hosted feature, and about the login URL
@@ -599,11 +610,11 @@ it("renders the pinned standalone authoring", async () => {
     ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
     ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["10b42b68c447e9134b3b038537b4ce7abdee0a93d62fb44da737bcf70a077f5a", "forms"],
+    ["5cafb09c16b4288f7e060cf02dcf7d0fa3ae8a7fd20b1641ca2fe8320a2c4283", "forms"],
     ["699de0a8f721e57ea98d186bf223aaf1a2bc36d4087776a723d8f10c2f1fd667", "writes"],
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
     ["114d9fd8e6cf5c260a9d2848f8fe5aa7e13a4ec2ab5e898eaa3c4bcc12544645", "publication"],
-    ["1e66be13f564cf110a5b8a066da4effb6f01856c2c7e4fda40adb5095e2c2731", "workspace/AGENTS.md"],
+    ["b4e81f2ec3bb6c3129b901f48b5e909b80014ba5e826f0cfc6324dab890ed3ef", "workspace/AGENTS.md"],
     ["52b250f4fb5820f484eabadb17246852498a159ab8c953fd844560aa531711de", "workspace/README.md"],
   ]);
 });

@@ -387,9 +387,9 @@ the whole task, which may take several steps: drafts, autosaves and step saves a
 are part of it, and you never redo the task or a finished step. A read build may fill in and
 submit a search, filter or query form to read results, but may not fill in or advance a form
 that saves data on the site (an application, profile, contracting or checkout form), save or
-submit one; when its task needs that, ask the owner once with request_input writeUpgrade: true
-(one choice question with the option ids read and write saying what would change), before any
-live example. A write answer makes it a write build in place. The first act step claims the write, later steps continue it, and the step that records the site's confirmation
+submit one; when its task needs that, ask the caller with request_input what would change, then
+change the task to a write with mint_update, as .agents/writes/SKILL.md says; a live read example
+that already ran is fine. An updated result makes it a write build in place. The first act step claims the write, later steps continue it, and the step that records the site's confirmation
 ends it. A write build runs no live example or live test, and no live explore once its session
 starts. Never repeat a write step blindly: after a step that failed and may have committed,
 first run an act step that only reads whether the write happened; if it did, record the
