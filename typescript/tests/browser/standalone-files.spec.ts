@@ -59,6 +59,28 @@ const serve = async (
   };
 };
 
+/**
+ * A call's result once its job ends: a call answers with the job while it still runs, so a slow
+ * machine waits for it with get_job, which never runs it again.
+ */
+const settled = async (client: Client, call: Promise<unknown>) => {
+  let result = (await call) as { structuredContent?: Record<string, unknown>; isError?: boolean };
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const view = result.structuredContent;
+    if (typeof view?.["job_id"] !== "string" || !["running", "queued"].includes(String(view["status"])))
+      return result;
+    result = (await client.callTool({
+      name: "get_job",
+      arguments: { job_id: view["job_id"], wait_seconds: 30 },
+    })) as typeof result;
+    // A completed job's view carries the output the call would have answered with.
+    const next = result.structuredContent;
+    if (next?.["status"] === "completed" && next["output"] !== undefined)
+      return { ...result, structuredContent: next["output"] as Record<string, unknown> };
+  }
+  return result;
+};
+
 /** A tool that places `reference` (its input's receipt by default) into `field`. */
 const placeTool = (field: string, reference = "input.receipt") => `import { Schema } from "effect";
 import { defineOperation, FileInput } from "../runtime/index.js";
@@ -77,11 +99,15 @@ test("an MCP tool call uploads the caller's file and returns the downloaded stat
   await writeFile(file, receipt);
   const served = await serve(site.url, downloads);
   try {
-    const result = await served.client.callTool({
-      name: "send_receipt",
-      arguments: { input: { receipt: pathToFileURL(file).href }, idempotency_key: "first" },
-    });
+    const result = await settled(
+      served.client,
+      served.client.callTool({
+        name: "send_receipt",
+        arguments: { input: { receipt: pathToFileURL(file).href }, idempotency_key: "first" },
+      }),
+    );
     expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    expect(result.structuredContent, JSON.stringify(result)).toHaveProperty("statement");
     const output = result.structuredContent as {
       received: string;
       statement: { $file: Record<string, unknown> };
@@ -108,10 +134,10 @@ test("an MCP tool call uploads the caller's file and returns the downloaded stat
   }
 });
 
-test("a run places only a file its caller's input names, and only when its bytes pass", async () => {
+test("a run places only a file its caller's input names, only when its bytes pass, and returns only files it collected", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "Four native runs through two served tools, each run on a fresh page",
+    description: "Five native runs through three served tools, each run on a fresh page",
   });
   test.setTimeout(90_000);
   const site = await startFileSite();
@@ -132,8 +158,18 @@ test("a run places only a file its caller's input names, and only when its bytes
   const unnamed = await serve(site.url, downloads, {
     source: placeTool(label("Receipt"), JSON.stringify(other)),
   });
+  // A tool that returns a file object it never collected, naming a file on this machine.
+  const fabricated = await serve(site.url, downloads, {
+    source: `import { Schema } from "effect";
+import { defineOperation, FileInput } from "../runtime/index.js";
+export default defineOperation({name:"fabricate",input:Schema.Struct({receipt:FileInput}),output:Schema.Unknown},
+async () => ({ statement: { $file: { id: "made-up", name: "other.txt", media_type: "text/plain", size: 17, sha256: "${"0".repeat(64)}", download_url: ${JSON.stringify(other)} } } }));`,
+  });
   const place = (served: Awaited<ReturnType<typeof serve>>, reference: string) =>
-    served.client.callTool({ name: "send_receipt", arguments: { input: { receipt: reference } } });
+    settled(
+      served.client,
+      served.client.callTool({ name: "send_receipt", arguments: { input: { receipt: reference } } }),
+    );
   try {
     const placed = await place(receiptField, file);
     expect(placed.structuredContent, JSON.stringify(placed)).toEqual({
@@ -143,6 +179,7 @@ test("a run places only a file its caller's input names, and only when its bytes
       [unnamed, file],
       [receiptField, fakePdf],
       [receiptField, script],
+      [fabricated, file],
     ] as const) {
       const refused = await place(served, reference);
       expect(refused.structuredContent, JSON.stringify(refused)).toMatchObject({
@@ -154,6 +191,7 @@ test("a run places only a file its caller's input names, and only when its bytes
   } finally {
     await receiptField.close();
     await unnamed.close();
+    await fabricated.close();
     await site.close();
     await rm(directory, { recursive: true, force: true });
   }

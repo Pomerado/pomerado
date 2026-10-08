@@ -299,7 +299,13 @@ const scriptFiles = (
       } catch (error) {
         throw fileFailure(error, "not_sent");
       }
-      await trigger();
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(files.collect({ slot, timeoutMs: 0 })));
+        throw error;
+      }
       const timeoutMs = Math.min(
         collectOptions?.timeoutMs ?? downloadWaitMs,
         Math.max(0, options.deadline.remainingMs()),
