@@ -13,12 +13,12 @@ import type {
   WriteStatus,
 } from "../runtime/run-outcome.js";
 import { RunOutcomeFailure } from "./run-report.js";
-import { submitJob, type JobStore, type RetrySubmission } from "../jobs/job-store.js";
+import { submitJob, type JobStore, type RetrySubmission } from "../runtime/job-store.js";
 import {
   makeMemoryJobStore,
   type LocalJobRecord,
   type LocalJobStore,
-} from "../jobs/local-job-store.js";
+} from "../runtime/local-job-store.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,

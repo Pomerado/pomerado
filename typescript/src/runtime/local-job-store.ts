@@ -3,7 +3,7 @@ import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "nod
 import { basename, dirname, join } from "node:path";
 import { Clock, Effect, Schema, type Scope } from "effect";
 import { localPromise } from "../execution/local-path.js";
-import { runOutcomeCodes } from "../runtime/run-outcome.js";
+import { runOutcomeCodes } from "./run-outcome.js";
 import { fingerprint } from "./fingerprint.js";
 import type { JobStore, RetrySubmission } from "./job-store.js";
 
