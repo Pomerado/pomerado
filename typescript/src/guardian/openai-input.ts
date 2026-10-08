@@ -67,6 +67,7 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.blockedOutcome === true
               ? { blockedOutcome: true }
               : {}),
+            ...(turn.pending.questionCandidate.scriptAsk === true ? { scriptAsk: true } : {}),
           },
         }),
     ...(turn.pending.updateCandidate === undefined

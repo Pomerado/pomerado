@@ -651,7 +651,7 @@ export const PublicationRequest = Schema.Struct({
     /** Required only while the site's integration has no name yet; a later one is ignored. */
     siteName: Schema.optional(
       SiteNaming.fields.name.annotations({
-        description: "The site's everyday name, as people say it, such as Google Flights",
+        description: "The site's everyday name, as people say it, such as Example Flights",
       }),
     ),
     siteSummary: Schema.optional(
@@ -1542,7 +1542,13 @@ export interface MintDependencies {
     beforeDispatch?: Effect.Effect<void, MintFailure>,
     exampleJournal?: ExampleJournal,
   ) => Effect.Effect<ExecutionEvidence, MintFailure>;
-  /** Persist before example/residual dispatch. Host binds input/account/authority, never tool args. */
+  /**
+   * Persist before example/residual dispatch. Host binds input/account/authority, never tool args.
+   * A build normally claims once. After a confirmed `effect` update turns a read into a write, the
+   * write session's first act step claims again even when a live read example already claimed:
+   * accept that second claim. A host that meters builds counts one when it publishes, not per
+   * claim.
+   */
   readonly claimExample: Effect.Effect<void, MintFailure>;
   readonly authorizeResidual: Effect.Effect<void, MintFailure>;
   /** Review current source and validate/screen public definition before atomic registry publication. */

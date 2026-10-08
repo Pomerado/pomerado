@@ -48,6 +48,11 @@ export interface PendingQuestion {
    * the caller reads as the build's outcome (`report_blocked`); its one prompt is the report.
    */
   readonly blockedOutcome?: true;
+  /**
+   * Host fact: the operation's script asks this through `ask` while it runs, not the minting
+   * agent through `request_input`.
+   */
+  readonly scriptAsk?: true;
 }
 
 const reviewedOption = <E>(
@@ -75,6 +80,7 @@ export const questionForReview = <E>(
   facts: {
     readonly credentialsAvailable: boolean;
     readonly blockedOutcome?: true;
+    readonly scriptAsk?: true;
   },
   screen: (text: string) => Effect.Effect<string, E>,
 ): Effect.Effect<PendingQuestion, E> =>
@@ -121,6 +127,7 @@ export const questionForReview = <E>(
       ...(notice === undefined ? {} : { notice }),
       credentialsAvailable: facts.credentialsAvailable,
       ...(facts.blockedOutcome === true ? { blockedOutcome: true as const } : {}),
+      ...(facts.scriptAsk === true ? { scriptAsk: true as const } : {}),
     };
   });
 
