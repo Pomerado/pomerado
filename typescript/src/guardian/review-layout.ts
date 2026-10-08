@@ -13,13 +13,7 @@ import type { PendingExecution, ReviewFailure } from "./review.js";
  * format. Only the per-review user message differs, so a mint's conversation stays cached when
  * it moves from one kind of review to another.
  */
-export type ReviewKind =
-  | "execution"
-  | "question"
-  | "update"
-  | "recovery"
-  | "publication"
-  | "host";
+export type ReviewKind = "execution" | "question" | "update" | "recovery" | "publication" | "host";
 
 export const reviewKindOf = (pending: PendingExecution): ReviewKind =>
   pending.hostReview !== undefined

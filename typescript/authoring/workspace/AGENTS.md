@@ -80,8 +80,8 @@ The owner's own tenant or instance of a product can live on another registrable 
 the product's marketing or login site, such as a per-customer domain. Work there is not out of
 scope: when the request or the owner's answer names it, or you cannot find it and ask the owner
 where they open it, go there and check the page against that exact origin instead of the site.
-Ask that as a text question: an option you write is never the owner naming a place, even when
-they pick it. Guardian reviews off-site steps like any other, against the place the owner named.
+The owner's pick of an option you wrote that names the place counts as naming it, as their own
+words do. Guardian reviews off-site steps like any other, against the place the owner named.
 On an off-site place nobody named, Guardian allows navigation and read-only discovery that serve
 the task, but escalates a write there or sending the caller's input or answers there. Credentials
 are still typed only where the host allows them.

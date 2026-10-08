@@ -229,7 +229,6 @@ it("drops a prerequisite the caller said the site does not offer", async () => {
           question:
             "The site shows no way to check a note's history before saving. How should the build go on?",
           answer: "Skip the history check and just save it",
-          typed: true,
         },
       ],
       reviewId: "review_1",

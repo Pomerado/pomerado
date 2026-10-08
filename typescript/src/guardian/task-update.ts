@@ -107,15 +107,13 @@ export const taskUpdateForReview = <E>(
     const changes = yield* Effect.forEach(update.changes, (change) =>
       change.setting === "input"
         ? screen.json(change.values).pipe(
-            Effect.map(
-              (values): TaskChange => ({
-                setting: "input",
-                values:
-                  typeof values === "object" && values !== null && !Array.isArray(values)
-                    ? (values as Readonly<Record<string, unknown>>)
-                    : {},
-              }),
-            ),
+            Effect.map((values): TaskChange => ({
+              setting: "input",
+              values:
+                typeof values === "object" && values !== null && !Array.isArray(values)
+                  ? (values as Readonly<Record<string, unknown>>)
+                  : {},
+            })),
           )
         : "text" in change && change.text !== undefined
           ? text(change.text).pipe(Effect.map((screened) => ({ ...change, text: screened })))
