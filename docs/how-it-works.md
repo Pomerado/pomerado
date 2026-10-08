@@ -16,6 +16,8 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
   - The loads move the tab. The host opens the agent's page again when that page showed the marker and isn't the direct answer to a form. Otherwise the tab stays where the loads left it.
   - Once a write session started, the check loads no page and reports itself unavailable.
   - The `signedIn` step refuses a marker that one of those signed-out pages shows.
+- A failed write step that may have committed tells the minter to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
+- Publishing a write first checks that its session may have sent the write. A step that recorded a confirmation, entered a commit mark or made a browser call counts. Only then is the composed contract read, reviewed and checked against the session.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.
@@ -148,10 +150,11 @@ The package has these entry points.
 - `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
 - Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, let other hosts compose the library. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
-- `submitJob` from `pomerado/core/jobs/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
+- `submitJob` from `pomerado/core/runtime/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
+- `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. It takes the session's non-read request count, which the local host passes as 0. The local host marks each step its effect journal can't rule out as `possiblySent` instead.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
 - `pomerado/testing/confirm-popups-contract` holds a fixture page with eight confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.
@@ -172,12 +175,11 @@ The package has these entry points.
 | --- | --- |
 | `typescript/src/mint/` | Shared minter loop, source tools and completion |
 | `typescript/src/guardian/` | Shared review loop, source inspection and policy |
-| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract and the page each live step starts from |
+| `typescript/src/runtime/` | Shared operation SDK, schemas, browser call contract, the page each live step starts from, the JobStore hook, the shared retry-key rule and the local job stores |
 | `typescript/src/browser/` | Shared browser helpers used by authored operations |
 | `typescript/src/destinations/` | Shared sign-in inspection, autofill and trusted credential entry |
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
 | `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
 | `typescript/src/standalone/` | Local library, terminal and MCP composition |
-| `typescript/src/jobs/` | The JobStore hook, the shared retry-key rule and the local job stores |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
