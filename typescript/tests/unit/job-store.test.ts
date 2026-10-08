@@ -7,8 +7,8 @@ import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { Effect, Either } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
-import { fingerprint } from "../../src/jobs/fingerprint.js";
-import { RetryConflict, submitJob, type RetrySubmission } from "../../src/jobs/job-store.js";
+import { fingerprint } from "../../src/runtime/fingerprint.js";
+import { RetryConflict, submitJob, type RetrySubmission } from "../../src/runtime/job-store.js";
 import {
   localRequestFingerprint,
   localRetryKey,
@@ -16,7 +16,7 @@ import {
   makeMemoryJobStore,
   removeExpiredRecord,
   type LocalJobRecord,
-} from "../../src/jobs/local-job-store.js";
+} from "../../src/runtime/local-job-store.js";
 import { describeJobStoreContract } from "../support/job-store-contract.js";
 
 const folders: string[] = [];
@@ -357,7 +357,7 @@ describe("the local file store", () => {
 
   it("stores one job when two processes submit one key at the same moment", async () => {
     const folder = await newFolder();
-    const source = new URL("../../src/jobs/", import.meta.url).href;
+    const source = new URL("../../src/runtime/", import.meta.url).href;
     // Each child loads the TypeScript sources as the local operation child does, then waits for
     // `go` so both submit at once.
     const script = `
