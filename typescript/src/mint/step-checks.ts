@@ -4,8 +4,6 @@ import { Effect, Option, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { type ExecutionRequest, MintFailure, type MintRequest } from "./contracts.js";
 import { entrypointImportClosure } from "./operation-source.js";
-import type { MintProjection } from "./projection.js";
-import { screenMintText } from "./workspace.js";
 
 /**
  * The checks a host runs on one submitted step before Guardian reviews it, and the read/write
@@ -238,27 +236,3 @@ export const repeatableReadFor = (
   buildEffect: MintRequest["effect"] | undefined,
   exampleClaimed: boolean,
 ) => buildEffect === "read" && !exampleClaimed;
-
-/**
- * The host's check of an approved write upgrade: only a repeatable read may become a write. It
- * returns the approved question, screened, which Guardian's intent then carries.
- */
-export const writeUpgradeApproval = (
-  projection: MintProjection,
-  state: {
-    readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly repeatableRead: boolean;
-  },
-  change: string,
-): Effect.Effect<string, MintFailure> =>
-  state.buildEffect !== "read" || !state.repeatableRead
-    ? Effect.fail(
-        new MintFailure({
-          code: "Unavailable",
-          failureDetail: failureDetail("mint_host_dependency_failed", {
-            operation: "writeUpgradeApproval",
-            context: { check: "not_a_repeatable_read", effect: state.buildEffect },
-          }),
-        }),
-      )
-    : screenMintText({ projection }, change);

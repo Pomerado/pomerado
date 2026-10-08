@@ -1098,51 +1098,6 @@ it("has Guardian review the effect question, which the owner may answer in their
   expect(logins).toBe(0);
 });
 
-it("keeps a read build read-only, open to asking again, when the owner answers a write upgrade in their own words", async () => {
-  const responses: { readonly status?: string; readonly buildEffect?: string }[] = [];
-  const upgrades: string[] = [];
-  const upgrade = {
-    writeUpgrade: true,
-    questions: [
-      {
-        id: "upgrade",
-        type: "choice" as const,
-        prompt: "Saving the address changes your profile on the site. Make this a write build?",
-        options: [
-          { id: "write", label: "write" },
-          { id: "read", label: "read" },
-        ],
-      },
-    ],
-  };
-  const f = await fixture(
-    (turn) =>
-      Effect.gen(function* () {
-        responses.push(
-          JSON.parse(yield* turn.actions.requestInput(upgrade)),
-          JSON.parse(yield* turn.actions.requestInput(upgrade)),
-        );
-      }),
-    {
-      askInput: answeredByOwner([
-        { upgrade: { other: "Only show me the saved address" } },
-        { upgrade: { option: "write", note: "Use the work address" } },
-      ]),
-      repeatableRead: true,
-      upgradeToWrite: (change) =>
-        Effect.sync(() => {
-          upgrades.push(change);
-        }),
-    },
-  );
-  await f.run({ ...request, siteOrigin: "https://shop.example.test" });
-  expect(responses).toMatchObject([
-    { status: "answered", buildEffect: "read" },
-    { status: "answered", buildEffect: "write" },
-  ]);
-  expect(upgrades).toHaveLength(1);
-});
-
 it("publishes without assumptions when the build lists none", async () => {
   const f = await fixture((turn) =>
     Effect.gen(function* () {
