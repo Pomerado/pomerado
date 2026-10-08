@@ -70,6 +70,7 @@ import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
+import { weakenedOutputsText } from "./output-obligations.js";
 import { publicationBlockFeedback } from "./publication-block.js";
 import {
   inputFeedbackInstruction,
@@ -3266,6 +3267,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       "Not published: the source this repair would publish is byte for byte the registered revision's, so there is nothing to publish. A new name or description alone is not a repair. The registered revision stays current and this repair ends here; do not call finish_build again.",
                   });
                 }
+                // Deterministic, before any review: the minter fixes the extraction, or the owner
+                // confirms a contract change. It is neither a review nor an outage.
+                if (error.reason === "output_obligation_weakened")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    { weakenedOutputs: error.weakenedOutputs ?? [] },
+                    `Not published and not reviewed: this repair loosens the registered tool's output contract: ${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. Fix the extraction so it returns each value. If the site no longer shows one, propose mint_update with an output change for that field, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field. Then call finish_build again with the same executionId; the example need not run again.`,
+                  );
                 if (error.reason === "tool_name_taken")
                   return notPublished(
                     error.code,

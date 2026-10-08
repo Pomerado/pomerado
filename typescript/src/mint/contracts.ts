@@ -43,6 +43,7 @@ import type {
 } from "./recovery-contracts.js";
 
 import type { CurrentInvocation } from "./invocation.js";
+import type { WeakenedOutput } from "./output-obligations.js";
 import { SiteNaming } from "../registry/site-naming.js";
 import { SupportedOperationVariant } from "../registry/operation-variants.js";
 import type { RegistryIssue } from "../registry/issues.js";
@@ -304,7 +305,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
-    | "capture_not_saved";
+    | "capture_not_saved"
+    /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
+    | "output_obligation_weakened";
+  /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
+  readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
   readonly publicationFeedback?: {
     readonly oneTimeParameters?: readonly string[];
