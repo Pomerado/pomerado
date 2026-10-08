@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
+import type { PlaywrightOptions } from "../../src/execution/playwright-execute.js";
 import {
   authorityOf,
   contextOf,
@@ -30,6 +31,7 @@ export const mint = async (options: {
   readonly answer?: (request: InputRequest) => Record<string, unknown>;
   readonly input?: Readonly<Record<string, unknown>>;
   readonly intent?: string;
+  readonly browser?: PlaywrightOptions;
 }) => {
   const requests: ModelRequest[] = [];
   const asked: InputRequest[] = [];
@@ -41,6 +43,7 @@ export const mint = async (options: {
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* createPomerado({
+          ...(options.browser === undefined ? {} : { browser: options.browser }),
           minterProvider: minter,
           guardianProvider: options.guardian.provider,
           ask: makeInputAsker((request) =>
