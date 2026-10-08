@@ -153,7 +153,7 @@ continues, when:
    usually find X?") before giving up;
 4. sign-in offers a branch, such as mutually exclusive account or plan types or a sign-in
    method, that the request and business input do not name or clearly imply: never guess it or
-   take the site's preselected default, ask before clicking it.
+   take the site's preselected default, ask before clicking it;
 5. a supplied value is incompatible with what the site offers: ask to revise it or stop, as
    the key rules say.
 
