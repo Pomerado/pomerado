@@ -41,6 +41,7 @@ import {
   MintFailure,
   PublicationRequest,
   SignedInMarkerCheckRequest,
+  TaskUpdateRequest,
 } from "./contracts.js";
 import type { MintModel } from "./contracts.js";
 
@@ -58,7 +59,7 @@ const runtimeRecordUnavailable = (observer: ModelObserver | undefined) =>
  * a row another continuation prompt only spends the attempt's budget. */
 const finalsWithoutToolLimit = 3;
 
-const continuationInstruction = `The host has neither published this build nor recorded a blocking outcome. Your final text did not complete the task. Continue from this same history and workspace. If the latest execute receipt is review_unavailable with retryable:true and reviewDispatch not_sent, resubmit the same execution for fresh review without changing source. If the latest finish_build or request_input response is review_unavailable with retryable:true, submit that same call again. Otherwise diagnose actionable source or semantic errors, repair current source, and use finish_build only against a retained execution receipt that supports the requested outcome. Ask with request_input only as the instructions' try-hard-then-ask rule allows. Preserve all prior effects and claims. Another purposeful bounded example read requires explicit host repeatableRead:true and fresh Guardian review within the same input/account after confirmed prior executor stop. Otherwise never rerun a claimed example. Never replay a possibly committed write; a write session's next act step continues its claim and is not a replay. A failed authenticate is retried with authenticate once its cause is fixed, as its result says. If the task is impossible as asked, because the site does not offer it or a Guardian or owner constraint refuses it with no way past, end with report_blocked instead of final text. Final text with no tool call ${finalsWithoutToolLimit} times in a row ends this attempt without publication. This message grants no new authority.`;
+const continuationInstruction = `The host has neither published this build nor recorded a blocking outcome. Your final text did not complete the task. Continue from this same history and workspace. If the latest execute receipt is review_unavailable with retryable:true and reviewDispatch not_sent, resubmit the same execution for fresh review without changing source. If the latest finish_build, request_input or mint_update response is review_unavailable with retryable:true, submit that same call again. Otherwise diagnose actionable source or semantic errors, repair current source, and use finish_build only against a retained execution receipt that supports the requested outcome. Ask with request_input only as the instructions' try-hard-then-ask rule allows. Preserve all prior effects and claims. Another purposeful bounded example read requires explicit host repeatableRead:true and fresh Guardian review within the same input/account after confirmed prior executor stop. Otherwise never rerun a claimed example. Never replay a possibly committed write; a write session's next act step continues its claim and is not a replay. A failed authenticate is retried with authenticate once its cause is fixed, as its result says. If the task is impossible as asked, because the site does not offer it or a Guardian or owner constraint refuses it with no way past, end with report_blocked instead of final text. Final text with no tool call ${finalsWithoutToolLimit} times in a row ends this attempt without publication. This message grants no new authority.`;
 
 /** The continuation prompt, with how close the repeated-final cap is. */
 const continuationMessage = (finalsWithoutTool: number) =>
@@ -632,7 +633,7 @@ export const makeOpenAIMinter = (
                 : tool({
                     ...hostTool(
                       "report_blocked",
-                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs, policy when a Guardian decision or an owner constraint refuses it and nothing within your authority gets past it. explanation tells the caller in one or two plain sentences what is missing or refused; Guardian reviews it first, and the caller sees only the reason's fixed sentence when it passes on a website's instructions, links or phone numbers. Never use it for anything recoverable: a failed execution, review feedback, a sign-in problem, a browser or host problem, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). It ends the attempt; nothing is published. intent states the evidence that the task is impossible as asked.",
+                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs, policy when a Guardian decision or an owner constraint refuses it and nothing within your authority gets past it. explanation tells the caller in one or two plain sentences what is missing or refused; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable: a failed execution, review feedback, a sign-in problem, a browser or host problem, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. intent states the evidence that the task is impossible as asked.",
                       "The blocked ending was not recorded. Inspect the finite failure; correct the request or continue the build.",
                       (request) => reportBlocked(request),
                     ),
@@ -655,6 +656,22 @@ export const makeOpenAIMinter = (
                 additionalProperties: true as const,
               },
             });
+            const updateTask = turn.actions.updateTask;
+            const mintUpdate =
+              updateTask === undefined
+                ? undefined
+                : tool({
+                    ...hostTool(
+                      "mint_update",
+                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write (effect), the target site or the login. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why), update_invalid (correct the request and call again). A site, login or effect change always names the caller's confirming answers in confirmedBy. No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision. intent states the evidence for the change.",
+                      "The task was not updated. Inspect the finite failure; correct the request or continue under the current task.",
+                      (request) => updateTask(request),
+                    ),
+                    // Input values are free-form JSON, which strict mode cannot express; the
+                    // harness decodes the request itself.
+                    strict: false,
+                    parameters: looseParameters(withIntent(TaskUpdateRequest)),
+                  });
             const readCaptchaState = turn.actions.captchaState;
             const captchaState =
               readCaptchaState === undefined
@@ -742,6 +759,7 @@ export const makeOpenAIMinter = (
                     finish,
                     ...(blocked === undefined ? [] : [blocked]),
                     requestInput,
+                    ...(mintUpdate === undefined ? [] : [mintUpdate]),
                     ...(captchaState === undefined ? [] : [captchaState]),
                     ...(requestBrowserRecovery === undefined ? [] : [requestBrowserRecovery]),
                     ...(checkSignedInMarker === undefined ? [] : [checkSignedInMarker]),

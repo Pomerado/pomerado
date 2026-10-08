@@ -6,6 +6,7 @@ import {
   MintServices,
   type ExecutionRequest,
   type MintDependencies,
+  type PublicationDecisionLog,
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
@@ -22,6 +23,7 @@ import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
+import { memoryPublicationDecisions } from "./publication-decisions.js";
 /**
  * Steps the local host refuses before review. It keeps no write maintenance, so it has no
  * possible write to inspect or finish. And once a write session started, a sign-in runs only as
@@ -47,8 +49,8 @@ const localStepRefusal = (
             "This write session already started, so it signs in only through a signInStep the host fills: an authenticate step without one would run your own source on the site outside the session's act steps. Nothing was executed.",
         }
       : undefined;
-const mintDependencies = (state: MintState) => {
-  const { workspace, authoring, deadline, context, request, mintAsk, handles } = state;
+const mintDependencies = (state: MintState, publicationDecisions: PublicationDecisionLog) => {
+  const { workspace, authoring, deadline, context, mintAsk, handles } = state;
   const { projection, options } = state.session;
   const dependencies: MintDependencies = {
     workspace: workspace.session,
@@ -67,7 +69,7 @@ const mintDependencies = (state: MintState) => {
           projection.text,
         );
         const result = yield* context.reviewQuestion(
-          { entrypoint: "question", sources: new Map(), input: request.input ?? {} },
+          { entrypoint: "question", sources: new Map(), input: context.input },
           pendingQuestion,
         );
         return { ...result.decision, reviewId: result.reviewId };
@@ -89,7 +91,15 @@ const mintDependencies = (state: MintState) => {
         Effect.mapError(mintError),
       ),
     recordBuildEffect: (effect) => Effect.sync(() => context.setBuildEffect(effect)),
-    upgradeToWrite: context.approveWrite,
+    reviewTaskUpdate: (candidate) =>
+      context.reviewTaskUpdate(candidate).pipe(
+        Effect.map((result) => ({ ...result.decision, reviewId: result.reviewId })),
+        Effect.mapError(mintError),
+      ),
+    applyTaskUpdate: (application) =>
+      context
+        .applyTaskUpdate(application, (siteOrigin) => state.rebindSite(siteOrigin))
+        .pipe(Effect.mapError(mintError)),
     repeatableRead: context.repeatableRead(),
     // A repeatable read's example claims nothing, so it may run again.
     claimExample: Effect.suspend(() =>
@@ -113,7 +123,7 @@ const mintDependencies = (state: MintState) => {
           preflightTestInput(execution, { buildEffect, executionHistory: context.executions() }) ??
           exampleInputRefusal(execution, {
             buildEffect,
-            callerInput: request.input ?? {},
+            callerInput: context.input,
             writeSession: state.writeSession,
           });
         if (refusal !== undefined) return refusal;
@@ -126,7 +136,7 @@ const mintDependencies = (state: MintState) => {
           : { supported: false as const, reason: boundary };
       }),
     reviewAndExecute: mintExecution(state),
-    checkSignedInMarker: state.markers.check,
+    checkSignedInMarker: (marker) => state.markers.check(marker),
     publish: mintPublication(state),
     // The local host keeps no recovery checkpoint; its write completion reads the assessments.
     outcomeReview: {
@@ -142,6 +152,7 @@ const mintDependencies = (state: MintState) => {
           state.assessments.set(assessment.executionId, assessment);
         }),
     },
+    publicationDecisions,
   };
   return dependencies;
 };
@@ -152,6 +163,8 @@ export const mintRequest = (
 ) =>
   Effect.gen(function* () {
     const state = yield* mintState(session, context, request);
+    // The request's runs share its publication decisions.
+    const publicationDecisions = memoryPublicationDecisions();
     const mintRequest = {
       mode: "mint",
       intent: request.intent,
@@ -163,11 +176,11 @@ export const mintRequest = (
     // Each run reads the build's read/write state as it stands when the run starts.
     if (context.buildEffect === undefined) {
       const asked = yield* runMint(mintRequest).pipe(
-        Effect.provideService(MintServices, mintDependencies(state)),
+        Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
       );
       if (context.buildEffect === undefined) return asked;
     }
     return yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
-      Effect.provideService(MintServices, mintDependencies(state)),
+      Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
     );
   });

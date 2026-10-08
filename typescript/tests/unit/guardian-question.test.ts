@@ -210,8 +210,45 @@ it("allows a blocked report that names the caller input at fault and why", async
   );
   const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
   expect(input.trusted_review.policy).toContain(
-    'or when it asks the user for anything; the user then sees only a fixed sentence. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user. The rules below apply to questions, not to this report.\n',
+    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user. The rules below apply to questions, not to this report.\n',
   );
+});
+
+// Guardian judged a blocked report about a refused publication from the agent's words alone.
+it("gives the question review the host's publication refusals as trusted evidence", async () => {
+  const refusal = {
+    decisionId: "decision_one",
+    outcome: "refused",
+    code: "PublicationUnavailable",
+    reason: "write_not_submitted",
+    executionId: "act_one",
+    decidedAt: 1_000,
+    failedChecks: ["write_not_submitted"],
+    recovery: "write_completion",
+  } as const;
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  const candidate = await Effect.runPromise(
+    questionForReview(
+      {
+        questions: [
+          { id: "blocked", type: "text", prompt: "The site never took the request as asked." },
+        ],
+      },
+      { credentialsAvailable: false, blockedOutcome: true, publicationDecisions: [refusal] },
+      (text) => Effect.succeed(text),
+    ),
+  );
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      candidate,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as {
+    question_review: { publicationDecisions?: unknown };
+  };
+  expect(input.question_review.publicationDecisions).toEqual([refusal]);
 });
 
 it("rejects a question candidate smuggled into an execution review", async () => {
@@ -388,7 +425,7 @@ it("gives a review every plain answer, screened and masked, and no secret, login
       {
         plan: { type: "choice", value: "team" },
         size: { type: "choice", value: { other: "Twelve seats" } },
-        // Own text repeating a label two options share stays text, but the agent wrote it.
+        // Own text repeating a label two options share stays text.
         tier: { type: "choice", value: { other: "Pro" } },
         extras: { type: "multi_choice", value: ["audit", "sso"] },
         go: { type: "confirm", value: { confirmed: true, text: "Platform" } },
@@ -403,10 +440,10 @@ it("gives a review every plain answer, screened and masked, and no secret, login
   );
   expect(reviewed).toEqual([
     { question: "<Which plan?>", answer: "<Team plan>" },
-    { question: "<Which size?>", answer: "<Twelve seats>", typed: true },
+    { question: "<Which size?>", answer: "<Twelve seats>" },
     { question: "<Which tier?>", answer: "<Pro>" },
     { question: "<Which extras?>", answer: ["<Audit log>", "<Single sign-on>"] },
-    { question: "<Continue?>", answer: { confirmed: true, text: "<Platform>" }, typed: true },
+    { question: "<Continue?>", answer: { confirmed: true, text: "<Platform>" } },
   ]);
   const notice = await Effect.runPromise(
     answersForReview(
@@ -475,10 +512,10 @@ it("gives a review the owner's own option and note beside their picks, as the ow
       answer: ["<North>"],
       other: "<Islands at https://islands.example.net>",
       note: "<Weekdays only>",
-      typed: true,
     },
   ]);
-  // A later review carries both to Guardian, and their links name where the owner's work lives.
+  // A later review carries them to Guardian, and their off-site links name where the owner's work
+  // lives.
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -499,49 +536,46 @@ it("gives a review the owner's own option and note beside their picks, as the ow
   });
 });
 
-it("never takes an option label the owner typed back as a note or an own option for the owner's words", async () => {
-  const label = "Main store at https://main.example.test";
+it("takes an off-site origin named only in an option the owner picked or typed back as owner-named", async () => {
+  const picked = "Our team's tenant at https://acme.tenant.example.org";
+  const typedBack = "Our branch office at https://branch.example.net";
   const reviewed = await Effect.runPromise(
     answersForReview(
       {
         questions: [
           {
-            id: "store",
+            id: "tenant",
             type: "choice",
-            prompt: "Which store?",
+            prompt: "Where do your orders live?",
             allowOther: true,
             allowNote: true,
             options: [
-              { id: "main", label },
-              { id: "outlet", label: "Outlet" },
+              { id: "tenant", label: picked },
+              { id: "here", label: "On this site" },
             ],
           },
           {
-            id: "stores",
+            id: "offices",
             type: "multi_choice",
-            prompt: "Which stores?",
+            prompt: "Which offices?",
             minSelections: 0,
             maxSelections: 2,
             allowOther: true,
             allowNote: true,
             options: [
-              { id: "main", label },
-              { id: "outlet", label: "Outlet" },
+              { id: "branch", label: typedBack },
+              { id: "main", label: "Main office" },
             ],
           },
         ],
       },
       {
-        store: { type: "choice", value: { option: "outlet", note: ` ${label.toUpperCase()} ` } },
-        stores: { type: "multi_choice", value: { options: ["outlet"], other: label } },
+        tenant: { type: "choice", value: "tenant" },
+        offices: { type: "multi_choice", value: { options: ["main"], note: typedBack } },
       },
       Effect.succeed,
     ),
   );
-  expect(reviewed).toEqual([
-    { question: "Which store?", answer: "Outlet" },
-    { question: "Which stores?", answer: ["Outlet"], other: label },
-  ]);
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -551,6 +585,11 @@ it("never takes an option label the owner typed back as a note or an own option 
     ),
   );
   const input: unknown = JSON.parse(userText(requests[0]));
-  expect(input).toMatchObject({ trusted_authority: { answeredQuestions: reviewed } });
-  expect(input).not.toMatchObject({ trusted_authority: { ownerNamedOrigins: expect.anything() } });
+  // The picked option and the option typed back are the owner's words; the option nobody picked
+  // names nothing.
+  expect(input).toMatchObject({
+    trusted_authority: {
+      ownerNamedOrigins: ["https://acme.tenant.example.org", "https://branch.example.net"],
+    },
+  });
 });

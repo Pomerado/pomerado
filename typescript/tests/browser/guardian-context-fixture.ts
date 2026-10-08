@@ -98,7 +98,7 @@ export const executionIdOf = (request: ModelRequest | undefined, callId: string)
 /** One Guardian review as the reviewer model received it, and what it read. */
 export interface RecordedReview {
   readonly input: Readonly<Record<string, unknown>>;
-  readonly kind: "question" | "execution" | "publication";
+  readonly kind: "question" | "update" | "execution" | "publication";
   readonly reads: Readonly<Record<string, unknown>>[];
 }
 /** A publication review's file index. */
@@ -123,8 +123,9 @@ export const authorityOf = (review: RecordedReview) =>
  * A scripted Guardian that records each review's input. An execution review reads its entrypoint
  * (and the whole current page's capture when `readPage` is set) before deciding; a publication
  * review reads the first chunk of every file it indexes; a question is allowed. `decide` returns
- * an outcome, or a review's whole decision. An outcome alone gets the execution action its step's
- * purpose implies.
+ * an outcome, or a publication review's whole decision; `decideUpdate` a task update's outcome,
+ * allow unless it says otherwise. An execution outcome alone gets the action its step's purpose
+ * implies.
  * `fail` makes a call throw, as a provider outage would.
  */
 export const recordingGuardian = (
@@ -132,6 +133,7 @@ export const recordingGuardian = (
     readonly decide?: (
       review: RecordedReview,
     ) => "allow" | "deny" | Readonly<Record<string, unknown>>;
+    readonly decideUpdate?: (review: RecordedReview) => string;
     readonly readPage?: boolean;
     readonly fail?: (call: number) => Error | undefined;
   } = {},
@@ -151,17 +153,27 @@ export const recordingGuardian = (
       (value) => value["type"] === "function_call_result",
     );
     const question = "question_review" in input;
+    const update = "update_review" in input;
     const publication = "trusted_publication" in input;
     if (results.length === 0)
       reviews.push({
         input,
-        kind: question ? "question" : publication ? "publication" : "execution",
+        kind: question ? "question" : update ? "update" : publication ? "publication" : "execution",
         reads: [],
       });
     const review = reviews.at(-1);
     if (review === undefined) throw new Error("No review recorded");
     if (question)
       return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture asks." }))];
+    if (update)
+      return [
+        message(
+          JSON.stringify({
+            outcome: options.decideUpdate?.(review) ?? "allow",
+            rationale: "Fixture update review.",
+          }),
+        ),
+      ];
     review.reads.splice(
       0,
       review.reads.length,

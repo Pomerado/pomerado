@@ -3,6 +3,8 @@ import type { GuardianSession, GuardianSessionOptions } from "./session.js";
 import { QuestionDecision } from "./question.js";
 import { decodePublicationDecision } from "./publication.js";
 import type { AnsweredQuestion, PendingQuestion } from "./question.js";
+import { TaskUpdateDecision } from "./task-update.js";
+import type { PendingTaskUpdate, ReviewedTaskUpdate } from "./task-update.js";
 import {
   failureDetail,
   failureDetailMetadata,
@@ -33,7 +35,7 @@ export interface GuardianDiagnostics {
     details: unknown,
     correlation?: {
       readonly reviewId?: string;
-      readonly reviewKind?: "execution" | "publication" | "question" | "host";
+      readonly reviewKind?: "execution" | "publication" | "question" | "update" | "host";
       readonly modelTiming?: ModelDiagnosticTiming;
       readonly required?: boolean;
     },
@@ -50,7 +52,7 @@ export interface GuardianDiagnostics {
     timing: ModelDiagnosticTiming,
     correlation?: {
       readonly reviewId?: string;
-      readonly reviewKind?: "execution" | "publication" | "question" | "host";
+      readonly reviewKind?: "execution" | "publication" | "question" | "update" | "host";
     },
   ) => Effect.Effect<void>;
   readonly retainScreenedSource: (args: {
@@ -213,11 +215,14 @@ export interface PendingExecution {
   // Intent and input have already crossed the trusted privacy broker. Observations carry the
   // published login URL raw, exactly as stored.
   readonly screenedIntent: string;
-  /**
-   * Mints only: the screened intent as the owner submitted it, without the approved write
-   * upgrade's question that `screenedIntent` may carry, whose wording is the minting model's.
-   */
+  /** Mints only: the screened intent as the owner submitted it. */
   readonly requestedIntent?: string;
+  /**
+   * Mints only: the caller-confirmed updates to the task that the host accepted, oldest first.
+   * The effective task is `screenedIntent` with each applied in order. Every review after an
+   * update reads them, and `allowedOrigins` is already rebound to a changed site.
+   */
+  readonly taskUpdates?: readonly ReviewedTaskUpdate[];
   readonly screenedInput: string;
   readonly screenedObservations: string;
   readonly accountScope: string;
@@ -231,6 +236,8 @@ export interface PendingExecution {
   readonly recoveryCandidate?: { readonly rationale: string };
   /** A host-defined review kind's request; set only by `reviewHostKind`. */
   readonly hostReview?: HostReview;
+  /** The minting agent's proposed task update; set only by `reviewTaskUpdate`. */
+  readonly updateCandidate?: PendingTaskUpdate;
   readonly allowedEffects: readonly string[];
   /**
    * Execution reviews only: whether this step's authority includes a website write, as a write
@@ -340,6 +347,12 @@ export interface PendingExecution {
       readonly executorStopped?: boolean;
       /** The live test ran an input the minting agent chose; the attempt's count of them. */
       readonly input?: "agent_chosen";
+      /**
+       * The task revision the execution ran under, once an update applied: 0 for the original
+       * request, else the `taskUpdates` revision then in force. What it did is judged against that
+       * revision, never a later one.
+       */
+      readonly taskRevision?: number;
       readonly authentication?: {
         readonly state: "authenticated" | "failed";
         readonly effect: "possible" | "verified";
@@ -482,7 +495,7 @@ interface ReviewAttempt {
   };
   readonly started: (correlation: {
     readonly reviewId: string;
-    readonly reviewKind: "execution" | "publication" | "question" | "host";
+    readonly reviewKind: "execution" | "publication" | "question" | "update" | "host";
   }) => void;
 }
 
@@ -1059,6 +1072,33 @@ export const makeGuardian = (
         return withOutageRetry("question", (run) =>
           review(run, { ...pending, questionCandidate: question }, readSource, (raw) =>
             Schema.decodeUnknown(QuestionDecision)(raw, {
+              onExcessProperty: "error",
+            }).pipe(Effect.mapError(decisionFailure)),
+          ),
+        );
+      }),
+    /**
+     * Reviews the minting agent's proposed task update (`mint_update`) against the effective task
+     * the pending review carries, through the same path, context and evidence tool as a question.
+     * It runs no code, so no entrypoint read is required.
+     */
+    reviewTaskUpdate: (
+      pending: PendingExecution,
+      update: PendingTaskUpdate,
+      readSource: ReviewTurn["readSource"],
+    ): Effect.Effect<{ reviewId: string; decision: TaskUpdateDecision }, ReviewFailure> =>
+      Effect.suspend(() => {
+        if (
+          pending.publication !== undefined ||
+          pending.questionCandidate !== undefined ||
+          pending.recoveryCandidate !== undefined ||
+          pending.updateCandidate !== undefined ||
+          pending.hostReview !== undefined
+        )
+          return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
+        return withOutageRetry("update", (run) =>
+          review(run, { ...pending, updateCandidate: update }, readSource, (raw) =>
+            Schema.decodeUnknown(TaskUpdateDecision)(raw, {
               onExcessProperty: "error",
             }).pipe(Effect.mapError(decisionFailure)),
           ),

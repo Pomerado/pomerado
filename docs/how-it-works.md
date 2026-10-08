@@ -27,6 +27,23 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
 
+### Failures a build survives
+
+- A diagnostic copy the host can't keep, such as an execution's diagnostics or a readable model transcript, is a recorded gap in the outcome's diagnostics. The build goes on, however many gaps there are.
+- The raw record of each model call is the one required trace. A host that keeps one through `retainRuntimeRecord` must store it before the next model call. If it can't, the attempt stops with `hostFailure: "diagnostic_retention"`. A host without `retainRuntimeRecord`, such as the local host, has no required trace.
+- A review whose evidence the host can't keep is a review outage. The minter may resubmit until reviews have been unavailable for the review outage budget, 15 minutes by default.
+- An execution whose capture the host can't produce or screen comes back as a capture gap: its result is withheld and its effect is possible. A publication whose capture evidence is unavailable comes back `not_published` with `retryable: true` until the review outage budget runs out. Neither runs a write again.
+- A publication dependency that stays unavailable, such as the registry, its source store, or a screening step or source read that names no file to fix, comes back with `retryable: true` until the review outage budget runs out.
+- `report_blocked` ends the build only when Guardian allows the explanation, or when its review stays unavailable past the review outage budget, which leaves the caller only the reason's fixed sentence. An unavailable review comes back with `retryable: true` before that. When Guardian asks for a reword, the minter gets the rationale, and may revise the explanation, which Guardian reviews again, or withdraw it and go on.
+- A `contract_input_mismatch` or `contract_output_mismatch` refusal's recovery is `correct_source` in a read build and `write_completion` in a write build.
+
+### Publication decisions
+
+- `path_screening` stays a refusal the minter fixes, since it can mean a source path holds a credential.
+- Each `finish_build` decision, refused or published, is a `PublicationDecision`: its code, reason, execution, time, failed checks and recovery path. The tool result carries its `decisionId`. The harness's own refusals before publication runs, such as an invalid request, and a host fallback's publication after unresolved input feedback are decisions too.
+- A host keeps them as evidence through `MintDependencies.publicationDecisions`, which records each decision and lists the build's decisions. The local host keeps them in memory for the request.
+- A question review and a blocked-explanation review get the latest refusals as `question_review.publicationDecisions`, and a task update review as `update_review.publicationDecisions`, so Guardian reads what the host refused, not only the minter's account of it.
+
 ## Guardian
 
 - Guardian is a second model that reviews the minter's work before it takes effect.
@@ -37,7 +54,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 
 ### Review requests
 
-Guardian reviews four built-in kinds of request: execution, question, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
+Guardian reviews five built-in kinds of request: execution, question, task update, browser recovery and publication. A host can add its own kinds. With a session (`makeGuardian`'s third argument), all of a mint's reviews are turns of one conversation.
 
 - **One request layout.** Every kind sends the same instructions, the same `read_source` tool and the same strict output format, which is the union of all kinds' fields. A kind's own policy and evidence go in its user message under `trusted_review`, so moving from one kind to another keeps the conversation's cached prefix. The host drops fields a kind doesn't use and refuses an outcome the kind may not return. A host adds its own per-kind policy, input and turn limit through `specialize`. It can't change the instructions or the output format.
 - **Host-defined kinds.** `reviewHostKind(pending, request, readSource?)` runs a review of a kind the host defines, as one more turn of the same conversation, with the same instructions, tool and output format.
@@ -60,6 +77,16 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - `guardian.review_retried` carries the scheduled backoff interval and the failed attempt's review ID. A failed source read, the host's own entrypoint read included, records its duration on `guardian.source_failed`.
   - A private host kind keeps no transcript, so its finite model and tool timing goes to `observeModelTrace` instead.
 
+### Task updates
+
+- The minter changes its task's settings with `mint_update` once the caller confirms the change: input values, a requirement, constraint or prerequisite (added, dropped or revised), the purpose, a read becoming a write, the target site or the login. It asks with `request_input` first unless the request already settles the change, and names the answered questions in `confirmedBy`. The caller's pick of an option the minter wrote confirms what that option says, as do the caller's own words.
+- `recommend` is the minter's own judgment: `update` for the same task and workflow, or `new_mint`, with a `suggestedRequest`, for a different task or another product's workflow. A changed site origin alone decides neither.
+- Guardian reviews the update as an `update` review (`reviewTaskUpdate`), against the effective task and the caller's recorded answers. It allows it, asks for clarification, asks for a reword, or finds that the change belongs in a new build.
+- Results: `updated`; `clarification_required` (from Guardian, or from the host when, for example, the new site needs a login the caller hasn't given); `reword`, which never ends the build; `new_mint_recommended`, which ends the build `blocked` with the summary and suggested request; `review_unavailable`, under the usual review outage budget; `update_refused` when this build can't take the change, such as a site change while a write session is open or once the build can't run another live example, or any change in maintenance, a recommended new build included; and `update_invalid` for a request that doesn't decode or a `new_mint` recommendation without a suggested request. Nothing changes on any result but `updated`. A site, login or effect change widens what the build may do, so it always needs an answer in `confirmedBy`. After a site change, `finish_build` publishes only an execution that ran on the new site. A read build that already ran a live read example may still become a write; the write session runs its own example, and only what it did can be published.
+- The host applies an allowed update through `MintDependencies.applyTaskUpdate`. All or nothing, it stores the harness checkpoint it is given, with the update applied, together with its own bindings, rebinds everything that depends on the site for a site change, reruns intake screening and the duplicate check where it has them, and resolves the login. It may answer `clarification_required` or `refused` instead. A takeover restores the whole update or none of it, and the same `mint_update` again is answered `updated` without another review. The local host has no intake screen, duplicate check, saved logins or checkpoint store: it rebinds the site, the input and the effect, leaves the earlier site's sign-in origins and sign-ins behind, and a sign-in on the new site asks you as any sign-in does.
+- An option the minter wrote is the caller's confirmation of what it says once they pick it or type it back. A link in it names where the caller's work lives (`trusted_authority.ownerNamedOrigins`), as the caller's own words do.
+- Every later review reads the effective task: the original intent and `trusted_authority.taskUpdates`, with the rebound `allowedOrigins`. Each recorded execution keeps the task revision it ran under (`taskRevision`). No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision.
+
 ### Publication review
 
 - `finish_build` runs one publication review after its own checks. Guardian reads the files that would ship, the public definition the host writes from the build's name, description and schemas, and the evidence they are judged against.
@@ -75,7 +102,7 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - Guardian judges each action before it runs and never sees its result. A separate model session, the outcome reviewer, judges afterwards whether each write Guardian labelled actually changed the site: `done`, `not_done` or `unknown`, with a short explanation and the evidence it rests on.
 - It runs beside the minter as its own continuing conversation, on GPT-6 Luna, with Guardian's session building blocks: provider compaction, and an interrupted turn closed before the next.
 - Its tools only read. It searches and reads the minter's whole history, the turns a compaction replaced in later requests included. It lists and reads the host's records of executions, generated source, screened captures and publication decisions, and reads the original request, the accepted answers and the task's current state. It records an assessment, and it can ask the minter for a readback, which the minter runs through its normal reviewed execution. It has no browser, shell or website access.
-- It wakes when a write returns, fails or loses its result, when a later live execution may hold a readback, when an answer changes the remaining work, and when `finish_build` runs with a write unresolved.
+- It wakes when a write returns, fails or loses its result, when a later live execution may hold a readback, when an answer or an applied `mint_update` changes the remaining work (a refused update does not), and when `finish_build` runs with a write unresolved.
 - It takes one turn at a time per mint. Events that arrive during a turn are coalesced into the next. Its turns are not minter activity.
 - A failed turn is retried after a wait, without limit, and never invents an outcome. The newest assessment of a write replaces the older one.
 - The minter keeps working meanwhile. The only step that waits for the reviewer is one that would run an earlier write's step again: the same entrypoint, or the same source under another name (a digest of its import closure's contents). It runs only once the reviewer, caught up without an outage and with no readback it asked for still unanswered, found every such write `not_done`.
@@ -129,11 +156,19 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
-- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status and a failed run's commit marks. It never holds the input or the output.
+- A served integration keeps each keyed job's record in its folder's `.jobs` for a day. The record holds the key, a digest of the input, the job ID, its status, and a failed run's outcome and commit marks. It never holds the input or the output.
 - Two servers on one integration folder share those records, so one key starts one job between them.
 - `.jobs` is for servers on one machine. A record names the process that runs its job, and a server on another machine or in another container can't tell whether that process still runs.
-- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status but not its output. A keyed job the restart stopped reads as failed and is never run again.
-- A failed job is never replayed. A website action it already sent may have taken effect.
+- Restarting the server stops running jobs and keeps saved integrations and keyed job records. After a restart, `get_job` and a repeated call find a keyed job's status and a failed run's outcome, but not its output. A keyed job the restart stopped reads as failed and is never run again.
+- A failed job is never replayed.
+- A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
+  - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
+  - A refused input or login whose declared commit steps were never entered reports `not_applied`, unless the write already recorded its confirmation. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
+  - A read never reports a possible website change.
+  - Only `possible_commit: true` tells the caller to read the site back before any retry.
+  - `retry` is one of four classes. `never`: don't repeat the call as is. `fix_input`: correct the input or the login, then call again. `new_key`: calling again is a new run, after reading the site back when `possible_commit` is true. `same_key`: the request itself may be repeated.
+  - A repeated `idempotency_key` always answers the job it named, even a failed one. To run a failed call again, call with a new key or none.
+- A failed mint's job still warns that a website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
 ## Library and terminal

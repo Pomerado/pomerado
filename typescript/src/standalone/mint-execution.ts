@@ -27,12 +27,8 @@ import { keepingAcceptedConfirms, makeDialogDecider } from "../inputs/dialog.js"
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { stepInput } from "../mint/step-checks.js";
-import {
-  commitEvidenceOf,
-  commitUncertain,
-  verifyFirstNotice,
-  type CommitEvidence,
-} from "../mint/write-session.js";
+import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
+import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -382,7 +378,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, start, mintAsk, writeSession } = state;
+    const { workspace, context, handles, start, mintAsk, writeSession } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -393,7 +389,7 @@ const authoredExecution = (
     const refusal = secretHandleRefusal(handles, files, execution, context.siteOrigin);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
-      callerInput: request.input ?? {},
+      callerInput: context.input,
       sessionInput: writeSession.input,
     });
     const { input, mark } = selected;
@@ -421,7 +417,7 @@ const authoredExecution = (
       execution.purpose === "explore" && live
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
-    const signInOrigins = request.authenticationOrigins ?? [];
+    const signInOrigins = context.authenticationOrigins;
     const watch =
       codes.length === 0
         ? undefined

@@ -48,7 +48,13 @@ import { SupportedOperationVariant } from "../registry/operation-variants.js";
 import type { RegistryIssue } from "../registry/issues.js";
 import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
-import type { QuestionDecision } from "../guardian/question.js";
+import { AnsweredQuestion, type QuestionDecision } from "../guardian/question.js";
+import {
+  TaskChange,
+  type PendingTaskUpdate,
+  type ReviewedTaskUpdate,
+  type TaskUpdateDecision,
+} from "../guardian/task-update.js";
 import {
   ConfirmQuestion,
   ProposedChoiceQuestion,
@@ -286,10 +292,7 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "contract_output_mismatch"
     /** The composed script does not run a confirm popup's action under the session's action id. */
     | "confirm_action_unmatched"
-    /**
-     * No act step Guardian labelled a write ran on the site, or the outcome review found that
-     * every one did not happen.
-     */
+    /** The session did not demonstrate the requested write. */
     | "write_not_submitted"
     /** Authored source holds a literal session token from the token view; recoverable. */
     | "session_token_literal"
@@ -711,12 +714,21 @@ export const BuildBlocked = Schema.Struct({
 });
 /**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
- * Guardian's question review allowed the caller to read it.
+ * Guardian's question review allowed the caller to read it. `new_mint_recommended` is the ending of
+ * a `mint_update` whose change belongs in a new build: the reviewed summary of the change and the
+ * request the caller could submit for that build.
  */
-const BuildBlockedOutcome = Schema.Struct({
-  reason: BuildBlocked.fields.reason,
-  explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
-});
+const BuildBlockedOutcome = Schema.Union(
+  Schema.Struct({
+    reason: BuildBlocked.fields.reason,
+    explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
+  }),
+  Schema.Struct({
+    reason: Schema.Literal("new_mint_recommended"),
+    explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
+    suggestedRequest: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
+  }),
+);
 type BuildBlockedOutcome = typeof BuildBlockedOutcome.Type;
 /**
  * A build the intake capability screen refused before any work: it needs a
@@ -733,6 +745,122 @@ const NotSupportedYet = Schema.Struct({
 /** A blocked build as its job records and shows it: the minter's ending or the intake refusal. */
 export const JobBuildBlocked = Schema.Union(BuildBlockedOutcome, NotSupportedYet);
 export type JobBuildBlocked = typeof JobBuildBlocked.Type;
+
+/**
+ * The minter's `mint_update`: a change to the task's settings that the caller confirmed. It runs
+ * after `request_input` when confirmation is needed; `confirmedBy` names the answered questions
+ * whose answers confirm it, the caller's pick of an option the minter wrote included. Guardian
+ * reviews it, then the host applies an accepted update (`applyTaskUpdate`). `recommend` is the
+ * minter's own judgment: `update` keeps the same task and workflow; `new_mint` ends this build
+ * blocked and hands the caller `suggestedRequest` for a new one.
+ */
+export const TaskUpdateRequest = Schema.Struct({
+  summary: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),
+  changes: Schema.Array(TaskChange).pipe(Schema.minItems(1), Schema.maxItems(8)),
+  confirmedBy: Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))).pipe(
+    Schema.maxItems(8),
+  ),
+  recommend: Schema.Literal("update", "new_mint"),
+  suggestedRequest: Schema.optional(
+    Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),
+  ),
+});
+export type TaskUpdateRequest = typeof TaskUpdateRequest.Type;
+
+/**
+ * Every `status` a `mint_update` result carries:
+ * - `updated`: Guardian allowed it and the host applied it; the result carries the effective task.
+ * - `clarification_required`: Guardian found the caller's confirmation missing or ambiguous, or the
+ *   host needs something only the caller has, such as a login for the new site. Nothing changed.
+ * - `reword`: Guardian's feedback; nothing changed and the build continues.
+ * - `new_mint_recommended`: the change belongs in a new build. This build ends blocked with the
+ *   recommendation and a suggested request.
+ * - `review_unavailable`: the review did not complete; resubmit within the review outage budget.
+ * - `update_refused`: the harness or host cannot apply this change to this build, such as a site
+ *   change once the build cannot run another live example. Nothing changed.
+ * - `update_invalid`: the request does not decode. Nothing changed.
+ */
+export const taskUpdateStatuses = [
+  "updated",
+  "clarification_required",
+  "reword",
+  "new_mint_recommended",
+  "review_unavailable",
+  "update_refused",
+  "update_invalid",
+] as const;
+export type TaskUpdateStatus = (typeof taskUpdateStatuses)[number];
+
+/**
+ * One update the host accepted, with the Guardian review that allowed it and the digest of the
+ * request that made it, by which the harness knows the same request again, as after a takeover.
+ */
+export interface AcceptedTaskUpdate extends ReviewedTaskUpdate {
+  readonly reviewId?: string;
+  readonly requestDigest: string;
+}
+
+/**
+ * The effective task: the original request with every accepted update applied in order. The
+ * intent itself never changes; `updates` carries what changed. `revision` is 0 for the original
+ * request and counts accepted updates.
+ */
+export interface TaskState {
+  readonly revision: number;
+  readonly effect: "read" | "write";
+  readonly siteOrigin?: string;
+  readonly businessInput: unknown;
+  readonly updates: readonly AcceptedTaskUpdate[];
+}
+
+/** A proposed update as the host's Guardian reviews it, against the current effective task. */
+export interface TaskUpdateCandidate {
+  readonly update: PendingTaskUpdate;
+  readonly current: TaskState;
+}
+
+/** What the host gets to apply: the update Guardian accepted and the task it makes. */
+export interface TaskUpdateApplication {
+  readonly current: TaskState;
+  /** The effective task after the update, as the harness computed it from `update.changes`. */
+  readonly next: TaskState;
+  readonly update: AcceptedTaskUpdate;
+  /**
+   * The harness checkpoint with the update applied (`taskState` is `next`). The host stores it
+   * as the attempt's harness snapshot in the same step as its own bindings, so a takeover restores
+   * the whole update or none of it; the harness takes the update on only once the host answers
+   * `applied`.
+   */
+  readonly harness: MintHarnessSnapshot;
+}
+
+/**
+ * How the host answered an accepted update. `notice` is host-authored text the minter reads.
+ * - `applied`: the host bound `next` exactly as given and stored `harness` with it.
+ * - `clarification_required`: the update needs something only the caller can give before it can
+ *   apply, such as a login for the new site the caller has not saved (`login_required`).
+ * - `refused`: the host cannot apply it to this build: intake screening refuses the effective task
+ *   (`intake_refused`), an existing tool already does it (`duplicate_tool`), the new site cannot
+ *   be bound (`site_unavailable`), or the host does not support the change (`change_unsupported`).
+ * Nothing changes on either refusal.
+ */
+export type TaskUpdateHostResult =
+  | { readonly outcome: "applied"; readonly notice?: string }
+  | {
+      readonly outcome: "clarification_required";
+      readonly reason: "login_required" | (string & {});
+      readonly notice: string;
+    }
+  | {
+      readonly outcome: "refused";
+      readonly reason:
+        | "intake_refused"
+        | "duplicate_tool"
+        | "site_unavailable"
+        | "change_unsupported"
+        | (string & {});
+      readonly notice: string;
+    };
 
 /**
  * Infrastructure outcomes that end a build incomplete through no choice of the agent. Maintenance
@@ -838,17 +966,6 @@ export const AgentRequest = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
-  /**
-   * Asks the owner to turn this read build into a write build: one choice question with the
-   * options `read` and `write`, reviewed by Guardian first. A `write` answer switches the job to
-   * write authority and write build rules in place.
-   */
-  writeUpgrade: Schema.optional(
-    Schema.Literal(true).annotations({
-      description:
-        "Only on a read build whose requested task needs a website change a read may not make (filling in or advancing a form that saves data on the site, saving, submitting): ask the owner to make this a write build, as one choice question with the option ids read and write whose prompt says what would change. Guardian reviews it first; a write answer switches the build in place.",
-    }),
-  ),
 });
 
 /** What the agent asks: the request without the host's id and source. */
@@ -864,10 +981,7 @@ export const withOwnWords = <Q extends { readonly type: string }>(question: Q): 
     ? { ...question, allowOther: true, allowNote: true }
     : question;
 
-/**
- * One choice question whose only options are `read` and `write`, with no notice: the shape of
- * the effect question and of a write upgrade.
- */
+/** One choice question whose only options are `read` and `write`, with no notice: the shape of the effect question. */
 export const isReadOrWriteChoice = (submitted: AgentInputRequest): boolean => {
   const [only] = submitted.questions;
   return (
@@ -893,6 +1007,11 @@ export interface MintActions {
   readonly requestInput: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Ends the build blocked (`BuildBlocked`); absent on a question-only turn. */
   readonly reportBlocked?: (input: unknown) => Effect.Effect<string, MintFailure>;
+  /**
+   * Changes the task's settings (`TaskUpdateRequest`), with a `TaskUpdateStatus` result; absent on
+   * a question-only turn and where the host has no task update hooks.
+   */
+  readonly updateTask?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Read-only CAPTCHA state for the host's current browser; absent when unsupported. */
   readonly captchaState?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** The agent's troubleshooting request for a new browser; absent where the host has none. */
@@ -1038,6 +1157,8 @@ export interface MintHarnessSnapshot {
   readonly purposes: readonly {
     readonly executionId: string;
     readonly purpose: ExecutionRequest["purpose"] | "command";
+    /** The task revision it ran under, once an update had applied; absent for the original. */
+    readonly taskRevision?: number;
   }[];
   readonly diagnostics: readonly string[];
   readonly exampleId?: string;
@@ -1064,9 +1185,16 @@ export interface MintHarnessSnapshot {
     readonly execution: number;
     readonly publication: number;
     readonly question: number;
+    /** Optional, so a rollout's old and new workers each restore the other's checkpoint. */
+    readonly update?: number;
   };
   /** When the current run of review outages began, in epoch milliseconds. */
   readonly reviewOutageStartedAt?: number;
+  /**
+   * The current review outage is a blocked explanation's, which `report_blocked` resubmits.
+   * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
+   */
+  readonly blockedReviewUnavailable?: true;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1074,15 +1202,28 @@ export interface MintHarnessSnapshot {
   readonly providerUnavailableRetries: number;
   /** When the current run of execution-provider outages began, in epoch milliseconds. */
   readonly providerOutageStartedAt?: number;
-  readonly diagnosticRetentionRetries: number;
+  /**
+   * Deprecated: nothing reads it. The harness always writes 0 only so an older worker, whose
+   * schema requires it, can restore a newer checkpoint across a release. Remove it once no older
+   * release runs.
+   */
+  readonly diagnosticRetentionRetries?: number;
   readonly executionClosed: boolean;
   readonly captchaChecks: number;
   /**
-   * The owner kept this read build read-only when asked to make it a write. Optional beside the
-   * fields every worker version reads, so a rollout's old and new workers each restore the
-   * other's checkpoint; an older checkpoint has none.
+   * The effective task once an update applied; absent while the original request stands. Optional
+   * beside the fields every worker version reads, so a rollout's old and new workers each restore
+   * the other's checkpoint; an older checkpoint has none.
    */
-  readonly writeUpgradeDeclined?: true;
+  readonly taskState?: TaskState;
+  /**
+   * The caller's answers to this build's questions as Guardian reads them, by question id, latest
+   * last: what `mint_update` may cite as confirmation. Optional for the same reason.
+   */
+  readonly answeredQuestions?: readonly {
+    readonly id: string;
+    readonly answer: AnsweredQuestion;
+  }[];
   /**
    * Sign-in is unavailable in this build and its outcome waits while a retained receipt may still
    * publish: the answer a later authenticate gets again, and that outcome. Optional, so a
@@ -1101,6 +1242,24 @@ export interface MintHarnessSnapshot {
    */
   readonly inputFeedbackReview?: InputFeedbackReview;
 }
+
+/** The effective task as a harness checkpoint keeps it. */
+const TaskStateSchema: Schema.Schema<TaskState> = Schema.Struct({
+  revision: Schema.NonNegativeInt,
+  effect: Schema.Literal("read", "write"),
+  siteOrigin: Schema.optionalWith(Schema.String, { exact: true }),
+  businessInput: Schema.Unknown,
+  updates: Schema.Array(
+    Schema.Struct({
+      revision: Schema.Int.pipe(Schema.positive()),
+      summary: Schema.String,
+      changes: Schema.Array(TaskChange),
+      confirmation: Schema.Array(AnsweredQuestion),
+      reviewId: Schema.optionalWith(Schema.String, { exact: true }),
+      requestDigest: Schema.String,
+    }),
+  ),
+});
 
 /** How a build ended, as a harness checkpoint keeps it. */
 const HarnessTerminal = Schema.Struct({
@@ -1149,6 +1308,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     Schema.Struct({
       executionId: Schema.String,
       purpose: Schema.Union(ExecutionRequest.fields.purpose, Schema.Literal("command")),
+      taskRevision: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), { exact: true }),
     }),
   ),
   diagnostics: Schema.Array(Schema.String),
@@ -1165,18 +1325,25 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     execution: Schema.NonNegativeInt,
     publication: Schema.NonNegativeInt,
     question: Schema.NonNegativeInt,
+    update: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,
   inputFeedbackCoverage: Schema.String,
   providerUnavailableRetries: Schema.NonNegativeInt,
   providerOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
-  diagnosticRetentionRetries: Schema.NonNegativeInt,
+  // Deprecated, written as 0 for older workers and ignored on read; see the interface.
+  diagnosticRetentionRetries: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   executionClosed: Schema.Boolean,
   captchaChecks: Schema.NonNegativeInt,
-  writeUpgradeDeclined: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  taskState: Schema.optionalWith(TaskStateSchema, { exact: true }),
+  answeredQuestions: Schema.optionalWith(
+    Schema.Array(Schema.Struct({ id: Schema.String, answer: AnsweredQuestion })),
+    { exact: true },
+  ),
   signInUnavailable: Schema.optionalWith(
     Schema.Struct({ answer: Schema.String, outcome: HarnessTerminal }),
     { exact: true },
@@ -1190,6 +1357,68 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     { exact: true },
   ),
 });
+
+/**
+ * How the minter can go on after a publication decision:
+ * - `none`: it published.
+ * - `retry`: a publication dependency stayed unavailable; call `finish_build` again.
+ * - `correct_source`: fix the source, contract or metadata, then call again without running the
+ *   write or example again.
+ * - `new_observation`: run a read or a live test first, never a completed write again.
+ * - `guardian_feedback`: act on Guardian's rationale and findings.
+ * - `write_completion`: the requested write was not demonstrated; continue the remaining
+ *   authorized work or ask about revising incompatible inputs.
+ * - `ended`: the decision ended the build.
+ */
+export type PublicationRecovery =
+  | "none"
+  | "retry"
+  | "correct_source"
+  | "new_observation"
+  | "guardian_feedback"
+  | "write_completion"
+  | "ended";
+
+/**
+ * One publication decision, a refusal or a publication, as typed host evidence. The harness
+ * writes it, never the agent, so a review reads what the host decided instead of the agent's
+ * account of it. Every field is finite host metadata: no source, output or rationale text.
+ */
+export interface PublicationDecision {
+  /** The harness's reference for this decision, unique in the build; tool results carry it. */
+  readonly decisionId: string;
+  readonly outcome: "published" | "refused";
+  /** `Published`, or the refusal's `MintFailure` code. */
+  readonly code: MintFailure["code"] | "Published";
+  /**
+   * The refusal's finite reason: a `MintFailure` reason such as `write_not_submitted`, Guardian's
+   * publication reason, or one of the harness's own, such as `missing_receipt`.
+   */
+  readonly reason?: string;
+  /** The retained execution the publication named, when the build holds it. */
+  readonly executionId?: string;
+  /** The Guardian publication review that decided it, when one did. */
+  readonly reviewId?: string;
+  /** When the harness decided, in epoch milliseconds. */
+  readonly decidedAt: number;
+  /**
+   * The finite checks that refused it: the reason, a registry issue, the publication gate's check,
+   * a route evidence gap and Guardian's finding categories. Empty for a publication.
+   */
+  readonly failedChecks: readonly string[];
+  readonly recovery: PublicationRecovery;
+}
+
+/**
+ * Where a host keeps publication decisions as indexed evidence. The harness records each decision
+ * as it makes it, and lists them for the reviews of a blocked explanation and of a question.
+ */
+export interface PublicationDecisionLog {
+  /** Keeps one decision, indexed by `decisionId`. A failure is a recorded gap; the build goes on. */
+  readonly record: (decision: PublicationDecision) => Effect.Effect<void, MintFailure>;
+  /** This build's decisions so far, oldest first, a takeover's predecessor's included. */
+  readonly list: Effect.Effect<readonly PublicationDecision[], MintFailure>;
+}
 
 export interface MintDependencies {
   readonly agentRecovery?: {
@@ -1270,10 +1499,14 @@ export interface MintDependencies {
   readonly reviewQuestion?: (
     request: AgentInputRequest,
     options?: {
-      readonly writeUpgrade?: true;
       /** The agent's `report_blocked` explanation, reviewed before its caller reads it. */
       readonly blockedOutcome?: true;
       readonly requestId?: string;
+      /**
+       * The build's latest publication refusals, from `publicationDecisions`, so the review reads
+       * what the host refused instead of the agent's account of it. Absent when there are none.
+       */
+      readonly publicationDecisions?: readonly PublicationDecision[];
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
@@ -1305,11 +1538,43 @@ export interface MintDependencies {
   /** Records the owner's answer to the effect question on the build, once. */
   readonly recordBuildEffect?: (effect: "read" | "write") => Effect.Effect<void, MintFailure>;
   /**
-   * Switches this read build to a write build after its owner approved `change`, the reviewed
-   * question prompt, and records the build's effect as `write` on the job. From then on every
-   * execution is reviewed under write authority and the write build rules.
+   * Guardian's review of a `mint_update` against the current effective task. The host runs it as
+   * its own Guardian review of kind `update` (`makeGuardian(...).reviewTaskUpdate`), with the same
+   * trusted authority every other review of the build reads. A review that does not complete
+   * fails with `ReviewUnavailable`, which the harness answers within the review outage budget.
+   * Absent, together with `applyTaskUpdate`, the minter is not offered `mint_update`.
    */
-  readonly upgradeToWrite?: (change: string) => Effect.Effect<void, MintFailure>;
+  readonly reviewTaskUpdate?: (
+    candidate: TaskUpdateCandidate,
+  ) => Effect.Effect<TaskUpdateDecision & { readonly reviewId?: string }, MintFailure>;
+  /**
+   * Applies an update Guardian allowed (`TaskUpdateHostResult`). Before it answers `applied`, the
+   * host must, in one step that applies all or nothing:
+   * - store `harness`, the checkpoint with the update applied, as the attempt's harness snapshot,
+   *   with its own bindings, so a takeover restores the whole update or none of it; a takeover
+   *   that restores it answers the same `mint_update` again as `updated` without another review;
+   * - for a `site` change, rebind everything that depends on the site to the new origin: the
+   *   authorized origins every review reads, the browser's entry and sign-in origin, the
+   *   publication site, and any private input, scheduling, quota or run-environment key bound to
+   *   it;
+   * - rerun intake screening and the duplicate check on the effective task, when it has them, and
+   *   answer `refused` when either refuses;
+   * - resolve the login the effective task needs (a new site, a read becoming a write that needs
+   *   a sign-in, or a `login` change), answering `clarification_required` when the caller must
+   *   supply or choose one first, such as when the account's one-login-per-site rule leaves no
+   *   usable login for the new site;
+   * - for an `effect` change, record the build's effect as `write`, so every later execution is
+   *   reviewed under write authority and the write build rules. The write session takes its own
+   *   example claim: the harness calls `claimExample` again when its first act step starts, so
+   *   the host must accept that claim even when a live read example already claimed one.
+   * From then on every Guardian review of the build reads the effective task: the original intent
+   * with `PendingExecution.taskUpdates` and the rebound `allowedOrigins`. The host never erases
+   * recorded executions, claims, unresolved writes or Guardian decisions, and each recorded
+   * execution keeps the task revision it ran under. It may refuse any update it cannot apply.
+   */
+  readonly applyTaskUpdate?: (
+    application: TaskUpdateApplication,
+  ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;
@@ -1399,7 +1664,13 @@ export interface MintDependencies {
     beforeDispatch?: (allowed: AllowedExecution) => Effect.Effect<void, MintFailure>,
     exampleJournal?: ExampleJournal,
   ) => Effect.Effect<ExecutionEvidence, MintFailure>;
-  /** Persist before example/residual dispatch. Host binds input/account/authority, never tool args. */
+  /**
+   * Persist before example/residual dispatch. Host binds input/account/authority, never tool args.
+   * A build normally claims once. After a confirmed `effect` update turns a read into a write, the
+   * write session's first act step claims again even when a live read example already claimed:
+   * accept that second claim. A host that meters builds counts one when it publishes, not per
+   * claim.
+   */
   readonly claimExample: Effect.Effect<void, MintFailure>;
   readonly authorizeResidual: Effect.Effect<void, MintFailure>;
   /** Review current source and validate/screen public definition before atomic registry publication. */
@@ -1414,6 +1685,8 @@ export interface MintDependencies {
    * each stays unresolved, is never repeated and is reported `may_have_applied`.
    */
   readonly outcomeReview?: OutcomeReviewHost;
+  /** Host evidence of each publication decision; absent, reviews get none. */
+  readonly publicationDecisions?: PublicationDecisionLog;
 }
 
 /**

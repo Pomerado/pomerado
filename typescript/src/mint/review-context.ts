@@ -249,13 +249,3 @@ export const reviewDenied = (
       ...(decision.findings === undefined ? {} : { findings: decision.findings }),
     },
   });
-
-/**
- * The intent Guardian reviews under: the owner's own, and once the owner approved a write
- * upgrade, the reviewed question they approved. Owner-named origins still come from the
- * requested intent alone, so a link in that question never becomes the owner's.
- */
-export const intentWithApproval = (requestedIntent: string, approved: string | undefined) =>
-  approved === undefined
-    ? requestedIntent
-    : `${requestedIntent}\nThe owner approved turning this read build into a write build, answering this reviewed question: ${approved}`;

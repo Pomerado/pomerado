@@ -28,16 +28,16 @@ saves data on the site, save or submit anything; a task that needs that is a wri
 ## When a read build finds it needs to write
 
 When a read build's task turns out to need that (a form that saves each step, a search
-that is really a booking), ask the owner once with `request_input` and `writeUpgrade: true`:
-one `choice` question with the option ids `read` and `write`, whose prompt says in one or
-two plain sentences what the build would change and why the task needs it. Ask as soon as
-exploration shows it, and before any live `example`: a job that ran a live read example
-cannot become a write. The host writes the two answers' labels. Guardian reviews it first.
-A `write` answer makes this a write build in place: every later step is reviewed under
-write authority and the rules below, what you explored stays valid evidence, and the first
-`act` step starts on the site origin page. A `read` answer keeps it read-only: finish what a read
-can do, or end and say the task needs a write build. An answer in the owner's own words approves
-no write either: follow what they said, and ask again if they asked for the change.
+that is really a booking), ask the caller with `request_input` whether the build may make
+that change, saying in one or two plain sentences what it would change on the site and why
+the task needs it. Ask as soon as exploration shows it; a live read example that already ran
+is fine, though it never stands in for the write. Once they confirm, by picking your option
+or in their own words, call `mint_update` with the change `{"setting": "effect", "effect":
+"write"}` and the answered question in `confirmedBy`. Guardian reviews it. An `updated` result
+makes this a write build in place: every later step is reviewed under write authority and the
+rules below, what you explored stays valid evidence, and the first `act` step starts on the
+site origin page. If they keep it read-only, finish what a read can do, or recommend a new
+write build with `mint_update` and `recommend: "new_mint"`.
 
 ## Before the session
 
@@ -135,12 +135,14 @@ or the `exampleInput` the first act step to pass one fixed) decodes against it a
 the named step recorded the declared confirmation, then publishes. A
 `not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
 `contract_input_mismatch` means correct the source and call `finish_build` again;
-never run the write again.<!-- pomerado:section writes.finish --> `write_not_submitted` means no
-`act` step that Guardian labelled a write ran on the site, or the outcome review found
-that every one of them did not happen. Read back first. If
-the write happened, publish with `readback`. If the read-back shows it did not, do the
-write once, marking its commit step, and read its confirmation. If no read-back can tell,
-never submit again: publish it as `unverifiable`. Filling a form or an offline example
+never run the write again.<!-- pomerado:section writes.finish --> `write_not_submitted` means the
+session has not demonstrated the requested write: no step recorded a confirmation, and no
+`act` step Guardian labelled a write reached the site unless the outcome review found it
+did not happen. Continue the remaining authorized work. If a step may already have
+committed, read back first, in a new file. If the write happened, publish with
+`readback`. The host runs a step that may have committed only once, unless the outcome
+review finds it did not happen. If no read-back can tell, never submit again: publish it
+as `unverifiable`. Filling a form or an offline example
 is not the write. An unreadable step output never justifies a run either: the write
 publishes with its output recorded as unavailable.
 
