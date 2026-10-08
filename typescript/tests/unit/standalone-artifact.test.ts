@@ -73,6 +73,40 @@ it("writes a sign-in as auth-fill.json beside pomerado.json and reads it back", 
     });
   }));
 
+it("keeps the questions publication reviewed in pomerado.json and reads them back", () =>
+  scratch(async (directory) => {
+    const questions = { delivery: { type: "choice" as const, prompt: "Which delivery speed?" } };
+    const artifact = { ...source, questions };
+    expect(await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory))))).toEqual(
+      artifact,
+    );
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toEqual({
+      entrypoint: "src/main.mjs",
+      files: ["src/main.mjs"],
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      questions,
+    });
+    // An invalid question id is refused before anything is written.
+    await scratch(async (other) => {
+      await expect(
+        run(writeArtifact(other, { ...source, questions: { Delivery: questions.delivery } })),
+      ).rejects.toThrow();
+      expect(await readdir(other)).toEqual([]);
+    });
+  }));
+
+it("keeps an empty question set in pomerado.json, apart from an artifact saved without one", () =>
+  scratch(async (directory) => {
+    const artifact = { ...source, questions: {} };
+    const restored = await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory))));
+    expect(restored).toEqual(artifact);
+    expect("questions" in restored).toBe(true);
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toMatchObject({
+      questions: {},
+    });
+  }));
+
 it("reads an artifact written without a sign-in as it always was", () =>
   scratch(async (directory) => {
     // pomerado.json as 0.2.0 wrote it: no signIn, and no recipe beside it.
@@ -85,6 +119,7 @@ it("reads an artifact written without a sign-in as it always was", () =>
     const restored = await run(readArtifact(directory));
     expect(restored).toEqual(source);
     expect("signIn" in restored).toBe(false);
+    expect("questions" in restored).toBe(false);
   }));
 
 it("keeps the confirms a write's build accepted in pomerado.json and reads them back", () =>
