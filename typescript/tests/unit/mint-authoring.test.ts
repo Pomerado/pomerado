@@ -276,7 +276,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
     "workspace/AGENTS.md",
-    "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input`: name the value, say what the site offers instead, and let them pick another value or change the request. End blocked only when their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+    "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
   // A format read from one sample breaks on the next value, so the minter reads it off the page.
   [
@@ -489,7 +489,7 @@ it("has the minter read back a write, accept recent-search saves and look before
     "Telemetry, analytics and bot-sensor POSTs are normal and need no change. So is an anonymous recent-search, prefill or search-state save the site fires when you submit a search.",
   );
   expect(guide.instructions.replace(/\s+/g, " ")).toContain(
-    "Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of our automation. Not finding a value where you first looked is not that evidence. Before you call a value unavailable, look everywhere the site keeps it, such as later calendar months, other tabs or more results.",
+    "Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of our automation. Not finding a value where you first looked is not that evidence. Before you call a value unavailable, check where the site would show it for the requested scope, such as the requested date's calendar or the results for the requested search. Settled evidence for the requested option, such as the site showing it as sold out or not offered, is enough.",
   );
 });
 
@@ -529,9 +529,9 @@ it("renders the pinned standalone authoring", async () => {
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["10b42b68c447e9134b3b038537b4ce7abdee0a93d62fb44da737bcf70a077f5a", "forms"],
     ["a1bdd90588c8f2689d9fd0544fa6107c27ad4aa5107df9b90a84e120d834028a", "writes"],
-    ["97c6c8bcd789e017bf344b99191ed5028a24d247a1969af37e6be194c85f349d", "caller-input"],
+    ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
     ["50644bd49a50ca3b856d5c55e6a6ca749bd8edae5515136a9139280b26c3254c", "publication"],
-    ["7b2e3943fa5c62f8a48a94c2e98fba5309d227f666b03d5ee33c6b34c5fe184b", "workspace/AGENTS.md"],
+    ["091810e51d488c58eeeb0032a4e8bd84f6e6439a91727f23e738e89d385be944", "workspace/AGENTS.md"],
     ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
   ]);
 });
