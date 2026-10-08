@@ -1,7 +1,9 @@
 import { Effect, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import {
+  cutToLimit,
   inputFindingCategories,
+  publicationExplanationLimit,
   PublicationFinding,
   PublicationReason,
 } from "./review-contracts.js";
@@ -23,12 +25,39 @@ type IndexedFile = PublicationScope["files"][number];
 const isInputFinding = (finding: PublicationFinding) =>
   inputFindingCategories.some((category) => category === finding.category);
 
-/** Findings the decision cannot carry: outside the index, or an empty or overlong range. */
+/** Findings the decision cannot carry: in a file outside the index, or in an empty one. */
 const misplaced = (decision: Decision, files: ReadonlyMap<string, IndexedFile>) =>
-  decision.findings.some((finding) => {
-    const length = files.get(finding.path)?.byteLength;
-    return length === undefined || finding.byteStart >= finding.byteEnd || finding.byteEnd > length;
-  });
+  decision.findings.some((finding) => !files.get(finding.path)?.byteLength);
+
+/**
+ * A finding's range fitted to its file: cut at the file's end, or the whole file when nothing of
+ * the range is left. A denial is a verdict, so a range the model miscounted never discards it.
+ */
+const fitted = (finding: PublicationFinding, length: number): PublicationFinding => {
+  const byteEnd = Math.min(finding.byteEnd, length);
+  return finding.byteStart < byteEnd
+    ? { ...finding, byteEnd }
+    : { ...finding, byteStart: 0, byteEnd: length };
+};
+
+/** Each finding's explanation cut to its limit, rather than failing the whole decision. */
+const boundedExplanations = (raw: unknown): unknown => {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const findings: unknown = Reflect.get(raw, "findings");
+  if (!Array.isArray(findings)) return raw;
+  return {
+    ...raw,
+    findings: findings.map((finding: unknown) => {
+      const explanation: unknown =
+        typeof finding === "object" && finding !== null
+          ? Reflect.get(finding, "explanation")
+          : undefined;
+      return typeof explanation === "string"
+        ? { ...(finding as object), explanation: cutToLimit(explanation, publicationExplanationLimit) }
+        : finding;
+    }),
+  };
+};
 
 /** A reason its outcome or findings contradict. */
 const inconsistent = (decision: Decision, files: ReadonlyMap<string, IndexedFile>) => {
@@ -70,7 +99,9 @@ const withNullDefaults = (raw: unknown): unknown => {
 export const decodePublicationDecision = (scope: PublicationScope, raw: unknown) =>
   Effect.gen(function* () {
     const files = new Map(scope.files.map((file) => [file.path, file]));
-    const decision = yield* Schema.decodeUnknown(PublicationDecision)(withNullDefaults(raw)).pipe(
+    const decoded = yield* Schema.decodeUnknown(PublicationDecision)(
+      boundedExplanations(withNullDefaults(raw)),
+    ).pipe(
       Effect.mapError(
         (error) =>
           new ReviewFailure({
@@ -79,8 +110,14 @@ export const decodePublicationDecision = (scope: PublicationScope, raw: unknown)
           }),
       ),
     );
-    if (misplaced(decision, files) || inconsistent(decision, files))
-      return yield* new ReviewFailure({ code: "InvalidDecision" });
+    if (misplaced(decoded, files)) return yield* new ReviewFailure({ code: "InvalidDecision" });
+    const decision = {
+      ...decoded,
+      findings: decoded.findings.map((finding) =>
+        fitted(finding, files.get(finding.path)?.byteLength ?? 0),
+      ),
+    };
+    if (inconsistent(decision, files)) return yield* new ReviewFailure({ code: "InvalidDecision" });
     return {
       outcome: decision.outcome,
       reason: decision.reason,
@@ -88,6 +125,23 @@ export const decodePublicationDecision = (scope: PublicationScope, raw: unknown)
       findings: decision.findings,
     };
   });
+
+/**
+ * The five output and input rules a publication review blocks on, shared by every host's
+ * publication policy: constant outputs, unapplied or narrowed inputs, inputs claimed applied
+ * without a readback, a throw where empty or null was right (and the reverse), and a write that
+ * does not reconcile the state it changes.
+ */
+export const publicationOutputPolicy =
+  "A needed value is one the request names, the record's identifier, or context those depend on, such as dates. In any implementation the bundle publishes, each of these is a schema_mismatch finding with reason source_correction. Constant output: an output that is a constant (null, an empty list, false, a fixed label) or the input echoed, where the example output or captures show the site's value; null or an empty list is right where the evidence shows none. Unapplied input: an input the code never applies, skips or always reports unsupported though the captures show its control, or a search filter the site offers for the tool's purpose that the tool neither takes nor names in its description as left out. Applied without readback: an input treated as applied without reading the site's committed state, such as its chip or selected control; echoed input or a built URL is not that state. Wrong failure: a throw on the site's no-results message or a missing optional value; a placeholder, label or another record's value instead of a needed value; or a schema making one optional or nullable. Built URL: Playwright source opening a page URL that holds a caller input value, other than one the page produced or a fixed entry URL. Unreconciled write, a confirmation finding instead: a write to existing state, such as a cart, that does not read it before and after the commit to check only the requested change happened.";
+
+/** The rules only a cart or checkout tool adds; the shared rules above cover its reconciliation. */
+export const publicationCartPolicy =
+  "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in; without a verified sign-in in trusted_execution_context, that is an unsupported_claim finding with reason evidence at the description. In a cart tool these are schema_mismatch findings with reason source_correction: not saying whether quantity adds or sets, or code doing the other; saving a value to the account unasked; adding items or raising a quantity to meet a site minimum instead of throwing InvalidInput with the site's reason.";
+
+/** What each finding's explanation tells the minter, so one revision fixes them all. */
+export const publicationFindingFeedback =
+  "Each finding's explanation, in at most three sentences the minter can act on alone, says what is wrong, the evidence (the file and what it shows) and the fix, never a credential value.";
 
 /**
  * Guardian's policy for a publication review: what ships, who wrote each file, and the privacy,
@@ -132,9 +186,12 @@ export const guardianPublicationPolicy = [
   [
     "Review the public input schema in publication/definition.json and the source that builds it. An enum member, example or default that is an account-specific value (a passenger or traveler, loyalty or member number, saved card, saved address, account or member ID, a contact) is an account_specific_enum finding at that schema text: a public tool takes such a value as free-form input. Public catalog values such as fare classes, sizes, currencies or a site's own product list are not account-specific. For a write build only, every option its session's steps met on the path, including add-ons and pre-selected defaults, must be an input of the tool (required when the site requires a choice, optional otherwise). An input_option finding, at that source or schema text, is only an add-on, a pre-selected paid option or a saved payment the composed script sets, keeps or clears on its own; an optional input left unset keeps the page's default and is no finding. On every tool, read or write, each value the code types, selects or fills on the site must be general: the schema accepts what the site's field accepts, an enum lists the site's full set of options, and the code works for every value the schema accepts. An input narrowed to the caller's example value is an example_value finding at that source or schema text. That covers an enum of only that value, a string the code rejects unless it is that value, and a label or option copied from the example instead of chosen from the input. Return one for every such input. On a read, a sort or page size the code fixes on its own is not a finding. A filter the code sets is an input like any other value it fills. An account-specific value is account_specific_enum, never example_value. A general input the example did not exercise is not an unsupported claim. An optional input the request did not mention, wired to a control the site offers that bears on the tool's purpose (a cabin class on a flight search, a filter on a list), is part of a good tool: never scope drift, a schema_mismatch or an unsupported claim. Never return input_option for a read.",
   ],
+  [publicationOutputPolicy],
+  [publicationCartPolicy],
   [
-    "Return outcome, a concise rationale explaining the actual evidence and any correction needed, a reason enum and findings with exact manifest path, UTF-8 byteStart/byteEnd and category. Never include credential values in the rationale. Use reason privacy for privacy corrections, source_correction for code/schema/guard corrections (a composed write that does not perform or return its declared confirmation or read-back is a confirmation finding), unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the verified output does not support a declared claim and a narrower claim would still satisfy the original request (otherwise source_correction), input_feedback with outcome deny when every finding is account_specific_enum, input_option or example_value (the minter fixes them; they never block publication on their own), host_owned with outcome deny when every finding is in an owner: host file other than publication/definition.json that no source or metadata edit can fix, authority for missing authority, evidence for insufficient evidence, approved only with allow and no findings. With any other finding, use that finding's reason and keep the input findings beside it. Return every finding the evidence supports in this one review, not one per round. With reason evidence, name each missing item in the rationale.",
+    "Return outcome, a concise rationale explaining the actual evidence and any correction needed, a reason enum and findings with exact manifest path, UTF-8 byteStart/byteEnd, category and explanation. Never include credential values in the rationale. Use reason privacy for privacy corrections, source_correction for code/schema/guard corrections, example_value findings included (a composed write that does not perform or return its declared confirmation or read-back is a confirmation finding), unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the verified output does not support a declared claim and a narrower claim would still satisfy the original request (otherwise source_correction), input_feedback with outcome deny when every finding is account_specific_enum or input_option (the minter fixes them; they never block publication on their own), host_owned with outcome deny when every finding is in an owner: host file other than publication/definition.json that no source or metadata edit can fix, authority for missing authority, evidence for insufficient evidence, approved only with allow and no findings. With any other finding, use that finding's reason and keep the input findings beside it. Return every finding the evidence supports in this one review, not one per round. With reason evidence, name each missing item in the rationale.",
   ],
+  [publicationFindingFeedback],
 ]
   .map((line) => line.join(" "))
   .join("\n");

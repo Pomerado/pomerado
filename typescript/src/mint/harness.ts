@@ -42,6 +42,7 @@ import {
   withOwnWords,
 } from "./contracts.js";
 import { answersForReview, type AnsweredQuestion } from "../guardian/question.js";
+import type { PublicationFinding } from "../guardian/review-contracts.js";
 import {
   taskUpdateForReview,
   type PendingTaskUpdate,
@@ -86,7 +87,7 @@ import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
-import { publicationBlockFeedback } from "./publication-block.js";
+import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -1101,6 +1102,34 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             ),
           ),
         );
+      /**
+       * A review as the minter reads it: the rationale and each finding's explanation screened
+       * like any Guardian text, and each finding's file as the minter's workspace names it.
+       */
+      const minterFindings = (findings: readonly PublicationFinding[]) =>
+        Effect.forEach(findings, (finding) =>
+          screenRationale(finding.explanation).pipe(
+            Effect.map((explanation) => ({
+              ...finding,
+              file: workspacePath(finding.path),
+              explanation,
+            })),
+          ),
+        );
+      const minterReview = <
+        Review extends {
+          readonly rationale: string;
+          readonly findings?: readonly PublicationFinding[] | undefined;
+        },
+      >(
+        review: Review,
+      ) =>
+        Effect.gen(function* () {
+          const rationale = yield* screenRationale(review.rationale);
+          return review.findings === undefined
+            ? { ...review, rationale }
+            : { ...review, rationale, findings: yield* minterFindings(review.findings) };
+        });
       const screenAssumptions = (proposedAssumptions: PublicationRequest["assumptions"] = []) =>
         Effect.gen(function* () {
           // An assumption that screening would change may carry private data: drop it.
@@ -3300,6 +3329,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "The host could not read the retained output of a verified example, so publication review had nothing to judge. The existing execution outcomes remain recorded."
                       : "Publication infrastructure is unavailable. The existing execution outcomes and protected results remain retained independently of future code publication.",
                   };
+                // The review as the minter reads it, screened once for every reply below.
+                const review =
+                  error.review === undefined ? undefined : yield* minterReview(error.review);
                 // Screening serializes through JSON, which leaves out undefined fields.
                 const diagnostic = yield* screenMintText(dependencies, {
                   phase: "publication",
@@ -3308,14 +3340,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   screening: error.screening,
                   publicationBlock: error.publicationBlock,
                   destinationEvidenceGap: error.destinationEvidenceGap,
-                  ...(error.review === undefined
-                    ? {}
-                    : {
-                        review: {
-                          ...error.review,
-                          rationale: yield* screenRationale(error.review.rationale),
-                        },
-                      }),
+                  ...(review === undefined ? {} : { review }),
                   reviewPhase: error.reviewPhase,
                   reviewFailure: error.reviewFailure,
                   diagnosticRetentionReason: error.diagnosticRetentionReason,
@@ -3398,7 +3423,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       error.code,
                       "input_feedback",
                       {
-                        findings,
+                        findings: yield* minterFindings(findings),
                         rationale,
                         reviewId: error.review.reviewId,
                         feedbackRoundsRemaining: maximumInputFeedbackRounds - inputFeedbackRounds,
@@ -3426,7 +3451,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     "host_owned",
                     {
-                      findings: error.review.findings ?? [],
+                      findings: yield* minterFindings(error.review.findings ?? []),
                       rationale: yield* screenRationale(error.review.rationale),
                       reviewId: error.review.reviewId,
                     },
@@ -3673,21 +3698,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.reason,
                   {
                     expectedEntrypoint: error.expectedEntrypoint,
-                    ...(error.review === undefined
-                      ? {}
-                      : {
-                          review: {
-                            ...error.review,
-                            rationale: yield* screenRationale(error.review.rationale),
-                          },
-                        }),
+                    ...(review === undefined ? {} : { review }),
                     diagnostic:
                       diagnostic._tag === "Right"
                         ? diagnostic.right
                         : "Publication diagnostic unavailable.",
                     repeatableRead,
                   },
-                  "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable. A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
+                  (error.code === "ReviewDenied" && error.review !== undefined
+                    ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId. The existing example and result remain recorded."
+                    : "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable.") +
+                    " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
                 );
               }
               return yield* publicationResult(publication.right, coverage, assumptions);
