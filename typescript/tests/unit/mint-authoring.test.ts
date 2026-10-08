@@ -466,8 +466,7 @@ it("leaves no heading, list or skill header of the local host's authoring empty"
 /*
  * The stale-session rule is one text for both hosts: the host signs in again by itself when a reset
  * or a page load leaves the site signed out, and a step it cannot keep signed in fails with
- * `session_not_kept`. The local minter's preamble lists mid-run re-sign-in as a hosted feature until
- * the local host does it.
+ * `session_not_kept`. The local host does both.
  */
 it("gives both hosts the same stale-session rule", async () => {
   const sentence =

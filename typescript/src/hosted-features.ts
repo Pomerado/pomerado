@@ -18,7 +18,6 @@ export const hostedFeatures: readonly HostedFeature[] = [
   { id: "http-recording", name: "HTTP recording, captures, HTTP versions and savedHTTP" },
   { id: "maintenance", name: "Maintenance and repair" },
   { id: "saved-browser-profiles", name: "Saved browser profiles" },
-  { id: "mid-run-sign-in", name: "Mid-run re-sign-in" },
   // Covers the shared text about `stateChangingRequests`: the core skill's "State-changing
   // requests" section and the write session's rule to read it on every step. The local host reads
   // back an uncertain commit from its own record of the step, without this list.
