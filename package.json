@@ -117,6 +117,11 @@
       "import": "./dist/typescript/src/destinations/autofill-page-code.js",
       "default": "./dist/typescript/src/destinations/autofill-page-code.js"
     },
+    "./core/destinations/autofill-recipe": {
+      "types": "./dist/typescript/src/destinations/autofill-recipe.d.ts",
+      "import": "./dist/typescript/src/destinations/autofill-recipe.js",
+      "default": "./dist/typescript/src/destinations/autofill-recipe.js"
+    },
     "./core/destinations/autofill-refusal": {
       "types": "./dist/typescript/src/destinations/autofill-refusal.d.ts",
       "import": "./dist/typescript/src/destinations/autofill-refusal.js",
@@ -187,6 +192,11 @@
       "import": "./dist/typescript/src/guardian/openai.js",
       "default": "./dist/typescript/src/guardian/openai.js"
     },
+    "./core/guardian/publication": {
+      "types": "./dist/typescript/src/guardian/publication.d.ts",
+      "import": "./dist/typescript/src/guardian/publication.js",
+      "default": "./dist/typescript/src/guardian/publication.js"
+    },
     "./core/guardian/question": {
       "types": "./dist/typescript/src/guardian/question.d.ts",
       "import": "./dist/typescript/src/guardian/question.js",
@@ -256,6 +266,11 @@
       "types": "./dist/typescript/src/mint/invocation.d.ts",
       "import": "./dist/typescript/src/mint/invocation.js",
       "default": "./dist/typescript/src/mint/invocation.js"
+    },
+    "./core/mint/login-url": {
+      "types": "./dist/typescript/src/mint/login-url.d.ts",
+      "import": "./dist/typescript/src/mint/login-url.js",
+      "default": "./dist/typescript/src/mint/login-url.js"
     },
     "./core/mint/openai": {
       "types": "./dist/typescript/src/mint/openai.d.ts",
@@ -466,6 +481,11 @@
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
       "import": "./dist/typescript/src/runtime/kernel-operation.js",
       "default": "./dist/typescript/src/runtime/kernel-operation.js"
+    },
+    "./core/runtime/kernel-operation-run": {
+      "types": "./dist/typescript/src/runtime/kernel-operation-run.d.ts",
+      "import": "./dist/typescript/src/runtime/kernel-operation-run.js",
+      "default": "./dist/typescript/src/runtime/kernel-operation-run.js"
     },
     "./core/runtime/kernel-operation-validation": {
       "types": "./dist/typescript/src/runtime/kernel-operation-validation.d.ts",

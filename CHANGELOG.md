@@ -4,6 +4,9 @@
 
 ### Breaking changes
 
+- A sign-in through a security question is saved in `auth-fill.json` as recipe version 1, or version 2 with a popup or approval, with the question's selector on its field. It was version 3. This version still reads version 3 recipes, so nothing has to be built again.
+  - 0.3.0 and every later version before this one, 0.4.0-canary.45 to 0.4.0-canary.47 included, refuse such a recipe. A run of an integration built this way fails there with `SignInRunFailed` (`MissingRecipe`, `invalid`) before it signs in or runs anything.
+  - Migrate by running such an integration with this version or later, and not rolling back once one is built.
 - A run reports a write that returned without recording its declared confirmation as possibly applied, not as a success. A write declared `unverifiable` reports the same. This holds for `run`, `pomerado run` and a served integration MCP.
   - A served write tool whose script declares no write and never calls `verified()` also fails as possibly applied. `pomerado run` is given no effect, so it still returns that script's output as a read.
   - `run` fails with the new `RunOutcomeFailure`. Its `outcome` has the code `outcome_unknown`, the write status `may_have_applied`, `possibleCommit: true` and the retry class `never`. Its `unconfirmed.output` keeps what the script returned.
@@ -28,6 +31,17 @@
 
 ### Other changes
 
+- New exports let another host share these modules instead of keeping a copy.
+  - `pomerado/core/guardian/publication` holds the publication decision decoder.
+  - `pomerado/core/runtime/kernel-operation-run` holds `executeKernelOperation`, which runs a script under the execution context's deadline, capture, events and journal. A host with its own implementation of an operation passes it as the optional `first` runner. The local host never does.
+  - `pomerado/core/destinations/autofill-recipe` holds the `auth-fill.json` schemas, `recipeStep` and `autofillRecipe`.
+  - `pomerado/core/mint/login-url` holds `oneTimeLoginUrlParameters` and `refuseCredentialParts`.
+  - `canonicalSchema` and `withReferences` join `pomerado/core/registry/schema-references`, and `described` and `siteInput` join `pomerado/core/mcp/schema`.
+- A version 1 or 2 recipe may name `questionSelector` on any secret field, as other hosts write it. A run reads it only on a security answer.
+- Publication asks once about a login URL that is one authorization request, such as an identity provider's authorize URL or one carrying `state`, `nonce` or `SAMLRequest`. The first `finish_build` fails `login_url_one_time` with the URL's one-time parameters. Finishing again with the same URL publishes it.
+- Publication refuses a name, description, `siteName` or `siteSummary` that holds a value the build was given, with `metadata_contains_credential`.
+- A run of a built integration counts as possibly sent from its start, as the shared runner marks it, so one that fails before its first browser call reports `possible` where it reported `not_sent`. A mint step still counts as possibly sent from its first browser call, and a run with no browser still reports `not_sent`. The shared runner also races the execution deadline, but the local host's own deadline starts first and still ends a local run as before.
+- A built integration's MCP server serves an input schema that recurses, with its references under `$defs` at the call schema's root. It used to fail to start with "Invalid operation schema.". The input is titled `<tool> input` and its description adds a summary of its top-level fields.
 - Recoverable failures no longer end a build:
   - When Guardian asks for a reword of a `report_blocked` explanation, the minter gets the rationale and may revise or withdraw it. An unavailable review of the explanation is retried under the review outage budget. Only an allowed explanation, or a review that stays unavailable past that budget, ends the build blocked. `MintHarnessSnapshot` gains optional `blockedReviewUnavailable`, so a takeover during such an outage can still resubmit the explanation.
   - A diagnostic copy the host could not keep, such as an execution's diagnostics or a readable model transcript, is a recorded gap, however many there are. The raw record of each model call stays fail closed: a host's `retainRuntimeRecord` failure still stops the attempt before the next model call, with `hostFailure: "diagnostic_retention"`. A host without `retainRuntimeRecord` has no required trace. `MintHarnessSnapshot.diagnosticRetentionRetries` is deprecated and optional: the harness always writes 0, only so older workers can restore newer checkpoints, and ignores it on read.

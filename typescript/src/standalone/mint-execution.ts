@@ -428,6 +428,7 @@ const authoredExecution = (
             timeoutMs: execution.timeoutSeconds * 1000,
             mode: "run",
             target: live ? "browser" : "pureFiles",
+            dispatchAtFirstCall: true,
             ask: scriptAsk,
             decideDialog: keepingAcceptedConfirms(
               makeDialogDecider(mintAsk, secrets.redact),

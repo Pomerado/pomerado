@@ -205,6 +205,8 @@ export const mintState = (
       acceptedConfirms: [],
       confirmSteps: new Set(),
     };
+    /** Each one-time login URL publication already asked about, so finishing again publishes it. */
+    const oneTimeLoginUrlsAsked = new Set<string>();
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     /**
      * Everything bound to the build's site: the sign-in browser and recorder, the marker checks
@@ -297,6 +299,7 @@ export const mintState = (
       mintAsk,
       runs,
       writeSession,
+      oneTimeLoginUrlsAsked,
       afterSubmit,
       get recorder() {
         return bound.recorder;
