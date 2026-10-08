@@ -789,6 +789,45 @@ it("records each publication decision, refused and published, through the host's
   );
 });
 
+// A contract mismatch is a source fix in a read, and a write the session did not demonstrate as
+// declared in a write build, which never runs the write again.
+it.each([
+  { effect: "read", purpose: "example", recovery: "correct_source" },
+  { effect: "write", purpose: "act", recovery: "write_completion" },
+] as const)(
+  "records a contract mismatch in a $effect build with recovery $recovery",
+  async ({ effect, purpose, recovery }) => {
+    const recorded: PublicationDecision[] = [];
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose });
+          expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+            status: "not_published",
+            reason: "contract_output_mismatch",
+          });
+        }),
+      {
+        publicationDecisions: {
+          record: (decision) =>
+            Effect.sync(() => {
+              recorded.push(decision);
+            }),
+          list: Effect.sync(() => recorded),
+        },
+        publish: () =>
+          Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "contract_output_mismatch" }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect });
+    expect(recorded).toEqual([
+      expect.objectContaining({ reason: "contract_output_mismatch", recovery }),
+    ]);
+  },
+);
+
 // Evidence the host could not keep is a gap: the publication decision still stands.
 it("records a publication decision the host could not keep as a gap and still publishes", async () => {
   const f = await fixture(

@@ -403,8 +403,9 @@ it("refuses report_blocked while an unavailable review may still be resubmitted"
   expect(JSON.stringify(f.requests[2]?.input)).toContain("review_unavailable_pending");
 });
 
-// A report Guardian could not review reaches the caller only as its reason.
-it("records a blocked ending without its explanation when the review is unavailable", async () => {
+// A report Guardian could not review within the review outage budget reaches the caller only as
+// its reason.
+it("records a blocked ending without its explanation when the review stays unavailable", async () => {
   const f = await fixture(
     (_request, index) =>
       index === 0
@@ -414,6 +415,7 @@ it("records a blocked ending without its explanation when the review is unavaila
           })
         : prose(),
     {
+      reviewOutageBudgetMs: 0,
       reviewQuestion: () =>
         Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" })),
     },
@@ -421,6 +423,34 @@ it("records a blocked ending without its explanation when the review is unavaila
   const outcome = await f.run();
   expect(outcome.blocked).toEqual({ reason: "site_lacks_capability" });
   expect(f.requests).toHaveLength(1);
+});
+
+// An unavailable review of a blocked explanation is retried like any other review, so the caller
+// still reads the explanation once Guardian allows it.
+it("shows a blocked explanation whose review was unavailable once, then allowed", async () => {
+  const explanation = "The site offers no online form for this request.";
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_lacks_capability", explanation }, "first"),
+        call("report_blocked", { reason: "site_lacks_capability", explanation }, "again"),
+      ][index] ?? prose(),
+    {
+      reviewQuestion: () =>
+        reviews++ === 0
+          ? Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" }))
+          : Effect.succeed({ outcome: "allow_business" as const, rationale: "Plain." }),
+    },
+  );
+  const outcome = await f.run();
+  expect(toolResult(f.requests[1], "first")).toMatchObject({
+    status: "review_unavailable",
+    retryable: true,
+  });
+  expect(outcome.blocked).toEqual({ reason: "site_lacks_capability", explanation });
+  expect(reviews).toBe(2);
+  expect(f.requests).toHaveLength(2);
 });
 
 /** The parsed result of the tool call `callId`, as the model read it in `request`. */

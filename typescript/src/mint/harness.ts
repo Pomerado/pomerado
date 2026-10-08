@@ -260,6 +260,9 @@ const writeCompletionReasons: ReadonlySet<string> = new Set([
   "commit_marks_unentered",
   "confirmation_undeclared",
   "confirmation_unrecorded",
+]);
+/** A contract that rejects what ran: a write not demonstrated as declared, or a read's source fix. */
+const contractReasons: ReadonlySet<string> = new Set([
   "contract_input_mismatch",
   "contract_output_mismatch",
 ]);
@@ -274,8 +277,9 @@ const newObservationReasons: ReadonlySet<string> = new Set([
   "login_url_contains_credential",
 ]);
 /** How the minter goes on after a refusal that is neither an outage nor Guardian's. */
-const refusalRecovery = (reason: string | undefined): PublicationRecovery =>
-  reason !== undefined && writeCompletionReasons.has(reason)
+const refusalRecovery = (reason: string | undefined, write: boolean): PublicationRecovery =>
+  reason !== undefined &&
+  (writeCompletionReasons.has(reason) || (write && contractReasons.has(reason)))
     ? "write_completion"
     : reason !== undefined && newObservationReasons.has(reason)
       ? "new_observation"
@@ -284,13 +288,14 @@ const refusalRecovery = (reason: string | undefined): PublicationRecovery =>
 const hostRefusalDecision = (
   reason: string,
   executionId: string | undefined,
+  write: boolean,
 ): Omit<PublicationDecision, "decisionId" | "decidedAt"> => ({
   outcome: "refused",
   code: "PublicationUnavailable",
   reason,
   ...(executionId === undefined ? {} : { executionId }),
   failedChecks: [reason],
-  recovery: refusalRecovery(reason),
+  recovery: refusalRecovery(reason, write),
 });
 /** The finite checks behind a publication refusal: never a value, path or rationale. */
 const refusalChecks = (error: MintFailure) => [
@@ -830,8 +835,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       /** When the current run of review outages began; cleared by any completed review. */
       let reviewOutageStartedAt = recovered?.reviewOutageStartedAt;
+      /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
+      let blockedReviewUnavailable = false;
       const reviewCompleted = Effect.sync(() => {
         reviewOutageStartedAt = undefined;
+        blockedReviewUnavailable = false;
       });
       /** A failure that shows Guardian decided: a deny, or an execution it allowed. */
       const reviewDecided = (error: MintFailure) =>
@@ -2195,7 +2203,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "sign_in_unresolved",
             "The last sign-in failed and is unresolved. Resolve it as its result says, with authenticate once its cause is fixed, before deciding the task is impossible as asked.",
           );
-        if (reviewOutageStartedAt !== undefined)
+        if (reviewOutageStartedAt !== undefined && !blockedReviewUnavailable)
           return refused(
             "review_unavailable_pending",
             "A Guardian review was unavailable and may be resubmitted. Submit that same call again first; an unavailable review is not a reason the task is impossible.",
@@ -2209,9 +2217,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       /**
        * Guardian's question review of a blocked explanation before any caller reads it, with the
-       * host's publication refusals. `allow_business` shows it; a review that did not complete
-       * leaves the reason's fixed sentence alone, never the agent's words; any other outcome goes
-       * back to the agent with its rationale.
+       * host's publication refusals. `allow_business` shows it; an unavailable review is offered
+       * back for resubmission under the review outage budget (`retry`), and past it, or for any
+       * other failure, leaves the reason's fixed sentence alone, never the agent's words; any
+       * other outcome goes back to the agent with its rationale.
        */
       const reviewBlockedExplanation = (explanation: string) => {
         const review = dependencies.reviewQuestion;
@@ -2225,15 +2234,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ),
               ),
               Effect.tap(() => reviewCompleted),
-              // The build still ends blocked: the failure is recorded, and the caller reads
-              // the reason alone.
               Effect.catchAll((error) =>
-                diagnose({
-                  phase: "blocked_review",
-                  code: error.code,
-                  reviewFailure: error.reviewFailure,
-                  reviewPhase: error.reviewPhase,
-                }).pipe(Effect.as({ outcome: "unavailable" as const })),
+                Effect.gen(function* () {
+                  yield* diagnose({
+                    phase: "blocked_review",
+                    code: error.code,
+                    reviewFailure: error.reviewFailure,
+                    reviewPhase: error.reviewPhase,
+                  });
+                  // A spent quota or an outage past its budget still ends blocked: the caller
+                  // reads the reason alone.
+                  if (
+                    error.code !== "ReviewUnavailable" ||
+                    error.modelOutage === "quota_exhausted" ||
+                    (yield* reviewRetryExhausted())
+                  )
+                    return { outcome: "unavailable" as const };
+                  blockedReviewUnavailable = true;
+                  reviewUnavailableRetries.question += 1;
+                  return { outcome: "retry" as const, error };
+                }),
               ),
             );
       };
@@ -2520,7 +2540,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const withheld = actStep && evidence.withheldConfirmation !== undefined;
               if (withheld && (writeSession === "closed" || !proposed.readBackUnavailable)) {
                 const reason = "read_back_required";
-                pendingDecision = hostRefusalDecision(reason, evidence.executionId);
+                pendingDecision = hostRefusalDecision(
+                  reason,
+                  evidence.executionId,
+                  buildEffect === "write",
+                );
                 yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
                 return JSON.stringify({
                   status: "not_published",
@@ -2557,7 +2581,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     : !evidence.resultRef
                       ? "missing_protected_result"
                       : "wrong_execution_purpose";
-                pendingDecision = hostRefusalDecision(reason, evidence?.executionId);
+                pendingDecision = hostRefusalDecision(
+                  reason,
+                  evidence?.executionId,
+                  buildEffect === "write",
+                );
                 yield* diagnose({
                   phase: "publication",
                   code: "PublicationUnavailable",
@@ -2612,7 +2640,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "retry"
                       : publication.left.code === "ReviewDenied"
                         ? "guardian_feedback"
-                        : refusalRecovery(reason),
+                        : refusalRecovery(reason, buildEffect === "write"),
               };
               if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
@@ -3200,6 +3228,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     if (refusal !== undefined) return refusal;
                     const review = yield* reviewBlockedExplanation(explanation);
                     yield* active("publication");
+                    if (review.outcome === "retry")
+                      return reviewUnavailableAnswer(
+                        review.error,
+                        "Guardian could not review the explanation, so the build has not ended and nothing reached the caller. Call report_blocked again for a fresh review. If Guardian stays unavailable long enough, the build ends blocked and the caller reads only the reason's fixed sentence.",
+                        { next: { retryable: true } },
+                      );
                     // Guardian asked for other words: the agent revises or withdraws its
                     // explanation, and the build goes on. A reword never ends a build.
                     if (review.outcome !== "allow_business" && review.outcome !== "unavailable") {

@@ -5,7 +5,7 @@
 ### Other changes
 
 - Recoverable failures no longer end a build:
-  - When Guardian asks for a reword of a `report_blocked` explanation, the minter gets the rationale and may revise or withdraw it. Only an allowed explanation, or a review that cannot complete, ends the build blocked.
+  - When Guardian asks for a reword of a `report_blocked` explanation, the minter gets the rationale and may revise or withdraw it. An unavailable review of the explanation is retried under the review outage budget. Only an allowed explanation, or a review that stays unavailable past that budget, ends the build blocked.
   - A diagnostic copy the host could not keep, such as an execution's diagnostics or a readable model transcript, is a recorded gap, however many there are. The raw record of each model call stays fail closed: a host's `retainRuntimeRecord` failure still stops the attempt before the next model call, with `hostFailure: "diagnostic_retention"`.
   - A review whose evidence the host could not keep is an ordinary review outage under the review outage budget, with no `retriesRemaining`.
   - `CaptureUnavailable` from an execution returns a capture gap with a possible effect, and from publication a `not_published` with `retryable: true`. The harness no longer sets `hostFailure: "capture_unavailable"`; the value stays in `MintOutcome` for older hosts.
