@@ -6,7 +6,6 @@ import { MintFailure } from "./contracts.js";
 // a registered credential in any of them is refused every time, and a login URL that is one
 // authorization request is asked about once.
 
-
 /** Parameters that belong to one authorization request: their values are spent when it ends. */
 const oneTimeParameters = new Set(
   [
@@ -77,7 +76,7 @@ export const oneTimeLoginUrlParameters = (loginUrl: string): readonly string[] =
  * each one's kind (`entity`), whether the caller or the host's sign-in supplied it, and whether it
  * is a session token the host found in the site's traffic.
  */
-export interface SecretMatcher<E> {
+export interface RegisteredSecretMatcher<E> {
   readonly registeredSecretMatches: (text: string) => Effect.Effect<
     readonly {
       readonly entity: string;
@@ -97,7 +96,7 @@ export interface SecretMatcher<E> {
  * this first: a registered credential there is always this refusal, never a definition block.
  */
 export const refuseCredentialParts = <E>(
-  broker: SecretMatcher<E>,
+  broker: RegisteredSecretMatcher<E>,
   texts: {
     readonly loginUrl: string | undefined;
     readonly name: string;

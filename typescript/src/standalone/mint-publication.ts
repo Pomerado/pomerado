@@ -94,10 +94,11 @@ export const screenedSignIn = <E>(
         loginUrl: signIn?.entryUrl,
         name: metadata.name,
         description: metadata.description,
+        // Each part is screened on its own; a missing one is empty, which holds no value.
         site:
-          metadata.siteName === undefined || metadata.siteSummary === undefined
+          metadata.siteName === undefined && metadata.siteSummary === undefined
             ? undefined
-            : { name: metadata.siteName, summary: metadata.siteSummary },
+            : { name: metadata.siteName ?? "", summary: metadata.siteSummary ?? "" },
       },
     );
     if (signIn === undefined) return undefined;

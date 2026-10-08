@@ -46,7 +46,6 @@ export const inlineLocalRefs = (schema: Record<string, unknown>): Record<string,
   return inlined;
 };
 
-
 /**
  * A tool's published schema in the one form every surface reads: its references resolved against
  * the schema's root, as the run check (Ajv) resolves them, and each one that is left points at a

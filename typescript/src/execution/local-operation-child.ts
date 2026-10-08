@@ -125,18 +125,23 @@ const journal: typeof baseJournal = {
 };
 /**
  * One run of the script through the runtime's runner: each execute call goes to the host, which
- * owns the browser, once the runner marked it as a possible dispatch. Capture and events are the
- * host's, so the child's are empty.
+ * owns the browser, once it is marked as a possible dispatch. The runner marks a live run from its
+ * start. A mint step is marked only here, at each browser call, so one that stopped before any call
+ * reads not sent. Capture and events are the host's, so the child's are empty.
  */
 const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0]) =>
   Effect.gen(function* () {
     const deadline = Deadline.after(start.timeoutMs);
+    const atFirstCall = start.dispatchAtFirstCall === true;
     const kernel = makeKernelCompatibility(start.sessionId, (code, timeoutSec) =>
-      call({
-        kind: "execute",
-        sessionId: start.sessionId,
-        body: { code, timeout_sec: timeoutSec ?? 60 },
-      }).pipe(
+      (atFirstCall ? journal.enteringDispatch : Effect.void).pipe(
+        Effect.zipRight(
+          call({
+            kind: "execute",
+            sessionId: start.sessionId,
+            body: { code, timeout_sec: timeoutSec ?? 60 },
+          }),
+        ),
         Effect.flatMap((value) => Schema.decodeUnknown(BrowserExecuteResponse)(value)),
         Effect.mapError(localError),
       ),
@@ -169,7 +174,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
     }).pipe(
       Effect.provideService(ExecutionContext, {
         deadline,
-        journal,
+        journal: atFirstCall ? { ...journal, enteringDispatch: Effect.void } : journal,
         events: { emit: () => Effect.void },
         capture: { start: Effect.void, finish: Effect.void },
       }),

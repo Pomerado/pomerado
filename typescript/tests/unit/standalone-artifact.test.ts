@@ -112,9 +112,11 @@ it.each([
 
 it("refuses a recipe it cannot read before writing it", () =>
   scratch(async (directory) => {
-    await expect(
-      run(writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 4 } } } as never)),
-    ).rejects.toThrow();
+    const written = run(
+      writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 4 } } } as never),
+    );
+    // The artifact's schema refuses the recipe's version, so nothing is written.
+    await expect(written).rejects.toThrow(/\["recipe"\][\s\S]*Expected 1 \| 2 \| 3, actual 4/);
     expect(await readdir(directory)).toEqual([]);
   }));
 
@@ -255,6 +257,34 @@ it("refuses a name or description that holds a sign-in value, naming the part", 
     publicationFeedback: { parts: [{ part: "description", credentialKinds: ["credential"] }] },
   });
   expect(JSON.stringify(refused.left)).not.toContain("ada@example.test");
+});
+
+it("screens a site name or summary on its own", async () => {
+  const secrets = makeRunSecrets();
+  secrets.register("ada@example.test");
+  const screen = (site: { readonly siteName?: string; readonly siteSummary?: string }) =>
+    Effect.runPromise(
+      Effect.either(
+        screenedSignIn(
+          undefined,
+          { name: "orders", description: "Reads the account's orders.", ...site },
+          secrets.assertAbsent,
+          new Set(),
+        ),
+      ),
+    );
+  for (const [site, part] of [
+    [{ siteName: "ada@example.test" }, "siteName"],
+    [{ siteSummary: "Orders for ada@example.test" }, "siteSummary"],
+  ] as const) {
+    const refused = await screen(site);
+    if (Either.isRight(refused)) throw new Error(`The ${part} was published`);
+    expect(refused.left).toMatchObject({
+      reason: "metadata_contains_credential",
+      publicationFeedback: { parts: [{ part, credentialKinds: ["credential"] }] },
+    });
+  }
+  expect(await screen({ siteName: "Example Shop" })).toEqual(Either.right(undefined));
 });
 
 it("asks once before publishing a login URL that is one authorization request, then publishes it", async () => {

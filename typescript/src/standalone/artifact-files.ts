@@ -40,22 +40,11 @@ export const Deployment = Schema.Struct({
 });
 export type Deployment = typeof Deployment.Type;
 
-/** A sign-in recipe as given, decoded as a recipe file is, so one this host cannot read is refused. */
-const givenRecipe = (value: unknown) => {
-  const signIn: unknown =
-    typeof value === "object" && value !== null ? Reflect.get(value, "signIn") : undefined;
-  return typeof signIn === "object" && signIn !== null
-    ? decodeSignInRecipe(JSON.stringify(Reflect.get(signIn, "recipe")) ?? "")
-    : undefined;
-};
-
 export const validateArtifact = (value: unknown) =>
   Schema.decodeUnknown(Artifact)(value).pipe(
     Effect.tap((artifact) =>
       Effect.try({
         try: () => {
-          if (artifact.signIn !== undefined && typeof givenRecipe(value) !== "object")
-            throw new Error("Artifact sign-in recipe is not one this host can read");
           const paths = artifact.files.map((file) => localRelativePath(file.path));
           if (paths.some((path) => metadataFiles.has(path.split("/")[0]?.toLowerCase() ?? "")))
             throw new Error("Artifact source collides with its metadata file");

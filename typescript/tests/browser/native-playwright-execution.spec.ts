@@ -19,7 +19,7 @@ import { detailNavigation } from "../../authoring/examples/navigation.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
-import { runLocalOperation } from "../../src/execution/local-operation.js";
+import { runLocalOperation, type LocalOperationFailure } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
 const native = <A>(
@@ -1030,8 +1030,13 @@ export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct
 
 // A live run may have reached the site once its script starts, whether or not it called the
 // browser yet; an offline run never can.
-test("local operation reports a started live run as possibly sent, and an offline run as unsent", async () => {
-  const run = (target: "browser" | "pureFiles") =>
+// A served run counts as possibly sent from its start, as the shared runner marks it. A mint step
+// counts from its first browser call, so a step that stopped before one reads not sent.
+test("local operation reports a started run as possibly sent, a mint step from its first browser call, and an offline run as unsent", async () => {
+  const run = (
+    target: "browser" | "pureFiles",
+    options: { readonly dispatchAtFirstCall?: true; readonly callsBrowser?: true } = {},
+  ) =>
     Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -1044,29 +1049,38 @@ test("local operation reports a started live run as possibly sent, and an offlin
                 "operation/src/tool.mjs",
                 `import { Schema } from "effect";
 import { defineOperation } from "../../runtime/index.js";
-export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => {
-  throw new Error("Stopped before any browser call");
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async ({ kernel, sessionId }) => {
+  ${options.callsBrowser === true ? 'await kernel.browsers.playwright.execute(sessionId, { code: "return 1;", timeout_sec: 5 });' : ""}
+  throw new Error("Stopped");
 });`,
               ],
             ],
             input: {},
             browser: {
               sessionId: "session-1",
-              executeResponse: () => Effect.fail(new Error("No browser call was expected")),
+              executeResponse: () =>
+                options.callsBrowser === true
+                  ? Effect.succeed({ success: true, result: 1 })
+                  : Effect.fail(new Error("No browser call was expected")),
             },
             target,
+            ...(options.dispatchAtFirstCall === undefined ? {} : { dispatchAtFirstCall: true }),
           }).pipe(Effect.either);
         }),
       ),
     );
-  expect(await run("browser")).toMatchObject({
-    _tag: "Left",
-    left: { name: "LocalOperationFailure", journal: { effect: "possible", commits: [] } },
-  });
-  expect(await run("pureFiles")).toMatchObject({
-    _tag: "Left",
-    left: { name: "LocalOperationFailure", journal: { effect: "not_sent", commits: [] } },
-  });
+  const effectOf = async (outcome: ReturnType<typeof run>) => {
+    const result = await outcome;
+    if (result._tag === "Right") throw new Error("Expected the run to fail");
+    expect(result.left).toMatchObject({ name: "LocalOperationFailure", journal: { commits: [] } });
+    return (result.left as LocalOperationFailure).journal.effect;
+  };
+  expect(await effectOf(run("browser"))).toBe("possible");
+  expect(await effectOf(run("browser", { dispatchAtFirstCall: true }))).toBe("not_sent");
+  expect(
+    await effectOf(run("browser", { dispatchAtFirstCall: true, callsBrowser: true })),
+  ).toBe("possible");
+  expect(await effectOf(run("pureFiles"))).toBe("not_sent");
 });
 
 test("reports each request the context sends, with its body up to the cap, only while a listener hears", async () => {
