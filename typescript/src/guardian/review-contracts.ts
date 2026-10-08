@@ -23,7 +23,11 @@ export interface PublicationScope {
  * `example_input` is the host's own check that each key of an intent-derived example's input is
  * a schema input, never Guardian's.
  */
-export const inputFindingCategories = ["account_specific_enum", "input_option", "example_input"] as const;
+export const inputFindingCategories = [
+  "account_specific_enum",
+  "input_option",
+  "example_input",
+] as const;
 export const publicationFindingCategories = [
   "private_literal",
   "credential",
