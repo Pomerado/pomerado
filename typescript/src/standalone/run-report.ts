@@ -105,9 +105,13 @@ const operationReasons: Readonly<Record<string, string>> = {
 /**
  * What a failed operation's journal shows. A browser step that ran may have changed the website
  * before any declared commit, so declared commit marks that were never entered prove nothing was
- * applied only when the site refused the input or the login, and only while the write may have
- * dispatched: a recorded confirmation keeps it applied. A failure with no journal may have
- * dispatched anything.
+ * applied only when the site refused the input or the login, or the run's sign-ins were spent,
+ * and only while the write may have dispatched: a recorded confirmation keeps it applied. A
+ * failure with no journal may have dispatched anything.
+ *
+ * Spent sign-ins report the sign-in unavailable, to retry with the same request, for a read and
+ * for a run that sent nothing or entered none of its declared commit steps. A write that may have
+ * applied keeps the outcome its journal shows, so a retry can't repeat it.
  */
 const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidence => {
   if (!(error instanceof LocalOperationFailure))
@@ -118,17 +122,18 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
       tool_effect: declared,
     };
   const { journal } = error;
-  const reason = operationReasons[error.code ?? ""];
   const tool = declared ?? (journal.commits.length > 0 ? "write" : undefined);
-  const refused = reason === "invalid_input" || reason === "credentials_rejected";
   const base =
     tool === "read"
       ? "not_started"
       : journalEffect(journal, tool === undefined ? undefined : { effect: tool });
-  const effect =
-    refused && base === "may_have_dispatched" && commitReportOf(journal).evidence === "not_entered"
-      ? "rejected"
-      : base;
+  const unentered =
+    base === "may_have_dispatched" && commitReportOf(journal).evidence === "not_entered";
+  const spent =
+    error.sessionLoss === "session_not_kept" && (base === "not_started" || unentered);
+  const reason = spent ? "login_check_unavailable" : operationReasons[error.code ?? ""];
+  const refused = spent || reason === "invalid_input" || reason === "credentials_rejected";
+  const effect = refused && unentered ? "rejected" : base;
   return {
     status: "completed",
     effect,
