@@ -344,6 +344,17 @@ describe("the publication policy", () => {
     );
     expect(policy).not.toContain("  ");
   });
+
+  // The local host's precheck screens only the build's own caller-supplied values and secret
+  // handles, so the policy never tells Guardian the files passed a credential check: Guardian
+  // looks for hard-coded keys, tokens and passwords itself.
+  it("credits no credential precheck the local host does not run", () => {
+    const policy = guardianPublicationPolicy;
+    expect(policy).not.toContain("passed a deterministic credential precheck");
+    expect(policy).toContain(
+      "The local precheck covered only this build's own caller-supplied values and secret handles; it did not screen for provider credentials or other secrets, so inspect every published file for hard-coded API keys, tokens and passwords. Inspect the published files for hardcoded customer/private data,",
+    );
+  });
 });
 
 const message = (value: unknown): ModelResponse["output"][number] => ({

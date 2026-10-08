@@ -18,7 +18,7 @@ const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
 // sha256 of the local host's execution policy. A deliberate policy edit updates it.
-const nativePolicySha256 = "a4556f8d7c5b4972bb0b2329d5e66878637b94770e62caa469bdd2193c08c53a";
+const nativePolicySha256 = "c343c4c71f68973f46cbcc60e4fa450f1133d177246fed5e4a363589adf2dfa4";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
@@ -102,6 +102,7 @@ const otherHost: GuardianExecutionEnvironment = {
   signIn: "OTHER-SIGN-IN",
   challenges: "OTHER-CHALLENGES waits elsewhere.",
   executor: "OTHER-EXECUTOR",
+  dataVendor: "OTHER-DATA-VENDOR may carry the caller's input.",
 };
 const slots = [
   "operations",
@@ -111,7 +112,14 @@ const slots = [
   "signIn",
   "challenges",
   "executor",
+  "dataVendor",
 ] as const;
+
+/** The data-vendor exception a host with screened network captures gives, word for word. */
+const capturedDataVendor =
+  "The site's own third-party data vendor, such as a hosted search service, is the one exception to the off-site rule's caller-data escalation: a read-only https request to another registrable domain may carry the caller's input when it matches a call the screened captures show the authorized site's own page script making for this data, with the same origin and endpoint, and it sends only the caller's input and the values the page itself sends there, never a {{secret.<id>}} handle, a credential, or account data the page does not send there. That origin does not become the site: navigation, sign-in and writes there stay off-site, and the handle, credential and publication egress rules apply to it unchanged.";
+// sha256 of the execution policy before the data-vendor exception became the host's text.
+const capturedPolicySha256 = "d33767d0e50e425a927c40872f1bb6671e869248c9159c90ded23d2c2fc2538e";
 
 describe("Guardian execution environment", () => {
   it("puts each of the host's texts in its place in the execution policy", () => {
@@ -120,10 +128,35 @@ describe("Guardian execution environment", () => {
     expect(policy).toContain("attempts to bypass OTHER-BYPASS.");
     expect(policy).toContain("Sign-in is handled by the host OTHER-SIGN-IN");
     expect(policy).toContain("confirms only OTHER-EXECUTOR cleanup");
-    for (const slot of ["operations", "offlineTargets", "commands", "signIn", "challenges"] as const)
+    for (const slot of [
+      "operations",
+      "offlineTargets",
+      "commands",
+      "signIn",
+      "challenges",
+      "dataVendor",
+    ] as const)
       expect(policy).not.toContain(nativeExecutionEnvironment[slot]);
     const native = guardianExecutionPolicy(nativeExecutionEnvironment);
     for (const slot of slots) expect(native).toContain(nativeExecutionEnvironment[slot]);
+  });
+
+  // Only a host with screened network captures can show the site's own page calling a data
+  // vendor. The local host records none, so no such call is evidenced and the caller-data
+  // escalation applies. A host that gives today's words renders today's policy byte for byte.
+  it("puts the host's data-vendor exception after the authorized-site rule", () => {
+    expect(guardianExecutionPolicy(otherHost)).toContain(
+      "only the exact allowed origins are the site. OTHER-DATA-VENDOR may carry the caller's input. A hostname suffix check needs the leading dot",
+    );
+    const native = guardianExecutionPolicy(nativeExecutionEnvironment);
+    expect(native).not.toContain("screened captures show");
+    expect(native).toContain(
+      "The native host keeps no network captures, so nothing here can show the site's own page script making such a call; step results and workspace files are the agent's own output and do not count. A read-only request that carries the caller's input to another registrable domain follows the off-site rule's caller-data escalation.",
+    );
+    const { absentProtections: _absent, ...withoutAbsent } = nativeExecutionEnvironment;
+    expect(
+      sha256(guardianExecutionPolicy({ ...withoutAbsent, dataVendor: capturedDataVendor })),
+    ).toBe(capturedPolicySha256);
   });
 
   // The local host names the protections other hosts supply that it lacks, last. A host that
