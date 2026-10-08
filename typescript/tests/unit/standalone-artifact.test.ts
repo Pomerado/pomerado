@@ -87,6 +87,41 @@ it("reads an artifact written without a sign-in as it always was", () =>
     expect("signIn" in restored).toBe(false);
   }));
 
+it("keeps the confirms a write's build accepted in pomerado.json and reads them back", () =>
+  scratch(async (directory) => {
+    const acceptedConfirms = [{ digest: "a".repeat(64) }, { digest: "b".repeat(64) }];
+    const artifact = { ...source, acceptedConfirms };
+    expect(
+      await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory)))),
+    ).toEqual(artifact);
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toEqual({
+      entrypoint: "src/main.mjs",
+      files: ["src/main.mjs"],
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      acceptedConfirms,
+    });
+  }));
+
+it("refuses a record of accepted confirms it cannot trust", () =>
+  scratch(async (directory) => {
+    for (const acceptedConfirms of [
+      [{ digest: "page text, not a digest" }],
+      Array.from({ length: 33 }, () => ({ digest: "c".repeat(64) })),
+    ])
+      await expect(
+        run(writeArtifact(directory, { ...source, acceptedConfirms } as never)),
+      ).rejects.toThrow();
+    expect(await readdir(directory)).toEqual([]);
+    await run(writeArtifact(directory, source));
+    const metadata = JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"));
+    await writeFile(
+      join(directory, "pomerado.json"),
+      JSON.stringify({ ...metadata, acceptedConfirms: [{ digest: "short" }] }),
+    );
+    await expect(run(readArtifact(directory))).rejects.toThrow();
+  }));
+
 it.each([
   [{ ...signIn.recipe, version: 4 }, "unknown_version"],
   [{ ...signIn.recipe, steps: [] }, "invalid"],

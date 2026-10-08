@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { ExpectedConfirms } from "../browser/dialogs/expected.js";
 import { autofillRecipePath } from "../destinations/autofill-recipe.js";
 import { decodeSignInRecipe, signInRecipeText } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
@@ -16,6 +17,8 @@ const Metadata = Schema.Struct({
     Schema.Struct({ recipe: Schema.Literal(autofillRecipePath), entryUrl: PageUrl }),
     { exact: true },
   ),
+  /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
+  acceptedConfirms: Schema.optionalWith(ExpectedConfirms, { exact: true }),
 });
 /** The artifact's own files beside its source, which no source path may name. */
 const metadataFiles = new Set(["pomerado.json", autofillRecipePath]);
@@ -108,6 +111,9 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           ...(checked.signIn === undefined
             ? {}
             : { signIn: { recipe: autofillRecipePath, entryUrl: checked.signIn.entryUrl } }),
+          ...(checked.acceptedConfirms === undefined
+            ? {}
+            : { acceptedConfirms: checked.acceptedConfirms }),
         },
         null,
         2,
