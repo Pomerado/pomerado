@@ -79,6 +79,21 @@ export type BoundableAsk = ReturnType<typeof makeBoundableAsk>;
 type LoginField = "username" | "password";
 
 /**
+ * The part of the login a rejected field names. An identifier of any kind is the login's
+ * username. A code, date of birth, ZIP or recovery code names none: those are asked fresh and
+ * never held.
+ */
+const loginFieldOf = (field: string): LoginField | undefined => {
+  if (field === "password") return "password";
+  return field === "username" ||
+    field === "email" ||
+    field === "phone" ||
+    field === "account_number"
+    ? "username"
+    : undefined;
+};
+
+/**
  * A login that a sign-in can mark as rejected. The values the site rejected are remembered, and
  * no sign-in sends them again, whether an automatic one or the build's own: while the login held
  * carries one, `login` holds none and its `values` asks for a correction. A correction that
@@ -95,8 +110,13 @@ export const makeRejectableLogin = <E>(
       return "password";
     return rejectedValues.username.has(login.username) ? "username" : undefined;
   };
+  /** The part of the login the last correction asked for. */
+  let corrected: LoginField | undefined;
   const correct = (field: CredentialRejectedField, held: WebsiteCredentials) =>
-    base.correct(field, held).pipe(
+    Effect.suspend(() => {
+      corrected = loginFieldOf(field) ?? corrected;
+      return base.correct(field, held);
+    }).pipe(
       Effect.flatMap((answer) => {
         const again = repeats(answer);
         return again === undefined ? Effect.succeed(answer) : base.correct(again, answer);
@@ -118,47 +138,39 @@ export const makeRejectableLogin = <E>(
     }),
     correct,
   };
+  /** The site rejected the login held now, in `field`, its identifier or its password. */
+  const reject = (field: LoginField) => {
+    const held = base.held();
+    if (held === undefined) return;
+    if (field === "username") rejectedValues.username.add(held.username);
+    if (field === "password" && held.password !== undefined)
+      rejectedValues.password.add(held.password);
+  };
   return {
     login,
-    /** The site rejected the login held now, in `field`, its identifier or its password. */
-    reject: (field: LoginField) => {
-      const held = base.held();
-      if (held === undefined) return;
-      if (field === "username") rejectedValues.username.add(held.username);
-      if (field === "password" && held.password !== undefined)
-        rejectedValues.password.add(held.password);
+    reject,
+    /**
+     * Marks the part of the held login a failed sign-in says the site rejected: its corrections
+     * ran out, or the correction it asked for went unanswered.
+     */
+    failed: (failure: unknown) => {
+      if (!(failure instanceof SignInRunFailed)) return;
+      const field =
+        failure.code === "CredentialsRejected"
+          ? loginFieldOf(failure.reason ?? "")
+          : // A login question goes unanswered with a login held only when it asked for a
+            // correction, of the part the site rejected: the first question, answered, is what
+            // holds one.
+            failure.code === "NeedsInput" &&
+              failure.reason === "login" &&
+              login.held() !== undefined
+            ? (corrected ?? "password")
+            : undefined;
+      if (field !== undefined) reject(field);
     },
   };
 };
 export type RejectableLogin<E> = ReturnType<typeof makeRejectableLogin<E>>;
-
-/**
- * The login field a failed sign-in says the site rejected: its corrections ran out, or the
- * correction it asked for went unanswered, with `held` the login it last sent. An identifier of
- * any kind is the login's username. A rejected code, date of birth, ZIP or recovery code names
- * no login field: those are asked fresh and never held.
- */
-const rejectedLoginField = (
-  failure: unknown,
-  held: WebsiteCredentials | undefined,
-): LoginField | undefined => {
-  if (!(failure instanceof SignInRunFailed)) return undefined;
-  if (failure.code === "CredentialsRejected") {
-    const field = failure.reason;
-    if (field === "password") return "password";
-    return field === "username" ||
-      field === "email" ||
-      field === "phone" ||
-      field === "account_number"
-      ? "username"
-      : undefined;
-  }
-  // A login question goes unanswered with a login held only when it asked for a correction: the
-  // first question, answered, is what holds one.
-  return failure.code === "NeedsInput" && failure.reason === "login" && held !== undefined
-    ? "password"
-    : undefined;
-};
 
 type Failed = (
   refusal: SessionSignInRefusal,
@@ -299,12 +311,7 @@ export const makeLocalSessionSignIn = (options: {
       spent.scope += 1;
       call.scope += 1;
       yield* replay(sign, bound, options.login.login).pipe(
-        Effect.tapError((error) =>
-          Effect.sync(() => {
-            const field = rejectedLoginField(error, options.login.login.held());
-            if (field !== undefined) options.login.reject(field);
-          }),
-        ),
+        Effect.tapError((error) => Effect.sync(() => options.login.failed(error))),
         Effect.mapError((error) => failed("session_sign_in_failed", "replay_failed", error)),
       );
       yield* options.saveSession.pipe(

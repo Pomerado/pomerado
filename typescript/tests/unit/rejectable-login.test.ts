@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { expect, it } from "vitest";
 import type { SignInLogin } from "../../src/destinations/sign-in-recipe.js";
 import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
+import { SignInRunFailed } from "../../src/runtime/sign-in-replay-steps.js";
 import { makeRejectableLogin } from "../../src/standalone/session-sign-in.js";
 
 // The login a build's or run's sign-ins share, once the site rejected part of it.
@@ -86,4 +87,35 @@ it("marks nothing for a field that is no part of the login", async () => {
   expect(rejectable.login.held()).toEqual(login);
   expect(await valuesOf(rejectable)).toMatchObject({ _tag: "Right", right: login });
   expect(asked).toEqual([]);
+});
+
+it("marks the username, not the password, when a username correction goes unanswered", async () => {
+  const fixed = { ...login, username: "member2@example.test" };
+  let unanswered = true;
+  let held: WebsiteCredentials | undefined = login;
+  const asked: string[] = [];
+  const base: SignInLogin<Error> = {
+    held: () => held,
+    values: Effect.sync(() => held ?? login),
+    correct: (field) =>
+      Effect.suspend(() => {
+        asked.push(field);
+        if (unanswered) return Effect.fail(new Error("unanswered"));
+        held = fixed;
+        return Effect.succeed(fixed);
+      }),
+  };
+  const rejectable = makeRejectableLogin(base, (field) => new Error(`repeated ${field}`));
+  // The site rejected the username, and its correction went unanswered: the sign-in failed asking
+  // for the login.
+  const unansweredCorrection = rejectable.login.correct("username", login);
+  expect(await Effect.runPromise(Effect.either(unansweredCorrection))).toMatchObject({
+    _tag: "Left",
+  });
+  rejectable.failed(new SignInRunFailed({ code: "NeedsInput", reason: "login" }));
+  expect(rejectable.login.held()).toBeUndefined();
+  // The next correction fixes the username and keeps the password, which the site never rejected.
+  unanswered = false;
+  expect(await valuesOf(rejectable)).toMatchObject({ _tag: "Right", right: fixed });
+  expect(asked).toEqual(["username", "username"]);
 });
