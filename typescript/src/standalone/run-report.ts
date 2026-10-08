@@ -105,7 +105,8 @@ const operationReasons: Readonly<Record<string, string>> = {
 /**
  * What a failed operation's journal shows. A browser step that ran may have changed the website
  * before any declared commit, so declared commit marks that were never entered prove nothing was
- * applied only when the site refused the input or the login. A failure with no journal may have
+ * applied only when the site refused the input or the login, and only while the write may have
+ * dispatched: a recorded confirmation keeps it applied. A failure with no journal may have
  * dispatched anything.
  */
 const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidence => {
@@ -120,12 +121,14 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
   const reason = operationReasons[error.code ?? ""];
   const tool = declared ?? (journal.commits.length > 0 ? "write" : undefined);
   const refused = reason === "invalid_input" || reason === "credentials_rejected";
-  const effect =
-    tool === "read" || journal.effect === "not_sent"
+  const base =
+    tool === "read"
       ? "not_started"
-      : refused && commitReportOf(journal).evidence === "not_entered"
-        ? "rejected"
-        : journalEffect(journal, tool === undefined ? undefined : { effect: tool });
+      : journalEffect(journal, tool === undefined ? undefined : { effect: tool });
+  const effect =
+    refused && base === "may_have_dispatched" && commitReportOf(journal).evidence === "not_entered"
+      ? "rejected"
+      : base;
   return {
     status: "completed",
     effect,

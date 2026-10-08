@@ -25,6 +25,12 @@ const commitSent: LocalOperationJournal = {
   effect: "possible",
   commits: [{ name: "save", state: "sent" }],
 };
+/** A write that recorded its confirmation before entering its declared commit. */
+const confirmedUnentered: LocalOperationJournal = {
+  effect: "verified",
+  confirmation: "message",
+  commits: [{ name: "save", state: "not_sent" }],
+};
 const confirmedWrite: LocalOperationJournal = {
   effect: "verified",
   confirmation: "message",
@@ -196,6 +202,22 @@ describe("a run that failed in its operation", () => {
       case: "invalid output after a browser step, whose commit was never entered",
       error: new LocalOperationFailure("InvalidOutput", commitNotEntered, "InvalidOutput"),
       outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    // A refusal makes unentered marks prove nothing applied only while the write may have
+    // dispatched. A recorded confirmation keeps the write applied, as the other host's job view does.
+    {
+      case: "a refused input after a recorded confirmation, whose commit was never entered",
+      error: new LocalOperationFailure(
+        "The date must be in the future.",
+        confirmedUnentered,
+        "InvalidInput",
+      ),
+      outcome: { code: "input_rejected", writeStatus: "applied", possibleCommit: false },
+    },
+    {
+      case: "a rejected login after a recorded confirmation, whose commit was never entered",
+      error: new LocalOperationFailure("password", confirmedUnentered, "CredentialsRejected"),
+      outcome: { code: "credentials_rejected", writeStatus: "applied", possibleCommit: false },
     },
     {
       case: "a sign-in failure raised during the operation",

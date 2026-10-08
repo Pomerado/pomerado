@@ -108,7 +108,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
 - A failed job is never replayed.
 - A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
   - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
-  - A refused input or login whose declared commit steps were never entered reports `not_applied`. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
+  - A refused input or login whose declared commit steps were never entered reports `not_applied`, unless the write already recorded its confirmation. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
   - A read never reports a possible website change.
   - Only `possible_commit: true` tells the caller to read the site back before any retry.
   - `retry` is one of four classes. `never`: don't repeat the call as is. `fix_input`: correct the input or the login, then call again. `new_key`: calling again is a new run, after reading the site back when `possible_commit` is true. `same_key`: the request itself may be repeated.
