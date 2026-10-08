@@ -137,9 +137,10 @@ const unsentRetry =
 
 /** What spent the attempt's sign-ins, as the agent and the build's owner read it. */
 const spentReason: Record<SpentSignIn, string> = {
-  relogin_spent: "the attempt's one sign-in again on this browser is spent",
+  relogin_spent: "the attempt's one extra sign-in is spent",
   fresh_profile_sign_ins_spent:
     "the sign-ins the attempt allows on a recovery's new profile are spent",
+  sign_in_retry_spent: "the attempt's one retry of a sign-in whose outcome was unclear is spent",
   host_refusals_repeated: `the host refused the same field of the same screen the same way ${maximumHostRefusals} times in a row, and no correction of the step got past it`,
 };
 
