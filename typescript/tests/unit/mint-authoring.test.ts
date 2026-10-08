@@ -376,6 +376,36 @@ it("gives the local builder the shared publication text and no hosted-only check
   );
 });
 
+/*
+ * The testing skill's capture loading, saved HTTP and DOM fixtures and post-publication cases are
+ * another host's sections, so neither the local host nor a host that composes nothing reads them.
+ */
+it("keeps the testing skill's capture and saved-fixture paragraphs in host sections", async () => {
+  const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
+  try {
+    for (const texts of [await renderedTexts("typescript/authoring"), await renderedTexts(root)]) {
+      const testing = (texts.get("testing") ?? "").replace(/\s+/g, " ");
+      expect(testing).toContain(
+        "- pureFiles: parsers/calculation with ordinary files and meaningful assertions. - liveBrowser: authorized fresh observation",
+      );
+      for (const hosted of [
+        "retain_capture",
+        "loadCaptureFixture",
+        "network.ndjson",
+        "SavedCaptureEvidence",
+        "held-out",
+        "## Load existing capture evidence",
+      ])
+        expect(testing).not.toContain(hosted);
+      expect(testing.trimEnd().endsWith("silently call production from an offline test.")).toBe(
+        true,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("leaves no heading, list or skill header of the local host's authoring empty", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const core = texts.get("core") ?? "";
