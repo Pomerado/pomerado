@@ -42,7 +42,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - `path_screening` stays a refusal the minter fixes, since it can mean a source path holds a credential.
 - Each `finish_build` decision, refused or published, is a `PublicationDecision`: its code, reason, execution, time, failed checks and recovery path. The tool result carries its `decisionId`. The harness's own refusals before publication runs, such as an invalid request, and a host fallback's publication after unresolved input feedback are decisions too.
 - A host keeps them as evidence through `MintDependencies.publicationDecisions`, which records each decision and lists the build's decisions. The local host keeps them in memory for the request.
-- A question review and a blocked-explanation review get the latest refusals as `question_review.publicationDecisions`, so Guardian reads what the host refused, not only the minter's account of it.
+- A question review and a blocked-explanation review get the latest refusals as `question_review.publicationDecisions`, and a task update review as `update_review.publicationDecisions`, so Guardian reads what the host refused, not only the minter's account of it.
 
 ## Guardian
 

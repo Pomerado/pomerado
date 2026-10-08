@@ -2445,7 +2445,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ? {}
                 : { suggestedRequest: redactCallerText(submitted.suggestedRequest) }),
             },
-            { confirmation, effect: buildEffect === "write" ? "write" : "read" },
+            {
+              confirmation,
+              effect: buildEffect === "write" ? "write" : "read",
+              ...(yield* publicationRefusals),
+            },
             {
               text: (text) => screenMintText(dependencies, text),
               json: (value) => dependencies.projection.json(value),
