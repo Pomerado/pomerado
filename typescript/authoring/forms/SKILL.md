@@ -147,9 +147,24 @@ Date ranges, calendar-only pickers, validation messages, uploads, staged forms a
 autosave need site-specific semantic checks. A date field that takes typing goes
 through `fillDate`; one that opens a calendar and takes no typing does not.
 `references/dates-and-files.ts` picks a calendar date by full `data-date` within an
-owned popup, and chooses a file whose base64 bytes are decoded with `Buffer.from` in
-the call. Beyond the SDK's form controls, do not invent a universal widget resolver. A
-field change, file upload or draft creation may already be a website write.
+owned popup, attaches a file and downloads one. Beyond the SDK's form controls, do not
+invent a universal widget resolver. A field change, file upload or draft creation may
+already be a website write.
+
+A file never travels as bytes in code, input or output. Type a file input field as the
+runtime's `FileInput`; the caller's file reaches the build as a `{{file.fN}}` handle in
+the input, with its name, type and size in the request's `files`. Pass the input's value
+as given to `files.place(input.receipt, { field: { label: "Receipt" } })`; `field` names
+the `<input type="file">` as data, its label or a `selector`, never code. The host checks
+the file and puts it there, and never anywhere else. Return a download as a `FileOutput`
+from `files.collect(trigger)`, where `trigger` makes the execute call that starts it; you
+see only its name, type, size and sha256. A downloaded file meant for the caller goes
+through `files.collect`. Never write a handle in source, set file inputs, handle downloads
+yourself, route the page's requests or read a file's contents back (`.files` items,
+`FileReader`, `FormData`, a request body): the host refuses such source. An older tool that
+sets a file input from base64 input with `setInputFiles` uses a deprecated pattern the host
+still allows while the build has no file handle and no `FileInput`: a repair keeps its input
+as it is, and a new tool takes a `FileInput` and uses `files.place`.
 
 ## Multi-step forms
 

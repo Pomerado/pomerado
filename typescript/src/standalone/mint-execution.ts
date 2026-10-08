@@ -30,6 +30,10 @@ import {
   draftQuestionDeclarations,
 } from "../mint/draft-questions.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
+import { fileHandleRefusal } from "../mint/file-handles.js";
+import { fileReadbackRefusal } from "../mint/file-readback.js";
+import { makeLocalFileHook } from "../execution/local-files.js";
+import { makeRunFiles } from "../runtime/file-transfer.js";
 import { stepInput } from "../mint/step-checks.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
@@ -400,6 +404,8 @@ const authoredExecution = (
     const entrypointSource = files.get(execution.entrypoint) ?? "";
     const refusal =
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
+      fileHandleRefusal(files, execution) ??
+      fileReadbackRefusal(files, execution, state.fileHandles.files.length > 0) ??
       draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
@@ -458,6 +464,19 @@ const authoredExecution = (
         yield* start.before(execution);
         /** Why the host could not sign in again while the script waited, the first time. */
         let signInFailure: SessionSignInFailed | undefined;
+        // A live step places only the caller's files, by the handles its input holds. A download
+        // it collects keeps only metadata and sha256, which the agent sees; no bytes are kept.
+        const runFiles = live
+          ? yield* makeRunFiles({
+              hook: yield* makeLocalFileHook({ execute: browser.executeResponse }),
+              execute: browser.executeResponse,
+              siteOrigin: context.siteOrigin,
+              resolve: state.fileHandles.resolve,
+              ...(state.session.options.files?.limits === undefined
+                ? {}
+                : { limits: state.session.options.files.limits }),
+            })
+          : undefined;
         const executed = yield* Effect.either(
           runLocalOperation({
             workspace,
@@ -490,6 +509,7 @@ const authoredExecution = (
                   }),
                 }
               : {}),
+            ...(runFiles === undefined ? {} : { files: runFiles }),
           }),
         );
         if (watch !== undefined && watch.typed().size > 0) {
@@ -529,7 +549,7 @@ const authoredExecution = (
         // A sign-in the host could not make while the script waited ends the request with why.
         if (signInFailure !== undefined) return yield* mintSessionSignInFailure(signInFailure);
         return evidence;
-      }),
+      }).pipe(Effect.scoped),
     );
   });
 export const mintExecution =
