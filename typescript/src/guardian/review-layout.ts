@@ -13,7 +13,7 @@ import type { PendingExecution, ReviewFailure } from "./review.js";
  * format. Only the per-review user message differs, so a mint's conversation stays cached when
  * it moves from one kind of review to another.
  */
-export type ReviewKind = "execution" | "question" | "recovery" | "publication" | "host";
+export type ReviewKind = "execution" | "question" | "update" | "recovery" | "publication" | "host";
 
 export const reviewKindOf = (pending: PendingExecution): ReviewKind =>
   pending.hostReview !== undefined
@@ -22,9 +22,11 @@ export const reviewKindOf = (pending: PendingExecution): ReviewKind =>
       ? "publication"
       : pending.questionCandidate !== undefined
         ? "question"
-        : pending.recoveryCandidate !== undefined
-          ? "recovery"
-          : "execution";
+        : pending.updateCandidate !== undefined
+          ? "update"
+          : pending.recoveryCandidate !== undefined
+            ? "recovery"
+            : "execution";
 
 /** Every outcome the shared format offers; a host-defined kind allows a subset of them. */
 export const guardianOutcomes = [
@@ -34,6 +36,8 @@ export const guardianOutcomes = [
   "allow_business",
   "authentication",
   "reword",
+  "clarify",
+  "new_mint",
 ] as const;
 export type GuardianOutcome = (typeof guardianOutcomes)[number];
 
@@ -43,6 +47,7 @@ const reviewOutcomes = {
   recovery: ["allow", "deny", "escalate"],
   publication: ["allow", "deny", "escalate"],
   question: ["allow_business", "authentication", "reword"],
+  update: ["allow", "clarify", "reword", "new_mint"],
 } as const satisfies Record<Exclude<ReviewKind, "host">, readonly GuardianOutcome[]>;
 
 /** The decision fields besides outcome and rationale that each kind uses. */
@@ -50,6 +55,7 @@ const reviewFields: Record<ReviewKind, readonly string[]> = {
   execution: [],
   recovery: [],
   question: [],
+  update: [],
   publication: ["reason", "findings"],
   host: ["label"],
 };
