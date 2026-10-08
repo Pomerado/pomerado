@@ -4,6 +4,7 @@ import { autofillRecipePath } from "../destinations/autofill-recipe.js";
 import { decodeSignInRecipe, signInRecipeText } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
+import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
 
@@ -17,6 +18,8 @@ const Metadata = Schema.Struct({
     Schema.Struct({ recipe: Schema.Literal(autofillRecipePath), entryUrl: PageUrl }),
     { exact: true },
   ),
+  /** The questions publication reviewed, the only ones a run asks. */
+  questions: Schema.optionalWith(ScriptQuestionDeclarations, { exact: true }),
   /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
   acceptedConfirms: Schema.optionalWith(ExpectedConfirms, { exact: true }),
 });
@@ -111,6 +114,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           ...(checked.signIn === undefined
             ? {}
             : { signIn: { recipe: autofillRecipePath, entryUrl: checked.signIn.entryUrl } }),
+          ...(checked.questions === undefined ? {} : { questions: checked.questions }),
           ...(checked.acceptedConfirms === undefined
             ? {}
             : { acceptedConfirms: checked.acceptedConfirms }),

@@ -36,6 +36,10 @@
 - Guardian's shared output format adds the outcomes `clarify` and `new_mint`, for the new `update` review kind. `GuardianDiagnostics` correlations add the `update` review kind.
 - `JobBuildBlocked` and `MintOutcome.blocked` add the reason `new_mint_recommended`, with an optional `suggestedRequest`.
 - New exports: `TaskChange`, `TaskUpdateDecision`, `PendingTaskUpdate`, `ReviewedTaskUpdate` and `taskUpdateForReview` from `pomerado/core/guardian/task-update`; `TaskUpdateRequest`, `taskUpdateStatuses`, `TaskUpdateStatus`, `TaskState`, `AcceptedTaskUpdate`, `TaskUpdateCandidate`, `TaskUpdateApplication` and `TaskUpdateHostResult` from `pomerado/core/mint/contracts`.
+- A local build's step asks only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. An ask whose id, prompt or bounds differ fails as `Undeclared` before Guardian's question review, and nobody is asked. A declaration held in a variable, imported or computed declares nothing.
+  - Migrate by writing `questions` as an object literal inside the entrypoint's `defineOperation` call.
+- A step whose literal `questions` names an invalid id is refused before review, with each id it names.
+- A run asks only the questions publication reviewed. A published artifact keeps them as `questions`, an empty object when there are none, and `pomerado.json` saves them. An artifact saved by an earlier release has no `questions`, so it asks only what its entrypoint declares as a plain literal.
 
 ### Other changes
 
@@ -98,6 +102,13 @@
 - `finish_build` on a write refuses a composed script whose files never name a step the owner accepted a confirm popup at, with `confirm_action_unmatched` and the steps in `confirmActionIds`. A run could never match that confirm. `checkWriteSession` takes those steps and the entrypoint as an optional `confirms`.
 - A run dismisses a popup whose question's window ends unanswered, and goes on. It used to fail the step. A cancel at the terminal, or a question that can't be asked or answered, still fails the step.
 - The new `pomerado/core/browser/dialogs/expected` export holds the confirm digest, matcher, recording, the `confirm_action_unmatched` check and the run's popup decision. The new `pomerado/core/runtime/incidents` export holds `IncidentStore`, the hook a host uses to record the popups it settled, and the local `noIncidents`. The new `pomerado/testing/confirm-popups-contract` export holds a fixture page and a check that any host's popup handling can run. `pomerado/core/browser/dialogs/contracts` adds `DialogFacts`.
+- A misplaced secret handle's refusal now tells the minter to write the handle as the whole string literal in the Playwright code of a `kernel.browsers.playwright.execute` call.
+- `exampleInputRefusal` takes an optional `maintenance` flag. A host sets it while it repairs a published tool, which runs its failing case's own input, so `exampleInput` is refused. The local host never sets it.
+- New exports let other hosts drop their copies of these checks.
+  - `pomerado/core/mint/step-checks` exports `testInputNotJson`.
+  - `pomerado/core/mint/publication-review` exports `unlistedExampleInputKeys` and `exampleInputFeedback`.
+  - `pomerado/core/mint/draft-questions` exports `draftQuestionDeclarations` and `draftQuestionDeclarationFailure`.
+  - `pomerado/core/execution/declared-questions` exports `asksAsDeclared`.
 
 ## 0.3.0
 
