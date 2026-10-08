@@ -4,6 +4,7 @@
 
 ### Other changes
 
+- The local minter's `AGENTS.md` starts with the features the shared prompts describe that another host supplies and the local host lacks, which the minter ignores. The local Guardian's execution policy ends with the same list, as protections it doesn't count on. `typescript/src/hosted-features.ts` holds the list, one line per entry, and a change that brings a feature to the local host deletes its entry. `GuardianExecutionEnvironment` gains an optional `absentProtections`, the policy's last line. A host that leaves it out gets the policy unchanged.
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.
 - Before ending blocked because a value the request gave is unavailable or invalid on the site, the minter asks the owner with `request_input`.

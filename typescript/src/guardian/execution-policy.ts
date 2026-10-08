@@ -1,3 +1,5 @@
+import { hostedProtectionsLine } from "../hosted-features.js";
+
 /**
  * What an execution review is told about the host that runs the code. Each field is the host's
  * text for one part of the execution policy. `name` reaches the model as
@@ -19,6 +21,11 @@ export interface GuardianExecutionEnvironment {
   readonly challenges: string;
   /** What a prior execution's `executorStopped` confirms the cleanup of. */
   readonly executor: string;
+  /**
+   * Protections other hosts supply that this one lacks, so a review never counts on them. It is
+   * the policy's last line. A host that lacks none leaves it out.
+   */
+  readonly absentProtections?: string;
 }
 
 /** The local host: native Playwright, local operation modules and the user's own shell. */
@@ -35,6 +42,7 @@ export const nativeExecutionEnvironment: GuardianExecutionEnvironment = {
   challenges:
     "waitPastChallenge is only a passive readiness wait. The native host supplies no automatic CAPTCHA solver. Do not treat a wait, reload or new browser as authority to interact with a challenge or ask the user to solve it; preserve uncertain effects and never automatically replay a write.",
   executor: "executor",
+  absentProtections: hostedProtectionsLine,
 };
 
 export const guardianExecutionPolicy = (
@@ -85,4 +93,6 @@ trusted_execution_context.repeatableRead is the host's existing retry permission
 Optional saved payment/private information is off unless explicitly authorized. When allowedEffects authorize a write (a write build's act step, or a published write's requested website action), an add-on, pre-selected paid option, saved payment method, private detail or unexpected commitment on the path is also enabled, kept, cleared, accepted or declined only as the caller's input or an answered question says: an option either of those settles is settled. A write step that settles one neither the caller's input nor an answered question settles, including by leaving a pre-selected paid option in place before a commit, lacks required input, so escalate. Leaving the page's default for a genuinely optional field is allowed and is not missing input. A read's sort, page size, filters or other defaults are not such choices.
 This review assesses one script/probe. It does not attest source bytes or inspect every nested action.
 The reviewer has only a scoped source-read tool, no shell, network, provider keys or mutation tools.
-The inspected workspace remains mutable; source can change between inspection and execution.`;
+The inspected workspace remains mutable; source can change between inspection and execution.${
+  environment.absentProtections ? `\n${environment.absentProtections}` : ""
+}`;

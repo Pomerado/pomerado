@@ -1,0 +1,73 @@
+import { Effect } from "effect";
+import { describe, expect, it } from "vitest";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
+import {
+  hostedFeatures,
+  hostedFeaturesPreamble,
+  hostedProtectionsLine,
+  renderHostedFeaturesPreamble,
+  renderHostedProtectionsLine,
+} from "../../src/hosted-features.js";
+import { loadStandaloneAuthoring, loadWorkspaceGuide } from "../../src/mint/skills.js";
+
+const sample = [
+  { features: ["F14", "F22"], name: "Anti-bot and proxies" },
+  { features: ["F12"], name: "savedDOM tests" },
+] as const;
+
+describe("hosted features the local host lacks", () => {
+  it("lists each entry once, with the features it covers", () => {
+    expect(hostedFeatures.length).toBeGreaterThan(0);
+    expect(new Set(hostedFeatures.map(({ name }) => name)).size).toBe(hostedFeatures.length);
+    for (const { features, name } of hostedFeatures) {
+      expect(name).toMatch(/^\S.*\S$/u);
+      expect(features.length).toBeGreaterThan(0);
+      for (const feature of features) expect(feature).toMatch(/^F(?:[1-9]|1\d|2[0-2])$/u);
+    }
+  });
+
+  it("renders the minter preamble as one lead sentence and one line per entry", () => {
+    expect(renderHostedFeaturesPreamble(sample)).toBe(
+      "These features are part of hosted Pomerado and not available open source. Please ignore these features.\n- Anti-bot and proxies\n- savedDOM tests",
+    );
+    expect(hostedFeaturesPreamble).toBe(renderHostedFeaturesPreamble(hostedFeatures));
+  });
+
+  it("renders the Guardian line from the same entries", () => {
+    expect(renderHostedProtectionsLine(sample)).toBe(
+      "These hosted protections aren't present here: anti-bot and proxies; savedDOM tests. Don't count on them.",
+    );
+    expect(hostedProtectionsLine).toBe(renderHostedProtectionsLine(hostedFeatures));
+  });
+
+  it("renders nothing once every feature is local", () => {
+    expect(renderHostedFeaturesPreamble([])).toBe("");
+    expect(renderHostedProtectionsLine([])).toBe("");
+  });
+
+  it("puts the preamble on top of the local minter's AGENTS.md and nowhere else", async () => {
+    const local = await Effect.runPromise(loadStandaloneAuthoring("typescript/authoring"));
+    expect(local.instructions.startsWith(`${hostedFeaturesPreamble}\n\n`)).toBe(true);
+    expect(local.files.get("AGENTS.md")).toBe(local.instructions);
+    for (const [path, text] of local.files)
+      if (path !== "AGENTS.md") expect(text).not.toContain(hostedFeaturesPreamble);
+    for (const skill of local.skills)
+      expect(new TextDecoder().decode(skill.content as Uint8Array)).not.toContain(
+        "part of hosted Pomerado",
+      );
+    // A host that loads the guide itself, with or without its own render, gets no preamble.
+    const guide = await Effect.runPromise(loadWorkspaceGuide("typescript/authoring"));
+    expect(local.instructions).toBe(`${hostedFeaturesPreamble}\n\n${guide.instructions}`);
+    expect(guide.instructions).not.toContain("part of hosted Pomerado");
+  });
+
+  it("ends the local Guardian's execution policy with the Guardian line", () => {
+    expect(nativeExecutionEnvironment.absentProtections).toBe(hostedProtectionsLine);
+    expect(
+      guardianExecutionPolicy(nativeExecutionEnvironment).endsWith(`\n${hostedProtectionsLine}`),
+    ).toBe(true);
+  });
+});

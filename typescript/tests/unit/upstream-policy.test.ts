@@ -18,7 +18,7 @@ const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
 // sha256 of the local host's execution policy. A deliberate policy edit updates it.
-const nativePolicySha256 = "d33767d0e50e425a927c40872f1bb6671e869248c9159c90ded23d2c2fc2538e";
+const nativePolicySha256 = "a4556f8d7c5b4972bb0b2329d5e66878637b94770e62caa469bdd2193c08c53a";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(
@@ -124,6 +124,16 @@ describe("Guardian execution environment", () => {
       expect(policy).not.toContain(nativeExecutionEnvironment[slot]);
     const native = guardianExecutionPolicy(nativeExecutionEnvironment);
     for (const slot of slots) expect(native).toContain(nativeExecutionEnvironment[slot]);
+  });
+
+  // The local host names the protections other hosts supply that it lacks, last. A host that
+  // lacks none leaves the field out, and its policy gains nothing.
+  it("ends the policy with the host's absent protections, and adds nothing without them", () => {
+    const policy = guardianExecutionPolicy(otherHost);
+    expect(policy.endsWith("source can change between inspection and execution.")).toBe(true);
+    expect(
+      guardianExecutionPolicy({ ...otherHost, absentProtections: "OTHER-ABSENT is not here." }),
+    ).toBe(`${policy}\nOTHER-ABSENT is not here.`);
   });
 
   it("sends the model the host's policy and names the host in the review input", async () => {
