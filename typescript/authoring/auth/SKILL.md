@@ -21,7 +21,10 @@ or the data sits behind a login wall). Try a public task signed out first.
 
 # The login URL you record
 
-<!-- pomerado:section auth.login-url -->
+The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to
+sign in. It must be a simple, stable route on the site: the page a person would bookmark to sign
+in, or where the site's own login link points before any redirect, read from that link. Never
+record:
 
 - a URL carrying one-time values: `state`, `nonce`, `code_challenge`, `code`, `session_state`,
   `SAMLRequest`, or a signed token or opaque random value in its query or fragment;
@@ -63,7 +66,12 @@ ask with `request_input` right away. A preselected option says nothing about the
 
 # One screen at a time
 
-<!-- pomerado:section auth.signed-out-flow -->
+Before recording, reopen the published stable `loginUrl` and map the complete signed-out flow. Reopen that
+route and record the required entry navigation from there, not just the username form reached
+after manual choices. Record each observed panel opener, authorized account/plan choice or
+Continue control as `signInStep: { fields: [], submit: "the-observed-selector" }`. Include only
+navigation needed for sign-in; exploration before the login URL and Business account actions,
+registration and password reset do not belong in the recipe.
 
 Record a field only after observing its unique visible enabled match in the intended frame and
 form, and a submit after observing its unique visible match there, even one the page enables only
@@ -71,7 +79,12 @@ once the fields hold input. Validate the complete live login and a fresh signed-
 the stable login URL. A saved DOM supports locator matching and extraction; it cannot prove live
 controls are actionable, their event handlers work or authentication succeeds.
 
-<!-- pomerado:section auth.partial-flow -->
+A run can begin partway through that flow because its bound profile or remembered device omitted
+an earlier stage. The host acts only on the observed recorded screen. It skips an earlier stage
+only when a later recorded page or distinct credential fields prove progression, or the published
+signed-in check verifies the session. A missing control, a timeout or a coincident Continue button
+on the same page does not prove an account choice happened. Record an authorized choice and its
+following Continue as separate steps.
 
 Call `execute` with purpose `authenticate`, target `liveBrowser` and a `signInStep` for the screen in
 front of you. Pass the stable route you clicked as `loginUrl` on the first one (above), never the
@@ -86,7 +99,55 @@ question has one visible match in that field's frame, supply its stable `questio
 its text. The host rereads the question before privately filling the answer. No answer reaches
 you, Guardian, generated code or the recipe. One-time and recovery codes keep their own slots.
 
-<!-- pomerado:section auth.step-fields -->
+- `fields`: each field the screen asks for, as a Playwright selector with exactly one visible match.
+  A selector never reaches into another frame (no `>>` chains or `internal:` engines): the host finds
+  each field in its own frame.
+  - An identifier field lists every kind it accepts in `accepts`, from `username`, `email`,
+    `phone` and `account_number`: a "username or email" field is `["username", "email"]`, an
+    email-only field `["email"]`, a mobile-number field `["phone"]`, an account, member or customer
+    number field `["account_number"]`. Read the label, type and placeholder. The host sends a kind
+    the login holds (username first, then email, phone and account number) or asks the caller once
+    for one it accepts. If it refuses the step as `identifier_conflict`, the answer was not this login's: send
+    the step again to ask again.
+  - `slot: "password"` for the password.
+  - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
+    otherwise the host asks the caller for the code. Never ask for a code yourself.
+  - `slot: "date_of_birth"` for a date of birth, with `format`, how the field takes it, read from
+    its placeholder, label, input mask or hint: `MM/DD/YYYY`, `DD/MM/YYYY`, `M/D/YYYY`,
+    `D/M/YYYY`, `MM-DD-YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY`, `YYYY-MM-DD`, `YYYY/MM/DD`, `MMDDYYYY`,
+    `DDMMYYYY` or `YYYYMMDD`. A native date input (`type="date"`) is `YYYY-MM-DD`. A date split into
+    a month, a day and a year is one field per part, each with its part's format: `MM` or `M` for a
+    month by number, `MMM` or `MMMM` for a month by its short or full name, `DD` or `D` for the day,
+    `YYYY` or `YY` for the year. A part may be a text box, a select or a custom dropdown: name the
+    select, or the dropdown's own control (its combobox or the button that opens its list), never
+    an option. The host fills the saved date into whatever control it finds, choosing the option
+    whose label or value matches, and records the format and the control's shape with the tool,
+    never the date. Every date layout, dropdowns included, is a screen you map.
+  - `slot: "zip"` for a ZIP or postal code the site checks to prove the account.
+  - `slot: "recovery_code"` for a backup or recovery code field. The host fills a saved one only
+    while recovery codes are the method in force, else asks the caller. Never ask for one yourself.
+  - `slot: "private_answer"` for a security question's answer field, with `questionSelector` when
+    the question has one visible match in that field's frame. The host fills the saved login's
+    answer to the question the page shows, else asks the caller with that question. Never ask for
+    an answer yourself.
+- `submit`: the observed control that submits those fields or advances this sign-in screen
+  ("Next", "Continue", "Sign in"), even one the page enables only once the fields hold input. It
+  may be a native button, a submit/button/image input, an HTML anchor or a custom ARIA action: use
+  its evidenced role, label or stable selector and purpose. The host clicks it, waiting a few
+  seconds for the page to enable it, and never clicks it while it is disabled. A screen that advances by itself (the identifier fills and the password field
+  appears by itself) names none; unrelated links or buttons on that page do not need a submit.
+  A two-factor method choice ("Text me a code", "Use my authenticator app") fills no field: list
+  every method the screen offers in `methods` (`sms`, `call`, `email`, `totp`, `push` or
+  `recovery_code` for "use a backup code", each with
+  the selector of the control that picks it) and name the one to pick now as `submit`, once the
+  branch rule above settles which. The tool's runs pick again from that list. A method's selector
+  publishes with the tool, so it never names the masked phone number or address the option shows
+  (such as `***-1234`): use the method's own words or a stable attribute.
+- Every selector and submit you send publishes with the tool, as does each screen's page address.
+  None may name this account's username, email or phone: not a "Continue as …" button's text, a
+  data attribute holding it, or a placeholder for it. Name a control by its role, label or a stable
+  attribute. The host refuses a step that names it (`selector_names_contact`), and a screen whose
+  address names it (`page_names_contact`) is refused; use an account-independent route.
 
 A screen may record `rejectedMarkers`, each with a field slot and an observed, value-free
 rejection selector. The slots are `username`, `email`, `phone`, `account_number`, `password`,
@@ -112,7 +173,12 @@ gift-card or promo code box, does not count. It does not classify unrecorded for
 page route. A successful host check does not replace inspecting the current screen and verifying
 authenticated access.
 
-<!-- pomerado:section auth.code-rejection -->
+On a combined password-and-code screen that returns empty, an explicit code rejection permits a
+fresh code with the unchanged password only while its two-send allowance remains. When the
+password remains in its field, retry only the fresh code. In a recorded replay, missing or
+ambiguous evidence about which field was rejected requests maintenance without resending the
+password. Report a rejection visible in the current mint even if no selector has been recorded
+yet; a visible recorded marker takes precedence over that report.
 
 Guardian checks each step against the screen: that every field takes the kinds it lists, that the
 submit is the right sign-in action, including a fieldless continuation or verification-method
@@ -135,7 +201,12 @@ the fields filled, you may click that one submit yourself in an `explore`, and n
 counts a value as sent only once it sees the form go out carrying it, whoever clicked. If it reports `submit: refused`, never click it.
 If the site says a field was wrong, send `signInStep: { rejected: { slot: "password" } }`
 with the actual rejected slot at once. The host asks for corrections; never ask for substitute
-credentials yourself or send a rejected value again.<!-- pomerado:section auth.next-screen -->
+credentials yourself or send a rejected value again. A primary identifier or password rejection
+asks for both username and password. A rejected secondary identifier, date of birth or ZIP asks
+only for that field; a recovery code uses the host's fresh-code ledger or question. The host allows
+at most two correction questions per rejected field per sign-in. Only submitted, visibly rejected
+fields consume their counters; `username` and the saved login's matching primary identifier share one
+counter. Worker takeover preserves these counters and rejected-value history.
 
 A rejected code permits at most two fresh-code corrections within the remaining sign-in time.
 This does not extend the unchanged password's limit of two sends, including sends before worker
@@ -162,13 +233,19 @@ signed-in indicator; confirmation alone does not verify the session.
 
 # Signed in
 
-<!-- pomerado:section auth.signed-in-evidence:start
-Prefer an observed protected account page or authenticated workflow control that the signed-out
-flow cannot reach, corroborated by the live business example. Generic Sign out or account chrome
-alone does not establish access to the caller's workflow. The signed-in marker you send is a
-separate check, of presence only (below): for it, a site-wide account menu or sign-out control is
-the right choice once `check_signed_in_marker` shows that the signed-out page lacks it.
-pomerado:section auth.signed-in-evidence:end -->
+Prefer an observed protected business/account page or authenticated workflow control that the
+signed-out flow cannot reach, corroborated by the live business example. Generic Sign out or
+account chrome alone does not establish access to the caller's workflow. The signed-in marker you
+send is a separate check, of presence only (`auth.sign-in-check`): for it, a site-wide account menu
+or sign-out control is the right choice once `check_signed_in_marker` shows the signed-out page
+lacks it. Call `authenticate` with `signInStep: { signedIn: { selector } }`. When the landing page
+shows no such marker, add `openPath`, the observed path of an account page that does, and the host
+opens it and checks there; never guess a protected route. The host checks that the submitted
+sign-in's recorded controls/form no longer show a password entry awaiting sign-in; unrelated
+password controls on the account page do not fail this check. It also checks that this sign-in
+submitted the login's identifier with its password, code or protected approval, then marks it
+verified; a Personal login locks to this site then. The marker is part of the published tool.
+Business work waits for a verified sign-in.
 
 # Popup sign-in
 
@@ -199,33 +276,38 @@ the same field on the same screen three times in a row ends sign-in in this buil
 
 # Every sign-in ends with its check
 
-<!-- pomerado:section auth.sign-in-check:start
-End every sign-in with a check that it worked, sent as `signInStep.signedIn`: an observed
-signed-in marker that every signed-in account shows and a signed-out page never does. Never use an
-account's name, email or number as the marker.
+Every sign-in you record ends with a deterministic sign-in check, sent as `signInStep.signedIn`: a
+marker every signed-in account shows and a signed-out page never does. Never put an account's
+name, email or number in it: the check publishes with the tool and runs for every login, and the
+host refuses one that names this account.
 
-The marker is checked in many places across the site, not only where this sign-in lands: after
-every reset, at the start of every operation, after a page load in the middle of a script, and on
-whatever page a failure lands on. So choose a site-wide element only a signed-in user sees, such as
+The host checks the marker in many places across the site, not only where this sign-in lands:
+after every reset, at the start of every operation, after a page load in the middle of a run, and
+on whatever page a failure lands on. Choose a site-wide element only a signed-in user sees, such as
 the global header's account menu or sign-out control, never something only the page after sign-in
-shows. It must show on any signed-in page, not only on `openPath`.
+shows.
 
-- Prefer stable attributes and names, such as `aria-label`, a role and its name, visible text or a
-  test id, over generated class names such as `css-1q2w3e`.
-- Never send a `urlPath` alone on a single-page app, or for a page the site also serves signed out:
-  the path stays the same when the session is gone. Never use the login page's path.
-- Test the marker with `check_signed_in_marker` before you send it, and choose another until every
-  check passes: absent on the signed-out page the host saw before the sign-in, and present on the
-  signed-in page now, after a fresh load and on another page you visited signed in. The host
-  refuses a marker that the signed-out page shows. When the tool reports the check unavailable,
-  or passed with the signed-out page unchecked, compare it yourself against the signed-out pages
-  you explored before signing in.
+- Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
+  generated class names such as `css-1q2w3e`.
+- Never send a `urlPath` alone on a single-page app, or for a page the site also serves signed
+  out; never the login page's path.
+- Test it with `check_signed_in_marker` and choose another until every check passes:
+  `signedOutSnapshot` absent (the host saved the page it saw before the sign-in sent anything, and
+  your explores from before signing in count too), `signedInNow`, `freshLoad` (the host opens
+  `openPath`, else `urlPath`, else the site's front page in a new tab) and `secondPage`. Your own
+  tab stays as it was. When it reports the signed-out page unchecked, as for a browser that
+  started from a saved profile, compare the marker yourself against what a signed-out visitor
+  sees.
+- The host repeats these checks when you send `signedIn`. It refuses a marker a signed-out page
+  shows (`marker_matches_signed_out_page`) or a sign-in page's path alone
+  (`marker_is_login_path`); the sign-in stays open and nothing is sent again, so send `signedIn`
+  with another marker. The marker must show on the signed-in page now. A fresh load never refuses
+  it: the result reports `freshLoad`, and when it is false a notice says why. When the new tab
+  showed the sign-in form, the site keeps its session only in page memory or session storage, and
+  the host signs in automatically at each operation start; the marker must still be site-wide.
 
-For example, after sign-in the header shows an "Account" link, which the signed-out header shows
-too, and an account menu button, which it does not. `{ "selector": "text=Account" }` matches the
-signed-out page and is refused. `{ "selector": "header [aria-label=\"Account menu\"]" }` passes
-every check, and is the marker to send.
-pomerado:section auth.sign-in-check:end -->
+The published tool records the check with its screens, and each run decides whether its sign-in
+worked by that check alone: a run whose check fails requests sign-in repair before its operation.
 
 ## A sign-in refusal found by operation code
 

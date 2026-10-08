@@ -162,7 +162,12 @@ starts it; you see only its name, type, size and sha256.
 
 ## Multi-step forms
 
-<!-- pomerado:section forms.saved-steps -->
+Filling in or advancing a form that saves data on the site (an application, a profile,
+a contracting or checkout form) is a write, even when nothing is submitted yet: many
+such forms save each step as you go. A read build may not fill in or advance such a
+form (it asks the caller and changes its task to a write with `mint_update` first, as the
+writes skill says); a write build does the whole form as its one task. A search, filter or query form
+whose read semantics are established stays a read.
 
 - Walk every step for real, in the session, with the caller's values. Never infer a
   later step's fields, options or wording in place of reaching it; the page after
