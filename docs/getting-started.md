@@ -6,7 +6,7 @@ This guide installs Pomerado, connects it to your MCP client and builds a first 
 
 - macOS or Linux.
 - Node 24.21 or a later Node 24 release. `node --version` should print `v24.21.0` or higher, below `v25`.
-- An OpenAI API key for an account that can use `gpt-6-sol` and `gpt-6-luna`. Pomerado calls OpenAI models to build and review integrations. Your agent can run on any model.
+- An OpenAI API key for an account that can use `gpt-6.1-sol` and `gpt-6-luna`. Pomerado calls OpenAI models to build and review integrations. Your agent can run on any model.
 - An MCP client that runs local stdio servers.
 
 ## Install
