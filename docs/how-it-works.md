@@ -30,7 +30,8 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - When a value you gave isn't available on the site, such as a sold-out date or an option the site doesn't list, it asks you whether to change it or stop. The question names your value and offers what the site has. It never picks another value for you.
 - A write keeps each native confirm you accept during its act steps on an https page. It saves up to 32 of them in `pomerado.json` as `acceptedConfirms`, each a digest of the message, the origin and the step. No page text is saved.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
-- Its prompts and examples come from `typescript/authoring/`.
+- Its prompts and examples come from `typescript/authoring/`. Every host reads the same text, except at the named sections where a host puts its own.
+- Its `AGENTS.md` starts with a list of features the prompts describe that another host supplies and the local host lacks. The minter ignores them. `typescript/src/hosted-features.ts` holds the list, one line per feature.
 
 ### Failures a build survives
 
@@ -56,6 +57,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - A denied call never reaches the website.
 - Guardian doesn't review a saved integration's runs. It approved the source while minting, so running an integration makes no model request and needs no model key.
 - Its policy in `typescript/src/guardian/upstream-policy.md` is adapted from OpenAI Codex under the Apache License 2.0.
+- Its execution policy ends with the same list of hosted features, as protections it doesn't count on.
 
 ### Review requests
 
@@ -199,8 +201,10 @@ The package has these entry points.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `submitJob` from `pomerado/core/runtime/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
-- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it.
+- `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it. Neither adds the list of hosted features. Only `loadStandaloneAuthoring`, the local host's loader, puts it on top of `AGENTS.md`.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
+  - `dataVendor` says when a read may carry the caller's input to the site's own data vendor on another domain, and what evidence shows the site's page making that call.
+  - `absentProtections` is optional. It names protections other hosts supply that this host lacks, as the policy's last line.
 - `executeKernelOperation` from `pomerado/core/runtime/kernel-operation-run` runs an operation's script under the execution context's deadline, capture, events and journal, as the local child process does. A host with its own implementation of an operation passes it as the optional `first` runner, which runs in place of the script and gets the script's run as its fallback.
 - `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. It takes the session's non-read request count, which the local host passes as 0. The local host marks each step its effect journal can't rule out as `possiblySent` instead.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
@@ -229,5 +233,6 @@ The package has these entry points.
 | `typescript/src/inputs/` | Input validation, terminal collection and per-session secrets |
 | `typescript/src/execution/` | Local workspaces, child processes and native Playwright adapter |
 | `typescript/src/standalone/` | Local library, terminal and MCP composition |
+| `typescript/src/hosted-features.ts` | Features another host supplies that the local minter ignores and its Guardian doesn't count on |
 | `typescript/src/mcp/schema.ts` | Pure schema adapter shared with the production MCP |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
