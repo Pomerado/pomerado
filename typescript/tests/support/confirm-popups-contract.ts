@@ -6,7 +6,10 @@ import { expectedConfirmDigest } from "../../src/browser/dialogs/expected.js";
  * The contract every host's handling of a run's native dialogs keeps, on one fixture page. The
  * confirm a write's build accepted at a step is accepted again at that step without asking, once.
  * Every other popup, in the page, in an iframe, in a popup window or in a read-only run, asks the
- * caller or is dismissed. None of them is ever accepted, and none is left open.
+ * caller or is dismissed. None of them is accepted, and none is left open. The one exception is
+ * the recorded message at the recorded step raised from another site's frame in the page: a host
+ * that reads a dialog's origin from the top page, the default `dialogOrigin`, accepts it as the
+ * page's own (see `ConfirmPopupContractOptions`).
  *
  * A host runs each case on a fresh page of a context `serveConfirmPopups` serves, with a fresh run:
  * it opens `confirmPopupsOrigin`, clicks the case's `selector` (inside the case's `frame`, when it
