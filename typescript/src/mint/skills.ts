@@ -19,6 +19,12 @@ const catalog = [
     ],
   },
   {
+    name: "search",
+    description:
+      "Read before settling a search or listing tool's inputs: the site's own filters, sort and location, applied and read back, and honest empty results",
+    references: [],
+  },
+  {
     name: "auth",
     description: "Discover an evidenced login entry and sign in through the host",
     references: ["auth-entry.ts"],
@@ -48,6 +54,12 @@ const catalog = [
     description:
       "Perform an authorized write once, confirm it, then return its integration without running it again",
     references: ["write-session.ts", "write-readback.ts"],
+  },
+  {
+    name: "cart",
+    description:
+      "Read before building any tool that reads, adds to, changes or checks out a cart: sign in first, read the cart before and after, quantity, account values and site limits",
+    references: [],
   },
   {
     name: "caller-input",

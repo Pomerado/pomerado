@@ -22,7 +22,8 @@ site's meaningful result or saved-state readback. An intermediate UI state can b
 an assertion about it can stop a flow before the final outcome is available.
 
 Keep Playwright's normal awaited actions and readiness waits, reads needed to choose the next
-action, native errors, and caller, authority, destination and write-replay guards. These are
+action, the input read-back before returning, native errors, and caller, authority, destination
+and write-replay guards. These are
 part of executing the flow, not extra success assertions. Do not add fixed pauses to make an
 intermediate state pass. When a final check fails, use the retained execution evidence to
 diagnose where the flow diverged.
@@ -44,9 +45,10 @@ pomerado:section publication.metadata-readers:end -->:
   status", "Cancel reservation". Leave out the site's name<!-- pomerado:section publication.integration-name --> and words
   like "tool".<!-- pomerado:section publication.unique-name -->
 - **Description.** 1–3 sentences for an agent deciding whether to call this tool: what it does,
-  what it returns, and when to use it instead of a similar tool. State limits (results per page,
-  date range, what it doesn't cover) and, for a write, exactly what changes on the site and
-  whether it can be undone. Don't repeat the inputs; their field descriptions cover them.<!-- pomerado:section publication.site-naming -->
+  what it returns, and when to use it instead of a similar tool. Briefly state the design
+  decisions, limits and interpretations a caller needs to read the result right (results per
+  page, date range, the site's default location, what it doesn't cover) and, for a write,
+  exactly what changes on the site and whether it can be undone. Don't repeat the inputs; their field descriptions cover them.<!-- pomerado:section publication.site-naming -->
 
 ## Check before `finish_build`
 
@@ -57,21 +59,21 @@ first:
   field has its own description, every output field is typed and each constraint has a JSON
   Schema form (core skill, the input schema). A read's schemas come from current source, so
   fix one there and call again with the same `executionId`; a required output field its example
-  did not return is refused (`contract_output_mismatch`).
+  did not return is refused (`contract_output_mismatch`). Values the request needs are required
+  and non-null, and no output is a constant where the page shows a value (core skill, output
+  fields).
 - **Typed output.** Prefer parsing what the page shows into typed fields over returning a
-  result row, card or itinerary as one text blob or summary. Prefer giving each fact a caller
-  would filter, sort or compare on its own field: a price as integer minor units with
-  `currency`, times as ISO 8601 with the offset, durations in minutes, counts as integers, and
-  codes and names as their own strings. A flight card reading "XX 234, 7:00 AM-3:31 PM,
-  Nonstop, 5h 31m, $244" should return `{ "flight_number": "XX 234", "departure_time":
-  "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0,
-  "duration_minutes": 331, "price_minor": 24400, "currency": "USD" }` rather than
-  `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
+  result row, card or itinerary as one text blob or summary. Give each fact a caller would
+  filter, sort or compare its own field (core skill, output fields). A flight card reading "XX
+  234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234",
+  "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00",
+  "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
   or stand in for one value that truly does not parse, with that field's description saying so.
 - **Inputs.** Nothing the caller could vary is a literal, and every optional field the flow
   offers that bears on the tool's purpose is an optional input, even one the request never
   mentioned and one you never asked about (core skill, the input schema). Guardian counts such an input as part of the
-  tool, never as scope drift or an unsupported claim.
+  tool, never as scope drift or an unsupported claim. Each input you accept is applied and read
+  back (core skill, the input schema, and `AGENTS.md`; the search skill for a search).
 - **Personal data.** No personal data from the session in source, schemas, examples or metadata:
   names, emails, account numbers, addresses or the owner's answers (the list below).
 - **Claims.** The name, description and output claim only what the example or session reached:
@@ -85,9 +87,9 @@ first:
 - **Write options.** Each option on the path is an input even when the caller left the choice to
   you; the script never takes the first, the alphabetically first or a hard-wired value.
 - **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens
-  it. Check it is the stable route you clicked (auth skill): no `state`, `nonce`,
+  it. Check it is the site's own sign-in link as you clicked it (auth skill): no `state`, `nonce`,
   `code_challenge`, `code`, `session_state` or signed token in its query or fragment, and no
-  identity provider's authorize endpoint. If it is not, open that stable route, call
+  identity provider's authorize endpoint. If it is not, follow that link again, call
   `authenticate` again with it as `loginUrl`, then call `finish_build` with the same `executionId`.<!-- pomerado:section publication.http -->
 - **Page traffic.** Let the site's own scripts, fonts, images and analytics load. Guardian never
   refuses them for the username or keys they carry, so never block, route around or suppress
@@ -160,7 +162,7 @@ A `not_published` result says why in `reason` and, for most reasons, what to do 
 
 | Where                      | Value                                                                                                                                  | What it means                                                                      | What to do                                                                                                                                                                                                                                                                                   |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reason`                   | `input_feedback`                                                                                                                       | Guardian found `account_specific_enum`, `input_option` or `example_value` findings | Correct the source (make the value free-form, add the option as an input, or widen the input and the code that sets it) and call `finish_build` again with the same `executionId`. Never run the write again. After the last round the host publishes privately and flags it                 |
+| `reason`                   | `input_feedback`                                                                                                                       | Guardian found `account_specific_enum`, `input_option` or `example_value` findings | Correct the source (make the value free-form, add the option as an input, or widen the input and the code that sets it) and call `finish_build` again with the same `executionId`. Never run the write again. After the last round the host publishes privately and flags it; never choose that fallback |
 | `reason`                   | `host_owned`                                                                                                                           | Every finding is in a host-owned file                                              | Read the findings and rationale. Report a genuine host-file blocker; do not edit host files, repeat the action or resubmit unchanged. A separate editable cause can be corrected on the same receipt.                                                                                        |
 | `reason`                   | `input_feedback_unresolved`                                                                                                            | The feedback rounds are spent                                                      | End the attempt; do not execute again                                                                                                                                                                                                                                                        |<!-- pomerado:section publication.http-rejections -->
 | `reason`                   | `secret_handle`<!-- pomerado:section publication.token-codes -->                                                                  | A published file holds a handle<!-- pomerado:section publication.token-meaning -->                                         | Read the value at run time instead (a declared question<!-- pomerado:section publication.token-source -->), then call again.<!-- pomerado:section publication.token-retest -->                                                                                                                            |

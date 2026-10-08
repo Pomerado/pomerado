@@ -569,8 +569,8 @@ export const makeOpenAIMinter = (
                 toolFailure(error, failureInstruction),
             });
             const signInDescription = turn.autofillSignIn
-              ? "trusted host credentials, signing in by host autofill with a signInStep for each sign-in screen (preferred) and by Kernel Managed Auth without signInStep only as the fallback"
-              : "trusted host credentials and Kernel Managed Auth";
+              ? "trusted host credentials, signing in by host autofill with a signInStep for each sign-in screen"
+              : "trusted host credentials";
             const executeTool = hostTool(
               "execute",
               `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for ${signInDescription} (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it. Up to 2 of a read's live tests may run an input you choose instead (testInput). Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty, an act step passes exampleInput the same way, and each act step that passes it runs it. A write build tests only offline. intent states what this execution should establish; it never authorizes the execution.`,

@@ -16,15 +16,17 @@ get the code. Never ask for it separately with `request_input`. A `request_input
 for a code is only for a later protected action after sign-in, when the site asks for another code
 to confirm it.
 
-Sign in only when the task needs it (the request asks, the task is about the caller's own account,
-or the data sits behind a login wall). Try a public task signed out first.
+Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
+Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
+or settings the task does not concern.
 
 # The login URL you record
 
 The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to
-sign in. It must be a simple, stable route on the site: the page a person would bookmark to sign
-in, or where the site's own login link points before any redirect, read from that link. Never
-record:
+sign in. Follow the site's own sign-in link: record its exact `href`, read before you click it,
+never a trimmed, rebuilt or guessed copy. When that link works only with one-time values in it,
+record the page that shows the link as `loginUrl` and the link's click as a fieldless
+`signInStep`. Never record:
 
 - a URL carrying one-time values: `state`, `nonce`, `code_challenge`, `code`, `session_state`,
   `SAMLRequest`, or a signed token or opaque random value in its query or fragment;
@@ -33,9 +35,8 @@ record:
 
 Such a URL was made for one sign-in; a run that replays it starts from spent values.
 
-Read a login link's `href` before you click it. A simple login route often redirects through an
-identity provider and lands on an authorize URL with one-time parameters: record the route you
-clicked, not the page you landed on.
+A login link often redirects through an identity provider and lands on an authorize URL with
+one-time parameters: record the link you clicked, not the page you landed on.
 
 # Discover the entry before authenticating
 
@@ -60,9 +61,15 @@ clicked, not the page you landed on.
    After a failed sign-in, reopening the login route in an `explore` to read it again is fine.
    `references/auth-entry.ts` shows a bounded second probe that reads a login form's controls.
 
-When the entry offers mutually exclusive account or plan types, or sign-in methods, decide before
-clicking one: take the branch only when the request or input names or clearly implies it, otherwise
-ask with `request_input` right away. A preselected option says nothing about the caller.
+When the entry offers mutually exclusive account or plan types, decide before clicking one: take
+the branch only when the request or input names or clearly implies it, otherwise ask with
+`request_input` right away. A preselected option says nothing about the caller.
+
+Pick a sign-in method in this order: the one the request or caller names, the password, then a
+code or approval; when several channels remain and nothing names one, ask the caller which, and
+never prefer one yourself. Never list or pick a passkey, security key or biometric option, even
+when the caller asks: the host cannot use one. When a passkey is the only way in, end with
+`report_blocked` `site_lacks_capability`.
 
 # One screen at a time
 
@@ -75,9 +82,10 @@ registration and password reset do not belong in the recipe.
 
 Record a field only after observing its unique visible enabled match in the intended frame and
 form, and a submit after observing its unique visible match there, even one the page enables only
-once the fields hold input. Validate the complete live login and a fresh signed-out replay from
-the stable login URL. A saved DOM supports locator matching and extraction; it cannot prove live
-controls are actionable, their event handlers work or authentication succeeds.
+once the fields hold input. The host validates the live login; a signed-out replay is verified
+only by a later registered run, so report it as unverified (testing skill). A saved DOM supports
+locator matching and extraction; it cannot prove live controls are actionable, their event
+handlers work or authentication succeeds.
 
 A run can begin partway through that flow because its bound profile or remembered device omitted
 an earlier stage. The host acts only on the observed recorded screen. It skips an earlier stage
@@ -139,8 +147,8 @@ you, Guardian, generated code or the recipe. One-time and recovery codes keep th
   A two-factor method choice ("Text me a code", "Use my authenticator app") fills no field: list
   every method the screen offers in `methods` (`sms`, `call`, `email`, `totp`, `push` or
   `recovery_code` for "use a backup code", each with
-  the selector of the control that picks it) and name the one to pick now as `submit`, once the
-  branch rule above settles which. The tool's runs pick again from that list. A method's selector
+  the selector of the control that picks it) and name the one to pick now as `submit`, by the
+  method order above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
 - Every selector and submit you send publishes with the tool, as does each screen's page address.
@@ -230,6 +238,12 @@ relation if that screen is in the popup. The host asks the caller through a prot
 after the identifier was submitted. Never ask an ordinary question for this approval or request
 the link, code or device contents. After confirmation, explore the account page and submit its
 signed-in indicator; confirmation alone does not verify the session.
+
+Never accept optional setup the site offers during or right after sign-in, such as creating a
+passkey, adding a phone number or turning on two-factor. Record its decline control ("Not now",
+"Skip") as its own `signInStep` with no fields and that control as `submit`, before the signed-in
+check, so runs pass it too; a run where it does not show skips it once the check verifies the
+session.
 
 # Signed in
 
@@ -346,6 +360,6 @@ Observe the current login screen with a reviewed read-only probe: its URL, frame
 
 Fields use the same slots and format declarations. `username` lists every accepted identifier kind; password/code/recovery-code/date-of-birth/ZIP/private-answer match that observed field's purpose. The host obtains the needed value through the caller's input callback or the terminal, checks the original field/document/origin/focus binding and inserts privately. The terminal hides a password, code or other secret as it is typed, and shows a username, email, phone number or account number. A private answer is prompted from the current `questionSelector` text when it has one visible match in the answer field's frame. When a recorded question could not be read, the prompt says so; with no `questionSelector`, it uses the field label. The answer is discarded after this fill. Supply the observed question selector when the question is adjacent to a generic answer label. No saved credential, seed or SMS automation is used. The host records the screens of a verified sign-in, without values, and publishes them with the tool; each run of the tool replays them, asking for the login and any code or answer only when the site needs it. No value enters your model context or files.
 
-Inspect each subsequent screen and send its observed step. After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`, where the host saved the next screen's controls: role, name or label, input type, and whether each is required, visible and enabled, never a value. Read it first to see what the screen asks for, then probe read-only only for what it lacks, such as a selector or form destination. A failed step's result shows the last saved controls inline, at most 30, and the file holds the rest. A method or account choice needs caller input before selection. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
+Inspect each subsequent screen and send its observed step. After a step whose submit the host clicked, its result names `captures/after-submit/<step>.json`, where the host saved the next screen's controls: role, name or label, input type, and whether each is required, visible and enabled, never a value. Read it first to see what the screen asks for, then probe read-only only for what it lacks, such as a selector or form destination. A failed step's result shows the last saved controls inline, at most 30, and the file holds the rest. An account choice needs caller input before selection, and a sign-in method follows the order above. Wait for and verify an observed signed-in marker; disappearance of the login form is insufficient. Rejection requires caller correction and never authorizes replay of a private submission. Popup/frame sign-in uses the observed host target and configured sign-in origins, with the same destination guard.
 
 pomerado:section auth.direct-request:end -->

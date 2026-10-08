@@ -50,7 +50,8 @@ already asked for, or to solve a CAPTCHA.
    characters (`page_title`, not `pageTitle`); the host refuses an invalid id before the
    script runs, and each `ask` uses the declared id exactly.
    - `{ type: "choice", prompt, allowOther? }`: one option; `allowOther` lets the caller
-     type their own answer, returned as `{ other }`. Own text that repeats exactly one
+     type their own answer, returned as `{ other }` (a build's `request_input` always
+     allows it, `AGENTS.md`). Own text that repeats exactly one
      offered option's label (or its listed form entry, `id (label)`) returns that option.
    - `{ type: "multi_choice", prompt, minSelections?, maxSelections? }`: several options,
      at least one unless `minSelections` says otherwise, at most the options offered.
@@ -124,7 +125,8 @@ change the declared question as it says and execute again. If the
 owner does not answer in time, the build ends as `no_response`; there is nothing to
 retry, and a write step after one that sent something is reported as a possible
 change. Do not turn an account-specific choice into a published input to work around
-a question.
+a question; a value the caller can type, such as a member number, is a free-form input
+instead.
 
 `references/caller-choice.ts` books a seat on the caller's chosen flight: it asks for a
 seat and a saved traveler once the flight's seat map is shown, then books once and calls

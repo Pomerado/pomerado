@@ -42,11 +42,13 @@ it("loads modular skill references and keeps auth discovery outside managed logi
   // The testing skill is shared text; its capture reference is another host's.
   expect(skills.map((entry) => entry.name)).toStrictEqual([
     "core",
+    "search",
     "auth",
     "testing",
     "pagination",
     "forms",
     "writes",
+    "cart",
     "caller-input",
     "publication",
   ]);
@@ -269,7 +271,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
   [
     "workspace/AGENTS.md",
-    "**Reach every page the way a person does.** In the Playwright version and your browser probes, open the site's entry page and get everywhere else through the site itself: type into its search boxes and forms, pick its suggestions and options, and click its links and buttons. Never open a URL, path or query string that holds the caller's input, such as a slug made from a name, a code or date placed in a path, or a parameter the site did not send. This holds for `src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run is fine to read, return, reload or follow, such as the results page your search landed on or a link's own `href`. So is a fixed page the site links to, opened without caller input. When a site control does not offer the caller's value, wait for it, retry it or use another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist. Never fall back to a URL you wrote. This rule does not cover the HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input. Before claiming a requested search or list result",
+    "**Reach every page the way a person does.** In the Playwright version and your browser probes, open the site's entry page and get everywhere else through the site itself: type into its search boxes and forms, pick its suggestions and options, and click its links and buttons. Never open a URL, path or query string that holds the caller's input, such as a slug made from a name, a code or date placed in a path, or a parameter the site did not send. This holds for `src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run is fine to read, return, reload or follow, such as the results page your search landed on or a link's own `href`. So is a fixed page the site links to, opened by its exact `href` without caller input. Never trim, rebuild or guess a link: a link with its query removed is a URL you wrote. When a site control does not offer the caller's value, wait for it, retry it or use another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist. Never fall back to a URL you wrote. This rule does not cover the HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input. **Read back every input before returning.**",
   ],
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
@@ -279,12 +281,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A format read from one sample breaks on the next value, so the minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Never derive a format from one sample: not an input format, an element key, a selector or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
     "publication",
-    'did not return is refused (`contract_output_mismatch`). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Prefer giving each fact a caller would filter, sort or compare on its own field: a price as integer minor units with `currency`, times as ISO 8601 with the offset, durations in minutes, counts as integers, and codes and names as their own strings. A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m, $244" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331, "price_minor": 24400, "currency": "USD" }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
+    'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null, and no output is a constant where the page shows a value (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
   ],
 ];
 
@@ -434,7 +436,7 @@ it("gives the local builder the shared publication text and no hosted-only check
   const texts = await renderedTexts("typescript/authoring");
   const publication = (texts.get("publication") ?? "").replace(/\s+/g, " ");
   expect(publication).toContain(
-    "Never run the write again. After the last round the host publishes privately and flags it |",
+    "Never run the write again. After the last round the host publishes privately and flags it; never choose that fallback |",
   );
   expect(publication).toContain("- **Login URL.** A signed-in tool publishes the `loginUrl`");
   expect(publication).toContain("`confirmation_unrecorded`, `confirm_action_unmatched`,");
@@ -606,16 +608,18 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["3f841159d3a3eb5d3e4e7080c889475f2c2e15b6dae03c28a5377d125b1591b1", "core"],
-    ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
-    ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
+    ["11f6d3ec38e25ac0a1da2c11605ae4b5b24a0d85460290c3aaf457f38ef2b2b5", "core"],
+    ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
+    ["523d44beba9d1d3c7396e7abd2d994f7530e269ae81d9aba0d1535b87f08952c", "auth"],
+    ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["5cafb09c16b4288f7e060cf02dcf7d0fa3ae8a7fd20b1641ca2fe8320a2c4283", "forms"],
-    ["699de0a8f721e57ea98d186bf223aaf1a2bc36d4087776a723d8f10c2f1fd667", "writes"],
-    ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
-    ["114d9fd8e6cf5c260a9d2848f8fe5aa7e13a4ec2ab5e898eaa3c4bcc12544645", "publication"],
-    ["b4e81f2ec3bb6c3129b901f48b5e909b80014ba5e826f0cfc6324dab890ed3ef", "workspace/AGENTS.md"],
-    ["52b250f4fb5820f484eabadb17246852498a159ab8c953fd844560aa531711de", "workspace/README.md"],
+    ["e7fbebc354b9c73f5c0402c515448ac3548503aab2128ad68e39d5c46c224b34", "forms"],
+    ["01c02a485f4cf56777357d1b48135426d737bdcccb9784772a66afc6105ab61d", "writes"],
+    ["8777cfd94916f86f91311453ca7847d5d72eaf6fd198974c73512f3f9d1f5206", "cart"],
+    ["b3147e9625a33c2a7c3db014199964d574af5e892d72b65680cda843e66da3e0", "caller-input"],
+    ["3fb022f27108187e17b4c0fae36b0f39ac8530d79a36db44a6afcf50b0362ff5", "publication"],
+    ["5ed6281c3ef4059cecf306d98635469dad3a0f1d195f52306f13759d8b065b13", "workspace/AGENTS.md"],
+    ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],
   ]);
 });
 
