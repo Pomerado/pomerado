@@ -57,6 +57,11 @@ export interface PendingQuestion {
    * report or question about one is judged against the refusal itself.
    */
   readonly publicationDecisions?: readonly PublicationDecision[];
+  /**
+   * Host fact: the operation's script asks this through `ask` while it runs, not the minting
+   * agent through `request_input`.
+   */
+  readonly scriptAsk?: true;
 }
 
 const reviewedOption = <E>(
@@ -86,6 +91,7 @@ export const questionForReview = <E>(
     readonly writeUpgrade?: true;
     readonly blockedOutcome?: true;
     readonly publicationDecisions?: readonly PublicationDecision[];
+    readonly scriptAsk?: true;
   },
   screen: (text: string) => Effect.Effect<string, E>,
 ): Effect.Effect<PendingQuestion, E> =>
@@ -137,6 +143,7 @@ export const questionForReview = <E>(
       ...(facts.publicationDecisions === undefined || facts.publicationDecisions.length === 0
         ? {}
         : { publicationDecisions: facts.publicationDecisions }),
+      ...(facts.scriptAsk === true ? { scriptAsk: true as const } : {}),
     };
   });
 

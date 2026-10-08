@@ -212,6 +212,16 @@
       "import": "./dist/typescript/src/guardian/upstream-policy.js",
       "default": "./dist/typescript/src/guardian/upstream-policy.js"
     },
+    "./core/jobs/fingerprint": {
+      "types": "./dist/typescript/src/jobs/fingerprint.d.ts",
+      "import": "./dist/typescript/src/jobs/fingerprint.js",
+      "default": "./dist/typescript/src/jobs/fingerprint.js"
+    },
+    "./core/jobs/job-store": {
+      "types": "./dist/typescript/src/jobs/job-store.d.ts",
+      "import": "./dist/typescript/src/jobs/job-store.js",
+      "default": "./dist/typescript/src/jobs/job-store.js"
+    },
     "./core/mcp/schema": {
       "types": "./dist/typescript/src/mcp/schema.d.ts",
       "import": "./dist/typescript/src/mcp/schema.js",
@@ -526,6 +536,11 @@
       "types": "./dist/typescript/tests/browser/isolated-locator-page.d.ts",
       "import": "./dist/typescript/tests/browser/isolated-locator-page.js",
       "default": "./dist/typescript/tests/browser/isolated-locator-page.js"
+    },
+    "./testing/job-store-contract": {
+      "types": "./dist/typescript/tests/support/job-store-contract.d.ts",
+      "import": "./dist/typescript/tests/support/job-store-contract.js",
+      "default": "./dist/typescript/tests/support/job-store-contract.js"
     },
     "./testing/mint-fixtures": {
       "types": "./dist/typescript/tests/support/mint-fixtures.d.ts",

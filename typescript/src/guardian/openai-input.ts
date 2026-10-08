@@ -71,6 +71,7 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.publicationDecisions === undefined
               ? {}
               : { publicationDecisions: turn.pending.questionCandidate.publicationDecisions }),
+            ...(turn.pending.questionCandidate.scriptAsk === true ? { scriptAsk: true } : {}),
           },
         }),
     ...(turn.pending.hostReview === undefined

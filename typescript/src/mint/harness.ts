@@ -2937,7 +2937,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     {},
-                    "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Google Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
+                    "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
                   );
                 if (error.reason === "variants_unsupported")
                   return notPublished(

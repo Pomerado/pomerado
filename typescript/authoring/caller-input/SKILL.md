@@ -23,6 +23,13 @@ reworded question still asks for it again. A placeholder that stands in for a re
 such as "[redacted value]", supplies nothing. A supplied value the site rejects, or two that
 conflict, can still need a question, one that names the actual problem.
 
+Work the request already covers proceeds without a question, such as finding the right field
+or choosing among alternatives the request already allows. A supplied value the site does not
+offer, such as an unavailable option, date or quantity, is not such a question: the tool throws
+`InvalidInput`, as .agents/core/SKILL.md says, and never substitutes another value. Asking the
+owner to revise it or stop is the minter's own `request_input` question while it builds, as
+`AGENTS.md` says.
+
 Use a published input instead whenever the value is stable and the caller can supply it
 up front, such as a flight number, a date or a quantity. Never ask for a password, a
 username or any other login: the host asks for a login itself and signs in. Never ask
