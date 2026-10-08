@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type { PublicationDecision } from "../mint/contracts.js";
 import {
   type InputOption,
   type InputRequest,
@@ -49,6 +50,11 @@ export interface PendingQuestion {
    */
   readonly blockedOutcome?: true;
   /**
+   * Host evidence: the build's latest publication refusals, as the host recorded them, so a
+   * report or question about one is judged against the refusal itself.
+   */
+  readonly publicationDecisions?: readonly PublicationDecision[];
+  /**
    * Host fact: the operation's script asks this through `ask` while it runs, not the minting
    * agent through `request_input`.
    */
@@ -80,6 +86,7 @@ export const questionForReview = <E>(
   facts: {
     readonly credentialsAvailable: boolean;
     readonly blockedOutcome?: true;
+    readonly publicationDecisions?: readonly PublicationDecision[];
     readonly scriptAsk?: true;
   },
   screen: (text: string) => Effect.Effect<string, E>,
@@ -127,6 +134,10 @@ export const questionForReview = <E>(
       ...(notice === undefined ? {} : { notice }),
       credentialsAvailable: facts.credentialsAvailable,
       ...(facts.blockedOutcome === true ? { blockedOutcome: true as const } : {}),
+      // Finite host metadata, written by the harness: nothing to screen.
+      ...(facts.publicationDecisions === undefined || facts.publicationDecisions.length === 0
+        ? {}
+        : { publicationDecisions: facts.publicationDecisions }),
       ...(facts.scriptAsk === true ? { scriptAsk: true as const } : {}),
     };
   });
