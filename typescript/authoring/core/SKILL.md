@@ -95,6 +95,9 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
+  error for that option over returning results for another one. A repair adds it when a caller
+  needs it.
 - Never derive a format from one sample: not an input format, an element key, a selector or a
   label. A key the page showed for the example's value says nothing about the next value, as
   when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
@@ -180,12 +183,23 @@ that asks.
   without fixing them, the host publishes the last reviewed version privately to the
   caller's account and flags it.
 
-Typed output, where the site makes it easy:
-- Prefer numbers for prices, amounts and counts, with the currency or unit in its own field.
-- Prefer ISO 8601 for dates and times, and minutes for durations. Type a date-only value as
-  the runtime's `CalendarDate` (forms skill).
-- Keep one field per fact. Split a combined line into separate fields.
-- If a value does not parse cleanly, returning the site's own text is fine.
+Typed output:
+- Prefer parsing what the page shows into typed fields over returning a result row, card or
+  itinerary as one text blob or summary. Prefer giving each fact a caller would filter, sort or
+  compare on its own field: a price as integer minor units with `currency`, times as ISO 8601
+  with the offset, durations in minutes, counts as integers, and codes and names as their own
+  strings. A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m, $244" should return
+  `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time":
+  "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331, "price_minor": 24400,
+  "currency": "USD" }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text
+  may ride beside the typed fields, or stand in for one value that truly does not parse, with
+  that field's description saying so.
+- Type a date-only value as the runtime's `CalendarDate` (forms skill).
+- Prefer keeping every result row the page shows.
+- Make the facts every result row has required output fields, such as a listing's price or a
+  flight's fare in each mode the tool offers. Type each so a value the code could not read
+  fails the output check, as `Schema.Int` or `Schema.NonEmptyString`, rather than an optional,
+  nullable or plain `Schema.Number` field. A run whose output fails its schema goes to repair.
 
 **Search results.** When the site says how its results matched, such as exact matches
 against suggested or fallback items, a search tool returns that. Otherwise its description
