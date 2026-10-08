@@ -1,5 +1,5 @@
 import { Agent, RunContext, RunState, Runner, tool } from "@openai/agents";
-import { Duration, Effect } from "effect";
+import { Cause, Duration, Effect, Exit } from "effect";
 import { guardianCompaction, makeGuardianSession } from "../guardian/session.js";
 import { lunaModel } from "../models/models.js";
 import { withReasoningContinuity } from "../models/reasoning-settings.js";
@@ -64,11 +64,17 @@ const reviewerTools = (
         additionalProperties: false,
       },
       strict: true,
-      execute: (input: unknown) => Effect.runPromise(run(input), { signal: signal() }),
+      execute: async (input: unknown) => {
+        const exit = await Effect.runPromiseExit(run(input), { signal: signal() });
+        if (Exit.isSuccess(exit)) return exit.value;
+        throw Cause.squash(exit.cause);
+      },
       // A host failure, such as an assessment the journal could not record, ends the turn so it
-      // is retried; it is never shown to the model as an answer.
+      // is retried; it is never shown to the model as an answer. Arguments the model got wrong
+      // are its to correct.
       errorFunction: (_context, error) => {
-        throw error;
+        if (error instanceof MintFailure || signal().aborted) throw error;
+        return JSON.stringify({ status: "invalid", detail: "The call's arguments did not decode." });
       },
     });
   return [
