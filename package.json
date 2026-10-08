@@ -172,6 +172,11 @@
       "import": "./dist/typescript/src/execution/boundary.js",
       "default": "./dist/typescript/src/execution/boundary.js"
     },
+    "./core/execution/declared-questions": {
+      "types": "./dist/typescript/src/execution/declared-questions.d.ts",
+      "import": "./dist/typescript/src/execution/declared-questions.js",
+      "default": "./dist/typescript/src/execution/declared-questions.js"
+    },
     "./core/execution/sign-in-diagnostics": {
       "types": "./dist/typescript/src/execution/sign-in-diagnostics.d.ts",
       "import": "./dist/typescript/src/execution/sign-in-diagnostics.js",
@@ -247,6 +252,11 @@
       "import": "./dist/typescript/src/mint/diagnostics.js",
       "default": "./dist/typescript/src/mint/diagnostics.js"
     },
+    "./core/mint/draft-questions": {
+      "types": "./dist/typescript/src/mint/draft-questions.d.ts",
+      "import": "./dist/typescript/src/mint/draft-questions.js",
+      "default": "./dist/typescript/src/mint/draft-questions.js"
+    },
     "./core/mint/harness": {
       "types": "./dist/typescript/src/mint/harness.d.ts",
       "import": "./dist/typescript/src/mint/harness.js",
@@ -301,6 +311,11 @@
       "types": "./dist/typescript/src/mint/projection.d.ts",
       "import": "./dist/typescript/src/mint/projection.js",
       "default": "./dist/typescript/src/mint/projection.js"
+    },
+    "./core/mint/publication-review": {
+      "types": "./dist/typescript/src/mint/publication-review.d.ts",
+      "import": "./dist/typescript/src/mint/publication-review.js",
+      "default": "./dist/typescript/src/mint/publication-review.js"
     },
     "./core/mint/recovery-contracts": {
       "types": "./dist/typescript/src/mint/recovery-contracts.d.ts",

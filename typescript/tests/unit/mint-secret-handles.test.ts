@@ -512,10 +512,10 @@ describe("secretHandleRefusal", () => {
       step("explore", "explore/leak.mjs"),
       site,
     );
-    // The rule, then an example of exactly what the check accepts: a literal in the code string
-    // passed to the runtime's page-execute call.
+    // The rule, then an example of exactly what the check accepts: the whole string literal in
+    // the Playwright code of a page-execute call.
     expect(refusal).toBe(
-      'explore/leak.mjs line 1: a secret handle may only be the whole string passed as the value to fill, type or pressSequentially, or a field of a request to this site, in code that never reads a typed field back (inputValue, evaluate), reads its own source, or redefines JSON, a global, a prototype or a page, keyboard or Kernel method; anything else is refused. Write the handle as a string literal, with no escaped quotes, inside the code string passed to the runtime\'s page-execute call, kernel.browsers.playwright.execute: the whole value passed to fill, type or pressSequentially, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.',
+      'explore/leak.mjs line 1: a secret handle may only be the whole string passed as the value to fill, type or pressSequentially, or a field of a request to this site, in code that never reads a typed field back (inputValue, evaluate), reads its own source, or redefines JSON, a global, a prototype or a page, keyboard or Kernel method; anything else is refused. Write the handle as the whole string literal in the Playwright code of a kernel.browsers.playwright.execute call, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.',
     );
   });
 

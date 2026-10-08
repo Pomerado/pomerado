@@ -25,6 +25,10 @@ import {
 } from "../browser/dialogs/expected.js";
 import { keepingAcceptedConfirms, makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
+import {
+  draftQuestionDeclarationFailure,
+  draftQuestionDeclarations,
+} from "../mint/draft-questions.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { stepInput } from "../mint/step-checks.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
@@ -391,7 +395,12 @@ const authoredExecution = (
     );
     const files = new Map(sources);
     const live = execution.target === "liveBrowser";
-    const refusal = secretHandleRefusal(handles, files, execution, context.siteOrigin);
+    // The step asks only what its entrypoint declares as a plain literal, read from its source,
+    // never from what its running script reports.
+    const entrypointSource = files.get(execution.entrypoint) ?? "";
+    const refusal =
+      secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
+      draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
       callerInput: context.input,
@@ -469,6 +478,7 @@ const authoredExecution = (
             target: live ? "browser" : "pureFiles",
             dispatchAtFirstCall: true,
             ask: scriptAsk,
+            declaredQuestions: draftQuestionDeclarations(execution.entrypoint, entrypointSource),
             decideDialog: keepingAcceptedConfirms(
               makeDialogDecider(mintAsk, secrets.redact),
               accepted,

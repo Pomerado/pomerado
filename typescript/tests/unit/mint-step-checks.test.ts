@@ -6,6 +6,7 @@ import {
   preflightTestInput,
   repeatableReadFor,
   stepInput,
+  testInputNotJson,
   writeSessionBoundary,
 } from "../../src/mint/step-checks.js";
 
@@ -153,6 +154,35 @@ describe("exampleInputRefusal", () => {
     ).toContain(
       "This write session already runs the exampleInput an earlier act step passed. Repeat it unchanged or omit it.",
     );
+  });
+
+  it("refuses exampleInput while a host repairs a published tool, which runs its failing case's input", () => {
+    const repairing = { ...scope("read"), maintenance: true };
+    expect(exampleInputRefusal(request({ exampleInput }), repairing)).toEqual({
+      supported: false,
+      reason:
+        "exampleInput is not for maintenance, which repairs the tool on its failing case's own input. Correct or remove exampleInput and execute again. Nothing was executed.",
+    });
+    expect(
+      exampleInputRefusal(act(), { ...scope("write"), maintenance: true })?.reason,
+    ).toContain("exampleInput is not for maintenance");
+    // The purpose comes first: a test is refused for its purpose, as without the flag.
+    expect(
+      exampleInputRefusal(request({ exampleInput, purpose: "test" }), repairing)?.reason,
+    ).toContain("exampleInput is valid only on a read's example or a write's act step.");
+    // A build that is not a repair runs as before.
+    expect(
+      exampleInputRefusal(request({ exampleInput }), { ...scope("read"), maintenance: false }),
+    ).toBeUndefined();
+  });
+});
+
+describe("testInputNotJson", () => {
+  it("is the refusal a test input that is not JSON text gets", () => {
+    expect(preflightTestInput(agentTest("{x"), { buildEffect: "read", executionHistory: [] })).toEqual({
+      supported: false,
+      reason: testInputNotJson,
+    });
   });
 });
 
