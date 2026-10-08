@@ -4,6 +4,11 @@
 
 ### Other changes
 
+- A served write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, in parallel, from a second server on the same folder, and after a restart. The same key with other input is refused with a retry-conflict message, and nothing runs. A call without a key is still a new website action.
+  - `pomerado-mcp serve` keeps each keyed job's record in the integration folder's `.jobs` for a day, with the key, a digest of the input, the job ID, its status and a failed run's commit marks, never the input or output. `get_job` finds a keyed job after a restart with its status but not its output, and a keyed job a stopped server left running reads as failed and is never run again.
+  - `.jobs` is reserved, so an artifact may not use the name. `IntegrationMcpOptions` gains `directory`, the folder those records live in.
+- `pomerado/core/jobs/job-store` exports `submitJob`, the retry-key rule every host shares, with its `JobStore` hook and `RetryConflict`. `pomerado/core/jobs/fingerprint` exports the request `fingerprint`. `pomerado/testing/job-store-contract` exports `describeJobStoreContract`, which runs the shared contract on a host's own store.
+
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.
 - Before ending blocked because a value the request gave is unavailable or invalid on the site, the minter asks the owner with `request_input`.
