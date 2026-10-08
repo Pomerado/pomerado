@@ -317,3 +317,47 @@ test("a step that lost its result after entering its mark publishes once a read-
     await site.close();
   }
 });
+
+test("a step that lost its result after entering its mark, with no read-back confirming it, publishes nothing", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/save.mjs": saveThenHang,
+            "src/look.mjs": probe(),
+            "src/tool.mjs": readBack,
+          }),
+        () => [call("execute", execution("act", "src/save.mjs", { timeoutSeconds: 12 }), "save")],
+        () => [call("execute", act("src/look.mjs"), "look")],
+        (request) => [finish("src/tool.mjs", executionIdOf(request, "look"), "publish")],
+      ],
+    });
+    expect(fixture.writes()).toBe(1);
+    const lost = toolResult(last, "save");
+    expect(lost).toMatchObject({ status: "failed", effect: "possible" });
+    expect(observationsOf(lost)?.writeSession?.verifyFirst).toBe(true);
+    expect(toolResult(last, "look")).toMatchObject({ status: "completed" });
+    // The lost step may have sent the write, so the session passes the sent check. Its streamed
+    // mark counts only once a later step confirms the write, and none did.
+    expect(toolResult(last, "publish")).toMatchObject({
+      status: "not_published",
+      reason: "commit_marks_unentered",
+    });
+    expect(built.build).not.toBe("published");
+    expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([
+      "act",
+      "act",
+      "contract",
+    ]);
+  } finally {
+    await site.close();
+  }
+});
