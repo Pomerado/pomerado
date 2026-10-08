@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Deferred, Effect, Ref } from "effect";
@@ -84,8 +84,7 @@ it("runs the work once for two calls with the same key sent in parallel", async 
         const jobs = yield* makeMcpJobs(1, "run");
         const runs = yield* Ref.make(0);
         const gate = yield* Deferred.make<void>();
-        const work = () =>
-          Deferred.await(gate).pipe(Effect.zipRight(countingWork(runs)()));
+        const work = () => Deferred.await(gate).pipe(Effect.zipRight(countingWork(runs)()));
         const views = yield* Effect.all([jobs.start(work, keyed), jobs.start(work, keyed)], {
           concurrency: "unbounded",
         });
@@ -135,7 +134,10 @@ it("refuses a key already used for a different request, and runs nothing for it"
         const refused = yield* Effect.flip(
           jobs.start(countingWork(runs), { ...keyed, requestFingerprint: "b".repeat(64) }),
         );
-        return { message: mcpFailureMessage(Cause.fail(refused), "run"), runs: yield* Ref.get(runs) };
+        return {
+          message: mcpFailureMessage(Cause.fail(refused), "run"),
+          runs: yield* Ref.get(runs),
+        };
       }),
     ),
   );
@@ -182,6 +184,7 @@ it("rejoins a keyed job after a restart over the same folder, and answers its st
 it("reads a keyed job its stopped server left running as failed, and never runs it again", async () => {
   const folder = await mkdtemp(join(tmpdir(), "pomerado-mcp-jobs-"));
   try {
+    // Closing the scope is the server's graceful stop, on end of input or a signal.
     const started = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -193,12 +196,10 @@ it("reads a keyed job its stopped server left running as failed, and never runs 
     );
     const [name] = (await readdir(folder)).filter((file) => file.endsWith(".json"));
     if (name === undefined) throw new Error("No record");
+    // The stop interrupts the job without an outcome, so its record still says running.
     const record: unknown = JSON.parse(await readFile(join(folder, name), "utf8"));
-    // The interrupted job's scope already wrote it as cancelled; a crash leaves it running.
-    await writeFile(
-      join(folder, name),
-      JSON.stringify({ ...Object(record), status: "running", owner: "1999999999:stopped" }),
-    );
+    expect(record).toMatchObject({ id: started.job_id, status: "running" });
+    expect(record).not.toHaveProperty("lost");
     const after = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -257,6 +258,32 @@ it("keeps a failed keyed job's commit marks and confirmation in its record", asy
     });
     expect(record?.confirmation).toBeUndefined();
   } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+it("runs calls without a key from a folder it can't write, and refuses a keyed call there before running it", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pomerado-mcp-jobs-"));
+  await chmod(folder, 0o500);
+  try {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const jobs = yield* makeMcpJobs(1, "run", yield* makeFileJobStore(join(folder, ".jobs")));
+          const runs = yield* Ref.make(0);
+          const plain = yield* jobs.start(countingWork(runs));
+          const plainView = yield* finished(jobs, plain.job_id);
+          const refused = yield* Effect.either(jobs.start(countingWork(runs), keyed));
+          return { plainView, refused, runs: yield* Ref.get(runs) };
+        }),
+      ),
+    );
+    expect(result.plainView).toMatchObject({ status: "completed", output: { saved: 1 } });
+    expect(result.refused._tag).toBe("Left");
+    expect(result.runs).toBe(1);
+    expect(await readdir(folder)).toEqual([]);
+  } finally {
+    await chmod(folder, 0o700);
     await rm(folder, { recursive: true, force: true });
   }
 });

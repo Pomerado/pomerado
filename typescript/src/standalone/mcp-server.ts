@@ -278,8 +278,9 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
     );
     const write = deployment.request.effect === "write";
     const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema, write);
+    // Only a write takes an idempotency_key, so only a write keeps its jobs in the folder.
     const store =
-      options.directory === undefined
+      options.directory === undefined || !write
         ? undefined
         : yield* makeFileJobStore(join(options.directory, ".jobs"));
     const { server, jobs, waitMs } = yield* makeServer(deployment.name, options, "run", store);
@@ -307,7 +308,10 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
               (ask) =>
                 Effect.gen(function* () {
                   const pomerado = yield* createPomerado({ ...options.pomerado, ask });
-                  return yield* pomerado.run(artifact, { ...deployment.request, input: input.input });
+                  return yield* pomerado.run(artifact, {
+                    ...deployment.request,
+                    input: input.input,
+                  });
                 }),
               key === undefined
                 ? undefined

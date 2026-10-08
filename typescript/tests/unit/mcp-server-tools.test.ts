@@ -114,20 +114,50 @@ it("refuses a malformed idempotency_key before any job starts", async () => {
   expect(JSON.stringify(result.content)).toContain("idempotency_key");
 });
 
-it("serves a tool from a folder it can't write, so calls without a key still work", async () => {
+it("serves a read tool from a folder without keeping its jobs there or naming an idempotency_key", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pomerado-read-tool-"));
+  try {
+    const tools = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* connected("read", folder);
+          return (yield* Effect.promise(() => client.listTools())).tools;
+        }),
+      ),
+    );
+    const getJob = tools.find((tool) => tool.name === "get_job");
+    expect(getJob?.description).toContain(
+      "Jobs are local and disappear when this MCP process stops.",
+    );
+    expect(JSON.stringify(tools)).not.toContain("idempotency_key");
+    expect(await readdir(folder)).toEqual([]);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+it("serves a write tool from a folder it can't write, and refuses a keyed call there before it acts", async () => {
   const folder = await mkdtemp(join(tmpdir(), "pomerado-read-only-tool-"));
   await chmod(folder, 0o500);
   try {
-    const names = await Effect.runPromise(
+    const { names, result } = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* connected("write", folder);
           const { tools } = yield* Effect.promise(() => client.listTools());
-          return tools.map((tool) => tool.name);
+          const result = yield* Effect.promise(() =>
+            client.callTool({
+              name: "write_fixture",
+              arguments: { input: { note: "a" }, idempotency_key: "booking-1" },
+            }),
+          );
+          return { names: tools.map((tool) => tool.name), result };
         }),
       ),
     );
     expect(names).toContain("write_fixture");
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("do not repeat a possible website write");
     expect(await readdir(folder)).toEqual([]);
   } finally {
     await chmod(folder, 0o700);

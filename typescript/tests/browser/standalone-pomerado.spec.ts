@@ -791,7 +791,7 @@ async ({kernel,sessionId,input,ask,enteringCommit,verified}) => {
           operation: {
             type: "update_file",
             path: "src/final.mjs",
-            diff: "@@\n-export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n+export default defineOperation({name:\"order_fixture\",input:Schema.Struct({item:Schema.String,quantity:Schema.Number}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:\"choice\",prompt:\"Which delivery speed?\"}},write:{confirmation:\"message\",commits:[\"save\"]}},\n",
+            diff: '@@\n-export default defineOperation({name:"order_fixture",input:Schema.Struct({item:Schema.String,quantity:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:"choice",prompt:"Which delivery speed?"}},write:{confirmation:"message",commits:["save"]}},\n+export default defineOperation({name:"order_fixture",input:Schema.Struct({item:Schema.String,quantity:Schema.Number}),output:Schema.Struct({saved:Schema.Boolean}),questions:{delivery:{type:"choice",prompt:"Which delivery speed?"}},write:{confirmation:"message",commits:["save"]}},\n',
           },
         },
       ];
@@ -1197,7 +1197,10 @@ async ({kernel,sessionId}) => {
     const launcher = Schema.decodeUnknownSync(
       Schema.Struct({
         mcpServers: Schema.Struct({
-          read_account: Schema.Struct({ command: Schema.String, args: Schema.Array(Schema.String) }),
+          read_account: Schema.Struct({
+            command: Schema.String,
+            args: Schema.Array(Schema.String),
+          }),
         }),
       }),
     )(JSON.parse(await readFile(join(saved, "mcp.json"), "utf8"))).mcpServers.read_account;
@@ -1215,7 +1218,11 @@ async ({kernel,sessionId}) => {
             ? started
             : await observeMcp(served.client, started.job_id, "input_required");
         expect(pending.pending_input?.questions, served.stderr()).toEqual([
-          expect.objectContaining({ id: "login", type: "credential", reason: "missing_credentials" }),
+          expect.objectContaining({
+            id: "login",
+            type: "credential",
+            reason: "missing_credentials",
+          }),
         ]);
         await served.client.callTool({
           name: "provide_input",
@@ -2227,9 +2234,7 @@ async ({kernel,sessionId}) => {
     );
     // The site took the code the caller supplied for this sign-in, typed by the agent's probe.
     expect(codesReceived).toEqual(["135790"]);
-    expect(contexts.get("operation/explore/code.mjs")?.["signInCodes"]).toEqual([
-      "{{secret.s1}}",
-    ]);
+    expect(contexts.get("operation/explore/code.mjs")?.["signInCodes"]).toEqual(["{{secret.s1}}"]);
     // A code asked after the sign-in was verified is an action's code, reviewed as before.
     expect(contexts.get("operation/explore/confirm.mjs")).toBeDefined();
     expect(contexts.get("operation/explore/confirm.mjs")?.["signInCodes"]).toBeUndefined();
@@ -2353,7 +2358,11 @@ const twoScreenSignIn = async (options: {
                   request.questions.map((question) => [
                     question.id,
                     question.type === "credential"
-                      ? { username: options.identifier, password: "synthetic-password", saveLogin: false }
+                      ? {
+                          username: options.identifier,
+                          password: "synthetic-password",
+                          saveLogin: false,
+                        }
                       : options.identifier,
                   ]),
                 ),

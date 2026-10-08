@@ -313,24 +313,26 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint", store?: Loca
       work: (ask: InputAsker) => Effect.Effect<unknown, Error, Scope.Scope>,
       submission?: RetrySubmission,
     ) =>
-      submitPermit.withPermits(1)(
-        Effect.gen(function* () {
-          prune(yield* Clock.currentTimeMillis);
-          if (submission?.retryKey === undefined) {
-            if (busy()) return yield* Effect.fail(new McpJobFailure({ code: "busy" }));
-            return yield* launch(randomUUID(), work, false);
-          }
-          const submitted = yield* submitJob(keyedStore, submission).pipe(
-            Effect.catchTag("RetryConflict", () =>
-              Effect.fail(new McpJobFailure({ code: "retry_conflict" })),
-            ),
-          );
-          if (!submitted.rejoined) return yield* launch(submitted.job.id, work, true);
-          const live = jobs.get(submitted.job.id);
-          const view = live === undefined ? storedView(submitted.job) : snapshot(live);
-          return { ...view, rejoined: true as const };
-        }),
-      ).pipe(Effect.uninterruptible);
+      submitPermit
+        .withPermits(1)(
+          Effect.gen(function* () {
+            prune(yield* Clock.currentTimeMillis);
+            if (submission?.retryKey === undefined) {
+              if (busy()) return yield* Effect.fail(new McpJobFailure({ code: "busy" }));
+              return yield* launch(randomUUID(), work, false);
+            }
+            const submitted = yield* submitJob(keyedStore, submission).pipe(
+              Effect.catchTag("RetryConflict", () =>
+                Effect.fail(new McpJobFailure({ code: "retry_conflict" })),
+              ),
+            );
+            if (!submitted.rejoined) return yield* launch(submitted.job.id, work, true);
+            const live = jobs.get(submitted.job.id);
+            const view = live === undefined ? storedView(submitted.job) : snapshot(live);
+            return { ...view, rejoined: true as const };
+          }),
+        )
+        .pipe(Effect.uninterruptible);
     /** A job this server holds no live job for: its record, polled while another server runs it. */
     const recordedJob = (id: string, waitMs: number) =>
       Effect.gen(function* () {
