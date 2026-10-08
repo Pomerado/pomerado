@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Effect, Either, type Scope } from "effect";
 import { describe, expect, it } from "vitest";
-import type { SubmittedJob } from "../../src/jobs/job-store.js";
+import type { SubmittedJob } from "../../src/runtime/job-store.js";
 
 /**
  * What a host gives the shared JobStore contract. Every store it opens reads the same data, so a
