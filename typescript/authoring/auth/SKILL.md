@@ -73,7 +73,7 @@ when the caller asks: the host cannot use one. When a passkey is the only way in
 
 # One screen at a time
 
-Before recording, reopen the published stable `loginUrl` and map the complete signed-out flow. Reopen that
+Before recording, reopen the published `loginUrl` and map the complete signed-out flow. Reopen that
 route and record the required entry navigation from there, not just the username form reached
 after manual choices. Record each observed panel opener, authorized account/plan choice or
 Continue control as `signInStep: { fields: [], submit: "the-observed-selector" }`. Include only
@@ -95,8 +95,8 @@ on the same page does not prove an account choice happened. Record an authorized
 following Continue as separate steps.
 
 Call `execute` with purpose `authenticate`, target `liveBrowser` and a `signInStep` for the screen in
-front of you. Pass the stable route you clicked as `loginUrl` on the first one (above), never the
-page it redirected to; runs open that route to replay your screens.
+front of you. Pass the site's own sign-in link as you clicked it (above) as `loginUrl` on the first
+one, never the page it redirected to; runs open that link to replay your screens.
 
 Security questions can change between screens and visits. Inspect the current question and its
 answer control each time, then record the observed field through the same `signInStep` mechanism.

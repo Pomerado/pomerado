@@ -11,8 +11,8 @@ writes skill's session, commit and publication rules still apply; this adds what
 ## Sign in first
 
 A cart or checkout always runs on the caller's account, because a signed-out cart lives in one
-browser session and a later call cannot find it. Sign in before the first `act` step (the auth
-skill), even when the site lets a guest add to a cart. Never use a signed-out cart in place of
+browser session and a later call cannot find it. Sign in before reading or changing the cart
+(for a write, before the first `act` step; the auth skill), even when the site lets a guest add to a cart. Never use a signed-out cart in place of
 the account's, and never judge the account's cart from one.
 
 ## Take the product as the site's tools do

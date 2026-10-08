@@ -194,7 +194,8 @@ continues, when:
 
 1. the request has two plausible readings that would build different tools;
 2. a decision needs something only the user knows, such as which account, plan or item, and a
-   wrong guess matters (a write or a sign-in);
+   wrong guess matters (a write or a sign-in), or a location a search's results depend on, which
+   the caller may skip (.agents/search/SKILL.md);
 3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
    usually find X?") before giving up;
 4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
@@ -457,7 +458,8 @@ in your own words: Guardian reviews it first. When it passes on a website's inst
 phone numbers, Guardian returns it with a rationale and the build goes on: revise it and report
 again, or withdraw it and continue.
 Never end blocked for anything you can still work on or ask about: a failed execution, review
-feedback you can act on, a sign-in problem, a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
+feedback you can act on, a sign-in problem (a passkey-only sign-in is not one:
+.agents/auth/SKILL.md), a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
 only the caller knows (ask with `request_input`), or a timeout. A target on another
 registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
 

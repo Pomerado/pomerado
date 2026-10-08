@@ -444,7 +444,7 @@ it("gives the local builder the shared publication text and no hosted-only check
   const texts = await renderedTexts("typescript/authoring");
   const publication = (texts.get("publication") ?? "").replace(/\s+/g, " ");
   expect(publication).toContain(
-    "Never run the write again. After the last round the host publishes privately and flags it; never choose that fallback |",
+    "Never run the write again. After the last round the host publishes privately and flags it |",
   );
   expect(publication).toContain("- **Login URL.** A signed-in tool publishes the `loginUrl`");
   expect(publication).toContain("`confirmation_unrecorded`, `confirm_action_unmatched`,");
@@ -616,17 +616,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["7222e0690ba86645ad855af0f17293b6773fafa6f85f4fa3860989c79dad391f", "core"],
+    ["e6126e5978d6c54e749c0c006501aacdc9f3f688dfc6ca9c30093d222939daeb", "core"],
     ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
-    ["523d44beba9d1d3c7396e7abd2d994f7530e269ae81d9aba0d1535b87f08952c", "auth"],
+    ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["e7fbebc354b9c73f5c0402c515448ac3548503aab2128ad68e39d5c46c224b34", "forms"],
     ["01c02a485f4cf56777357d1b48135426d737bdcccb9784772a66afc6105ab61d", "writes"],
-    ["8777cfd94916f86f91311453ca7847d5d72eaf6fd198974c73512f3f9d1f5206", "cart"],
+    ["a6a79d3d19f685f4d05697ce105102465b0fd5244a0cf1e297ac9e9cdd9f4d9e", "cart"],
     ["b3147e9625a33c2a7c3db014199964d574af5e892d72b65680cda843e66da3e0", "caller-input"],
-    ["3fb022f27108187e17b4c0fae36b0f39ac8530d79a36db44a6afcf50b0362ff5", "publication"],
-    ["5ed6281c3ef4059cecf306d98635469dad3a0f1d195f52306f13759d8b065b13", "workspace/AGENTS.md"],
+    ["c882afded68960b6387260744bd119c0d397b9ed08c004c9421e486d24432c79", "publication"],
+    ["5ff05613733463e730f1fcc791fa1645f8be7ad613352852d9644f83ab6d416e", "workspace/AGENTS.md"],
     ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],
   ]);
 });

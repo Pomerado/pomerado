@@ -181,9 +181,16 @@ that asks.
   `Schema.between(0, Number.MAX_SAFE_INTEGER, { title: "Safe integer", description:
 "Nonnegative safe integer amount" })` keeps the bound with public prose. Only
   host-approved standard enums and origins are recognized as public.
-- Guardian's publication review checks the schema and the code that fills it. Correct its
-  `input_feedback` findings in source, as the publication skill's "Reading a rejection" says;
-  never run a write again for them.
+- Guardian's publication review checks the schema and the code that fills it. A
+  `not_published` result with reason `input_feedback` lists `account_specific_enum` and
+  `input_option` findings. They are feedback, on a read or a write: correct the source
+  (make the value free-form or add the option as an input) and call `finish_build` again
+  with the same `executionId`. An input narrowed to the example's value (`example_value`)
+  blocks publication instead: widen the input and the code that sets it. The host reads the schemas offline from current source and checks that the
+  example's or session's own input, and a read example's output, still decode. Never run a
+  write again for it. After two such rounds, or if you stop
+  without fixing them, the host publishes the last reviewed version privately to the
+  caller's account and flags it.
 
 **Output fields.** Decide from the request and the pages which values the request needs: each
 value it names, the record's identifier as the site shows it, and the context those values
