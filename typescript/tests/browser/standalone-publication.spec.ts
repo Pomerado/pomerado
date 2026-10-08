@@ -285,15 +285,17 @@ if(index===1)return response([call('execute',{purpose:'example',target:'liveBrow
 if(index<=4){if(index>2)appendFileSync(ledger,'finish '+JSON.stringify(resultOf(request,'finish_'+(index-1)))+'\\n');return response([call('finish_build',{intent:'Return the fixture integration',entrypoint:'src/tool.mjs',executionId:resultOf(request,'example').executionId,metadata:{name:'read_fixture',description:'Read the fixture heading'},coverage:'One live example'},'finish_'+index)]);}
 return response([message('Done.')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
+const action=(current)=>{if(current?.trusted_review?.kind!=='execution')return {};const purpose=current.trusted_execution_context?.currentExecution?.purpose;return {action:purpose==='act'?'write':purpose==='authenticate'?'authentication':'read'};};
+const outcomeReviewerProvider={getModel:()=>({getResponse:async()=>response([message('No assessment yet.')]),getStreamedResponse:()=>{throw new Error('Unused stream');}})};
 const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 const items=typeof request.input==='string'?[request.input]:request.input;
 const start=items.findLastIndex(item=>objects(item).some(value=>'submitted_call' in value));
 const current=objects(items[start]).find(value=>'submitted_call' in value);
 if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum'}]})]);}
-if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review'})]);
+if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review',...action(current)})]);
 return response([call('read_source',{path:current.submitted_call.entrypoint,offset:0},'read')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
-startCli(process.argv.slice(2),{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider});
+startCli(process.argv.slice(2),{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,outcomeReviewerProvider});
 `,
   );
   return { file, ledger };
