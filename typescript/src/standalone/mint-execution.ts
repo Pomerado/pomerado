@@ -145,7 +145,7 @@ const scriptQuestions = (
     Effect.gen(function* () {
       const question = yield* questionForReview(
         candidate,
-        { credentialsAvailable: false },
+        { credentialsAvailable: false, scriptAsk: true },
         projection.text,
       );
       const review = yield* context.reviewQuestion(
