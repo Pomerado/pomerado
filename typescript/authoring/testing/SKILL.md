@@ -25,13 +25,16 @@ at that URL and completes the recorded steps. Do not clear a live session or rep
 A read may run up to two live tests per attempt with an input you choose instead of
 the caller's: set `testInput` to the tool's input as JSON text, with purpose `test`
 and target `liveBrowser`. Use them to show the tool works for other values its schema
-accepts, such as another route, two travellers and another cabin. Pick public values
+accepts, such as another route, two travellers and another cabin. For a detail read, spend
+one on another record whose page differs, such as a product with options or a listing with
+another layout. Pick public values
 the site offers (places, dates, counts, listed options), never a person's, account's
 or record's name, number or code. The operation checks the input against its input
 schema before it touches the site, and a failed check still counts. Guardian reviews
 it as a read. Run them before your first `finish_build`, since a publication that
-succeeds ends live execution. If a test shows the schema must widen, widen it and run the example again,
-because publication takes its schemas from the example. Check `testInput` against the
+succeeds ends live execution. If a test shows the schema must widen, widen it in source;
+publication reads the schemas from current source, and only a changed flow needs a fresh
+example (publication skill). Check `testInput` against the
 schema yourself first: a failed test of `src/tool-http.mjs` marks the HTTP version's
 latest live test failed, and it is dropped. The example uses the caller's input, or your `exampleInput` when that input is empty, and offline tests always use the caller's input.<!-- pomerado:section testing.offline-fixtures -->
 

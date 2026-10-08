@@ -2,6 +2,9 @@ import { Effect } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import { runLocalOperation } from "../execution/local-operation.js";
+import { localFileReferences, makeLocalFileHook } from "../execution/local-files.js";
+import { localDownloads } from "../execution/local-downloads.js";
+import { makeRunFiles } from "../runtime/file-transfer.js";
 import { makeRunDialogDecider } from "../inputs/dialog.js";
 import { draftQuestionDeclarations } from "../mint/draft-questions.js";
 import { noIncidents } from "../runtime/incidents.js";
@@ -48,6 +51,18 @@ export const runOperation = (
       { siteData: "keep" },
       localStartHooks(browser.execute, browser.targetId),
     );
+    // A run may place only the files its caller's input names.
+    const references = localFileReferences(request.input);
+    const files = yield* makeRunFiles({
+      hook: yield* makeLocalFileHook({
+        execute: browser.executeResponse,
+        downloads: localDownloads(options.files?.downloads),
+      }),
+      execute: browser.executeResponse,
+      siteOrigin,
+      resolve: (reference) => (references.has(reference) ? reference : undefined),
+      ...(options.files?.limits === undefined ? {} : { limits: options.files.limits }),
+    });
     const result = yield* runLocalOperation({
       workspace,
       entrypoint: artifact.entrypoint,
@@ -76,6 +91,7 @@ export const runOperation = (
         incidents: noIncidents,
       }),
       ...(signIn === undefined ? {} : { signIn: signIn.hook() }),
+      files,
     }).pipe(Effect.mapError(runOutcomeFailure(request.effect, "operation")));
     return yield* returnedRun(request.effect, result);
   }).pipe(Effect.mapError(beforeOperationFailure(request.effect)));

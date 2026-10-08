@@ -71,12 +71,8 @@ use its named phase and current evidence before diagnosing or changing the locat
 Drive every field from the input. Choose the option that matches the input value, by
 the option's value or its observed label pattern, and read back that the field took it.
 Never click a label or option copied from the example, and never reject an input value
-the schema accepts. A closed list of options stays an enum of the site's options, as you
-observed them on the site; a caller's answer picks an option but does not show which
-exist. For an autocomplete, typeahead or searchable combobox, whose options come from a
-query, type the caller's value and pick the suggestion that matches it: an exact code or
-name match wins, and nothing matching or several matching equally is `InvalidInput` (core
-skill, the input schema).
+the schema accepts. Enums and typeahead matching follow the core skill's input schema; a
+caller's answer picks an option but does not show which exist.
 
 Fill every dropdown and date control with the SDK's form controls: import
 `formControlsCode` from the runtime, put it at the top of the call's code, and call its
@@ -147,9 +143,24 @@ Date ranges, calendar-only pickers, validation messages, uploads, staged forms a
 autosave need site-specific semantic checks. A date field that takes typing goes
 through `fillDate`; one that opens a calendar and takes no typing does not.
 `references/dates-and-files.ts` picks a calendar date by full `data-date` within an
-owned popup, and chooses a file whose base64 bytes are decoded with `Buffer.from` in
-the call. Beyond the SDK's form controls, do not invent a universal widget resolver. A
-field change, file upload or draft creation may already be a website write.
+owned popup, attaches a file and downloads one. Beyond the SDK's form controls, do not
+invent a universal widget resolver. A field change, file upload or draft creation may
+already be a website write.
+
+A file never travels as bytes in code, input or output. Type a file input field as the
+runtime's `FileInput`; the caller's file reaches the build as a `{{file.fN}}` handle in
+the input, with its name, type and size in the request's `files`. Pass the input's value
+as given to `files.place(input.receipt, { field: { label: "Receipt" } })`; `field` names
+the `<input type="file">` as data, its label or a `selector`, never code. The host checks
+the file and puts it there, and never anywhere else. Return a download as a `FileOutput`
+from `files.collect(trigger)`, where `trigger` makes the execute call that starts it; you
+see only its name, type, size and sha256. A downloaded file meant for the caller goes
+through `files.collect`. Never write a handle in source, set file inputs, handle downloads
+yourself, route the page's requests or read a file's contents back (`.files` items,
+`FileReader`, `FormData`, a request body): the host refuses such source. An older tool that
+sets a file input from base64 input with `setInputFiles` uses a deprecated pattern the host
+still allows while the build has no file handle and no `FileInput`: a repair keeps its input
+as it is, and a new tool takes a `FileInput` and uses `files.place`.
 
 ## Multi-step forms
 
@@ -179,17 +190,11 @@ Expose prerequisite resolvers for valid choices. A prepare/confirm flow binds th
 draft to the account and requires caller-expected item, quantity, amount/currency
 and destination. Read current terms immediately before commitment; fail with a
 specific correction when changed. Use server quote/version checks where available;
-otherwise report the read-to-submit race. Ask about each add-on and pre-selected
-paid option, saved payment and private detail included; never keep or clear one unasked.
-Ask about an optional field only when it is core or relevant to the intent or the
-flow, not about every one. Every optional field the flow offers is still an optional
-input of the tool, wired to its control, even when you do not ask about it, such as
-economy or first class on a flight search; left unset, it keeps the page's default.
-A control with exactly one possible value, such as a select or radio group with a
-single option, is not a question, and neither is one the input or an
-earlier answer already settles; an add-on toggle, a pre-selected checkbox or a lone
-saved payment method is still a yes-or-no choice to ask about. Confirm by meaningful resource/readback, not merely a generic toast or
-200 response. Match a confirmation message only against text the site showed for this
+otherwise report the read-to-submit race. Ask about choices as `AGENTS.md` ("Try hard,
+then ask") says, and never keep or clear an add-on, pre-selected paid option or saved
+payment unasked; every optional field the flow offers is still an optional input (core
+skill, the input schema). Confirm by meaningful resource/readback, not merely a generic
+toast or 200 response. Match a confirmation message only against text the site showed for this
 submission, never wording you expect; when no such message was observed, read back the saved
 state (the record, its quantity or status) instead.
 

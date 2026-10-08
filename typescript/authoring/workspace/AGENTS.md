@@ -98,9 +98,9 @@ When the site does not match the request exactly, tell two cases apart:
   `mint_update`.
 
 **Sign in only when the task needs it.** Try a public task signed out first. Sign in when the
-request asks for it, the task is about the caller's own account, or the site puts the data
-behind a login wall. A login page on the first load of a public task is not a reason to sign
-in: look for the public route first.
+request asks for it, the task is about the caller's own account, such as any cart or checkout
+(.agents/cart/SKILL.md), or the site puts the data behind a login wall. A login page on the
+first load of a public task is not a reason to sign in: look for the public route first.
 
 **Check the page is on the site before exploring it.** The site is every `https:` origin on
 the site origin's registrable domain, the apex and any subdomain: `www.example.com`,
@@ -153,19 +153,22 @@ Never open a URL, path or query string that holds the caller's input, such as a 
 a name, a code or date placed in a path, or a parameter the site did not send. This holds for
 `src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run
 is fine to read, return, reload or follow, such as the results page your search landed on or a
-link's own `href`. So is a fixed page the site links to, opened without caller input. When a
-site control does not offer the caller's value, wait for it, retry it or use another of the
-site's own controls, and return `InvalidInput` when the site shows the value does not exist.
+link's own `href`. So is a fixed page the site links to, opened by its exact `href` without
+caller input. Never trim, rebuild or guess a link: a link with its query removed is a URL you
+wrote. When a site control does not offer the caller's value, wait for it, retry it or use
+another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist.
 Never fall back to a URL you wrote. This rule does not cover the HTTP version
 (`src/tool-http.mjs`), which may build its requests from the caller's input.
 
-Before claiming a requested search or list result, also verify the requested input and
-committed selection against the site's state. A path or query naming the input is a
-sufficient page identity guard, but a URL or query the tool built itself is not evidence of
-the result, and neither is echoed input. Before returning, read back the page's own display
-of each input the site shows, such as the date picker, selected time, party size,
-passengers and cabin, and refuse or flag a mismatch. A detail read also checks the page's
-stable identity (.agents/core/SKILL.md).
+**Read back every input before returning.** Read the page's own display of each input the
+site shows, such as the date picker, selected time, party size, passengers, cabin, applied
+filters, sort and selected options, and refuse a mismatch: the tool's code fails the run
+(`OperationFailure`) and never returns results for an input that did not apply. Echoed input, a
+URL the tool built, a URL parameter, a box checked before the site applied it or the option's
+name elsewhere on the page does not show an input applied; read the site's committed state, such
+as the applied chip, the selected control or the results' own state. A detail read also checks
+the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing
+tool: read .agents/search/SKILL.md before you settle its inputs.
 
 **Load large content progressively.** Know a file's size before reading it:<!-- pomerado:section agents.file-lengths --> every `read_source` result gives
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
@@ -190,13 +193,15 @@ First use the request, the business input, earlier answers and what the page sho
 continues, when:
 
 1. the request has two plausible readings that would build different tools;
-2. a decision needs something only the user knows, such as which account, plan, item or
-   preference, and a wrong guess matters (a write, a sign-in or wrong data);
+2. a decision needs something only the user knows, such as which account, plan or item, and a
+   wrong guess matters (a write or a sign-in), or a location a search's results depend on, which
+   the caller may skip (.agents/search/SKILL.md);
 3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
    usually find X?") before giving up;
-4. sign-in offers a branch, such as mutually exclusive account or plan types or a sign-in
-   method, that the request and business input do not name or clearly imply: never guess it or
-   take the site's preselected default, ask before clicking it;
+4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
+   channel to use when there is no password (.agents/auth/SKILL.md), that the request and
+   business input do not name or clearly imply: never guess it or take the site's preselected
+   default, ask before clicking it;
 5. a supplied value is incompatible with what the site offers: ask to revise it or stop, as
    the key rules say.
 
@@ -207,8 +212,8 @@ open.
 
 Never ask for a fact the site shows (a choice it offers is askable when the input leaves it
 open), for host or infrastructure failures, for permission to do what was requested, for
-credentials (the host asks for logins itself) or for CAPTCHAs. Asking which sign-in method or
-account to use is a different question and is expected, as the sign-in branch rule above says.
+credentials (the host asks for logins itself) or for CAPTCHAs. Asking which account or code
+channel to use is a different question and is expected, as the sign-in branch rule above says.
 On a write, you never assume a missing business choice: ask about add-ons, pre-selected paid
 options and saved payment actually observed on the site, and about any other optional field
 only when the request's purpose clearly depends on its value (an unset optional input keeps the
@@ -277,11 +282,11 @@ authentication. Follow these stages in order:
    after a failed sign-in too. Never type, fill or select into its fields, press keys in them, or
    click its submit, Next, Continue or send-code control during exploration: that is signing in,
    which only `authenticate` does. Other controls on the page, such as a site search or a cookie
-   banner, are not the sign-in. Record the stable login route, then call execute purpose
+   banner, are not the sign-in. Record the site's own sign-in link, then call execute purpose
    `authenticate`, with a `signInStep` built from what you read. An authenticated request already grants sign-in, so never use
    `request_input` to ask permission to log in.
-2. Use that evidence to pass `loginUrl` directly on `authenticate`: the site's stable login route
-   you clicked, never a one-time authorize page it redirected to (.agents/auth/SKILL.md); the
+2. Use that evidence to pass `loginUrl` directly on `authenticate`: the site's own sign-in link
+   as you clicked it, never a one-time authorize page it redirected to (.agents/auth/SKILL.md); the
    host uses it exactly as given. The operation needs no login or identity hooks: the host signs in before the
    script runs.
 3. Call execute with purpose `authenticate` and target `liveBrowser` to sign in through trusted
@@ -453,7 +458,8 @@ in your own words: Guardian reviews it first. When it passes on a website's inst
 phone numbers, Guardian returns it with a rationale and the build goes on: revise it and report
 again, or withdraw it and continue.
 Never end blocked for anything you can still work on or ask about: a failed execution, review
-feedback you can act on, a sign-in problem, a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
+feedback you can act on, a sign-in problem (a passkey-only sign-in is not one:
+.agents/auth/SKILL.md), a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
 only the caller knows (ask with `request_input`), or a timeout. A target on another
 registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
 

@@ -17,6 +17,7 @@ import type { WriteDeclaration } from "./operation.js";
 import { kernelTimeoutSec } from "./kernel-execute-client.js";
 import type { KernelExecuteClient } from "./kernel-execute-client.js";
 import { inspectSignInRejection } from "./sign-in-rejection.js";
+import { FileField, FileRefused, type FileChannel, type ScriptFiles } from "./files.js";
 import type { SignInRejectionMarker } from "./sign-in-rejection.js";
 import {
   CredentialsRejected,
@@ -161,6 +162,12 @@ export interface KernelOperationContext<
    * `CredentialsRejected`. Never call it between a write's commit and its read-back.
    */
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
+  /**
+   * The run's files: `place` puts a caller's file into a file input on the site, `collect`
+   * captures a download the page starts. The bytes stay with the host. A run without the host's
+   * file service, such as an offline run, throws `OperationFailure` on either.
+   */
+  readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
 }
 
@@ -235,7 +242,109 @@ interface ScriptBrowser {
   readonly signIn?: () => Promise<{ readonly signedInAgain: boolean }>;
   /** Hosted HTTP authoring diagnostics; native browser scripts use the portable errors. */
   readonly scriptError?: (error: unknown, dispatch: Dispatch) => OperationFailure;
+  /** The host's file service for this run, bound only when the host moves files. */
+  readonly files?: FileChannel;
 }
+
+/** The default wait for a download to finish after its trigger. */
+export const downloadWaitMs = 30_000;
+
+/** Refusals the caller's file causes, which the caller fixes with another file. */
+const callerFileReasons: ReadonlySet<string> = new Set([
+  "too_large",
+  "run_limit",
+  "type_mismatch",
+  "executable",
+  "not_accepted",
+]);
+
+/**
+ * A file refusal, or the host's file service failing, as the script's own failure: the caller's
+ * file refused is `InvalidInput`, naming the reason, and anything else an `OperationFailure`.
+ * Only a refusal after the host set the input, or after a trigger's own calls, may have sent
+ * anything.
+ */
+const fileFailure = (error: unknown, afterCalls = false) => {
+  const refused = error instanceof FileRefused ? error : undefined;
+  if (refused !== undefined && callerFileReasons.has(refused.reason))
+    return new operationErrors.InvalidInput(refused.message);
+  return new OperationFailure(refused?.message ?? "The host's file service failed", {
+    cause: error,
+    dispatch:
+      afterCalls || refused === undefined || refused.dispatched === true ? "unknown" : "not_sent",
+  });
+};
+
+/**
+ * The context's `files` over the host's channel. A live run marks a possible dispatch once a
+ * placement set the file input, or may have, as an execute call does; a refusal before that
+ * reached no page. Collecting only reads what the trigger's own calls made the page download.
+ */
+const scriptFiles = (
+  options: ScriptBrowser & { readonly deadline: Deadline; readonly journal?: EffectJournal },
+): ScriptFiles => {
+  const channel = () => {
+    if (options.files === undefined || options.offline === true)
+      throw new OperationFailure("This run has no file service", { dispatch: "not_sent" });
+    return options.files;
+  };
+  const dispatched = () => {
+    if (options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
+  };
+  return {
+    place: async (reference, { field, timeoutSec }) => {
+      const files = channel();
+      if (typeof reference !== "string")
+        throw new OperationFailure("files.place takes the input's file reference", {
+          dispatch: "not_sent",
+        });
+      // A field is data naming one input; anything else, such as page code, names none.
+      if (Either.isLeft(Schema.decodeUnknownEither(FileField)(field)))
+        throw fileFailure(new FileRefused({ reason: "field_not_found" }));
+      try {
+        const placed = await settle(
+          files.place({
+            reference,
+            field,
+            timeoutSec: kernelTimeoutSec(
+              Math.min((timeoutSec ?? 30) * 1000, options.deadline.remainingMs()),
+            ),
+          }),
+        );
+        dispatched();
+        return placed;
+      } catch (error) {
+        if (!(error instanceof FileRefused) || error.dispatched === true) dispatched();
+        throw fileFailure(error);
+      }
+    },
+    collect: async (trigger, collectOptions) => {
+      const files = channel();
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(files.collect({ slot, timeoutMs: 0 })));
+        throw error;
+      }
+      const timeoutMs = Math.min(
+        collectOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      try {
+        return await settle(files.collect({ slot, timeoutMs }));
+      } catch (error) {
+        throw fileFailure(error, true);
+      }
+    },
+  };
+};
 
 /** Builds the context the runtime hands a Kernel script. */
 const makeKernelOperationContext = <Input>(
@@ -294,6 +403,7 @@ const makeKernelOperationContext = <Input>(
   },
   // The runtime checks every id and option against the declarations; the types only guide.
   ask: scriptAsk(options.scriptInput),
+  files: scriptFiles(options),
   waitPastChallenge: async ({ ready }) => {
     // The SDK accepts only a whole-millisecond request timeout.
     const limitMs = Math.floor(Math.min(challengeSolverWaitMs, options.deadline.remainingMs()));
@@ -420,6 +530,14 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         const output = await operation.run({
           ...context,
           decideDialog: (report) => afterSignIn(() => context.decideDialog(report)),
+          // Placing a file is a browser call: it waits for a sign-in under way and counts as one.
+          files: {
+            ...context.files,
+            place: (reference, options) => {
+              calls += 1;
+              return afterSignIn(() => context.files.place(reference, options));
+            },
+          },
         });
         // A returned Effect never ran, so only the script's own execute calls may have sent.
         if (Effect.isEffect(output))

@@ -332,6 +332,16 @@
       "import": "./dist/typescript/src/mint/runner-failure.js",
       "default": "./dist/typescript/src/mint/runner-failure.js"
     },
+    "./core/mint/file-handles": {
+      "types": "./dist/typescript/src/mint/file-handles.d.ts",
+      "import": "./dist/typescript/src/mint/file-handles.js",
+      "default": "./dist/typescript/src/mint/file-handles.js"
+    },
+    "./core/mint/file-readback": {
+      "types": "./dist/typescript/src/mint/file-readback.d.ts",
+      "import": "./dist/typescript/src/mint/file-readback.js",
+      "default": "./dist/typescript/src/mint/file-readback.js"
+    },
     "./core/mint/secret-handles": {
       "types": "./dist/typescript/src/mint/secret-handles.d.ts",
       "import": "./dist/typescript/src/mint/secret-handles.js",
@@ -481,6 +491,21 @@
       "types": "./dist/typescript/src/runtime/failure-renderer-contract.d.ts",
       "import": "./dist/typescript/src/runtime/failure-renderer-contract.js",
       "default": "./dist/typescript/src/runtime/failure-renderer-contract.js"
+    },
+    "./core/runtime/file-transfer": {
+      "types": "./dist/typescript/src/runtime/file-transfer.d.ts",
+      "import": "./dist/typescript/src/runtime/file-transfer.js",
+      "default": "./dist/typescript/src/runtime/file-transfer.js"
+    },
+    "./core/runtime/file-types": {
+      "types": "./dist/typescript/src/runtime/file-types.d.ts",
+      "import": "./dist/typescript/src/runtime/file-types.js",
+      "default": "./dist/typescript/src/runtime/file-types.js"
+    },
+    "./core/runtime/files": {
+      "types": "./dist/typescript/src/runtime/files.d.ts",
+      "import": "./dist/typescript/src/runtime/files.js",
+      "default": "./dist/typescript/src/runtime/files.js"
     },
     "./core/runtime/fingerprint": {
       "types": "./dist/typescript/src/runtime/fingerprint.d.ts",

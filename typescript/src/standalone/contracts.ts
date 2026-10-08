@@ -6,6 +6,7 @@ import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import type { FileLimits } from "../runtime/files.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 export interface PomeradoOptions {
   readonly ask: InputAsker;
@@ -16,6 +17,13 @@ export interface PomeradoOptions {
   readonly outcomeReviewerProvider?: ModelProvider;
   readonly policy?: string;
   readonly timeoutMs?: number;
+  /**
+   * Files a run places and collects. A caller names its own file by a `file:` URL in the input.
+   * A run keeps each downloaded file for 30 minutes and returns its `file:` URL: under
+   * `downloads` when given, else in this process's temporary directory, which is removed when
+   * the process exits. `limits` caps the bytes (`defaultFileLimits`).
+   */
+  readonly files?: { readonly downloads?: string; readonly limits?: FileLimits };
 }
 
 export interface PomeradoRequest {

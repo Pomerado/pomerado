@@ -36,7 +36,6 @@ export type GuardianAction = typeof GuardianAction.Type;
 export const inputFindingCategories = [
   "account_specific_enum",
   "input_option",
-  "example_value",
   "example_input",
 ] as const;
 export const publicationFindingCategories = [
@@ -48,6 +47,8 @@ export const publicationFindingCategories = [
   "schema_mismatch",
   "unsupported_claim",
   "confirmation",
+  // An input narrowed to the example's value, which blocks publication like a source correction.
+  "example_value",
   ...inputFindingCategories,
 ] as const;
 export const publicationReasons = [
@@ -83,11 +84,31 @@ export const RoutePointer = Schema.Struct({
 });
 export type RoutePointer = typeof RoutePointer.Type;
 
+/**
+ * Text cut to `limit` characters, its last an ellipsis, never keeping half of a surrogate pair:
+ * Guardian's text that outgrows its limit is kept, not lost with the decision.
+ */
+export const cutToLimit = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const high = text.charCodeAt(limit - 2);
+  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? limit - 2 : limit - 1)}…`;
+};
+
+/** The characters one finding's explanation may hold; the host cuts a longer one to fit. */
+export const publicationExplanationLimit = 800;
 export const PublicationFinding = Schema.Struct({
   path: Schema.String,
   byteStart: Schema.Int.pipe(Schema.nonNegative()),
   byteEnd: Schema.Int.pipe(Schema.positive()),
   category: Schema.Literal(...publicationFindingCategories),
+  /**
+   * What is wrong, the evidence and the fix, in words the minter acts on without the rest of the
+   * review. It may quote the source, so it reaches the minter screened like the rationale.
+   */
+  explanation: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(publicationExplanationLimit),
+  ),
   /** Only for a finding in a host-generated file; the model sends null for any other. */
   route: Schema.optionalWith(RoutePointer, { exact: true, nullable: true }),
 });

@@ -60,7 +60,7 @@ export interface SignInDiagnostic {
   readonly phase:
     /** The host reading a saved login from its store, before anything else of the sign-in. */
     | "credential_resolve"
-    /** The direct sign-in request, on the current browser before the Managed Auth handoff. */
+    /** The direct sign-in request, on the current browser. */
     | "direct_login"
     | "initial_identity"
     | "stop_current"

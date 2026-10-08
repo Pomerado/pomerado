@@ -318,6 +318,126 @@ describe("a run that failed in its operation", () => {
   });
 });
 
+// The host refused a sign-in the script waited for in `ensureSignedIn`: its sign-ins were spent,
+// or the sign-in failed. Either way the operation reports the session not kept.
+describe("a run that can't sign in again", () => {
+  const fail = (declared: "read" | "write" | undefined, journal: LocalOperationJournal) =>
+    runOutcomeFailure(declared, "operation")(
+      new LocalOperationFailure(
+        "The host could not keep the site signed in",
+        journal,
+        "OperationFailure",
+        "OperationFailure",
+        undefined,
+        { sessionLoss: "session_not_kept" },
+      ),
+    );
+  /** A run's journal once a browser step ran, with no commit marks declared. */
+  const stepRan: LocalOperationJournal = { effect: "possible", commits: [] };
+  const signInUnavailable = {
+    code: "website_sign_in_unavailable",
+    details: {},
+    possibleCommit: false,
+    retry: "same_key",
+  };
+
+  it("reports a read as the sign-in unavailable, to retry with the same request", () => {
+    const failure = fail("read", stepRan);
+    expect(failure.outcome).toEqual({ ...signInUnavailable, writeStatus: null });
+    expect(failure.message).toBe(
+      "The website did not keep the run signed in, and signing in again was unavailable, so the run stopped. Nothing changed on the website. Run it again in a few minutes.",
+    );
+    expect(failure.journal).toEqual(stepRan);
+  });
+
+  // A write counts as unapplied only when its journal shows no commit step entered, as for a
+  // refused input or login. Any other write may have applied, so a retry could repeat it, and a
+  // commit step the journal shows entered keeps a run labelled a read from that retry too.
+  it.each([
+    {
+      case: "a run labelled a read whose journal shows a commit step entered",
+      declared: "read",
+      journal: commitSent,
+      outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false, retry: "never" },
+    },
+    // A mark name no authored mark could have is no report, so it proves nothing about commits.
+    {
+      case: "a run labelled a read whose journal reports its commit marks unreadably",
+      declared: "read",
+      journal: { effect: "possible", commits: [{ name: "Place Order", state: "sent" }] },
+      outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false, retry: "never" },
+    },
+    {
+      case: "a write that entered none of its declared commit steps",
+      declared: "write",
+      journal: commitNotEntered,
+      outcome: { ...signInUnavailable, writeStatus: "not_applied" },
+    },
+    {
+      case: "a write that sent nothing",
+      declared: "write",
+      journal: nothingSent,
+      outcome: { ...signInUnavailable, writeStatus: "not_attempted" },
+    },
+    {
+      case: "an undeclared tool's run that declared commit steps and entered none",
+      declared: undefined,
+      journal: commitNotEntered,
+      outcome: { ...signInUnavailable, writeStatus: "not_applied" },
+    },
+    {
+      case: "an undeclared tool's run that sent nothing",
+      declared: undefined,
+      journal: nothingSent,
+      outcome: { ...signInUnavailable, writeStatus: null },
+    },
+    {
+      case: "a write that entered a commit step",
+      declared: "write",
+      journal: commitSent,
+      outcome: {
+        code: "outcome_unknown",
+        writeStatus: "may_have_applied",
+        possibleCommit: true,
+        retry: "never",
+      },
+    },
+    {
+      case: "a write that declared no commit steps after a browser step ran",
+      declared: "write",
+      journal: stepRan,
+      outcome: {
+        code: "outcome_unknown",
+        writeStatus: "may_have_applied",
+        possibleCommit: true,
+        retry: "never",
+      },
+    },
+    {
+      case: "an undeclared tool's run without commit steps after a browser step ran",
+      declared: undefined,
+      journal: stepRan,
+      outcome: { code: "outcome_unknown", writeStatus: null, possibleCommit: true, retry: "never" },
+    },
+    {
+      case: "a write that recorded its confirmation",
+      declared: "write",
+      journal: confirmedUnentered,
+      outcome: {
+        code: "execution_failed",
+        writeStatus: "applied",
+        possibleCommit: false,
+        retry: "never",
+      },
+    },
+  ] as const)("reports $case", ({ declared, journal, outcome }) => {
+    const failure = fail(declared, journal);
+    expect(failure.outcome).toMatchObject(outcome);
+    if (failure.outcome.possibleCommit) expect(failure.message).toMatch(readBack);
+    else expect(failure.message).not.toMatch(readBack);
+  });
+});
+
 describe("a run that failed before its operation", () => {
   const fail = beforeOperationFailure("write");
 

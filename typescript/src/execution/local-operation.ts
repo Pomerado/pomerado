@@ -22,6 +22,8 @@ import { createLocalProcess, type LocalProcess, type LocalProcessResult } from "
 import { localError, localOutputLimit } from "./local-path.js";
 import { LocalOperationMessage, type LocalOperationResult } from "./local-operation-protocol.js";
 import type { LocalWorkspace } from "./local-workspace.js";
+import { FileRefused } from "../runtime/files.js";
+import { outputFiles, type RunFiles } from "../runtime/file-transfer.js";
 
 export interface LocalOperationOptions {
   readonly workspace: LocalWorkspace;
@@ -55,6 +57,11 @@ export interface LocalOperationOptions {
    * `ensureSignedIn` answers that it did not sign in again.
    */
   readonly signIn?: SessionSignInHook;
+  /**
+   * The run's files, for the script's `files`. Absent, `files` throws; either way an output naming
+   * a `$file` this run did not collect fails the run.
+   */
+  readonly files?: RunFiles;
 }
 export interface LocalOperationJournal {
   readonly effect: "not_sent" | "possible" | "verified";
@@ -165,6 +172,29 @@ const handleRequest = (
       if (options.browser === undefined || message.sessionId !== options.browser.sessionId)
         return Effect.fail(new Error("Local operation browser session mismatch"));
       return options.browser.executeResponse(message.body.code, message.body.timeout_sec);
+    }
+    if (
+      message.kind === "file_place" ||
+      message.kind === "file_arm" ||
+      message.kind === "file_collect"
+    ) {
+      const files = options.files;
+      if (files === undefined || options.mode === "contract" || options.target === "pureFiles")
+        return Effect.fail(new Error("Local operation files are unavailable"));
+      const answer: Effect.Effect<unknown, FileRefused> =
+        message.kind === "file_place"
+          ? files.place(message)
+          : message.kind === "file_arm"
+            ? files.arm()
+            : files.collect(message);
+      // The refusal's reason crosses to the script as its code; nothing of the file does.
+      return answer.pipe(
+        Effect.mapError((refused) =>
+          Object.assign(new Error(refused.message), {
+            code: `FileRefused:${refused.reason}${refused.dispatched === true ? ":dispatched" : ""}`,
+          }),
+        ),
+      );
     }
     if (message.kind === "sign_in")
       return options.signIn === undefined
@@ -369,6 +399,20 @@ const operationOutput = (
   };
 };
 
+/** Fails the run when its output holds a `$file` the run's files did not collect. */
+const checkOutputFiles = (files: RunFiles | undefined, result: LocalOperationResult) =>
+  (files === undefined
+    ? outputFiles(result.output).length === 0
+      ? Effect.void
+      : Effect.fail(new FileRefused({ reason: "not_collected" }))
+    : files.checkOutput(result.output)
+  ).pipe(
+    Effect.mapError(
+      (refused) =>
+        new LocalOperationFailure(refused.message, operationJournal(result), "FileRefused"),
+    ),
+  );
+
 /** Executes one immutable reviewed snapshot through the original operation runtime, without replay. */
 export const runLocalOperation = (
   options: LocalOperationOptions,
@@ -412,6 +456,7 @@ export const runLocalOperation = (
         ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
+        ...(options.files !== undefined ? { files: true } : {}),
         ...(options.signIn !== undefined &&
         options.browser !== undefined &&
         options.mode !== "contract" &&
@@ -454,6 +499,10 @@ export const runLocalOperation = (
             );
           }),
         ),
+      );
+      // Only a file this run collected may stand in its output; a script cannot name another.
+      yield* checkOutputFiles(options.files, result).pipe(
+        Effect.tapError(() => process.close),
       );
       yield* process.close;
       const output = yield* process.result.pipe(

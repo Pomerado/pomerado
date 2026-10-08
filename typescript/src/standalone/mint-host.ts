@@ -24,6 +24,7 @@ import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
 import { memoryPublicationDecisions } from "./publication-decisions.js";
+import type { FileHandles } from "../mint/file-handles.js";
 /**
  * Steps the local host refuses before review. It keeps no write maintenance, so it has no
  * possible write to inspect or finish. And once a write session started, a sign-in runs only as
@@ -160,9 +161,10 @@ export const mintRequest = (
   session: StandaloneSession,
   context: RequestContext,
   request: PomeradoRequest,
+  fileHandles: FileHandles,
 ) =>
   Effect.gen(function* () {
-    const state = yield* mintState(session, context, request);
+    const state = yield* mintState(session, context, request, fileHandles);
     // The request's runs share its publication decisions.
     const publicationDecisions = memoryPublicationDecisions();
     const mintRequest = {
@@ -172,6 +174,8 @@ export const mintRequest = (
       observations: context.observations,
       siteOrigin: context.siteOrigin,
       effect: request.effect ?? "ask",
+      // The caller's files, as handles with their metadata; the input holds the handles.
+      ...(fileHandles.files.length === 0 ? {} : { files: fileHandles.files }),
     } as const;
     // Each run reads the build's read/write state as it stands when the run starts.
     if (context.buildEffect === undefined) {

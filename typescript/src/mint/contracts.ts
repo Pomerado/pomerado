@@ -49,6 +49,7 @@ import type { RegistryIssue } from "../registry/issues.js";
 import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import { AnsweredQuestion, type QuestionDecision } from "../guardian/question.js";
+import { MintFile } from "./file-handles.js";
 import {
   TaskChange,
   type PendingTaskUpdate,
@@ -113,6 +114,15 @@ export type SpentSignIn =
   | "host_refusals_repeated";
 
 export type { SessionLoss };
+
+/**
+ * One registered output field a repair loosens and how, by path (`items[].price.amount`; the
+ * root is `output`, its items `output[]`). The host that publishes repairs compares the schemas.
+ */
+export interface WeakenedOutput {
+  readonly field: string;
+  readonly change: "removed" | "optional" | "nullable" | "widened";
+}
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
@@ -304,6 +314,10 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "session_token_placeholder"
     /** Source to publish holds a `{{secret.…}}` handle, which only the build's own executions fill. */
     | "secret_handle"
+    /** Source to publish holds a `{{file.…}}` handle, which names a file only in this build. */
+    | "file_handle"
+    /** Source to publish sets a file input, handles a download or reads a file back itself. */
+    | "file_readback"
     /** The live page URL the sign-in used carries one-time authorization values; asked once. */
     | "login_url_one_time"
     /** The login URL to publish carries a registered credential; refused every time. */
@@ -319,7 +333,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The publication gate refused a file Guardian's review reads; `publicationBlock` names it. */
     | "evidence_screening"
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
-    | "capture_not_saved";
+    | "capture_not_saved"
+    /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
+    | "output_obligation_weakened";
+  /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
+  readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
   readonly publicationFeedback?: {
     readonly oneTimeParameters?: readonly string[];
@@ -365,6 +383,11 @@ export const MintRequest = Schema.Struct({
   businessInput: Schema.Unknown,
   observations: Schema.Unknown,
   siteOrigin: Schema.optional(Schema.String.pipe(Schema.maxLength(2048))),
+  /**
+   * The caller's files: each one's `{{file.fN}}` handle, which `businessInput` holds where the file
+   * stood, with its name, media type and size. Never its bytes.
+   */
+  files: Schema.optional(Schema.Array(MintFile)),
   /** `ask` means the owner has not answered yet. Nothing executes or publishes until they do. */
   effect: Schema.optionalWith(Schema.Literal("read", "write", "ask"), {
     default: () => "read" as const,
@@ -512,7 +535,7 @@ export const ExecutionRequest = Schema.Struct({
   exampleInput: Schema.optional(Schema.String),
 });
 export type ExecutionRequest = typeof ExecutionRequest.Type;
-/** The execute tool's input where the site signs in through Kernel Managed Auth. */
+/** The execute tool's input where the host offers no autofill sign-in: no `signInStep`. */
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
 
 export const CaptureRequest = Schema.Struct({
@@ -1579,6 +1602,13 @@ export interface MintDependencies {
   readonly applyTaskUpdate?: (
     application: TaskUpdateApplication,
   ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
+  /**
+   * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
+   * `owner` when the person the repair's questions reach may manage the tool, otherwise `none`.
+   * The harness asks it before review; `none`, a failure or an absent hook refuses the update as
+   * `owner_unavailable`, so a repair without the owner keeps the registered contract.
+   */
+  readonly taskUpdateConfirmer?: () => Effect.Effect<"owner" | "none", MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;
