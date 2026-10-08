@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { ExpectedConfirms } from "../browser/dialogs/expected.js";
 import {
   decodeSignInRecipe,
   signInRecipePath,
@@ -19,6 +20,8 @@ const Metadata = Schema.Struct({
     Schema.Struct({ recipe: Schema.Literal(signInRecipePath), entryUrl: PageUrl }),
     { exact: true },
   ),
+  /** The confirm popups a write's build accepted, as digests its runs accept without asking. */
+  acceptedConfirms: Schema.optionalWith(ExpectedConfirms, { exact: true }),
 });
 /** The artifact's own files beside its source, which no source path may name. */
 const metadataFiles = new Set(["pomerado.json", signInRecipePath]);
@@ -125,6 +128,9 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           ...(checked.signIn === undefined
             ? {}
             : { signIn: { recipe: signInRecipePath, entryUrl: checked.signIn.entryUrl } }),
+          ...(checked.acceptedConfirms === undefined
+            ? {}
+            : { acceptedConfirms: checked.acceptedConfirms }),
         },
         null,
         2,

@@ -1,4 +1,5 @@
 import { Effect, Either } from "effect";
+import { expectedConfirmLimit } from "../browser/dialogs/expected.js";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
 import { runnableOperationFiles, savedOperationFiles } from "../mint/operation-source.js";
@@ -204,6 +205,9 @@ export const mintPublication =
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
           ...(signIn === undefined ? {} : { signIn }),
+          ...(write && writeSession.acceptedConfirms.length > 0
+            ? { acceptedConfirms: writeSession.acceptedConfirms.slice(0, expectedConfirmLimit) }
+            : {}),
         },
         diagnostics: [],
       };

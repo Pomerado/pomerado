@@ -14,7 +14,12 @@ import {
 } from "../mint/contracts.js";
 import { localCommandTimeoutMs } from "../execution/local-workspace.js";
 import { localOutputLimit } from "../execution/local-path.js";
-import { makeDialogDecider } from "../inputs/dialog.js";
+import {
+  acceptedConfirmsKept,
+  recordConfirmSteps,
+  type ObservedConfirm,
+} from "../browser/dialogs/expected.js";
+import { keepingAcceptedConfirms, makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
@@ -353,6 +358,8 @@ const authoredExecution = (
     }
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
+    // The confirm popups the owner accepts during this execution, host-only.
+    const accepted: ObservedConfirm[] = [];
     return yield* context.running(
       {
         purpose: execution.purpose,
@@ -380,7 +387,10 @@ const authoredExecution = (
             mode: "run",
             target: live ? "browser" : "pureFiles",
             ask: scriptAsk,
-            decideDialog: makeDialogDecider(mintAsk, secrets.redact),
+            decideDialog: keepingAcceptedConfirms(
+              makeDialogDecider(mintAsk, secrets.redact),
+              accepted,
+            ),
           }),
         );
         if (watch !== undefined && watch.typed().size > 0) {
@@ -392,6 +402,12 @@ const authoredExecution = (
           yield* context.observe;
           if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
+        // A write keeps the confirms its act steps accepted, for its runs to accept again.
+        if (execution.purpose === "act")
+          recordConfirmSteps(
+            writeSession,
+            yield* acceptedConfirmsKept({ write: true, accepted, screen: secrets.assertAbsent }),
+          );
         if (execution.purpose === "act")
           writeSession.steps.push({
             entrypoint: execution.entrypoint,

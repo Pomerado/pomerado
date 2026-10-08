@@ -6,12 +6,27 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
-import { Effect } from "effect";
+import { Effect, Either, Schema } from "effect";
+import { defineOperation } from "../../src/browser/index.js";
+import { expectedConfirmDigest } from "../../src/browser/dialogs/expected.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
-import type { InputRequest } from "../../src/runtime/input-request.js";
+import { makeRunDialogDecider } from "../../src/inputs/dialog.js";
+import { noIncidents } from "../../src/runtime/incidents.js";
+import { InputRequestFailure, type InputRequest } from "../../src/runtime/input-request.js";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { call, executionIdOf, recordingGuardian } from "./guardian-context-fixture.js";
 import { act, mint } from "./standalone-mint-fixture.js";
+import { runExample } from "./authoring-fixture.js";
+import {
+  confirmPopupCases,
+  confirmPopupContractFailures,
+  confirmPopupOutcome,
+  confirmPopupsOrigin,
+  recordedConfirmPopups,
+  serveConfirmPopups,
+  type ConfirmPopupCaseName,
+  type ConfirmPopupObservation,
+} from "../support/confirm-popups-contract.js";
 
 const orderHost = "www.order.test";
 
@@ -195,16 +210,142 @@ const withOrderSite = async (
   }
 };
 
-test("a write's run asks the caller about the confirm its build accepted", async () => {
+test("a write's run accepts the confirm its build accepted, and asks about a changed one", async () => {
   test.setTimeout(120_000);
   await withOrderSite(async (site) => {
     const artifact = await mintOrder(site);
     expect(site.state.orders).toBe(1);
-    const run = await runOrder(site, artifact, "accept");
+    // The build kept the confirm the owner accepted as a digest of its message, origin and step.
+    expect(artifact.acceptedConfirms).toEqual([
+      expectedConfirmDigest({
+        message: "Place this order?",
+        origin: new URL(site.url).origin,
+        step: "place-order",
+      }),
+    ]);
+    const run = await runOrder(site, artifact, "dismiss");
     expect(run.output).toEqual({ placed: true });
-    expect(run.asked).toHaveLength(1);
-    expect(run.asked[0]?.notice).toContain("Place this order?");
+    expect(run.asked).toEqual([]);
+    expect(site.state.orders).toBe(2);
+    // The page now asks something else at the same step: the caller decides, and dismisses.
+    site.state.message = "Place this order and subscribe?";
+    const changed = await runOrder(site, artifact, "dismiss");
+    expect(changed.output).toEqual({ placed: false });
+    expect(changed.asked).toHaveLength(1);
+    expect(changed.asked[0]?.notice).toContain("Place this order and subscribe?");
     expect(site.state.orders).toBe(2);
   });
 });
 
+/** Clicks the case's button as step `step` and reports its confirm, as a generated script does. */
+const clickAsStep = defineOperation(
+  {
+    name: "confirm_popup_case",
+    input: Schema.Struct({ selector: Schema.String, step: Schema.String }),
+    output: Schema.Literal("accept", "dismiss", "unreported"),
+  },
+  async ({ kernel, sessionId, input, decideDialog }) => {
+    const raised = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 10,
+      code: `
+        const shown = new Promise((resolve) => page.once("dialog", (dialog) => {
+          globalThis.dialog = dialog;
+          resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
+        }));
+        void page.locator(${JSON.stringify(input.selector)}).click().catch(() => {});
+        return await Promise.race([shown, new Promise((resolve) => setTimeout(() => resolve(null), 2000))]);
+      `,
+    });
+    if (!raised.success) throw new Error(String(raised.error));
+    const shown = Schema.decodeUnknownSync(
+      Schema.NullOr(
+        Schema.Struct({
+          type: Schema.Literal("alert", "confirm", "prompt", "beforeunload"),
+          message: Schema.String,
+          url: Schema.String,
+        }),
+      ),
+    )(raised.result);
+    if (shown === null) return "unreported" as const;
+    const decision = await decideDialog({ step: input.step, ...shown });
+    const answered = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 10,
+      code:
+        decision.choice === "accept"
+          ? "await globalThis.dialog.accept(); delete globalThis.dialog;"
+          : "await globalThis.dialog.dismiss(); delete globalThis.dialog;",
+    });
+    if (!answered.success) throw new Error(String(answered.error));
+    return decision.choice;
+  },
+);
+
+test("the local run keeps the confirm popup contract", async ({ context }) => {
+  test.setTimeout(60_000);
+  await serveConfirmPopups(context);
+  const observed: Partial<Record<ConfirmPopupCaseName, ConfirmPopupObservation>> = {};
+  for (const entry of confirmPopupCases) {
+    const page = await context.newPage();
+    await page.goto(confirmPopupsOrigin);
+    let asked = 0;
+    // A caller who never answers: the question's window ends unanswered.
+    const ask = makeInputAsker((request) => {
+      if (dialogQuestion(request)) asked += 1;
+      return Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
+    });
+    const { result } = await runExample(
+      page,
+      clickAsStep,
+      { selector: entry.selector, step: entry.step },
+      {
+        siteOrigin: confirmPopupsOrigin,
+        dialogs: makeRunDialogDecider({
+          ask,
+          project: String,
+          readOnly: false,
+          expectedConfirms: recordedConfirmPopups,
+          incidents: noIncidents,
+        }),
+      },
+    );
+    expect(Either.isRight(result), JSON.stringify(result)).toBe(true);
+    observed[entry.name] = { outcome: await confirmPopupOutcome(page, entry.name), asked };
+    await page.close();
+  }
+  expect(observed).toMatchObject({
+    recorded: { outcome: "accepted", asked: 0 },
+    unrecorded: { outcome: "dismissed", asked: 1 },
+    other_step: { outcome: "dismissed", asked: 1 },
+    iframe: { outcome: "dismissed", asked: 1 },
+    // No script listens to the new window, so the browser dismisses its confirm.
+    popup: { outcome: "dismissed", asked: 0 },
+  });
+  expect(
+    confirmPopupContractFailures(observed as Record<ConfirmPopupCaseName, ConfirmPopupObservation>),
+  ).toEqual([]);
+});
+
+test("the confirm popup contract fails a host that accepts or leaves open what it should not", () => {
+  const kept = {
+    recorded: { outcome: "accepted", asked: 0 },
+    unrecorded: { outcome: "dismissed", asked: 1 },
+    other_step: { outcome: "dismissed", asked: 1 },
+    iframe: { outcome: "dismissed", asked: 0 },
+    popup: { outcome: "dismissed", asked: 0 },
+  } as const;
+  expect(confirmPopupContractFailures(kept)).toEqual([]);
+  expect(
+    confirmPopupContractFailures({
+      ...kept,
+      recorded: { outcome: "accepted", asked: 1 },
+      unrecorded: { outcome: "dismissed", asked: 0 },
+      iframe: { outcome: "accepted", asked: 0 },
+      popup: { outcome: "pending", asked: 0 },
+    }),
+  ).toEqual([
+    "recorded: the recorded confirm must be accepted without asking (accepted, asked 1)",
+    "unrecorded: an unrecorded confirm in the page must ask the caller first",
+    "iframe: an unrecorded confirm must end dismissed, never accepted",
+    "popup: an unrecorded confirm must end dismissed, never pending",
+  ]);
+});
