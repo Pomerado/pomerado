@@ -58,7 +58,6 @@ export const routePointerParts = [
   "response_field",
   "query",
   "path_segment",
-  "session",
   "url",
 ] as const;
 /**
