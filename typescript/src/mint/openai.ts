@@ -260,6 +260,23 @@ const parameters = <A, I>(schema: Schema.Schema<A, I>) => ({
   },
 });
 
+/**
+ * Every item a run state holds, oldest first. The SDK's `history` starts at the latest
+ * compaction, as each request does; the state itself keeps the items before it.
+ */
+const untrimmedHistory = (
+  state: Pick<RunState<unknown, never>, "_originalInput" | "_generatedItems">,
+): AgentInputItem[] => [
+  ...(typeof state._originalInput === "string"
+    ? [{ role: "user" as const, type: "message" as const, content: state._originalInput }]
+    : state._originalInput),
+  ...state._generatedItems.flatMap((item) =>
+    item.type === "tool_approval_item" || item.rawItem === undefined
+      ? []
+      : [item.rawItem as AgentInputItem],
+  ),
+];
+
 /** Ordinary work ends through completion, cancellation, authority or time limits. This
  * in-memory backstop is far above normal use and is never persisted as a remaining budget. */
 const mintModelCallCapacity = 512;
@@ -746,10 +763,24 @@ export const makeOpenAIMinter = (
             });
             let modelCalls = turn.recovery?.initial?.modelCalls ?? 0;
             let finalsWithoutTool = turn.recovery?.initial?.finalsWithoutTool ?? 0;
-            let activeState:
-              | { toString(): string; readonly history: readonly AgentInputItem[] }
-              | undefined;
-            turn.history?.(() => activeState?.history ?? []);
+            let activeState: RunState<unknown, typeof agent> | undefined;
+            /**
+             * The items a provider compaction replaced before the current segment started: a
+             * segment continues from the SDK's history, which starts at the latest compaction.
+             */
+            let archived: AgentInputItem[] = [];
+            type HeldState = Parameters<typeof untrimmedHistory>[0];
+            const fullHistory = (state: HeldState) => [
+              ...archived,
+              ...untrimmedHistory(state),
+            ];
+            /** Keeps what the next segment's input leaves out: the items before `state`'s compaction. */
+            const archiveBeforeSegment = (state: HeldState) => {
+              const full = fullHistory(state);
+              const compaction = full.findLastIndex((item) => item.type === "compaction");
+              if (compaction > 0) archived = full.slice(0, compaction);
+            };
+            turn.history?.(() => (activeState === undefined ? archived : fullHistory(activeState)));
             const totalUsage = new Usage();
             /** Finite per-call counts, so the host can store the cache hit rate per call. */
             const reportUsage = (
@@ -909,6 +940,7 @@ export const makeOpenAIMinter = (
                   if (!(error instanceof MaxTurnsExceededError) || error.state === undefined)
                     throw error;
                   const history: AgentInputItem[] = error.state.history;
+                  archiveBeforeSegment(error.state);
                   if (turn.isComplete()) {
                     totalUsage.add(error.state.usage);
                     diagnostics?.completed(history, totalUsage);
@@ -967,6 +999,7 @@ export const makeOpenAIMinter = (
                     modelCalls,
                   }) ?? Effect.void,
                 );
+                archiveBeforeSegment(result.state);
                 input = [
                   ...result.history,
                   {

@@ -75,11 +75,11 @@ const decision = (value: Record<string, unknown>): ModelResponse["output"][numbe
   content: [
     {
       type: "output_text",
-      text: JSON.stringify({ reason: null, findings: null, label: null, ...value }),
+      text: JSON.stringify({ reason: null, findings: null, label: null, action: null, ...value }),
     },
   ],
 });
-const allow = decision({ outcome: "allow", rationale: "Reads the hours only." });
+const allow = decision({ outcome: "allow", rationale: "Reads the hours only.", action: "read" });
 const read = (id: string, path: string): ModelResponse["output"][number] => ({
   type: "function_call",
   callId: id,
@@ -227,7 +227,11 @@ it("keeps instructions, tools and output format identical across all five review
   expect(
     requests.map((request) => (reviewRequest(request).trusted_review as { kind: string }).kind),
   ).toEqual(["execution", "question", "recovery", "publication", "catalog_listing"]);
-  expect(execution.decision).toEqual({ outcome: "allow", rationale: "Reads the hours only." });
+  expect(execution.decision).toEqual({
+    outcome: "allow",
+    rationale: "Reads the hours only.",
+    action: "read",
+  });
   expect(question.decision).toEqual({
     outcome: "allow_business",
     rationale: "Only the owner knows the branch.",

@@ -464,7 +464,7 @@ describe("the OpenAI publication reviewer", () => {
     const requests = scripted((index) =>
       index === 0
         ? [read(pending.entrypoint)]
-        : [message({ outcome: "allow", rationale: "Fine." })],
+        : [message({ outcome: "allow", rationale: "Fine.", action: "read" })],
     );
     const { publication: _publication, ...execution } = pending;
     await Effect.runPromise(

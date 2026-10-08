@@ -100,6 +100,7 @@ describe("Guardian modeled reviewer contract", () => {
           return {
             outcome: "allow",
             rationale: "Modeled reviewer inspected the submitted synthetic source.",
+            action: "read",
           };
         }),
     };
@@ -180,7 +181,7 @@ describe("Guardian modeled reviewer contract", () => {
             run: (turn) =>
               Effect.sync(() => {
                 expect(turn.sources?.entrypoint).toBeUndefined();
-                return { outcome, rationale: "No source was read." };
+                return { outcome, rationale: "No source was read.", action: "read" };
               }),
           }).review(pending, reader(empty));
         expect(await Effect.runPromise(Effect.either(decide("allow")))).toMatchObject({
@@ -232,6 +233,7 @@ describe("Guardian modeled reviewer contract", () => {
           return {
             outcome: "allow",
             rationale: "Decision after inspecting the required submitted source.",
+            action: "read",
           };
         }),
     });
@@ -337,7 +339,11 @@ describe("Guardian modeled reviewer contract", () => {
           run: (turn) =>
             Effect.sync(() => {
               entrypointSource = turn.sources?.entrypoint;
-              return { outcome: "allow", rationale: "Modeled reviewer inspected the source." };
+              return {
+                outcome: "allow",
+                rationale: "Modeled reviewer inspected the source.",
+                action: "read",
+              };
             }),
         },
         {
@@ -528,7 +534,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // Failure mode: the adapter fills the upstream policy's slot with the browser policy and then
   // appends it again, so every review sends the model that policy twice.
   it("sends the tenant policy once, in the upstream policy's slot", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
@@ -561,7 +567,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // the page to enable it before it clicks. Guardian judges what the submit is, not whether the page
   // has enabled it yet.
   it("asks Guardian for an observed sign-in submit, enabled or not", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
@@ -579,7 +585,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // A security question's answer field takes private_answer, which no other slot may take, and
   // private_answer goes on no other field. The rule is shared text, whatever host fills the slots.
   it("ties private_answer to a security question's answer field only", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
@@ -596,7 +602,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // A site's own trackers carry caller input off-site and its page saves recent searches, and a
   // host recording gap was read as an order to stop probing. None of these is the source's doing.
   it("tells Guardian page traffic and a recording gap are not the source's effects", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Controlled source was read.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
@@ -615,7 +621,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
 
   // Guardian reviews an execution's source, never each request it sends.
   it("an execution review carries no destination review", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Relevant listing page." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Relevant listing page.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
         pending,
@@ -628,7 +634,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // An entry load can redirect to a sibling subdomain, such as flights. to www. Guardian, seeing
   // only the exact origin and no observed page, would deny every guarded explore.
   it("a first explore review names the authorized site's registrable domain", async () => {
-    const requests = readThenDecide({ outcome: "allow", rationale: "Guarded on the site." });
+    const requests = readThenDecide({ outcome: "allow", rationale: "Guarded on the site.", action: "read" });
     await Effect.runPromise(
       makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
         {

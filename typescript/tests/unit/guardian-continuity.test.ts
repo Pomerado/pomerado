@@ -72,6 +72,7 @@ it("keeps reasoning and source exchanges between reviews of the same mint withou
                         text: JSON.stringify({
                           outcome: "allow",
                           rationale: "Current source was read",
+                          action: "read",
                         }),
                       },
                     ],
@@ -115,7 +116,7 @@ const message = (outcome: "allow" | "deny" = "allow"): ModelResponse["output"][n
   role: "assistant",
   status: "completed",
   content: [
-    { type: "output_text", text: JSON.stringify({ outcome, rationale: "Fixture verdict" }) },
+    { type: "output_text", text: JSON.stringify({ outcome, rationale: "Fixture verdict", action: "read" }) },
   ],
 });
 const call = (id: string): ModelResponse["output"][number] => ({
@@ -283,6 +284,7 @@ it("keeps a publication's permit wait separate from the mint review holding the 
               return {
                 outcome: "allow" as const,
                 rationale: "Approved synthetic source.",
+                action: "read" as const,
               };
             }),
         },
@@ -618,7 +620,7 @@ it.each(["all_turns", "current_turn", undefined] as const)(
                 content: [
                   {
                     type: "output_text",
-                    text: JSON.stringify({ outcome: "allow", rationale: "Synthetic recovery" }),
+                    text: JSON.stringify({ outcome: "allow", rationale: "Synthetic recovery", action: "read" }),
                     annotations: [],
                   },
                 ],
