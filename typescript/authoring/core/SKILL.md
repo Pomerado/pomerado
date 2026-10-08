@@ -170,9 +170,8 @@ that asks.
   and an annotation never declares its contents public. Explain constraints without copying private input
   or unneeded numeric identifiers; for a nonnegative safe integer,
   `Schema.between(0, Number.MAX_SAFE_INTEGER, { title: "Safe integer", description:
-"Nonnegative safe integer amount" })` keeps the bound with public prose. Return a
-  supplied currency value from the validated input instead of embedding it in source.
-  Only host-approved standard enums and origins are recognized as public.
+"Nonnegative safe integer amount" })` keeps the bound with public prose. Only
+  host-approved standard enums and origins are recognized as public.
 - Guardian's publication review checks the schema and the code that fills it. A
   `not_published` result with reason `input_feedback` lists `account_specific_enum` and
   `input_option` findings. They are feedback, on a read or a write: correct the source

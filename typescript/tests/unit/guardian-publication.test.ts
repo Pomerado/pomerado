@@ -242,6 +242,34 @@ describe("a publication decision", () => {
     expect(decision.rationale).toBe(`${rationale.slice(0, 3999)}…`);
   });
 
+  // An explanation longer than a finding may hold keeps its start rather than failing the denial,
+  // and never ends on half of a character.
+  it.each([
+    { text: "x".repeat(900), kept: `${"x".repeat(799)}…` },
+    { text: `${"x".repeat(798)}😀${"x".repeat(50)}`, kept: `${"x".repeat(798)}…` },
+  ])("cuts an overlong explanation to 800 characters: $kept.length", async ({ text, kept }) => {
+    const { decision } = await Effect.runPromise(
+      makeGuardian({
+        run: () =>
+          Effect.succeed({
+            outcome: "deny",
+            reason: "source_correction",
+            rationale: "One output is a constant.",
+            findings: [
+              {
+                path: pending.entrypoint,
+                byteStart: 0,
+                byteEnd: 1,
+                category: "schema_mismatch",
+                explanation: text,
+              },
+            ],
+          }),
+      }).review(pending, sourcesOf(files)),
+    );
+    expect(decision.findings?.[0]?.explanation).toBe(kept);
+  });
+
   // Guardian's shared output format sends null for a field a kind does not use.
   it("reads a null findings list as none and an allow without a reason as approved", async () => {
     const { decision } = await Effect.runPromise(

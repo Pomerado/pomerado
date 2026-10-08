@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { Cause, Clock, Data, Duration, Effect, Option, Schema } from "effect";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
-import { PublicationFinding, PublicationReason } from "./review-contracts.js";
+import { cutToLimit, PublicationFinding, PublicationReason } from "./review-contracts.js";
 import type { PublicationScope, PublicationFileBlock } from "./review-contracts.js";
 import {
   decisionForKind,
@@ -86,10 +86,7 @@ const boundedRationale = (raw: unknown): unknown => {
   if (typeof raw !== "object" || raw === null) return raw;
   const rationale: unknown = Reflect.get(raw, "rationale");
   if (typeof rationale !== "string" || rationale.length <= rationaleLimit) return raw;
-  // Never keep half of a surrogate pair.
-  const high = rationale.charCodeAt(rationaleLimit - 2);
-  const end = high >= 0xd800 && high <= 0xdbff ? rationaleLimit - 2 : rationaleLimit - 1;
-  return { ...raw, rationale: `${rationale.slice(0, end)}…` };
+  return { ...raw, rationale: cutToLimit(rationale, rationaleLimit) };
 };
 
 export const GuardianDecision = Schema.Struct({

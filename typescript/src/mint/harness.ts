@@ -3094,6 +3094,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "The host could not read the retained output of a verified example, so publication review had nothing to judge. The existing execution outcomes remain recorded."
                       : "Publication infrastructure is unavailable. The existing execution outcomes and protected results remain retained independently of future code publication.",
                   };
+                // The review as the minter reads it, screened once for every reply below.
+                const review =
+                  error.review === undefined ? undefined : yield* minterReview(error.review);
                 // Screening serializes through JSON, which leaves out undefined fields.
                 const diagnostic = yield* screenMintText(dependencies, {
                   phase: "publication",
@@ -3102,9 +3105,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   screening: error.screening,
                   publicationBlock: error.publicationBlock,
                   destinationEvidenceGap: error.destinationEvidenceGap,
-                  ...(error.review === undefined
-                    ? {}
-                    : { review: yield* minterReview(error.review) }),
+                  ...(review === undefined ? {} : { review }),
                   reviewPhase: error.reviewPhase,
                   reviewFailure: error.reviewFailure,
                   diagnosticRetentionReason: error.diagnosticRetentionReason,
@@ -3427,9 +3428,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.reason,
                   {
                     expectedEntrypoint: error.expectedEntrypoint,
-                    ...(error.review === undefined
-                      ? {}
-                      : { review: yield* minterReview(error.review) }),
+                    ...(review === undefined ? {} : { review }),
                     diagnostic:
                       diagnostic._tag === "Right"
                         ? diagnostic.right
@@ -3437,7 +3436,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     repeatableRead,
                   },
                   (error.code === "ReviewDenied" && error.review !== undefined
-                    ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding, then call finish_build again with the same executionId. The existing example and result remain recorded."
+                    ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId. The existing example and result remain recorded."
                     : "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable.") +
                     " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
                 );

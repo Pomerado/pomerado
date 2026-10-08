@@ -74,6 +74,16 @@ export const RoutePointer = Schema.Struct({
 });
 export type RoutePointer = typeof RoutePointer.Type;
 
+/**
+ * Text cut to `limit` characters, its last an ellipsis, never keeping half of a surrogate pair:
+ * Guardian's text that outgrows its limit is kept, not lost with the decision.
+ */
+export const cutToLimit = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const high = text.charCodeAt(limit - 2);
+  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? limit - 2 : limit - 1)}…`;
+};
+
 /** The characters one finding's explanation may hold; the host cuts a longer one to fit. */
 export const publicationExplanationLimit = 800;
 export const PublicationFinding = Schema.Struct({

@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
 import {
+  cutToLimit,
   inputFindingCategories,
   publicationExplanationLimit,
   PublicationFinding,
@@ -39,13 +40,6 @@ const fitted = (finding: PublicationFinding, length: number): PublicationFinding
     : { ...finding, byteStart: 0, byteEnd: length };
 };
 
-/** Text cut to `limit` characters with an ellipsis, never keeping half of a surrogate pair. */
-const cut = (text: string, limit: number) => {
-  if (text.length <= limit) return text;
-  const high = text.charCodeAt(limit - 2);
-  return `${text.slice(0, high >= 0xd800 && high <= 0xdbff ? limit - 2 : limit - 1)}…`;
-};
-
 /** Each finding's explanation cut to its limit, rather than failing the whole decision. */
 const boundedExplanations = (raw: unknown): unknown => {
   if (typeof raw !== "object" || raw === null) return raw;
@@ -59,7 +53,7 @@ const boundedExplanations = (raw: unknown): unknown => {
           ? Reflect.get(finding, "explanation")
           : undefined;
       return typeof explanation === "string"
-        ? { ...(finding as object), explanation: cut(explanation, publicationExplanationLimit) }
+        ? { ...(finding as object), explanation: cutToLimit(explanation, publicationExplanationLimit) }
         : finding;
     }),
   };
@@ -139,15 +133,15 @@ export const decodePublicationDecision = (scope: PublicationScope, raw: unknown)
  * does not reconcile the state it changes.
  */
 export const publicationOutputPolicy =
-  "A value the request needs is one the request names, the record's identifier, or context those values depend on, such as dates or a location, as the page shows them. Each of these is a schema_mismatch finding with reason source_correction, in any implementation the bundle publishes. Constant output: an output set to a constant, such as null, an empty list, false or a fixed label, or copied from the input, where the example output or captures show the site offers that value; null or an empty list is correct where the evidence shows the value absent. Unapplied input: an input the code never applies, skips or always reports unsupported while the captures show its control, or, on a search or list, a filter the site offers for the tool's purpose that the tool neither takes nor names in its description as left out; an input narrowed to the example's value is an example_value finding and blocks too. Applied without readback: an input treated as applied without reading the site's committed state, such as the applied chip, the selected control or the results' own state; echoed input, a URL the code built or a box checked before the site applied it is not that state. Wrong failure: a throw where the site showed no results or the page lacks an optional value; or null, a placeholder, a label or another record's value returned in place of a value the request needs, or a schema that makes one optional or nullable. Unreconciled write, a confirmation finding instead: a write to existing state, such as a cart or a saved record, that does not read it before and after the commit to check that only the requested change happened. Output that mixes the site's suggestions with matches without saying so is an unsupported_claim finding.";
+  "A needed value is one the request names, the record's identifier, or context those depend on, such as dates. In any implementation the bundle publishes, each of these is a schema_mismatch finding with reason source_correction. Constant output: an output that is a constant (null, an empty list, false, a fixed label) or the input echoed, where the example output or captures show the site's value; null or an empty list is right where the evidence shows none. Unapplied input: an input the code never applies, skips or always reports unsupported though the captures show its control, or a search filter the site offers for the tool's purpose that the tool neither takes nor names in its description as left out. Applied without readback: an input treated as applied without reading the site's committed state, such as its chip or selected control; echoed input or a built URL is not that state. Wrong failure: a throw on the site's no-results message or a missing optional value; a placeholder, label or another record's value instead of a needed value; or a schema making one optional or nullable. Built URL: Playwright source opening a page URL that holds a caller input value, other than one the page produced or a fixed entry URL. Unreconciled write, a confirmation finding instead: a write to existing state, such as a cart, that does not read it before and after the commit to check only the requested change happened.";
 
 /** The rules only a cart or checkout tool adds; the shared rules above cover its reconciliation. */
 export const publicationCartPolicy =
-  "A cart tool, one that reads, adds to, changes or checks out a cart, runs signed in: when trusted_execution_context records no verified sign-in, return an unsupported_claim finding with reason evidence at the description. In a cart tool, each of these is a schema_mismatch finding with reason source_correction: a description or quantity field that does not say whether quantity adds to the line or sets it, or code that does the other; saving a value to the account that the request did not ask to save, such as an address; and adding items or raising a quantity to meet a site minimum instead of throwing InvalidInput with the site's reason.";
+  "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in; without a verified sign-in in trusted_execution_context, that is an unsupported_claim finding with reason evidence at the description. In a cart tool these are schema_mismatch findings with reason source_correction: not saying whether quantity adds or sets, or code doing the other; saving a value to the account unasked; adding items or raising a quantity to meet a site minimum instead of throwing InvalidInput with the site's reason.";
 
 /** What each finding's explanation tells the minter, so one revision fixes them all. */
 export const publicationFindingFeedback =
-  "Give each finding an explanation the minter can act on alone, in at most three sentences: what is wrong and the output, input, claim or file at fault; the evidence, naming the file and what it shows; and the fix. Never include credential values in it.";
+  "Each finding's explanation, in at most three sentences the minter can act on alone, says what is wrong, the evidence (the file and what it shows) and the fix, never a credential value.";
 
 /**
  * Guardian's policy for a publication review: what ships, who wrote each file, and the privacy,
@@ -172,7 +166,6 @@ export const guardianPublicationPolicy = [
   [
     "Also preserve ordinary authority, schema compatibility and supported-claim checks.",
     "Compare the trusted original intent's material requested outcome and its effect limits, such as search only (the example's input values are one case, not limits), with the original extracted contract, current entrypoint and public definition. An honestly disclosed diagnostic-only or narrower capability does not satisfy a different requested outcome; reject that substitution as source_correction with an in-manifest schema_mismatch or unsupported_claim finding. A diagnostic request, a supported bounded or verified-empty result, and future-source repair under the original compatible contract remain eligible; a failed prior example does not itself require another execution or resolve the original invocation. Source edits since the prior example are permitted without source attestation.",
-    "Deny with reason source_correction when the Playwright source opens a page URL whose path or query holds a caller input value; a URL the page produced in the same run, a fixed entry URL and the HTTP source's requests are fine.",
   ],
   [
     "In publication review, an answer in trusted_authority.answeredQuestions is one instance of the caller's input, like the example's: the published tool cannot read this job's answers when it runs, so published source must take that value from its input or a declared question, and a literal copy of an answer in published source, schema or definition is hard-coded data, judged like a copied example value. An update in trusted_authority.taskUpdates is a caller-confirmed change to the task that Guardian allowed and the host applied, and it amends the material requested outcome compared above as it says: a dropped requirement or prerequisite, such as a check the site turned out not to offer, lets the published tool omit that step; a changed value or option is one instance of the caller's input, like an answer; a changed purpose, effect or site is the requested outcome from then on. Nothing else amends it: an answer alone that an update did not carry never does. No update removes the requested action itself or the protection against repeating a write that may already have been sent, or makes a capability the site lacks a supported claim.",
@@ -196,7 +189,7 @@ export const guardianPublicationPolicy = [
   [publicationOutputPolicy],
   [publicationCartPolicy],
   [
-    "Return outcome, a concise rationale explaining the actual evidence and any correction needed, a reason enum and findings with exact manifest path, UTF-8 byteStart/byteEnd, category and explanation. Never include credential values in the rationale. Use reason privacy for privacy corrections, source_correction for code/schema/guard corrections (a composed write that does not perform or return its declared confirmation or read-back is a confirmation finding), unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the verified output does not support a declared claim and a narrower claim would still satisfy the original request (otherwise source_correction), input_feedback with outcome deny when every finding is account_specific_enum or input_option (the minter fixes them; they never block publication on their own), host_owned with outcome deny when every finding is in an owner: host file other than publication/definition.json that no source or metadata edit can fix, authority for missing authority, evidence for insufficient evidence, approved only with allow and no findings. With any other finding, use that finding's reason and keep the input findings beside it. Return every finding the evidence supports in this one review, not one per round. With reason evidence, name each missing item in the rationale.",
+    "Return outcome, a concise rationale explaining the actual evidence and any correction needed, a reason enum and findings with exact manifest path, UTF-8 byteStart/byteEnd, category and explanation. Never include credential values in the rationale. Use reason privacy for privacy corrections, source_correction for code/schema/guard corrections, example_value findings included (a composed write that does not perform or return its declared confirmation or read-back is a confirmation finding), unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the verified output does not support a declared claim and a narrower claim would still satisfy the original request (otherwise source_correction), input_feedback with outcome deny when every finding is account_specific_enum or input_option (the minter fixes them; they never block publication on their own), host_owned with outcome deny when every finding is in an owner: host file other than publication/definition.json that no source or metadata edit can fix, authority for missing authority, evidence for insufficient evidence, approved only with allow and no findings. With any other finding, use that finding's reason and keep the input findings beside it. Return every finding the evidence supports in this one review, not one per round. With reason evidence, name each missing item in the rationale.",
   ],
   [publicationFindingFeedback],
 ]

@@ -195,7 +195,7 @@ async ({kernel,sessionId}) => {
       },
     });
     expect(String(denial?.["instruction"])).toContain(
-      "Fix every finding, then call finish_build again with the same executionId.",
+      "Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId.",
     );
     expect(built.build, JSON.stringify(built)).toBe("published");
     expect(publications(guardian.reviews)).toHaveLength(2);
