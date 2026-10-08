@@ -1,4 +1,5 @@
 import { Effect, Either } from "effect";
+import { expectedConfirmLimit } from "../browser/dialogs/expected.js";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
 import { runnableOperationFiles, savedOperationFiles } from "../mint/operation-source.js";
@@ -144,8 +145,9 @@ export const mintPublication =
         };
       });
       // A write first proves its session may have sent the write, then that its composed contract
-      // matches the session. A confirmation proves it; otherwise an act step Guardian labelled a
-      // write that may have reached the site, unless the outcome review found it did not happen.
+      // matches the session and names each step a confirm popup was accepted at. A confirmation
+      // proves the write was sent; otherwise an act step Guardian labelled a write that may have
+      // reached the site, unless the outcome review found it did not happen.
       const session = write
         ? yield* checkWriteSession({
             session: {
@@ -156,6 +158,7 @@ export const mintPublication =
             },
             step: sample.journal,
             extract,
+            confirms: { steps: writeSession.confirmSteps, entrypoint: publication.entrypoint },
           })
         : undefined;
       const { files, sources, signIn, result } = session?.extracted ?? (yield* extract);
@@ -230,6 +233,9 @@ export const mintPublication =
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
           ...(signIn === undefined ? {} : { signIn }),
+          ...(write && writeSession.acceptedConfirms.length > 0
+            ? { acceptedConfirms: writeSession.acceptedConfirms.slice(0, expectedConfirmLimit) }
+            : {}),
         },
         diagnostics: [],
       };

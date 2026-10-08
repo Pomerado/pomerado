@@ -166,6 +166,60 @@ describe("a write session's publication check", () => {
     expect(extractions).toBe(1);
   });
 
+  describe("with the steps its confirm popups were accepted at", () => {
+    const placing = contract({ confirmation: "readback", commits: ["place-order"] });
+    const withFiles = (files: Readonly<Record<string, string>>) => ({
+      ...placing,
+      files: new Map(Object.entries(files)),
+    });
+    const confirmsAt = (extracted: ReturnType<typeof withFiles>, steps: readonly string[]) =>
+      Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [confirmed] },
+          step: confirmed,
+          extract: Effect.succeed(extracted),
+          confirms: { steps, entrypoint: "src/tool.mjs" },
+        }),
+      );
+
+    it("refuses a composed script that never names a step a confirm was accepted at", () => {
+      const exit = confirmsAt(withFiles({ "src/tool.mjs": `decideDialog({step:"submit-order"})` }), [
+        "place-order",
+      ]);
+      expect(reason(exit)).toBe("confirm_action_unmatched");
+      expect(
+        Exit.isFailure(exit) && exit.cause._tag === "Fail" ? exit.cause.error : undefined,
+      ).toMatchObject({ confirmActionIds: ["place-order"] });
+    });
+
+    it("passes when the entrypoint or a module it imports names each step", () => {
+      const imported = withFiles({
+        "src/tool.mjs": `import { step } from "./steps.mjs";`,
+        "src/steps.mjs": `export const step = 'place-order';`,
+      });
+      expect(Exit.isSuccess(confirmsAt(imported, ["place-order"]))).toBe(true);
+      // A file the entrypoint does not import does not count.
+      const unimported = withFiles({
+        "src/tool.mjs": `decideDialog({step:"submit-order"})`,
+        "src/old.mjs": `decideDialog({step:"place-order"})`,
+      });
+      expect(reason(confirmsAt(unimported, ["place-order"]))).toBe("confirm_action_unmatched");
+      expect(Exit.isSuccess(confirmsAt(unimported, []))).toBe(true);
+    });
+
+    it("checks them only after the contract, as the contract's refusal comes first", () => {
+      const exit = Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [confirmed] },
+          step: confirmed,
+          extract: Effect.succeed({ ...contract(), files: new Map([["src/tool.mjs", ""]]) }),
+          confirms: { steps: ["place-order"], entrypoint: "src/tool.mjs" },
+        }),
+      );
+      expect(reason(exit)).toBe("confirmation_undeclared");
+    });
+  });
+
   it("publishes an unverifiable write whose step entered its mark and confirmed nothing", () => {
     const { result } = check(
       [{ enteredMarks: ["place-order"], action: "write", possiblySent: true }],

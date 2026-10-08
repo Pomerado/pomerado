@@ -4,6 +4,7 @@ import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
 import type { LocalOperationJournal } from "../execution/local-operation.js";
 import type { PlaywrightExecutor } from "../execution/playwright-execute.js";
+import type { ConfirmSession } from "../browser/dialogs/expected.js";
 import {
   identifierPreference,
   type AutofillSlot,
@@ -244,13 +245,26 @@ export const mintState = (
     /**
      * The build's one write session: whether its first act step dispatched, and the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one), and its act steps in order for publication's checks.
+      readonly steps: (WriteSessionMarks & { readonly executionId: string })[];
+    } & ConfirmSession = {
+      started: false,
+      input: undefined,
+      steps: [],
+      acceptedConfirms: [],
+      confirmSteps: new Set(),
+    };
      */
     const writeSession: {
       started: boolean;
       input: Readonly<Record<string, unknown>> | undefined;
       readonly steps: (WriteSessionMarks & { readonly executionId: string })[];
-    } = { started: false, input: undefined, steps: [] };
+    } & ConfirmSession = {
+      started: false,
+      input: undefined,
+      steps: [],
+      acceptedConfirms: [],
+      confirmSteps: new Set(),
+    };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     const markers = makeMarkerChecks({
       page: browser,
