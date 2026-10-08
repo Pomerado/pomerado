@@ -7,7 +7,7 @@
 - A local build's step asks only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. An ask whose id, prompt or bounds differ fails as `Undeclared` before Guardian's question review, and nobody is asked. A declaration held in a variable, imported or computed declares nothing.
   - Migrate by writing `questions` as an object literal inside the entrypoint's `defineOperation` call.
 - A step whose literal `questions` names an invalid id is refused before review, with each id it names.
-- A run asks only the questions publication reviewed. A published artifact keeps them as `questions`, and `pomerado.json` saves them. An artifact without them asks only what its entrypoint declares as a plain literal.
+- A run asks only the questions publication reviewed. A published artifact keeps them as `questions`, an empty object when there are none, and `pomerado.json` saves them. An artifact saved by an earlier release has no `questions`, so it asks only what its entrypoint declares as a plain literal.
 
 ### Other changes
 

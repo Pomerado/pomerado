@@ -109,8 +109,9 @@ export interface MintArtifact {
   /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
   readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
   /**
-   * The questions publication reviewed, the only ones a run asks its caller. An artifact without
-   * them asks only what its entrypoint declares as a plain literal.
+   * The questions publication reviewed, the only ones a run asks its caller, and `{}` when there
+   * are none. An artifact saved before builds recorded them asks only what its entrypoint
+   * declares as a plain literal.
    */
   readonly questions?: ScriptQuestionDeclarations;
 }

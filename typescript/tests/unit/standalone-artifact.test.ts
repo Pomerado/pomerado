@@ -96,6 +96,17 @@ it("keeps the questions publication reviewed in pomerado.json and reads them bac
     });
   }));
 
+it("keeps an empty question set in pomerado.json, apart from an artifact saved without one", () =>
+  scratch(async (directory) => {
+    const artifact = { ...source, questions: {} };
+    const restored = await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory))));
+    expect(restored).toEqual(artifact);
+    expect("questions" in restored).toBe(true);
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toMatchObject({
+      questions: {},
+    });
+  }));
+
 it("reads an artifact written without a sign-in as it always was", () =>
   scratch(async (directory) => {
     // pomerado.json as 0.2.0 wrote it: no signIn, and no recipe beside it.

@@ -66,7 +66,7 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
-- A run asks only the questions publication reviewed, which `pomerado.json` keeps. Any other ask fails as `Undeclared` and asks nobody. An integration saved without them asks only what its entrypoint declares as a plain literal.
+- A run asks only the questions publication reviewed, which `pomerado.json` keeps, even when there are none. Any other ask fails as `Undeclared` and asks nobody. An integration saved by an earlier release has none recorded, so it asks only what its entrypoint declares as a plain literal.
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.

@@ -72,8 +72,8 @@ export const runOperation = (
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
       timeoutMs: options.timeoutMs ?? 1_200_000,
       ask,
-      // Only the questions publication reviewed; an artifact saved without them asks only what
-      // its entrypoint declares as a plain literal.
+      // Only the questions publication reviewed; an artifact saved before builds recorded them
+      // asks only what its entrypoint declares as a plain literal.
       declaredQuestions:
         artifact.questions ??
         draftQuestionDeclarations(
