@@ -1,23 +1,11 @@
 import { Effect } from "effect";
-import type { CommitMark } from "../runtime/context.js";
+import type { CommitEvidence } from "../runtime/run-outcome.js";
 import { MintFailure } from "./contracts.js";
 import { writeContractRefusal } from "./write-contract.js";
 
-/**
- * What an act step's runner proves about its commit steps. `not_entered`: it declared marks and
- * entered none. `entered`: it entered at least one. `undeclared`: the script declared no marks, so
- * a commit the host cannot see stays possible. `unreported`: no readable report, so nothing is
- * known. Only `not_entered` ever lets a write count as having sent nothing.
- */
-export type CommitEvidence = "not_entered" | "entered" | "undeclared" | "unreported";
-
-/** The evidence of a runner's own report of its commit marks. */
-export const commitEvidenceOf = (marks: readonly CommitMark[]) =>
-  marks.length === 0
-    ? ("undeclared" as const)
-    : marks.some((mark) => mark.state !== "not_sent")
-      ? ("entered" as const)
-      : ("not_entered" as const);
+// The commit evidence of an act step's runner, shared with the run outcome classifier. This module
+// keeps exporting both names, so its subpath's exports are unchanged.
+export { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 
 /**
  * Whether an act step that did not succeed may have committed its write: the host counted

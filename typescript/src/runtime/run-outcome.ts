@@ -29,9 +29,18 @@ const CommitReport = Schema.Struct({
  * What a write's runner reported about its commit marks. `not_entered`: the script declared its
  * commit steps and entered none. `entered`: a commit step was about to dispatch or did.
  * `undeclared`: the script declared no marks, so a commit the ledger cannot see (a GET) stays
- * possible. `unreported`: no readable report, so nothing is known.
+ * possible. `unreported`: no readable report, so nothing is known. Only `not_entered` ever lets a
+ * write count as having sent nothing.
  */
 export type CommitEvidence = "not_entered" | "entered" | "undeclared" | "unreported";
+
+/** The evidence of a runner's own report of its commit marks, once that report was read. */
+export const commitEvidenceOf = (marks: readonly CommitMark[]) =>
+  marks.length === 0
+    ? ("undeclared" as const)
+    : marks.some((mark) => mark.state !== "not_sent")
+      ? ("entered" as const)
+      : ("not_entered" as const);
 
 export interface CommitReportOutcome {
   readonly evidence: CommitEvidence;
@@ -48,15 +57,7 @@ export const commitReportOf = (resultJson: unknown): CommitReportOutcome => {
   const decoded = Schema.decodeUnknownOption(CommitReport)(resultJson);
   if (Option.isNone(decoded)) return { evidence: "unreported" };
   const marks = decoded.value.commits;
-  return {
-    evidence:
-      marks.length === 0
-        ? "undeclared"
-        : marks.some((mark) => mark.state !== "not_sent")
-          ? "entered"
-          : "not_entered",
-    marks,
-  };
+  return { evidence: commitEvidenceOf(marks), marks };
 };
 
 /** The tool revision fields the outcome functions read: its effect and declared confirmation. */
