@@ -6,7 +6,7 @@ import type {
   SignInValueHooks,
 } from "../destinations/sign-in-recipe.js";
 import { MintFailure } from "../mint/contracts.js";
-import { CredentialRejectedField } from "../runtime/authentication.js";
+import { CredentialRejectedField, type WebsiteCredentials } from "../runtime/authentication.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { InputAsker } from "../runtime/input-request.js";
 import {
@@ -75,6 +75,55 @@ export const makeBoundableAsk = (base: InputAsker) => {
 };
 export type BoundableAsk = ReturnType<typeof makeBoundableAsk>;
 
+/**
+ * A login that a sign-in can mark as rejected. Until the owner gives another, `login` holds none
+ * and its `values` asks for a correction of the rejected one, so no sign-in sends a value the site
+ * rejected again, whether an automatic one or the build's own.
+ */
+export const makeRejectableLogin = <E>(base: SignInLogin<E>) => {
+  let rejected: { readonly login: WebsiteCredentials; readonly field: CredentialRejectedField } | undefined;
+  /** The rejection, while the login held is still the one the site rejected. */
+  const marked = () => {
+    const held = base.held();
+    return rejected !== undefined && held === rejected.login ? rejected : undefined;
+  };
+  const login: SignInLogin<E> = {
+    held: () => (marked() === undefined ? base.held() : undefined),
+    values: Effect.suspend(() => {
+      const mark = marked();
+      return mark === undefined ? base.values : base.correct(mark.field, mark.login);
+    }),
+    correct: base.correct,
+  };
+  return {
+    login,
+    /** The site rejected `field` of the login held now. */
+    reject: (field: CredentialRejectedField) => {
+      const held = base.held();
+      if (held !== undefined) rejected = { login: held, field };
+    },
+  };
+};
+export type RejectableLogin<E> = ReturnType<typeof makeRejectableLogin<E>>;
+
+/**
+ * The login field a failed sign-in says the site rejected: its corrections ran out, or the
+ * correction it asked for went unanswered, with `held` the login it last sent.
+ */
+const rejectedLoginField = (
+  failure: unknown,
+  held: WebsiteCredentials | undefined,
+): CredentialRejectedField | undefined => {
+  if (!(failure instanceof SignInRunFailed)) return undefined;
+  if (failure.code === "CredentialsRejected")
+    return Schema.is(CredentialRejectedField)(failure.reason) ? failure.reason : undefined;
+  // A login question goes unanswered with a login held only when it asked for a correction: the
+  // first question, answered, is what holds one.
+  return failure.code === "NeedsInput" && failure.reason === "login" && held !== undefined
+    ? "password"
+    : undefined;
+};
+
 type Failed = (
   refusal: SessionSignInRefusal,
   reason: string,
@@ -99,8 +148,8 @@ export const makeLocalSessionSignIn = (options: {
   readonly browser: SignInReplayBrowser<Error>;
   /** The sign-in to replay, once one was recorded and verified. */
   readonly recorded: () => RecordedSignIn | undefined;
-  /** The login the host already holds, read once per build or run. */
-  readonly login: SignInLogin<unknown>;
+  /** The login the host already holds, read once per build or run, which a rejection marks. */
+  readonly login: RejectableLogin<unknown>;
   readonly values: SignInValueHooks<Error>;
   /** The asker `login` and `values` ask through. */
   readonly asks: BoundableAsk;
@@ -208,7 +257,13 @@ export const makeLocalSessionSignIn = (options: {
       spent.attempt += 1;
       spent.scope += 1;
       call.scope += 1;
-      yield* replay(sign, bound, options.login).pipe(
+      yield* replay(sign, bound, options.login.login).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            const field = rejectedLoginField(error, options.login.login.held());
+            if (field !== undefined) options.login.reject(field);
+          }),
+        ),
         Effect.mapError((error) => failed("session_sign_in_failed", "replay_failed", error)),
       );
       yield* options.saveSession.pipe(
@@ -241,23 +296,34 @@ export const makeLocalSessionSignIn = (options: {
     });
   /**
    * The hook for one execution's `ensureSignedIn`. The runtime's automatic first call answers that
-   * the page is as it was: the host signed in, or reset and checked the page, just before the
-   * execution got the browser, and a check that may move the page would lose the page the
-   * execution starts on. A sign-in the host could not make is refused.
+   * the page is as it was, without a check, since a check may move the page the execution starts
+   * on: a build checked the page after its reset, and a run signed in just before it loaded the
+   * site's root, which it does not check. A sign-in the host could not make is refused, and
+   * `failed` hears why.
    */
-  const hook = (): SessionSignInHook => {
+  const hook = (failed?: (failure: SessionSignInFailed) => void): SessionSignInHook => {
     let calls = 0;
+    const refuse = (failure: SessionSignInFailed) =>
+      Effect.sync(() => {
+        failed?.(failure);
+        return { outcome: "refused", cause: failure.refusal } as const;
+      });
     return (bound) =>
       Effect.suspend(() => {
         calls += 1;
         if (calls === 1) return Effect.succeed({ outcome: "signed_in", signedInAgain: false } as const);
         return ensureSignedIn("signed_out_mid_operation", bound).pipe(
           Effect.map(({ signedInAgain }) => ({ outcome: "signed_in", signedInAgain }) as const),
-          Effect.catchAll((failure) =>
-            Effect.succeed({ outcome: "refused", cause: failure.refusal } as const),
-          ),
-          Effect.catchAllDefect(() =>
-            Effect.succeed({ outcome: "refused", cause: "session_sign_in_failed" } as const),
+          Effect.catchAll(refuse),
+          Effect.catchAllDefect((defect) =>
+            refuse(
+              new SessionSignInFailed({
+                refusal: "session_sign_in_failed",
+                trigger: "signed_out_mid_operation",
+                reason: "sign_in_defect",
+                failure: defect,
+              }),
+            ),
           ),
         );
       });
@@ -326,13 +392,15 @@ export const makeRunSignIn = (
     onRequest: browser.onRequest,
     typing: session.signInTyping,
   });
-  const login = localSignInLogin({ ask: asks.ask, register: secrets.register, siteOrigin });
+  const login = makeRejectableLogin(
+    localSignInLogin({ ask: asks.ask, register: secrets.register, siteOrigin }),
+  );
   const values = askingValueHooks({ ask: asks.ask, register: secrets.register, site, siteOrigin });
   const before = signInForRun({
     recipe: signIn.recipe,
     entryUrl: signIn.entryUrl,
     browser: signInBrowser,
-    login,
+    login: login.login,
     values,
     carries: secrets.carries,
     site,

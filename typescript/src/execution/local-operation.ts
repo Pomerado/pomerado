@@ -101,22 +101,29 @@ const suspended = <A, E>(deadline: Deadline, run: Effect.Effect<A, E>) =>
  * its last step to end and refuses. An interrupted request (the script ended or the child exited)
  * stops the sign-in the same way.
  */
-const answerSessionSignIn = (signIn: SessionSignInHook) =>
+export const answerSessionSignIn = (
+  signIn: SessionSignInHook,
+  bounds: { readonly fillMs: number; readonly answerMs: number; readonly settleMs: number } = {
+    fillMs: sessionSignInFillMs,
+    answerMs: sessionSignInAnswerMs,
+    settleMs: sessionSignInSettleMs,
+  },
+) =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const stop = new AbortController();
     const signingIn = yield* Effect.forkDaemon(
-      signIn({ untilMs: now + sessionSignInFillMs, stop: stop.signal }),
+      signIn({ untilMs: now + bounds.fillMs, stop: stop.signal }),
     );
     // Stop the sign-in at its next step and wait for it to end, so nothing after this shares the
     // browser with it.
     const settle = Effect.sync(() => stop.abort()).pipe(
-      Effect.zipRight(Fiber.await(signingIn).pipe(Effect.timeoutOption(sessionSignInSettleMs))),
+      Effect.zipRight(Fiber.await(signingIn).pipe(Effect.timeoutOption(bounds.settleMs))),
       Effect.zipRight(Fiber.interrupt(signingIn)),
     );
     const raced = yield* Effect.raceFirst(
       Fiber.join(signingIn).pipe(Effect.map((answer) => ({ answer }))),
-      Effect.sleep(sessionSignInAnswerMs).pipe(Effect.as({ expired: true as const })),
+      Effect.sleep(bounds.answerMs).pipe(Effect.as({ expired: true as const })),
     ).pipe(Effect.onInterrupt(() => settle));
     if ("answer" in raced) return raced.answer;
     yield* settle;

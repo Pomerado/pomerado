@@ -36,6 +36,7 @@ import { makeMarkerChecks } from "./signed-in-marker.js";
 import {
   makeBoundableAsk,
   makeLocalSessionSignIn,
+  makeRejectableLogin,
   mintSessionSignInFailure,
 } from "./session-sign-in.js";
 import type { StandaloneSession } from "./session.js";
@@ -58,6 +59,8 @@ const unavailable = (operation: string) => (error: unknown) =>
     code: "Unavailable",
     failureDetail: failureDetail("mint_host_dependency_failed", { operation, error }),
   });
+/** Browser code that returns the context's cookies and site storage, IndexedDB included. */
+export const saveStateCode = "return await context.storageState({ indexedDB: true });";
 /**
  * Where a build's live steps start. The first step that is not reset loads the request's URL once.
  * A live example, a live test and a write session's first step reset the page and load the site
@@ -82,9 +85,16 @@ export const makeBuildStart = (
 ) => {
   const tracker = makeStartTracker<SavedSession>();
   const hooks = localStartHooks(browser.execute, browser.targetId);
-  // The context's storage and the tab's session storage, which is left out past its cap.
+  // The context's storage and the tab's session storage, which is left out past its cap. A
+  // browser call returns at most 1 MiB, so when both together fail, the save reads the stored
+  // state alone, as it did before it kept session storage: it fails only where that read fails.
   const readSession = browser.execute(saveSessionCode(browser.targetId, siteOrigin), 60).pipe(
     Effect.flatMap(Schema.decodeUnknown(SavedSession)),
+    Effect.orElse(() =>
+      browser
+        .execute(saveStateCode, 60)
+        .pipe(Effect.map((state): SavedSession => ({ state, sessionStorage: [] }))),
+    ),
     Effect.map(
       (saved): SavedSession =>
         Buffer.byteLength(JSON.stringify(saved.sessionStorage)) <= savedSessionStorageCapBytes
@@ -228,11 +238,14 @@ export const mintState = (
     // One login and one set of value questions for the build's sign-ins, the automatic ones too,
     // whose questions a script's bound limits.
     const signInAsks = makeBoundableAsk(mintAsk);
-    const login = localSignInLogin({
-      ask: signInAsks.ask,
-      register: secrets.register,
-      siteOrigin: context.siteOrigin,
-    });
+    // A login an automatic sign-in sent and the site rejected is not sent again, by any sign-in.
+    const login = makeRejectableLogin(
+      localSignInLogin({
+        ask: signInAsks.ask,
+        register: secrets.register,
+        siteOrigin: context.siteOrigin,
+      }),
+    );
     const values = askingValueHooks({
       ask: signInAsks.ask,
       register: secrets.register,
@@ -241,7 +254,7 @@ export const mintState = (
     });
     const recorder = yield* makeSignInRecorder<Error>({
       browser: signInBrowser,
-      login,
+      login: login.login,
       values,
       // The screen may show a value the caller gave, such as the typed email on a password
       // screen; it reaches Guardian masked. The source check still refuses any value left.

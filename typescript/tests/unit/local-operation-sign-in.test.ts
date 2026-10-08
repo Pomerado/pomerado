@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { expect, it } from "vitest";
-import { runLocalOperation } from "../../src/execution/local-operation.js";
+import { answerSessionSignIn, runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 import {
   sessionSignInFillMs,
@@ -104,4 +104,60 @@ it("binds no sign-in for an operation that cannot reach the browser", async () =
   const result = await runEnsuring({ signIn: host.signIn, target: "pureFiles" });
   expect(result).toMatchObject({ _tag: "Right", right: { output: { signedInAgain: false } } });
   expect(host.bounds).toEqual([]);
+});
+
+/** A host sign-in that notes its bound and its stop, and ends as `ends` says. */
+const watchedSignIn = (ends: "never" | "on_stop") => {
+  const seen: { untilMs: number; stoppedAt?: number; endedAt?: number } = { untilMs: 0 };
+  const signIn: SessionSignInHook = (bound) =>
+    Effect.async<SessionSignInAnswer>((resume) => {
+      seen.untilMs = bound.untilMs;
+      bound.stop.addEventListener("abort", () => {
+        seen.stoppedAt = Date.now();
+        if (ends === "on_stop") {
+          seen.endedAt = Date.now();
+          resume(Effect.succeed({ outcome: "signed_in", signedInAgain: true }));
+        }
+      });
+      return Effect.sync(() => {
+        seen.endedAt = Date.now();
+      });
+    });
+  return { signIn, seen };
+};
+/** Short bounds in the shared order: filling, then the answer, then the settle. */
+const bounds = { fillMs: 100, answerMs: 300, settleMs: 400 };
+
+it("refuses a sign-in still running at the answer bound, once it stopped it and waited out the settle", async () => {
+  const host = watchedSignIn("never");
+  const startedAt = Date.now();
+  const answer = await Effect.runPromise(answerSessionSignIn(host.signIn, bounds));
+  const answeredAt = Date.now();
+  expect(answer).toEqual({ outcome: "refused", cause: "session_sign_in_failed" });
+  // No step starts after the filling bound.
+  expect(host.seen.untilMs - startedAt).toBeLessThanOrEqual(bounds.fillMs + 50);
+  // Stopped at the answer bound, it got the settle to end its last step, then was ended.
+  expect((host.seen.stoppedAt ?? 0) - startedAt).toBeGreaterThanOrEqual(bounds.answerMs - 5);
+  expect((host.seen.endedAt ?? 0) - (host.seen.stoppedAt ?? 0)).toBeGreaterThanOrEqual(
+    bounds.settleMs - 5,
+  );
+  expect(answeredAt).toBeGreaterThanOrEqual(host.seen.endedAt ?? Infinity);
+});
+
+it("refuses at the answer bound even when the stopped sign-in then ends signed in, without waiting out the settle", async () => {
+  const host = watchedSignIn("on_stop");
+  const startedAt = Date.now();
+  const answer = await Effect.runPromise(answerSessionSignIn(host.signIn, bounds));
+  expect(answer).toEqual({ outcome: "refused", cause: "session_sign_in_failed" });
+  expect((host.seen.stoppedAt ?? 0) - startedAt).toBeGreaterThanOrEqual(bounds.answerMs - 5);
+  expect(Date.now() - startedAt).toBeLessThan(bounds.answerMs + bounds.settleMs);
+});
+
+it("answers a sign-in that ends before the answer bound with its own answer, stopping nothing", async () => {
+  const signIn: SessionSignInHook = () =>
+    Effect.sleep(50).pipe(Effect.as({ outcome: "signed_in", signedInAgain: true } as const));
+  expect(await Effect.runPromise(answerSessionSignIn(signIn, bounds))).toEqual({
+    outcome: "signed_in",
+    signedInAgain: true,
+  });
 });

@@ -13,6 +13,7 @@ import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
+import type { InputRequest } from "../../src/runtime/input-request.js";
 
 // Where each live step of a local build starts: its page, tabs, cookies and storage. A local
 // fixture site records what every probe saw, and scripted models drive the build.
@@ -218,8 +219,17 @@ const startSite = async () => {
   ]);
   const visits: string[] = [];
   const probes: Probe[] = [];
-  /** A path whose next signed-in load signs the session out, as an expired session would. */
-  const state: { signOutOn: string | undefined } = { signOutOn: undefined };
+  const state: {
+    /** A path whose next signed-in load signs the session out, as an expired session would. */
+    signOutOn: string | undefined;
+    /**
+     * Whether pages other than the account page show the signed-in marker to a signed-in session,
+     * as a site-wide account menu would. Without it, only `/account` shows it.
+     */
+    markerOnEveryPage: boolean;
+    /** Accepted sign-ins by password. */
+    logins: number;
+  } = { signOutOn: undefined, markerOnEveryPage: true, logins: 0 };
   const server = createServer(
     {
       key: await readFile(join(directory, "key.pem")),
@@ -253,6 +263,7 @@ const startSite = async () => {
         if (request.method === "POST" && path === "/api/login") {
           const sent: unknown = JSON.parse(await body(request));
           const matches = JSON.stringify(sent) === JSON.stringify(account);
+          if (matches) state.logins += 1;
           response.writeHead(matches ? 200 : 401, {
             "content-type": "application/json",
             ...(matches ? { "set-cookie": "member=signed; Path=/; Secure; HttpOnly" } : {}),
@@ -321,7 +332,7 @@ const startSite = async () => {
         // account menu would.
         return page(
           response,
-          `<title>${path}</title><h1>${path}</h1>${signedIn ? `<p id="account">Signed in</p>` : ""}`,
+          `<title>${path}</title><h1>${path}</h1>${signedIn && state.markerOnEveryPage ? `<p id="account">Signed in</p>` : ""}`,
         );
       })().catch(() => response.destroy());
     },
@@ -367,6 +378,7 @@ const build = (
   },
   steps: readonly ((request: ModelRequest) => Output)[],
   runUrl?: string,
+  asked: InputRequest[] = [],
 ) =>
   Effect.runPromise(
     Effect.scoped(
@@ -375,10 +387,11 @@ const build = (
           browser: { endpoint: site.endpoint },
           minterProvider: provider((model, index) => steps[index]?.(model) ?? [message("Done.")]),
           guardianProvider: guardian(),
-          ask: makeInputAsker((asked) =>
-            Effect.succeed(
-              Object.fromEntries(
-                asked.questions.map((question) => [
+          ask: makeInputAsker((request) =>
+            Effect.sync(() => {
+              asked.push(request);
+              return Object.fromEntries(
+                request.questions.map((question) => [
                   question.id,
                   question.type === "credential"
                     ? { ...account, saveLogin: false }
@@ -386,8 +399,8 @@ const build = (
                       ? signInCode
                       : account.password,
                 ]),
-              ),
-            ),
+              );
+            }),
           ),
           // Each build runs several resets and live steps; under a loaded machine 40 s was tight.
           timeoutMs: 60_000,
@@ -538,6 +551,91 @@ test("a signed-in build whose reset's load signs it out signs in again before it
     tab: null,
     tabs: 1,
   });
+});
+
+test("a marker only the account page shows reads signed out on the root after each reset, which signs the build in again until its sign-ins run out", async () => {
+  test.setTimeout(150_000);
+  const site = await startSite();
+  // A marker with no path and no page to open, which the root never shows, on a site whose
+  // sign-in page shows its form to a signed-in session too.
+  site.state.markerOnEveryPage = false;
+  const [, signIn, check, explored] = readSteps(true);
+  if (!signIn || !check || !explored) throw new Error("Unexpected read steps");
+  const logins: number[] = [];
+  const counted = (respond: (request: ModelRequest) => Output) => (request: ModelRequest) => {
+    logins.push(site.state.logins);
+    return respond(request);
+  };
+  const asked: InputRequest[] = [];
+  const built = await build(
+    site,
+    { url: `${site.origin}/login`, effect: "read" },
+    [
+      () =>
+        patch({
+          "explore/look.mjs": explore,
+          "test/check.mjs": operation("check", probe("test")),
+          "src/tool.mjs": operation("probe", probe("example")),
+        }),
+      signIn,
+      check,
+      explored,
+      counted(() => [execution("test", "test/check.mjs", {}, "test_1")]),
+      counted(() => [execution("test", "test/check.mjs", {}, "test_2")]),
+      counted(() => [execution("test", "test/check.mjs", {}, "test_3")]),
+      counted(() => [execution("example", "src/tool.mjs")]),
+      counted(finish),
+    ],
+    undefined,
+    asked,
+  );
+  // Each reset loads the root, which reads signed out. The check that types nothing loads the
+  // sign-in page, which shows its form, so the host signs in again with the login the build holds.
+  // After the first sign-in the reopened root reads signed out again, so the host signs in once
+  // more and takes the session as one the root's load loses: from then on each reset signs in
+  // once, and the step starts on the page that sign-in left.
+  expect(logins).toEqual([1, 3, 4, 5]);
+  expect(site.visits).toEqual([
+    "/login",
+    "/account",
+    "/deep",
+    // The first test's reset: two sign-ins, with the root reopened between them.
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    // The second and third tests' resets: one sign-in each.
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    "/",
+    "/login",
+    "/login",
+    "/account",
+    // The example's reset: the build's four automatic sign-ins are spent.
+    "/",
+    "/login",
+  ]);
+  expect(site.probes.map(({ step, path }) => ({ step, path }))).toEqual([
+    { step: "test", path: "/account" },
+    { step: "test", path: "/account" },
+    { step: "test", path: "/account" },
+  ]);
+  // The build asked for the login once, and ends with the session not kept.
+  expect(asked.map(({ questions }) => questions.map(({ id }) => id))).toEqual([["login"]]);
+  expect(built).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+  expect(built.diagnostics).toContainEqual(
+    JSON.stringify({
+      phase: "sign_in",
+      reason: "sign_in_unavailable",
+      sessionLoss: "session_not_kept",
+    }),
+  );
 });
 
 test("a write session's first step starts clean at the root, and the next continues", async () => {
