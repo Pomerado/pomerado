@@ -432,6 +432,11 @@
       "import": "./dist/typescript/src/runtime/failure-detail.js",
       "default": "./dist/typescript/src/runtime/failure-detail.js"
     },
+    "./core/runtime/failure-renderer-contract": {
+      "types": "./dist/typescript/src/runtime/failure-renderer-contract.d.ts",
+      "import": "./dist/typescript/src/runtime/failure-renderer-contract.js",
+      "default": "./dist/typescript/src/runtime/failure-renderer-contract.js"
+    },
     "./core/runtime/fingerprint": {
       "types": "./dist/typescript/src/runtime/fingerprint.d.ts",
       "import": "./dist/typescript/src/runtime/fingerprint.js",
@@ -486,6 +491,11 @@
       "types": "./dist/typescript/src/runtime/provider-metadata.d.ts",
       "import": "./dist/typescript/src/runtime/provider-metadata.js",
       "default": "./dist/typescript/src/runtime/provider-metadata.js"
+    },
+    "./core/runtime/run-outcome": {
+      "types": "./dist/typescript/src/runtime/run-outcome.d.ts",
+      "import": "./dist/typescript/src/runtime/run-outcome.js",
+      "default": "./dist/typescript/src/runtime/run-outcome.js"
     },
     "./core/runtime/runner-codes": {
       "types": "./dist/typescript/src/runtime/runner-codes.d.ts",
