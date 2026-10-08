@@ -171,14 +171,13 @@ const keyedJobId = (retryKey: string) => {
  * record is written whole to a temporary file and then hard-linked into place, and the link fails
  * when the key's file exists. Two processes submitting one key at once therefore store one job.
  * Opening the store reads every record: a running job whose server stopped is marked lost, and a
- * finished record older than a day is deleted.
+ * finished record older than a day is deleted. The folder is created with the first record.
  */
 export const makeFileJobStore = (
   directory: string,
 ): Effect.Effect<LocalJobStore, Error, Scope.Scope> =>
   Effect.gen(function* () {
     const owner = yield* openOwner;
-    yield* localPromise(() => mkdir(directory, { recursive: true, mode: 0o700 }));
     const path = (id: string) => join(directory, `${id}.json`);
     const temporary = (id: string) => join(directory, `.${id}.${randomUUID()}.tmp`);
     const text = (record: LocalJobRecord) => `${JSON.stringify(record)}\n`;
@@ -202,9 +201,13 @@ export const makeFileJobStore = (
           Effect.tapError(() => localPromise(() => rm(next, { force: true })).pipe(Effect.ignore)),
         );
       });
-    /** Creates the record's file only when none exists, answering whether it did. */
+    /**
+     * Creates the record's file only when none exists, answering whether it did. The folder is
+     * made here, so a tool folder nobody may write still serves calls without a key.
+     */
     const create = (record: LocalJobRecord) =>
       Effect.gen(function* () {
+        yield* localPromise(() => mkdir(directory, { recursive: true, mode: 0o700 }));
         const next = temporary(record.id);
         yield* localPromise(() => writeFile(next, text(record), { mode: 0o600, flag: "wx" }));
         return yield* localPromise(() => link(next, path(record.id))).pipe(
@@ -243,7 +246,10 @@ export const makeFileJobStore = (
     const sweep = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       sweptAt = now;
-      for (const name of yield* localPromise(() => readdir(directory))) {
+      const names = yield* localPromise(() => readdir(directory)).pipe(
+        Effect.catchIf(isMissing, () => Effect.succeed([])),
+      );
+      for (const name of names) {
         if (recordFile.test(name)) {
           // An unreadable record stays, so its key keeps failing closed instead of acting again.
           const record = yield* get(name.slice(0, -".json".length)).pipe(
@@ -262,7 +268,8 @@ export const makeFileJobStore = (
         }
       }
     });
-    yield* sweep;
+    // A folder this process can't read or write leaves its keyed calls failing closed later.
+    yield* sweep.pipe(Effect.ignore);
     return {
       persistent: true,
       insert: (submission) =>

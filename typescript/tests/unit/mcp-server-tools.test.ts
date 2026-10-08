@@ -1,3 +1,6 @@
+import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
@@ -24,6 +27,24 @@ const deployment = (effect: "read" | "write") => ({
   description: "Operate a local fixture",
   request: { url: "http://127.0.0.1:9/", intent: "Operate a local fixture", effect },
 });
+
+/** Connects an MCP client to a served integration, without starting a browser or a run. */
+const connected = (effect: "read" | "write", directory?: string) =>
+  Effect.gen(function* () {
+    const server = yield* makeIntegrationMcp({
+      artifact,
+      deployment: deployment(effect),
+      ...(directory === undefined ? {} : { directory }),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    yield* Effect.promise(() => server.connect(serverTransport));
+    const client = new Client({ name: "pomerado-unit", version: "1.0.0" });
+    yield* Effect.acquireRelease(
+      Effect.promise(() => client.connect(clientTransport)),
+      () => Effect.promise(() => client.close()),
+    );
+    return client;
+  });
 
 /** Lists a served integration's tools over MCP without starting a browser or a run. */
 const listed = (effect: "read" | "write") =>
@@ -73,4 +94,43 @@ it("lets a write tool take an optional idempotency_key and says to send one with
   expect(tool.description).toContain(
     "Send an idempotency_key with every write and reuse it only to retry that same call. A call without one is a new website action.",
   );
+});
+
+it("refuses a malformed idempotency_key before any job starts", async () => {
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* connected("write");
+        return yield* Effect.promise(() =>
+          client.callTool({
+            name: "write_fixture",
+            arguments: { input: { note: "a" }, idempotency_key: "has spaces" },
+          }),
+        );
+      }),
+    ),
+  );
+  expect(result.isError).toBe(true);
+  expect(JSON.stringify(result.content)).toContain("idempotency_key");
+});
+
+it("serves a tool from a folder it can't write, so calls without a key still work", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pomerado-read-only-tool-"));
+  await chmod(folder, 0o500);
+  try {
+    const names = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* connected("write", folder);
+          const { tools } = yield* Effect.promise(() => client.listTools());
+          return tools.map((tool) => tool.name);
+        }),
+      ),
+    );
+    expect(names).toContain("write_fixture");
+    expect(await readdir(folder)).toEqual([]);
+  } finally {
+    await chmod(folder, 0o700);
+    await rm(folder, { recursive: true, force: true });
+  }
 });

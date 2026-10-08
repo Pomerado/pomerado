@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -244,6 +245,29 @@ describe("the local file store", () => {
     expect(Either.isLeft(result)).toBe(true);
     expect(Either.isLeft(result) && result.left instanceof RetryConflict).toBe(false);
     expect(await readFile(join(folder, saved.name), "utf8")).toBe("{not json");
+  });
+
+  it("opens in a folder it can't write, and fails a keyed submission there before storing anything", async () => {
+    const folder = await newFolder();
+    await chmod(folder, 0o500);
+    try {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const store = yield* makeFileJobStore(join(folder, ".jobs"));
+            return {
+              read: yield* store.get(randomUUID()),
+              keyed: yield* Effect.either(submitJob(store, keyed)),
+            };
+          }),
+        ),
+      );
+      expect(result.read).toBeUndefined();
+      expect(Either.isLeft(result.keyed)).toBe(true);
+      expect(await readdir(folder)).toEqual([]);
+    } finally {
+      await chmod(folder, 0o700);
+    }
   });
 
   it("stores one job when two processes submit one key at the same moment", async () => {
