@@ -645,10 +645,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["7d8808e98d27441c029303a499d4d30fa874b6199fec2dd65a3a90b5a26787f6", "read, 1 left"],
-    ["230ad9c68c6607199a3ee2daf483a8017babb18597d22789aacb84392d1da7e8", "read, 0 left"],
-    ["455b35df112a08a4e6a100a9a54ef810810580cf3d33e9dd2c5279ca299c08e6", "write, 1 left"],
-    ["fb7a6750993e7c9c453ae695165f07036f95c971a475684a916fb5a6ed2fa8df", "write, 0 left"],
+    ["aba44b16df36914a1d988881085b9b43e4d6e0570e0a68423318eecd7abb4cbc", "read, 1 left"],
+    ["bad5f0878c5ecce40c209c1f5e3bd0dac6422c9e42fb0a857c0281e99c6e88eb", "read, 0 left"],
+    ["acf24b4205a7e37c6cfab1f19421d36f26a385bbc7bcaaf8a2799ef29fc77d5e", "write, 1 left"],
+    ["fa380b552c8ddec278fc6d2de4f613a37459d2f9cbf3c9393fe94251ee71511a", "write, 0 left"],
   ]);
 });
 
