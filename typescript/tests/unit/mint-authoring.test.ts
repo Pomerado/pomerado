@@ -381,6 +381,14 @@ it("tells the local minter its own exec_command rule replaces the shared one", a
   expect(text.indexOf(local)).toBeGreaterThan(text.indexOf(leadIn));
 });
 
+it("lists every installed skill in the local workspace README", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const readme = (await renderedTexts("typescript/authoring")).get("workspace/README.md") ?? "";
+  const list = /Read the installed ([^.]+) skills as relevant\./u.exec(readme.replace(/\s+/g, " "));
+  const named = new Set((list?.[1] ?? "").split(/, | and /u));
+  expect(skills.map(({ name }) => name).filter((name) => !named.has(name))).toStrictEqual([]);
+});
+
 /*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
  * the private fallback, the login URL check and recorded confirm popups, which its preamble lists
@@ -574,7 +582,7 @@ it("renders the pinned standalone authoring", async () => {
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
     ["50644bd49a50ca3b856d5c55e6a6ca749bd8edae5515136a9139280b26c3254c", "publication"],
     ["f8198cd04e3055c6d04b565e1f883a584f7c53485d9269da5531cb68e111558f", "workspace/AGENTS.md"],
-    ["9d04f527102b5b6de5acc9b954c57a2aead3bfff46bd20eecb70e45a10804a2c", "workspace/README.md"],
+    ["52b250f4fb5820f484eabadb17246852498a159ab8c953fd844560aa531711de", "workspace/README.md"],
   ]);
 });
 
