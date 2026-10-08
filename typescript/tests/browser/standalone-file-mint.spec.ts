@@ -171,7 +171,7 @@ async ({kernel,sessionId,input,files}) => { await files.place(input.receipt, { f
   const downloadReadback = `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
 export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
-async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code:"const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download statement' }).click()]); const { readFile } = await import('node:fs/promises'); return await readFile(await download.path(), 'utf8');",timeout_sec:10}));`;
+async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code:"const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download statement' }).click()]); let text = ''; for await (const chunk of await download.createReadStream()) text += chunk; return text;",timeout_sec:10}));`;
   // Only looks at the page, so Guardian reviews it.
   const look = `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
