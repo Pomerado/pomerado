@@ -212,16 +212,6 @@
       "import": "./dist/typescript/src/guardian/upstream-policy.js",
       "default": "./dist/typescript/src/guardian/upstream-policy.js"
     },
-    "./core/jobs/fingerprint": {
-      "types": "./dist/typescript/src/jobs/fingerprint.d.ts",
-      "import": "./dist/typescript/src/jobs/fingerprint.js",
-      "default": "./dist/typescript/src/jobs/fingerprint.js"
-    },
-    "./core/jobs/job-store": {
-      "types": "./dist/typescript/src/jobs/job-store.d.ts",
-      "import": "./dist/typescript/src/jobs/job-store.js",
-      "default": "./dist/typescript/src/jobs/job-store.js"
-    },
     "./core/mcp/schema": {
       "types": "./dist/typescript/src/mcp/schema.d.ts",
       "import": "./dist/typescript/src/mcp/schema.js",
@@ -321,6 +311,11 @@
       "types": "./dist/typescript/src/mint/write-contract.d.ts",
       "import": "./dist/typescript/src/mint/write-contract.js",
       "default": "./dist/typescript/src/mint/write-contract.js"
+    },
+    "./core/mint/write-session": {
+      "types": "./dist/typescript/src/mint/write-session.d.ts",
+      "import": "./dist/typescript/src/mint/write-session.js",
+      "default": "./dist/typescript/src/mint/write-session.js"
     },
     "./core/models/model-diagnostic-failure": {
       "types": "./dist/typescript/src/models/model-diagnostic-failure.d.ts",
@@ -427,6 +422,11 @@
       "import": "./dist/typescript/src/runtime/failure-detail.js",
       "default": "./dist/typescript/src/runtime/failure-detail.js"
     },
+    "./core/runtime/fingerprint": {
+      "types": "./dist/typescript/src/runtime/fingerprint.d.ts",
+      "import": "./dist/typescript/src/runtime/fingerprint.js",
+      "default": "./dist/typescript/src/runtime/fingerprint.js"
+    },
     "./core/runtime/host-execute": {
       "types": "./dist/typescript/src/runtime/host-execute.d.ts",
       "import": "./dist/typescript/src/runtime/host-execute.js",
@@ -436,6 +436,11 @@
       "types": "./dist/typescript/src/runtime/input-request.d.ts",
       "import": "./dist/typescript/src/runtime/input-request.js",
       "default": "./dist/typescript/src/runtime/input-request.js"
+    },
+    "./core/runtime/job-store": {
+      "types": "./dist/typescript/src/runtime/job-store.d.ts",
+      "import": "./dist/typescript/src/runtime/job-store.js",
+      "default": "./dist/typescript/src/runtime/job-store.js"
     },
     "./core/runtime/kernel-operation": {
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
