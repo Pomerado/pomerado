@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { Effect, Either } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import {
   localRetryKey,
   makeFileJobStore,
   makeMemoryJobStore,
+  removeExpiredRecord,
   type LocalJobRecord,
 } from "../../src/jobs/local-job-store.js";
 import { describeJobStoreContract } from "../support/job-store-contract.js";
@@ -62,8 +63,24 @@ describe("the request fingerprint", () => {
     expect(fingerprint(key, "retry", { tool: "save", input: { a: 1, b: [true, null] } })).not.toBe(
       one,
     );
-    expect(fingerprint(key, "request", { tool: "save", input: { a: 2, b: [true, null] } })).not.toBe(
-      one,
+    expect(
+      fingerprint(key, "request", { tool: "save", input: { a: 2, b: [true, null] } }),
+    ).not.toBe(one);
+  });
+
+  // Hosts store these digests, so a change to them would make every stored retry key miss.
+  it("gives the same digest it always gave for a fixed key and value", () => {
+    expect(fingerprint(key, "request", { b: [true, null, 1.5, "x"], a: { d: 1, c: 2 } })).toBe(
+      "c43dd34ac704dc270e55e3c082535b5616baad4da47fc411343f2beb38f0d3ad",
+    );
+    expect(fingerprint(key, "retry", { tool: "save", key: "booking-1" })).toBe(
+      "e83cf16e604bac21f547bd6e50bc70c8435499ab3a8da0b19b0b9a1f84d9a254",
+    );
+    expect(localRetryKey("save", "k1")).toBe(
+      "57c65c1383e14b25ab9d3813297f4493e0bd528ed3baf493274eef72b1172c41",
+    );
+    expect(localRequestFingerprint("save", { a: 1 })).toBe(
+      "76be1628533e660c2d2a9f3c501194264db06456dd6a1d6ea0c686bccb50fbd3",
     );
   });
 
@@ -220,6 +237,74 @@ describe("the local file store", () => {
     );
     expect(after.read).toBeUndefined();
     expect(after.again.rejoined).toBe(false);
+  });
+
+  it("never deletes a running job's record, however old, while its server runs", async () => {
+    const folder = await newFolder();
+    const read = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const owner = yield* makeFileJobStore(folder);
+          const job = (yield* submitJob(owner, keyed)).job;
+          const old = { ...job, createdAt: Date.now() - 3 * 24 * 60 * 60_000 };
+          yield* Effect.promise(() =>
+            writeFile(join(folder, `${job.id}.json`), JSON.stringify(old)),
+          );
+          const other = yield* makeFileJobStore(folder);
+          return {
+            read: yield* other.get(job.id),
+            again: yield* submitJob(other, keyed),
+          };
+        }),
+      ),
+    );
+    expect(read.read).toMatchObject({ status: "running" });
+    expect(read.again).toMatchObject({ rejoined: true, job: { status: "running" } });
+  });
+
+  it("deletes a stray temporary file older than a day when it opens, and keeps a newer one", async () => {
+    const folder = await newFolder();
+    const old = join(folder, `.${randomUUID()}.${randomUUID()}.tmp`);
+    const fresh = join(folder, `.${randomUUID()}.${randomUUID()}.tmp`);
+    await writeFile(old, "{}");
+    await writeFile(fresh, "{}");
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+    await utimes(old, twoDaysAgo, twoDaysAgo);
+    await Effect.runPromise(Effect.scoped(makeFileJobStore(folder)));
+    expect(await readdir(folder)).toEqual([basename(fresh)]);
+  });
+
+  it("keeps a record another process wrote over an expired one a sweep is deleting", async () => {
+    const folder = await newFolder();
+    const id = randomUUID();
+    const file = join(folder, `${id}.json`);
+    const expired: LocalJobRecord = {
+      version: 1,
+      id,
+      retryKey: "retry_a",
+      requestFingerprint: "f".repeat(64),
+      status: "completed",
+      createdAt: 1,
+      finishedAt: 2,
+      owner: "1:first",
+    };
+    const newer: LocalJobRecord = {
+      version: 1,
+      id,
+      retryKey: "retry_a",
+      requestFingerprint: "f".repeat(64),
+      status: "running",
+      createdAt: Date.now(),
+      owner: "2:second",
+    };
+    await writeFile(file, JSON.stringify(newer));
+    await Effect.runPromise(removeExpiredRecord(file, expired));
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(newer);
+    expect(await readdir(folder)).toEqual([basename(file)]);
+
+    await Effect.runPromise(removeExpiredRecord(file, newer));
+    expect(await readdir(folder)).toEqual([]);
+    await Effect.runPromise(removeExpiredRecord(file, newer));
   });
 
   it("fails a keyed submission closed when its record can't be read", async () => {

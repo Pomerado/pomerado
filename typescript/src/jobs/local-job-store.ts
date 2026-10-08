@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Clock, Effect, Schema, type Scope } from "effect";
 import { localPromise } from "../execution/local-path.js";
 import { fingerprint } from "./fingerprint.js";
@@ -44,7 +44,9 @@ export type LocalJobUpdate = Partial<
 /** A JobStore the local MCP host runs, with the reads and updates its jobs need. */
 export interface LocalJobStore extends JobStore<RetrySubmission, LocalJobRecord, Error> {
   /** The record the submission's retry key names, or undefined when it names none. */
-  readonly lookup: (submission: RetrySubmission) => Effect.Effect<LocalJobRecord | undefined, Error>;
+  readonly lookup: (
+    submission: RetrySubmission,
+  ) => Effect.Effect<LocalJobRecord | undefined, Error>;
   readonly get: (id: string) => Effect.Effect<LocalJobRecord | undefined, Error>;
   readonly update: (id: string, patch: LocalJobUpdate) => Effect.Effect<void, Error>;
   /** Records outlive this process, so a restarted server finds them. */
@@ -107,7 +109,8 @@ const newRecord = (
 });
 const expired = (record: LocalJobRecord, now: number) =>
   record.finishedAt !== undefined && now - record.finishedAt >= retentionMs;
-const missingRecord = () => new Error("The job a retry key names was removed. Send the call again.");
+const missingRecord = () =>
+  new Error("The job a retry key names was removed. Send the call again.");
 
 /** Jobs kept in this process only, for a host with no folder to keep them in. */
 export const makeMemoryJobStore = (): Effect.Effect<LocalJobStore, never, Scope.Scope> =>
@@ -158,6 +161,33 @@ export const makeMemoryJobStore = (): Effect.Effect<LocalJobStore, never, Scope.
 const recordFile = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/u;
 const isMissing = (error: Error) => "code" in error && error.code === "ENOENT";
 const isTaken = (error: Error) => "code" in error && error.code === "EEXIST";
+const decodeRecord = (text: string) =>
+  Schema.decodeUnknown(Schema.parseJson(LocalJobRecord))(text).pipe(
+    Effect.mapError((cause) => new Error("A local job record can't be read.", { cause })),
+  );
+
+/**
+ * Deletes the expired record a sweep read from `file`. Another process may have deleted that record
+ * and created a new one for the same key since, so the file is moved aside whole, read again, and
+ * linked back unless it is still the record the sweep read.
+ */
+export const removeExpiredRecord = (file: string, swept: LocalJobRecord) =>
+  Effect.gen(function* () {
+    const aside = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
+    const moved = yield* localPromise(() => rename(file, aside)).pipe(
+      Effect.as(true),
+      Effect.catchIf(isMissing, () => Effect.succeed(false)),
+    );
+    if (!moved) return;
+    const current = yield* localPromise(() => readFile(aside, "utf8")).pipe(
+      Effect.flatMap(decodeRecord),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (current?.createdAt !== swept.createdAt || current.owner !== swept.owner)
+      yield* localPromise(() => link(aside, file)).pipe(Effect.catchIf(isTaken, () => Effect.void));
+    yield* localPromise(() => rm(aside, { force: true }));
+  });
+
 /** A keyed job's ID: a UUID drawn from its retry key, so each key has exactly one file name. */
 const keyedJobId = (retryKey: string) => {
   const hex = createHash("sha256").update(retryKey).digest("hex");
@@ -183,13 +213,7 @@ export const makeFileJobStore = (
     const text = (record: LocalJobRecord) => `${JSON.stringify(record)}\n`;
     const read = (id: string) =>
       localPromise(() => readFile(path(id), "utf8")).pipe(
-        Effect.flatMap((saved) =>
-          Schema.decodeUnknown(Schema.parseJson(LocalJobRecord))(saved).pipe(
-            Effect.mapError(
-              (cause) => new Error("A local job record can't be read.", { cause }),
-            ),
-          ),
-        ),
+        Effect.flatMap(decodeRecord),
         Effect.map((record): LocalJobRecord | undefined => record),
         Effect.catchIf(isMissing, () => Effect.succeed(undefined)),
       );
@@ -256,15 +280,14 @@ export const makeFileJobStore = (
             Effect.orElseSucceed(() => undefined),
           );
           if (record !== undefined && expired(record, now))
-            yield* localPromise(() => rm(join(directory, name), { force: true }));
+            yield* removeExpiredRecord(join(directory, name), record);
         } else if (name.endsWith(".tmp")) {
           const file = join(directory, name);
           const modified = yield* localPromise(() => stat(file)).pipe(
             Effect.map((stats) => stats.mtimeMs),
             Effect.orElseSucceed(() => now),
           );
-          if (now - modified >= retentionMs)
-            yield* localPromise(() => rm(file, { force: true }));
+          if (now - modified >= retentionMs) yield* localPromise(() => rm(file, { force: true }));
         }
       }
     });
