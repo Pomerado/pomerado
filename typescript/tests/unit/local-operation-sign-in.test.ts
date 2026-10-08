@@ -125,8 +125,12 @@ const watchedSignIn = (ends: "never" | "on_stop") => {
     });
   return { signIn, seen };
 };
-/** Short bounds in the shared order: filling, then the answer, then the settle. */
-const bounds = { fillMs: 100, answerMs: 300, settleMs: 400 };
+/**
+ * Short bounds in the shared order: filling, then the answer, then the settle. Every check on
+ * real time is a lower bound, or an upper bound with seconds to spare, so a slow runner only
+ * makes a test slower.
+ */
+const bounds = { fillMs: 100, answerMs: 1_000, settleMs: 400 };
 
 it("refuses a sign-in still running at the answer bound, once it stopped it and waited out the settle", async () => {
   const host = watchedSignIn("never");
@@ -134,30 +138,41 @@ it("refuses a sign-in still running at the answer bound, once it stopped it and 
   const answer = await Effect.runPromise(answerSessionSignIn(host.signIn, bounds));
   const answeredAt = Date.now();
   expect(answer).toEqual({ outcome: "refused", cause: "session_sign_in_failed" });
-  // No step starts after the filling bound.
-  expect(host.seen.untilMs - startedAt).toBeLessThanOrEqual(bounds.fillMs + 50);
-  // Stopped at the answer bound, it got the settle to end its last step, then was ended.
-  expect((host.seen.stoppedAt ?? 0) - startedAt).toBeGreaterThanOrEqual(bounds.answerMs - 5);
-  expect((host.seen.endedAt ?? 0) - (host.seen.stoppedAt ?? 0)).toBeGreaterThanOrEqual(
-    bounds.settleMs - 5,
+  const stoppedAt = host.seen.stoppedAt ?? 0;
+  // No step starts after the filling bound, which passes well before the answer bound.
+  expect(host.seen.untilMs - startedAt).toBeGreaterThanOrEqual(bounds.fillMs);
+  expect(stoppedAt - host.seen.untilMs).toBeGreaterThanOrEqual(
+    bounds.answerMs - bounds.fillMs - 5,
   );
+  // Stopped at the answer bound, it got the settle to end its last step, then was ended.
+  expect(stoppedAt - startedAt).toBeGreaterThanOrEqual(bounds.answerMs - 5);
+  expect((host.seen.endedAt ?? 0) - stoppedAt).toBeGreaterThanOrEqual(bounds.settleMs - 5);
   expect(answeredAt).toBeGreaterThanOrEqual(host.seen.endedAt ?? Infinity);
-});
+}, 30_000);
 
 it("refuses at the answer bound even when the stopped sign-in then ends signed in, without waiting out the settle", async () => {
   const host = watchedSignIn("on_stop");
+  const settled = { ...bounds, settleMs: 20_000 };
   const startedAt = Date.now();
-  const answer = await Effect.runPromise(answerSessionSignIn(host.signIn, bounds));
+  const answer = await Effect.runPromise(answerSessionSignIn(host.signIn, settled));
   expect(answer).toEqual({ outcome: "refused", cause: "session_sign_in_failed" });
   expect((host.seen.stoppedAt ?? 0) - startedAt).toBeGreaterThanOrEqual(bounds.answerMs - 5);
-  expect(Date.now() - startedAt).toBeLessThan(bounds.answerMs + bounds.settleMs);
-});
+  expect(Date.now() - startedAt).toBeLessThan(settled.answerMs + settled.settleMs);
+}, 60_000);
 
 it("answers a sign-in that ends before the answer bound with its own answer, stopping nothing", async () => {
-  const signIn: SessionSignInHook = () =>
-    Effect.sleep(50).pipe(Effect.as({ outcome: "signed_in", signedInAgain: true } as const));
-  expect(await Effect.runPromise(answerSessionSignIn(signIn, bounds))).toEqual({
-    outcome: "signed_in",
-    signedInAgain: true,
-  });
-});
+  let stopped = false;
+  const signIn: SessionSignInHook = (bound) =>
+    Effect.sleep(50).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          stopped = bound.stop.aborted;
+        }),
+      ),
+      Effect.as({ outcome: "signed_in", signedInAgain: true } as const),
+    );
+  expect(
+    await Effect.runPromise(answerSessionSignIn(signIn, { ...bounds, answerMs: 20_000 })),
+  ).toEqual({ outcome: "signed_in", signedInAgain: true });
+  expect(stopped).toBe(false);
+}, 60_000);

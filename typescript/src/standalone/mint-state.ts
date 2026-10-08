@@ -33,7 +33,7 @@ import {
   type StartState,
 } from "../runtime/start-state.js";
 import { makeAfterSubmit } from "./after-submit.js";
-import { localSignInLogin, makeSignInBrowser } from "./authentication.js";
+import { localSignInLogin, makeSignInBrowser, repeatedLoginFailure } from "./authentication.js";
 import { makeMarkerChecks } from "./signed-in-marker.js";
 import {
   makeBoundableAsk,
@@ -247,6 +247,7 @@ export const mintState = (
         register: secrets.register,
         siteOrigin: context.siteOrigin,
       }),
+      repeatedLoginFailure,
     );
     const values = askingValueHooks({
       ask: signInAsks.ask,

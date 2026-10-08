@@ -29,7 +29,7 @@ import {
 } from "../runtime/sign-in-replay.js";
 import type { SignInReplayTiming } from "../runtime/sign-in-replay-steps.js";
 import { askingValueHooks } from "../runtime/sign-in-values.js";
-import { localSignInLogin, makeSignInBrowser } from "./authentication.js";
+import { localSignInLogin, makeSignInBrowser, repeatedLoginFailure } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 
 /** Why the local host could not leave the page signed in, and what failed. */
@@ -76,31 +76,53 @@ export const makeBoundableAsk = (base: InputAsker) => {
 export type BoundableAsk = ReturnType<typeof makeBoundableAsk>;
 
 /**
- * A login that a sign-in can mark as rejected. Until the owner gives another, `login` holds none
- * and its `values` asks for a correction of the rejected one, so no sign-in sends a value the site
- * rejected again, whether an automatic one or the build's own.
+ * A login that a sign-in can mark as rejected. The values the site rejected are remembered, and
+ * no sign-in sends them again, whether an automatic one or the build's own: while the login held
+ * carries one, `login` holds none and its `values` asks for a correction. A correction that
+ * repeats a rejected value is asked again once, and fails with `repeated` the second time.
  */
-export const makeRejectableLogin = <E>(base: SignInLogin<E>) => {
-  let rejected: { readonly login: WebsiteCredentials; readonly field: CredentialRejectedField } | undefined;
-  /** The rejection, while the login held is still the one the site rejected. */
-  const marked = () => {
-    const held = base.held();
-    return rejected !== undefined && held === rejected.login ? rejected : undefined;
+export const makeRejectableLogin = <E>(
+  base: SignInLogin<E>,
+  repeated: (field: CredentialRejectedField) => E,
+) => {
+  const rejectedValues = { username: new Set<string>(), password: new Set<string>() };
+  /** The field of `login` that carries a value the site rejected, if any. */
+  const repeats = (login: WebsiteCredentials): CredentialRejectedField | undefined => {
+    if (login.password !== undefined && rejectedValues.password.has(login.password))
+      return "password";
+    return rejectedValues.username.has(login.username) ? "username" : undefined;
   };
+  const correct = (field: CredentialRejectedField, held: WebsiteCredentials) =>
+    base.correct(field, held).pipe(
+      Effect.flatMap((answer) => {
+        const again = repeats(answer);
+        return again === undefined ? Effect.succeed(answer) : base.correct(again, answer);
+      }),
+      Effect.flatMap((answer) => {
+        const again = repeats(answer);
+        return again === undefined ? Effect.succeed(answer) : Effect.fail(repeated(again));
+      }),
+    );
   const login: SignInLogin<E> = {
-    held: () => (marked() === undefined ? base.held() : undefined),
+    held: () => {
+      const held = base.held();
+      return held === undefined || repeats(held) !== undefined ? undefined : held;
+    },
     values: Effect.suspend(() => {
-      const mark = marked();
-      return mark === undefined ? base.values : base.correct(mark.field, mark.login);
+      const held = base.held();
+      const field = held === undefined ? undefined : repeats(held);
+      return held === undefined || field === undefined ? base.values : correct(field, held);
     }),
-    correct: base.correct,
+    correct,
   };
   return {
     login,
     /** The site rejected `field` of the login held now. */
     reject: (field: CredentialRejectedField) => {
       const held = base.held();
-      if (held !== undefined) rejected = { login: held, field };
+      if (held === undefined) return;
+      if (field !== "password") rejectedValues.username.add(held.username);
+      else if (held.password !== undefined) rejectedValues.password.add(held.password);
     },
   };
 };
@@ -394,6 +416,7 @@ export const makeRunSignIn = (
   });
   const login = makeRejectableLogin(
     localSignInLogin({ ask: asks.ask, register: secrets.register, siteOrigin }),
+    repeatedLoginFailure,
   );
   const values = askingValueHooks({ ask: asks.ask, register: secrets.register, site, siteOrigin });
   const before = signInForRun({

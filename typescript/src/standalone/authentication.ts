@@ -19,7 +19,7 @@ import type {
   SignInRequest,
 } from "../destinations/sign-in-recipe.js";
 import { MintFailure } from "../mint/contracts.js";
-import type { WebsiteCredentials } from "../runtime/authentication.js";
+import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -164,6 +164,10 @@ const loginFailure = (cause: unknown) =>
       error: cause,
     }),
   });
+
+/** A corrected login that repeated, twice, a value the site rejected, so nothing was sent. */
+export const repeatedLoginFailure = (field: CredentialRejectedField) =>
+  loginFailure(new Error(`The corrected login repeats the ${field} the site rejected`));
 
 /**
  * The local host's login for one build: one `credential` question, asked when a screen first

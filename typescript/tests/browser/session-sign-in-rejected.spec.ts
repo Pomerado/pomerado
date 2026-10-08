@@ -31,8 +31,15 @@ const shopRecipe = (origin: string) => ({
   signedIn: { selector: shopSignIn.signedIn },
 });
 
-test("an automatic sign-in after one whose login the site rejected asks for a correction before it types", async () => {
-  test.setTimeout(180_000);
+/**
+ * Signs a run in from a signed-in browser with a login it never reads, then signs the shop out
+ * twice and calls the script's sign-in after each. `password` answers each login question in
+ * order, by its reason, or leaves it unanswered with `undefined`. Returns the questions' reasons,
+ * the two answers and the login posts each sign-in sent.
+ */
+const signedOutTwice = async (
+  password: (reason: string, nth: number) => string | undefined,
+) => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-sign-in-rejected-"));
   const shop = await startShop(directory);
   const server = await chromium.launchServer({
@@ -43,28 +50,20 @@ test("an automatic sign-in after one whose login the site rejected asks for a co
     ],
   });
   const asked: string[] = [];
-  let corrections = 0;
-  // The first login the run reads is wrong. The first correction goes unanswered, and the next
-  // one gives the right password.
   const ask = makeInputAsker((request: InputRequest) =>
     Effect.suspend(() => {
       const question = request.questions[0];
       const reason = question?.type === "credential" ? question.reason : "other";
       asked.push(reason);
-      if (reason === "invalid_credentials" && corrections++ === 0)
-        return Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
+      const given = password(reason, asked.filter((seen) => seen === reason).length);
+      if (given === undefined) return Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
       return Effect.succeed({
-        login: {
-          username: shopAccount.username,
-          password:
-            reason === "missing_credentials" ? `${shopAccount.password}-wrong` : shopAccount.password,
-          saveLogin: false,
-        },
+        login: { username: shopAccount.username, password: given, saveLogin: false },
       });
     }),
   );
   try {
-    await Effect.runPromise(
+    return await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const session = yield* makeSession({
@@ -94,20 +93,16 @@ await primary.locator("#account").waitFor({ timeout: 10000 });`);
           const hook = signIn.hook();
           const bound = () => ({ untilMs: Date.now() + 120_000, stop: new AbortController().signal });
           yield* hook(bound());
-          const signedOut = () => {
-            shop.state.signOutOn = "/orders";
-            return page(`await primary.goto(${JSON.stringify(`${shop.origin}/orders`)});`);
-          };
-          const postsBefore = shop.state.loginPosts;
-          // Signed out: the wrong login goes out once, and its correction goes unanswered.
-          yield* signedOut();
-          expect(yield* hook(bound())).toEqual({ outcome: "refused", cause: "session_sign_in_failed" });
-          expect(shop.state.loginPosts).toBe(postsBefore + 1);
-          // Still signed out: the next sign-in asks for the correction first and sends only it.
-          yield* page(`await primary.goto(${JSON.stringify(`${shop.origin}/orders`)});`);
-          expect(yield* hook(bound())).toEqual({ outcome: "signed_in", signedInAgain: true });
-          expect(shop.state.loginPosts).toBe(postsBefore + 2);
-          expect(asked).toEqual(["missing_credentials", "invalid_credentials", "invalid_credentials"]);
+          shop.state.signOutOn = "/orders";
+          const answers: unknown[] = [];
+          const posts: number[] = [];
+          for (const _ of [1, 2]) {
+            const postsBefore = shop.state.loginPosts;
+            yield* page(`await primary.goto(${JSON.stringify(`${shop.origin}/orders`)});`);
+            answers.push(yield* hook(bound()));
+            posts.push(shop.state.loginPosts - postsBefore);
+          }
+          return { asked, answers, posts };
         }),
       ),
     );
@@ -116,4 +111,67 @@ await primary.locator("#account").waitFor({ timeout: 10000 });`);
     await shop.close();
     await rm(directory, { recursive: true, force: true });
   }
+};
+
+const wrong = `${shopAccount.password}-wrong`;
+
+test("an automatic sign-in after one whose login the site rejected asks for a correction before it types", async () => {
+  test.setTimeout(180_000);
+  // The first login the run reads is wrong. The first correction goes unanswered, and the next
+  // one gives the right password.
+  const run = await signedOutTwice((reason, nth) =>
+    reason === "missing_credentials" ? wrong : nth === 1 ? undefined : shopAccount.password,
+  );
+  expect(run.answers).toEqual([
+    { outcome: "refused", cause: "session_sign_in_failed" },
+    { outcome: "signed_in", signedInAgain: true },
+  ]);
+  // The wrong login goes out once. The next sign-in asks for the correction first and sends
+  // only it.
+  expect(run.posts).toEqual([1, 1]);
+  expect(run.asked).toEqual(["missing_credentials", "invalid_credentials", "invalid_credentials"]);
+});
+
+test("a correction that repeats the login the site rejected is asked again before anything is typed", async () => {
+  test.setTimeout(180_000);
+  // As above, but the next sign-in's first correction gives the rejected password again.
+  const run = await signedOutTwice((reason, nth) =>
+    reason === "missing_credentials"
+      ? wrong
+      : nth === 1
+        ? undefined
+        : nth === 2
+          ? wrong
+          : shopAccount.password,
+  );
+  expect(run.answers).toEqual([
+    { outcome: "refused", cause: "session_sign_in_failed" },
+    { outcome: "signed_in", signedInAgain: true },
+  ]);
+  // The rejected password goes out only the first time.
+  expect(run.posts).toEqual([1, 1]);
+  expect(run.asked).toEqual([
+    "missing_credentials",
+    "invalid_credentials",
+    "invalid_credentials",
+    "invalid_credentials",
+  ]);
+});
+
+test("corrections that keep repeating the login the site rejected refuse the sign-in, typing nothing", async () => {
+  test.setTimeout(180_000);
+  const run = await signedOutTwice((reason, nth) =>
+    reason === "invalid_credentials" && nth === 1 ? undefined : wrong,
+  );
+  expect(run.answers).toEqual([
+    { outcome: "refused", cause: "session_sign_in_failed" },
+    { outcome: "refused", cause: "session_sign_in_failed" },
+  ]);
+  expect(run.posts).toEqual([1, 0]);
+  expect(run.asked).toEqual([
+    "missing_credentials",
+    "invalid_credentials",
+    "invalid_credentials",
+    "invalid_credentials",
+  ]);
 });
