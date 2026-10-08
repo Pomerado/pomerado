@@ -327,6 +327,11 @@
       "import": "./dist/typescript/src/mint/write-contract.js",
       "default": "./dist/typescript/src/mint/write-contract.js"
     },
+    "./core/mint/write-session": {
+      "types": "./dist/typescript/src/mint/write-session.d.ts",
+      "import": "./dist/typescript/src/mint/write-session.js",
+      "default": "./dist/typescript/src/mint/write-session.js"
+    },
     "./core/models/model-diagnostic-failure": {
       "types": "./dist/typescript/src/models/model-diagnostic-failure.d.ts",
       "import": "./dist/typescript/src/models/model-diagnostic-failure.js",

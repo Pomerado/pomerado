@@ -32,6 +32,10 @@
 - Guardian's question review allows a blocked report that starts "Caller input error:" when it names the input value at fault and why the site cannot fulfil it.
 - The core skill's input schema rules tell the minter never to derive a format from one sample, such as a zero-padded date key, and to read it off the page for the value it needs.
 - The publication skill's checks before `finish_build` add **Typed output**, right after **Schemas**. It prefers parsing what the page shows into typed fields, one per fact a caller would filter, sort or compare on, with a worked example, over one text blob or summary.
+- A failed `act` step that may have committed its write carries `writeSession` with `verifyFirst: true` and a notice to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
+- `finish_build` on a write first checks that the session may have sent its write. A step that recorded a confirmation, entered a commit mark or made a browser call counts. A session with none of these gets `write_not_submitted` before Guardian reviews the composed contract. It used to get a contract refusal first.
+- A step that lost its result counts the commit marks it entered only once a later step confirms the write.
+- `pomerado/core/mint/write-session` exports the write session checks. `sessionSentWrite` and `checkWriteSession` take the session's non-read request count, so a host that counts requests passes its own. A host that counts none passes 0 and marks a step `possiblySent` when its own record can't rule out a send. The local host sets it from the effect journal. `LocalOperationFailure` gains `reported`, which is false when the host lost the child's result.
 
 ## 0.3.0
 
