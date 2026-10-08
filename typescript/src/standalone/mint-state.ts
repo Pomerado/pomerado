@@ -15,6 +15,7 @@ import { makeSecretHandles } from "../mint/secret-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
 import type { GuardianAction } from "../guardian/review-contracts.js";
 import type { OutcomeAssessment } from "../mint/outcome-review-contracts.js";
+import type { WriteSessionMarks } from "../mint/write-session.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
@@ -243,12 +244,13 @@ export const mintState = (
     /**
      * The build's one write session: whether its first act step dispatched, and the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one).
+     * one), and its act steps in order for publication's checks.
      */
     const writeSession: {
       started: boolean;
       input: Readonly<Record<string, unknown>> | undefined;
-    } = { started: false, input: undefined };
+      readonly steps: (WriteSessionMarks & { readonly executionId: string })[];
+    } = { started: false, input: undefined, steps: [] };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     const markers = makeMarkerChecks({
       page: browser,

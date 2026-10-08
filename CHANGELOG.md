@@ -7,8 +7,8 @@
 - Guardian's execution review returns a required `action` label, `read`, `write` or `authentication`, in the shared output format. An execution allow without one fails to decode and is retried like an outage. An allowed `write` on a step without the new `PendingExecution.writeAuthority` becomes a denial.
   - Migrate recorded Guardian responses by adding `action` to every execution allow, and set `writeAuthority` on the steps that may write.
 - `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows, so every dispatch carries a label: `beforeDispatch(allowed: AllowedExecution)`. Pass the review ID and Guardian's label, or `hostAuthentication` for a sign-in screen the host fills itself.
-- The local host's dispatch-based repeat guard and `replayedWriteStep`, `writeStepDigest` and `WriteStep` from `pomerado/core/mint/step-checks` are removed. The harness now refuses a step that repeats an earlier write's entrypoint until the outcome review finds that write did not happen.
-- A local write session's `write_not_submitted` now means no act step Guardian labelled a write ran on the site, or the outcome review found that each did not happen.
+- The local host's blind-repeat guard and `replayedWriteStep`, `writeStepDigest` and `WriteStep` from `pomerado/core/mint/step-checks` are removed. The harness now refuses a step that repeats an earlier write's entrypoint until the outcome review finds that write did not happen.
+- `sessionSentWrite` and `checkWriteSession` from `pomerado/core/mint/write-session` decide whether a write session sent its write from Guardian's labels and the outcome review, not from request counts or commit marks. They take `{ steps }` without `nonReadRequests`; each step carries its `action` label, `possiblySent` and its newest `assessment`. `write_not_submitted` means no step recorded a confirmation and no act step Guardian labelled a write may have reached the site, or the outcome review found each did not happen.
 
 ### Other changes
 
@@ -26,6 +26,10 @@
 - Guardian's question review allows a blocked report that starts "Caller input error:" when it names the input value at fault and why the site cannot fulfil it.
 - The core skill's input schema rules tell the minter never to derive a format from one sample, such as a zero-padded date key, and to read it off the page for the value it needs.
 - The publication skill's checks before `finish_build` add **Typed output**, right after **Schemas**. It prefers parsing what the page shows into typed fields, one per fact a caller would filter, sort or compare on, with a worked example, over one text blob or summary.
+- A failed `act` step Guardian labelled a write that may have committed it carries `writeSession` with `verifyFirst: true` and a notice to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
+- `finish_build` on a write first checks that the session may have sent its write, and a session that did not gets `write_not_submitted` before Guardian reviews the composed contract. It used to get a contract refusal first.
+- A step that lost its result counts the commit marks it entered only once a later step confirms the write.
+- `pomerado/core/mint/write-session` exports the write session checks. A host marks a step `possiblySent` when its own record can't rule out a send; the local host sets it from the effect journal. `LocalOperationFailure` gains `reported`, which is false when the host lost the child's result.
 
 ## 0.3.0
 

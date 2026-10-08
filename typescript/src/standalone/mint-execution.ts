@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Effect, Either } from "effect";
 import {
   runLocalOperation,
   LocalOperationFailure,
@@ -22,6 +22,12 @@ import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { stepInput } from "../mint/step-checks.js";
+import {
+  commitEvidenceOf,
+  commitUncertain,
+  verifyFirstNotice,
+  type CommitEvidence,
+} from "../mint/write-session.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -199,6 +205,46 @@ const scriptQuestions = (
   };
 };
 
+/**
+ * What an act step's effect journal shows about its write. The journal reads `not_sent` only
+ * while the step made no browser call, so anything else may have reached the site: the step is
+ * `possiblySent`. Whether it was a write is Guardian's label, `action`. A step whose child did
+ * not report its own result has `unreported` commit evidence, and the marks it streamed count
+ * only once a later step confirms. Only a failed step Guardian labelled a write asks the minter
+ * to read back before writing again.
+ */
+const actOutcome = (
+  executed: Either.Either<LocalOperationOutput, Error>,
+  action: GuardianAction | undefined,
+) => {
+  const failure = Either.isLeft(executed) ? executed.left : undefined;
+  const journal: LocalOperationJournal = Either.isRight(executed)
+    ? executed.right
+    : failure instanceof LocalOperationFailure
+      ? failure.journal
+      : { effect: "possible", commits: [] };
+  const reported =
+    Either.isRight(executed) || (failure instanceof LocalOperationFailure && failure.reported);
+  const entered = journal.commits
+    .filter((mark) => mark.state !== "not_sent")
+    .map(({ name }) => name);
+  const sent = journal.effect === "not_sent" ? 0 : undefined;
+  const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
+  return {
+    marks: {
+      ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
+      ...(action === undefined ? {} : { action }),
+      possiblySent: journal.effect !== "not_sent",
+      enteredMarks: reported ? entered : [],
+      ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
+    },
+    writeSession:
+      failure !== undefined && action === "write" && commitUncertain(sent, commit)
+        ? { verifyFirst: true as const, notice: verifyFirstNotice(sent, commit) }
+        : undefined,
+  };
+};
+
 type Journal = Parameters<MintDependencies["reviewAndExecute"]>[2];
 interface ReceiptInput {
   readonly state: MintState;
@@ -216,6 +262,8 @@ interface ReceiptInput {
     };
   };
   readonly journal: Journal;
+  /** A failed act step that may have committed its write: read back before writing again. */
+  readonly writeSession?: { readonly verifyFirst: true; readonly notice: string };
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -237,6 +285,7 @@ const failedReceipt = (
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
+    const { writeSession } = receipt;
 
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
@@ -267,6 +316,7 @@ const failedReceipt = (
         ...(failure instanceof LocalOperationFailure
           ? { code: failure.code, tag: failure.tag }
           : {}),
+        ...(writeSession === undefined ? {} : { writeSession }),
       },
       review: reviewFeedback(reviewed),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
@@ -420,6 +470,9 @@ const authoredExecution = (
           yield* context.observe;
           if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
+        const act =
+          execution.purpose === "act" ? actOutcome(executed, reviewed.decision.action) : undefined;
+        if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
         const receipt = {
@@ -431,6 +484,7 @@ const authoredExecution = (
           ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
           reviewed,
           journal,
+          ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
         };
         return yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)
