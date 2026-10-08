@@ -283,7 +283,7 @@ const clickAsStep = defineOperation(
 test("the local run keeps the confirm popup contract", async ({ context }) => {
   test.setTimeout(60_000);
   await serveConfirmPopups(context);
-  const observed: Partial<Record<ConfirmPopupCaseName, ConfirmPopupObservation>> = {};
+  const observed = new Map<ConfirmPopupCaseName, ConfirmPopupObservation>();
   for (const entry of confirmPopupCases) {
     const page = await context.newPage();
     await page.goto(confirmPopupsOrigin);
@@ -309,10 +309,10 @@ test("the local run keeps the confirm popup contract", async ({ context }) => {
       },
     );
     expect(Either.isRight(result), JSON.stringify(result)).toBe(true);
-    observed[entry.name] = { outcome: await confirmPopupOutcome(page, entry.name), asked };
+    observed.set(entry.name, { outcome: await confirmPopupOutcome(page, entry.name), asked });
     await page.close();
   }
-  expect(observed).toMatchObject({
+  expect(Object.fromEntries(observed)).toEqual({
     recorded: { outcome: "accepted", asked: 0 },
     unrecorded: { outcome: "dismissed", asked: 1 },
     other_step: { outcome: "dismissed", asked: 1 },
@@ -320,32 +320,35 @@ test("the local run keeps the confirm popup contract", async ({ context }) => {
     // No script listens to the new window, so the browser dismisses its confirm.
     popup: { outcome: "dismissed", asked: 0 },
   });
-  expect(
-    confirmPopupContractFailures(observed as Record<ConfirmPopupCaseName, ConfirmPopupObservation>),
-  ).toEqual([]);
+  expect(confirmPopupContractFailures(observed)).toEqual([]);
 });
 
 test("the confirm popup contract fails a host that accepts or leaves open what it should not", () => {
-  const kept = {
-    recorded: { outcome: "accepted", asked: 0 },
-    unrecorded: { outcome: "dismissed", asked: 1 },
-    other_step: { outcome: "dismissed", asked: 1 },
-    iframe: { outcome: "dismissed", asked: 0 },
-    popup: { outcome: "dismissed", asked: 0 },
-  } as const;
-  expect(confirmPopupContractFailures(kept)).toEqual([]);
+  const kept: readonly (readonly [ConfirmPopupCaseName, ConfirmPopupObservation])[] = [
+    ["recorded", { outcome: "accepted", asked: 0 }],
+    ["unrecorded", { outcome: "dismissed", asked: 1 }],
+    ["other_step", { outcome: "dismissed", asked: 1 }],
+    ["iframe", { outcome: "dismissed", asked: 0 }],
+    ["popup", { outcome: "dismissed", asked: 0 }],
+  ];
+  expect(confirmPopupContractFailures(new Map(kept))).toEqual([]);
   expect(
-    confirmPopupContractFailures({
-      ...kept,
-      recorded: { outcome: "accepted", asked: 1 },
-      unrecorded: { outcome: "dismissed", asked: 0 },
-      iframe: { outcome: "accepted", asked: 0 },
-      popup: { outcome: "pending", asked: 0 },
-    }),
+    confirmPopupContractFailures(
+      new Map([
+        ...kept,
+        ["recorded", { outcome: "accepted", asked: 1 }],
+        ["unrecorded", { outcome: "dismissed", asked: 0 }],
+        ["iframe", { outcome: "accepted", asked: 0 }],
+        ["popup", { outcome: "pending", asked: 0 }],
+      ]),
+    ),
   ).toEqual([
     "recorded: the recorded confirm must be accepted without asking (accepted, asked 1)",
     "unrecorded: an unrecorded confirm in the page must ask the caller first",
     "iframe: an unrecorded confirm must end dismissed, never accepted",
     "popup: an unrecorded confirm must end dismissed, never pending",
+  ]);
+  expect(confirmPopupContractFailures(new Map(kept.slice(1)))).toEqual([
+    "recorded: the case was not run",
   ]);
 });

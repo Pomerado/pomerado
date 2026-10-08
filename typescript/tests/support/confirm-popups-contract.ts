@@ -12,7 +12,7 @@ import { expectedConfirmDigest } from "../../src/browser/dialogs/expected.js";
  * `confirmPopupsOrigin`, clicks the case's `selector` under its own run handling as the action
  * named `step`, with `recordedConfirmPopups` as the tool's record and a caller who never answers,
  * then reads `confirmPopupOutcome` and counts the questions the caller got.
- * `confirmPopupContractFailures` judges every case at once.
+ * `confirmPopupContractFailures` judges the observations of every case at once.
  */
 export const confirmPopupsOrigin = "https://confirm-popups.test";
 
@@ -135,15 +135,17 @@ export interface ConfirmPopupObservation {
 
 /**
  * Where a host's observations break the contract, as one line per broken case; empty when the
- * host keeps it. The recorded confirm is accepted without asking. An unrecorded confirm in the
- * page asks the caller and, unanswered, is dismissed. The iframe's and the popup window's are
- * dismissed, asked or not.
+ * host keeps it. Every case must be observed. The recorded confirm is accepted without asking.
+ * An unrecorded confirm in the page asks the caller and, unanswered, is dismissed. The iframe's
+ * and the popup window's are dismissed, asked or not.
  */
 export const confirmPopupContractFailures = (
-  observed: Readonly<Record<ConfirmPopupCaseName, ConfirmPopupObservation>>,
+  observed: ReadonlyMap<ConfirmPopupCaseName, ConfirmPopupObservation>,
 ): readonly string[] =>
   confirmPopupCases.flatMap(({ name, shownIn }) => {
-    const { outcome, asked } = observed[name];
+    const observation = observed.get(name);
+    if (observation === undefined) return [`${name}: the case was not run`];
+    const { outcome, asked } = observation;
     if (name === "recorded")
       return outcome === "accepted" && asked === 0
         ? []
