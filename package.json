@@ -62,6 +62,11 @@
       "import": "./dist/typescript/src/browser/dialogs/contracts.js",
       "default": "./dist/typescript/src/browser/dialogs/contracts.js"
     },
+    "./core/browser/dialogs/expected": {
+      "types": "./dist/typescript/src/browser/dialogs/expected.d.ts",
+      "import": "./dist/typescript/src/browser/dialogs/expected.js",
+      "default": "./dist/typescript/src/browser/dialogs/expected.js"
+    },
     "./core/browser/dialogs/service": {
       "types": "./dist/typescript/src/browser/dialogs/service.d.ts",
       "import": "./dist/typescript/src/browser/dialogs/service.js",
@@ -437,6 +442,11 @@
       "import": "./dist/typescript/src/runtime/host-execute.js",
       "default": "./dist/typescript/src/runtime/host-execute.js"
     },
+    "./core/runtime/incidents": {
+      "types": "./dist/typescript/src/runtime/incidents.d.ts",
+      "import": "./dist/typescript/src/runtime/incidents.js",
+      "default": "./dist/typescript/src/runtime/incidents.js"
+    },
     "./core/runtime/input-request": {
       "types": "./dist/typescript/src/runtime/input-request.d.ts",
       "import": "./dist/typescript/src/runtime/input-request.js",
@@ -531,6 +541,11 @@
       "types": "./dist/typescript/tests/support/canary.d.ts",
       "import": "./dist/typescript/tests/support/canary.js",
       "default": "./dist/typescript/tests/support/canary.js"
+    },
+    "./testing/confirm-popups-contract": {
+      "types": "./dist/typescript/tests/support/confirm-popups-contract.d.ts",
+      "import": "./dist/typescript/tests/support/confirm-popups-contract.js",
+      "default": "./dist/typescript/tests/support/confirm-popups-contract.js"
     },
     "./testing/credential-masking-corpus": {
       "types": "./dist/typescript/tests/support/credential-masking-corpus.d.ts",
