@@ -6,12 +6,12 @@ import { modelFailureMetadata } from "../models/model-failure.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
 import { makeInputAsker } from "../inputs/callback.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
-import { submitJob, type JobStore, type RetrySubmission } from "../jobs/job-store.js";
+import { submitJob, type JobStore, type RetrySubmission } from "../runtime/job-store.js";
 import {
   makeMemoryJobStore,
   type LocalJobRecord,
   type LocalJobStore,
-} from "../jobs/local-job-store.js";
+} from "../runtime/local-job-store.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,
