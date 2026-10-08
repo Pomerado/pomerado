@@ -118,6 +118,17 @@ it("asks the caller about every other dialog, as before", async () => {
   ])
     expect(await Effect.runPromise(decide(shown))).toEqual({ choice: "accept" });
   expect(asked).toHaveLength(5);
+  // A tool published without a record asks about every confirm, as before.
+  const older = answering("dismiss");
+  const unrecorded = makeRunDialogDecider({
+    ask: older.ask,
+    project: String,
+    readOnly: false,
+    expectedConfirms: undefined,
+    incidents: noIncidents,
+  });
+  expect(await Effect.runPromise(unrecorded(report("confirm")))).toEqual({ choice: "dismiss" });
+  expect(older.asked).toHaveLength(1);
   // A read tool never accepts from the record.
   const read = answering("dismiss");
   expect(await Effect.runPromise(runDecider(read.ask, { readOnly: true })(report("confirm")))).toEqual(
