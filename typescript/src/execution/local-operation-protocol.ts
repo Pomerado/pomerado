@@ -3,6 +3,7 @@ import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
+import { fileReferenceMaxLength } from "../runtime/files.js";
 
 const InputIssue = Schema.Struct({
   path: Schema.String.pipe(Schema.maxLength(maximumInputIssuePath)),
@@ -27,6 +28,8 @@ export const LocalOperationStart = Schema.Struct({
   dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host signs the page in again when the script's `ensureSignedIn` finds it signed out. */
   signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** The host places and collects files for the script's `files`. */
+  files: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),
@@ -61,6 +64,23 @@ export const LocalOperationMessage = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("ask"), id: Id, request: InputRequest }),
   Schema.Struct({ kind: Schema.Literal("dialog"), id: Id, report: DialogReport }),
   Schema.Struct({ kind: Schema.Literal("sign_in"), id: Id }),
+  /** `files.place`: the host puts the referenced file into the located file input. */
+  Schema.Struct({
+    kind: Schema.Literal("file_place"),
+    id: Id,
+    reference: Schema.String.pipe(Schema.maxLength(fileReferenceMaxLength)),
+    field: Schema.String.pipe(Schema.maxLength(4096)),
+    timeoutSec: Schema.Int.pipe(Schema.between(1, 300)),
+  }),
+  /** `files.collect`, before its trigger: the host starts capturing downloads. */
+  Schema.Struct({ kind: Schema.Literal("file_arm"), id: Id }),
+  /** `files.collect`, after its trigger: the host keeps the slot's download. */
+  Schema.Struct({
+    kind: Schema.Literal("file_collect"),
+    id: Id,
+    slot: Id,
+    timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+  }),
   Schema.Struct({ kind: Schema.Literal("cancel"), id: Id }),
   Schema.Struct({ kind: Schema.Literal("journal"), ...JournalFields }),
   Schema.Struct({

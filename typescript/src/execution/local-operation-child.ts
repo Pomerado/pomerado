@@ -43,6 +43,7 @@ const { makeScriptInput, ScriptInput, ScriptInputFailure } =
 const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
+const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -162,8 +163,36 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
         ),
       deadline,
     );
+    // The host refuses a file with a `FileRefused:<reason>` code; anything else is unavailable.
+    const fileRefusal = (error: Error) => {
+      const code = "code" in error && typeof error.code === "string" ? error.code : "";
+      const reason = Schema.decodeUnknownOption(FileRefusalReason)(code.split(":")[1]);
+      return new FileRefused({ reason: reason._tag === "Some" ? reason.value : "unavailable" });
+    };
     return yield* executeKernelOperation(operation, start.input, {
       kernel,
+      ...(start.files === true && start.offline !== true
+        ? {
+            files: {
+              place: (request) =>
+                (atFirstCall ? journal.enteringDispatch : Effect.void).pipe(
+                  Effect.zipRight(call({ kind: "file_place", ...request })),
+                  Effect.flatMap((value) => Schema.decodeUnknown(PlacedFile)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              arm: () =>
+                call({ kind: "file_arm" }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(Schema.String)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              collect: (request) =>
+                call({ kind: "file_collect", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+            },
+          }
+        : {}),
       sessionId: start.sessionId,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),

@@ -15,6 +15,7 @@ import {
 import { siteInput, standard } from "../mcp/schema.js";
 import { canonicalSchema } from "../registry/schema-references.js";
 import { InputAnswers } from "../runtime/input-request.js";
+import { fileFormat } from "../runtime/files.js";
 import { createPomerado } from "./pomerado.js";
 import { type MintArtifact, type PomeradoOptions, type PomeradoRequest } from "./contracts.js";
 import { Deployment, validateArtifact } from "./artifact-files.js";
@@ -218,6 +219,23 @@ const idempotencyKey = {
 };
 const writeRetry =
   "Send an idempotency_key with every write and reuse it only to retry that same call. A call without one is a new website action.";
+/**
+ * A schema for the validator: the file marker, `format: "file"`, is for hosts to read and checks
+ * nothing, so it is left out rather than reported as a format the validator does not know.
+ */
+const withoutFileFormat = <Schema>(schema: Schema): Schema => {
+  const strip = (node: unknown): unknown =>
+    Array.isArray(node)
+      ? node.map(strip)
+      : typeof node === "object" && node !== null
+        ? Object.fromEntries(
+            Object.entries(node)
+              .filter(([key, value]) => !(key === "format" && value === fileFormat))
+              .map(([key, value]) => [key, strip(value)]),
+          )
+        : node;
+  return strip(schema) as Schema;
+};
 interface BusinessCall {
   readonly input: unknown;
   readonly idempotency_key?: string;
@@ -243,7 +261,7 @@ const businessInput = (
     return yield* Effect.try({
       try: (): StandardSchemaWithJSON<BusinessCall, BusinessCall> => {
         const validator = new AjvJsonSchemaValidator();
-        validator.getValidator(output);
+        validator.getValidator(withoutFileFormat(output));
         const canonical = canonicalSchema(input);
         if (canonical === undefined) throw new Error("The input schema names a missing reference.");
         const json = {
@@ -258,7 +276,7 @@ const businessInput = (
           required: ["input"],
           additionalProperties: false,
         };
-        const validate = validator.getValidator<BusinessCall>(json);
+        const validate = validator.getValidator<BusinessCall>(withoutFileFormat(json));
         return {
           "~standard": {
             version: 1,

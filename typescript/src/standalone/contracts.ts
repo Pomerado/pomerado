@@ -6,6 +6,7 @@ import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import type { FileLimits } from "../runtime/files.js";
 export interface PomeradoOptions {
   readonly ask: InputAsker;
   readonly browser?: PlaywrightOptions;
@@ -13,6 +14,12 @@ export interface PomeradoOptions {
   readonly guardianProvider?: ModelProvider;
   readonly policy?: string;
   readonly timeoutMs?: number;
+  /**
+   * Files a run places and collects. A caller names its own file by a `file:` URL in the input.
+   * A run keeps each downloaded file under `downloads` (the system's temporary directory by
+   * default) and returns its `file:` URL. `limits` caps the bytes (`defaultFileLimits`).
+   */
+  readonly files?: { readonly downloads?: string; readonly limits?: FileLimits };
 }
 
 export interface PomeradoRequest {
