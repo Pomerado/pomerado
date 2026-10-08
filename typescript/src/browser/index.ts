@@ -47,6 +47,8 @@ export {
 } from "../runtime/errors.js";
 export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/errors.js";
 export { CalendarDate, formControlsCode } from "./form-controls.js";
+export { FileInput, FileOutput, FileRefused, defaultFileLimits } from "../runtime/files.js";
+export type { FileObject, FileLimits, PlacedFile, ScriptFiles } from "../runtime/files.js";
 export type { FormControlShape } from "./form-controls.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";

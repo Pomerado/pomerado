@@ -43,6 +43,7 @@ const { makeScriptInput, ScriptInput, ScriptInputFailure } =
 const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
+const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -166,8 +167,49 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
         ),
       deadline,
     );
+    // The host refuses a file with a `FileRefused:<reason>` code; anything else is unavailable.
+    const fileRefusal = (error: Error) => {
+      const code = "code" in error && typeof error.code === "string" ? error.code : "";
+      const [, named, sent] = code.split(":");
+      const reason = Schema.decodeUnknownOption(FileRefusalReason)(named);
+      return new FileRefused({
+        reason: reason._tag === "Some" ? reason.value : "unavailable",
+        // Only a refusal the host says came before setting the input sent nothing.
+        ...(reason._tag === "Some" && sent !== "dispatched" ? {} : { dispatched: true }),
+      });
+    };
     return yield* executeKernelOperation(operation, start.input, {
       kernel,
+      ...(start.files === true && start.offline !== true
+        ? {
+            files: {
+              // A build's step counts as possibly sent once a placement set, or may have set,
+              // the input; a refusal before that reached no page.
+              place: (request) =>
+                call({ kind: "file_place", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(PlacedFile)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                  Effect.tapBoth({
+                    onSuccess: () => (atFirstCall ? journal.enteringDispatch : Effect.void),
+                    onFailure: (refused) =>
+                      atFirstCall && refused.dispatched === true
+                        ? journal.enteringDispatch
+                        : Effect.void,
+                  }),
+                ),
+              arm: () =>
+                call({ kind: "file_arm" }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(Schema.String)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              collect: (request) =>
+                call({ kind: "file_collect", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+            },
+          }
+        : {}),
       sessionId: start.sessionId,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
