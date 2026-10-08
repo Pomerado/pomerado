@@ -17,7 +17,7 @@ export type FeatureId = `F${number}`;
 
 export const hostedFeatures: readonly HostedFeature[] = [
   { features: ["F14", "F22"], name: "Anti-bot, CAPTCHA, proxies and browser replacement" },
-  { features: ["F16"], name: "Saved logins and vault" },
+  { features: ["F16"], name: "Saved logins" },
   { features: ["F13", "F15", "F12"], name: "HTTP recording, captures, HTTP versions and savedHTTP" },
   { features: ["F21"], name: "Maintenance and repair" },
   { features: ["F17"], name: "Saved browser profiles" },
