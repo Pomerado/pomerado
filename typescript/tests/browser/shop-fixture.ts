@@ -5,11 +5,15 @@ import { createServer } from "node:https";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { initialStoreState, storeProducts, storeRoutes, type StoreState } from "./shop-store.js";
 
-const products = [
-  { id: "p-1", name: "Brass lamp", priceMinor: 4200 },
-  { id: "p-2", name: "Oak shelf", priceMinor: 9900 },
-];
+export type { CartLine, PlacedOrder, ShippingAddress, StoreProduct } from "./shop-store.js";
+export { storeProducts } from "./shop-store.js";
+
+// The JSON search API serves the home goods, as it did before the storefront had apparel.
+const products = storeProducts
+  .filter((item) => item.department === "home")
+  .map(({ id, name, priceMinor }) => ({ id, name, priceMinor }));
 export const shopAccount = { username: "ada@example.test", password: "correct-horse-battery-9" };
 /** The code the shop asks for after the one-screen sign-in, when `loginCode` is set. */
 export const shopCode = "482913";
@@ -21,8 +25,8 @@ export const lockedShopAccount = {
   password: "locked-horse-battery-7",
 };
 
-/** Counters and switches for one controlled shop. */
-interface ShopState {
+/** Counters and switches for one controlled shop, with its storefront's carts and orders. */
+interface ShopState extends StoreState {
   searchPageLoads: number;
   /** Loads of the code screen, by GET, that `loginCode` puts after the one-screen sign-in. */
   codePageLoads: number;
@@ -325,6 +329,12 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     response.end();
   };
   return new Map([
+    ...storeRoutes({
+      state,
+      signedIn: (request) => cookieOf(request, "shop_session") === signedIn,
+      cookiesFor,
+      csrfOf: (request) => cookieOf(request, "csrf_token"),
+    }),
     ["/", home],
     ["/sign-in", identifierScreen],
     ["/sign-in/password", passwordScreen],
@@ -343,7 +353,8 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
 
 /**
  * A controlled HTTPS shop: an HTML search page whose script calls a cookie-gated JSON API, a
- * CSRF-protected cart POST and a JSON sign-in endpoint. The modeled curl marks its requests with
+ * CSRF-protected cart POST, a JSON sign-in endpoint, and a storefront (`shop-store.ts`) with
+ * filtered catalog search, product options, guest and account carts, and checkout. The modeled curl marks its requests with
  * `x-modeled-transport`, which a real site cannot see, so the fixture can count them.
  */
 export const startShop = async (directory: string): Promise<Shop> => {
@@ -380,6 +391,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     loginCode: false,
     signedInLogin: "form",
     signOutOn: undefined,
+    ...initialStoreState(),
   };
   const sessionValue = `sess-${randomBytes(12).toString("hex")}`;
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;
