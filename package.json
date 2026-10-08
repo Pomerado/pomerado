@@ -282,11 +282,6 @@
       "import": "./dist/typescript/src/mint/operation-source.js",
       "default": "./dist/typescript/src/mint/operation-source.js"
     },
-    "./core/mint/output-obligations": {
-      "types": "./dist/typescript/src/mint/output-obligations.d.ts",
-      "import": "./dist/typescript/src/mint/output-obligations.js",
-      "default": "./dist/typescript/src/mint/output-obligations.js"
-    },
     "./core/mint/projection": {
       "types": "./dist/typescript/src/mint/projection.d.ts",
       "import": "./dist/typescript/src/mint/projection.js",

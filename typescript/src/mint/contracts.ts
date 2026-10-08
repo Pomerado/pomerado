@@ -43,7 +43,6 @@ import type {
 } from "./recovery-contracts.js";
 
 import type { CurrentInvocation } from "./invocation.js";
-import type { WeakenedOutput } from "./output-obligations.js";
 import { SiteNaming } from "../registry/site-naming.js";
 import { SupportedOperationVariant } from "../registry/operation-variants.js";
 import type { RegistryIssue } from "../registry/issues.js";
@@ -99,6 +98,15 @@ export type SpentSignIn =
   "relogin_spent" | "fresh_profile_sign_ins_spent" | "host_refusals_repeated";
 
 export type { SessionLoss };
+
+/**
+ * One registered output field a repair loosens and how, by path (`items[].price.amount`; the
+ * root is `output`, its items `output[]`). The host that publishes repairs compares the schemas.
+ */
+export interface WeakenedOutput {
+  readonly field: string;
+  readonly change: "removed" | "optional" | "nullable" | "widened";
+}
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
