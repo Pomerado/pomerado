@@ -299,7 +299,7 @@ const authoredExecution = (
   journal: Parameters<MintDependencies["reviewAndExecute"]>[2],
 ) =>
   Effect.gen(function* () {
-    const { workspace, context, request, handles, start, mintAsk, writeSession } = state;
+    const { workspace, context, handles, start, mintAsk, writeSession } = state;
     const { browser, secrets } = state.session;
     const id = randomUUID();
     const sources = (yield* workspace.snapshot).filter(([path]) =>
@@ -340,7 +340,7 @@ const authoredExecution = (
       execution.purpose === "explore" && live
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
-    const signInOrigins = request.authenticationOrigins ?? [];
+    const signInOrigins = context.authenticationOrigins;
     const watch =
       codes.length === 0
         ? undefined

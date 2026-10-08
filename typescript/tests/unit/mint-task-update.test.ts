@@ -123,7 +123,7 @@ const updateHost = (
       host?.(application) ??
       Effect.sync(() => {
         applied.push(application);
-        return { outcome: "applied" as const, state: application.next };
+        return { outcome: "applied" as const };
       }),
   };
   return { reviews, applied, overrides };
@@ -232,6 +232,7 @@ it("drops a prerequisite the caller said the site does not offer", async () => {
         },
       ],
       reviewId: "review_1",
+      requestDigest: expect.any(String),
     },
   ]);
   expect(outcome.build).toBe("published");
@@ -445,5 +446,139 @@ it("asks the minter to confirm an update that cites no answered question", async
     source: "host",
     unanswered: ["save"],
   });
+  expect(updates.reviews).toEqual([]);
+});
+
+/** Execution receipts numbered in order, each completed with a protected result. */
+const numberedExecutions = () => {
+  let count = 0;
+  const reviewAndExecute: MintDependencies["reviewAndExecute"] = (_input, beforeDispatch) =>
+    (beforeDispatch ?? Effect.void).pipe(
+      Effect.zipRight(
+        Effect.sync(() => {
+          count++;
+          return {
+            executionId: `execution_${count}`,
+            status: "completed" as const,
+            effect: "verified" as const,
+            resultRef: `protected_${count}`,
+            observations: { value: "public" },
+          };
+        }),
+      ),
+    );
+  return reviewAndExecute;
+};
+const sister = "https://notes.example.org";
+const siteQuestion = {
+  questions: [
+    {
+      id: "site",
+      type: "choice",
+      prompt: `Your notes live on ${sister}. Build the tool there?`,
+      options: [
+        { id: "move", label: `Yes, use ${sister}` },
+        { id: "stay", label: "No, stay here" },
+      ],
+    },
+  ],
+};
+const toSister = {
+  summary: `Build the tool on ${sister}, where the caller's notes live.`,
+  changes: [{ setting: "site", origin: sister }],
+  confirmedBy: ["site"],
+  recommend: "update",
+};
+
+it("publishes after a site change only an example that ran on the new site", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "before"),
+        call("request_input", siteQuestion, "ask"),
+        call("mint_update", toSister, "update"),
+        call("finish_build", { ...publication, executionId: "execution_1" }, "stale"),
+        call("execute", example, "after"),
+        call("finish_build", { ...publication, executionId: "execution_2" }, "publish"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ site: "move" }]),
+      repeatableRead: true,
+      reviewAndExecute: numberedExecutions(),
+    },
+    { effect: "read", siteOrigin: site },
+  );
+  const outcome = await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({ status: "updated" });
+  expect(resultOf(f.requests, "stale")).toMatchObject({
+    status: "not_published",
+    reason: "example_before_site_change",
+  });
+  expect(outcome.build).toBe("published");
+  expect(f.counts().published).toBe(1);
+});
+
+it("refuses a site change once the build cannot run another live example", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "example"),
+        call("request_input", siteQuestion, "ask"),
+        call("mint_update", toSister, "update"),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ site: "move" }]), repeatableRead: false },
+    { effect: "read", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "no_live_example_left",
+  });
+  expect(String(resultOf(f.requests, "update")?.["instruction"])).toContain("new_mint");
+  expect(updates.reviews).toEqual([]);
+});
+
+it("refuses a site change while the write session is open", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...example, purpose: "act", target: "liveBrowser" }, "act"),
+        call("request_input", siteQuestion, "ask"),
+        call("mint_update", toSister, "update"),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ site: "move" }]) },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "act")).toMatchObject({ status: "completed" });
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "write_session_open",
+  });
+  expect(updates.reviews).toEqual([]);
+});
+
+it("asks for the caller's confirmation before a change that widens what the build may do", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("mint_update", { ...toSister, confirmedBy: [] }, "site"),
+        call("mint_update", { ...toWrite, confirmedBy: [] }, "write"),
+      ][index] ?? prose(),
+    { ...updates.overrides, repeatableRead: true },
+    { effect: "read", siteOrigin: site },
+  );
+  await f.run();
+  for (const id of ["site", "write"])
+    expect(resultOf(f.requests, id), id).toMatchObject({
+      status: "clarification_required",
+      source: "host",
+      reason: "confirmation_required",
+    });
   expect(updates.reviews).toEqual([]);
 });

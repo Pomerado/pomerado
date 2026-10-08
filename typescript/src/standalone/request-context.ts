@@ -179,8 +179,14 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     const answeredQuestions = new Map<string, AnsweredQuestion>();
     /** Handles of codes the agent asked for during this attempt's unverified sign-in. */
     const signInCodeHandles = new Set<string>();
+    /** Where this site's history starts: a site change leaves the earlier site's sign-ins behind. */
+    let siteSince = 0;
+    /** The request's own sign-in origins, which belong to its first site only. */
+    let authenticationOrigins: readonly string[] = request.authenticationOrigins ?? [];
     const signedIn = () =>
-      executions.some((execution) => execution.authentication?.state === "authenticated");
+      executions
+        .slice(siteSince)
+        .some((execution) => execution.authentication?.state === "authenticated");
     const guardian = makeGuardian(
       {
         ...makeOpenAIReviewer(policy, false, {
@@ -228,7 +234,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             ...(step.note ? [step.note] : []),
           ].join("\n"),
           accountScope: invocationId,
-          allowedOrigins: [site.siteOrigin, ...(request.authenticationOrigins ?? [])],
+          allowedOrigins: [site.siteOrigin, ...authenticationOrigins],
           allowedEffects:
             step.currentExecution === undefined ? [] : allowedEffectsFor(step.currentExecution),
           answeredQuestions: [...answeredQuestions.values()],
@@ -444,9 +450,11 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           .pipe(Effect.mapError((failure) => reviewFailureOf(failure)));
       });
     /**
-     * Applies an update Guardian allowed. The local host has no intake screen, duplicate check or
-     * saved logins: it rebinds the site, input and effect, and a sign-in on a new site asks the
-     * caller as any sign-in does. `rebind` moves the build's browser bindings to a new site.
+     * Applies an update Guardian allowed, all or nothing. The local host has no intake screen,
+     * duplicate check, saved logins or checkpoint store: it rebinds the site, input and effect,
+     * and a sign-in on a new site asks the caller as any sign-in does. `rebind` binds the build's
+     * browser pieces to a new site; only once it succeeds does anything switch, and the earlier
+     * site's sign-in origins, sign-ins, codes and observed page are left behind.
      */
     const applyTaskUpdate = (
       application: TaskUpdateApplication,
@@ -460,11 +468,19 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             reason: "change_unsupported",
             notice: "Only a read build that has not run its live example can become a write.",
           } as const;
-        if (next.siteOrigin !== undefined && next.siteOrigin !== site.siteOrigin) {
-          site = yield* requestSite(session, { url: `${next.siteOrigin}/` });
+        const moved =
+          next.siteOrigin !== undefined && next.siteOrigin !== site.siteOrigin
+            ? yield* requestSite(session, { url: `${next.siteOrigin}/` })
+            : undefined;
+        if (moved !== undefined) yield* rebind(moved.siteOrigin);
+        // Nothing below fails, so the update switches every binding at once.
+        if (moved !== undefined) {
+          site = moved;
+          authenticationOrigins = [];
+          siteSince = executions.length;
+          signInCodeHandles.clear();
           observed = undefined;
           observedUrl = undefined;
-          yield* rebind(site.siteOrigin);
         }
         input = next.businessInput;
         if (next.effect === "write") buildEffect = "write";
@@ -474,12 +490,16 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           changes: update.changes,
           confirmation: update.confirmation,
         });
-        return { outcome: "applied", state: next } as const;
+        return { outcome: "applied" } as const;
       });
     return {
       /** The site the build works on now. */
       get siteOrigin() {
         return site.siteOrigin;
+      },
+      /** The sign-in origins the build's current site takes besides its own. */
+      get authenticationOrigins() {
+        return authenticationOrigins;
       },
       /** The caller's input as the effective task has it. */
       get input() {

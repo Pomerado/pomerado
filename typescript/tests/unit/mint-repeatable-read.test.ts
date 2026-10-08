@@ -127,10 +127,10 @@ it("asks the host to claim a repeatable read's example, and still refuses a late
           reviews++;
           return { outcome: "allow" as const, rationale: "Confirmed." };
         }),
-      applyTaskUpdate: (application) =>
+      applyTaskUpdate: () =>
         Effect.sync(() => {
           applied++;
-          return { outcome: "applied" as const, state: application.next };
+          return { outcome: "applied" as const };
         }),
     },
     { effect: "read", siteOrigin: "https://site.invalid" },

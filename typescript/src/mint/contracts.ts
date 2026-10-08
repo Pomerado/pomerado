@@ -779,9 +779,13 @@ export const taskUpdateStatuses = [
 ] as const;
 export type TaskUpdateStatus = (typeof taskUpdateStatuses)[number];
 
-/** One update the host accepted, with the Guardian review that allowed it. */
+/**
+ * One update the host accepted, with the Guardian review that allowed it and the digest of the
+ * request that made it, by which the harness knows the same request again, as after a takeover.
+ */
 export interface AcceptedTaskUpdate extends ReviewedTaskUpdate {
   readonly reviewId?: string;
+  readonly requestDigest: string;
 }
 
 /**
@@ -809,11 +813,18 @@ export interface TaskUpdateApplication {
   /** The effective task after the update, as the harness computed it from `update.changes`. */
   readonly next: TaskState;
   readonly update: AcceptedTaskUpdate;
+  /**
+   * The harness checkpoint with the update applied (`taskState` is `next`). The host stores it
+   * as the attempt's harness snapshot in the same step as its own bindings, so a takeover restores
+   * the whole update or none of it; the harness takes the update on only once the host answers
+   * `applied`.
+   */
+  readonly harness: MintHarnessSnapshot;
 }
 
 /**
  * How the host answered an accepted update. `notice` is host-authored text the minter reads.
- * - `applied`: the host bound and checkpointed `state`, normally `next` as given.
+ * - `applied`: the host bound `next` exactly as given and stored `harness` with it.
  * - `clarification_required`: the update needs something only the caller can give before it can
  *   apply, such as a login for the new site the caller has not saved (`login_required`).
  * - `refused`: the host cannot apply it to this build: intake screening refuses the effective task
@@ -822,7 +833,7 @@ export interface TaskUpdateApplication {
  * Nothing changes on either refusal.
  */
 export type TaskUpdateHostResult =
-  | { readonly outcome: "applied"; readonly state: TaskState; readonly notice?: string }
+  | { readonly outcome: "applied"; readonly notice?: string }
   | {
       readonly outcome: "clarification_required";
       readonly reason: "login_required" | (string & {});
@@ -1112,6 +1123,8 @@ export interface MintHarnessSnapshot {
   readonly purposes: readonly {
     readonly executionId: string;
     readonly purpose: ExecutionRequest["purpose"] | "command";
+    /** The task revision it ran under, once an update had applied; absent for the original. */
+    readonly taskRevision?: number;
   }[];
   readonly diagnostics: readonly string[];
   readonly exampleId?: string;
@@ -1199,6 +1212,7 @@ const TaskStateSchema: Schema.Schema<TaskState> = Schema.Struct({
       changes: Schema.Array(TaskChange),
       confirmation: Schema.Array(AnsweredQuestion),
       reviewId: Schema.optionalWith(Schema.String, { exact: true }),
+      requestDigest: Schema.String,
     }),
   ),
 });
@@ -1249,6 +1263,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     Schema.Struct({
       executionId: Schema.String,
       purpose: Schema.Union(ExecutionRequest.fields.purpose, Schema.Literal("command")),
+      taskRevision: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), { exact: true }),
     }),
   ),
   diagnostics: Schema.Array(Schema.String),
@@ -1416,7 +1431,9 @@ export interface MintDependencies {
   /**
    * Applies an update Guardian allowed (`TaskUpdateHostResult`). Before it answers `applied`, the
    * host must, in one step that applies all or nothing:
-   * - checkpoint the effective task (`next`) durably, so a takeover restores it;
+   * - store `harness`, the checkpoint with the update applied, as the attempt's harness snapshot,
+   *   with its own bindings, so a takeover restores the whole update or none of it; a takeover
+   *   that restores it answers the same `mint_update` again as `updated` without another review;
    * - for a `site` change, rebind everything that depends on the site to the new origin: the
    *   authorized origins every review reads, the browser's entry and sign-in origin, the
    *   publication site, and any private input, scheduling, quota or run-environment key bound to

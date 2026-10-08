@@ -24,7 +24,7 @@ import {
   diagnosticScreeningReason,
   diagnosticStorageFailure,
 } from "../models/model-diagnostic-failure.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Cause, Clock, Effect, Exit, FiberSet, Option, Schema, Scope } from "effect";
 import {
   AgentRequest,
@@ -139,6 +139,10 @@ const signInOrLoginInUseAnswer = (
     : error.reason === "login_in_use"
       ? loginInUseAnswer
       : undefined;
+
+/** A task update request's identity: the same request has the same digest. */
+const taskUpdateDigest = (request: TaskUpdateRequest) =>
+  createHash("sha256").update(JSON.stringify(request), "utf8").digest("hex");
 
 type AgentQuestion = (typeof AgentRequest.Type)["questions"][number];
 /** The agent's question as its caller reads it, with each caller-visible text redacted. */
@@ -604,6 +608,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       );
       for (const receipt of dependencies.priorReadExecutions ?? [])
         purposes.set(receipt.executionId, "example");
+      /** The task revision each execution ran under, when an update had applied before it. */
+      const revisions = new Map<string, number>(
+        (recovered?.purposes ?? []).flatMap((entry) =>
+          entry.taskRevision === undefined ? [] : [[entry.executionId, entry.taskRevision]],
+        ),
+      );
       let example: ExecutionEvidence | undefined =
         recovered?.exampleId === undefined
           ? executions.findLast((entry) => purposes.get(entry.executionId) === "example")
@@ -1171,6 +1181,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         };
         executions.push(referenceOnly);
         purposes.set(evidence.executionId, purpose);
+        if (taskState.revision > 0) revisions.set(evidence.executionId, taskState.revision);
         if (purpose === "example") example = referenceOnly;
         // The step that recorded the site's confirmation is the build's own write result.
         if (purpose === "act" && safe.confirmation !== undefined) {
@@ -1315,13 +1326,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const taskUpdateRefusal = (
         submitted: TaskUpdateRequest,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
-        if (submitted.recommend === "new_mint") return undefined;
         if (request.mode === "maintenance")
           return {
             reason: "maintenance",
             instruction:
               "Maintenance repairs the published tool under its own task, which does not change. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
           };
+        if (submitted.recommend === "new_mint") return undefined;
         const settings = new Set(submitted.changes.map((change) => change.setting));
         if (settings.has("effect")) {
           if (buildEffect === "write")
@@ -1359,6 +1370,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               reason: "write_session_open",
               instruction:
                 "This build's write session is open, and its write may have committed on the current site. Finish or read back that write first; the site cannot change under it.",
+            };
+          // Publication needs an example from the new site, so the build must still be able to
+          // run one there.
+          if (executionClosed || (exampleClaimed && !repeatableRead))
+            return {
+              reason: "no_live_example_left",
+              instruction:
+                "This build can no longer run a live example, so nothing it publishes could be proven on another site. Finish under the current site, or call mint_update with recommend new_mint and a suggestedRequest for a build on the other site.",
             };
         }
         const input = taskState.businessInput;
@@ -2232,6 +2251,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             : []),
         ].join(" ");
       };
+      /** The `updated` result: the effective task as it now stands, and what to do next. */
+      const updatedAnswer = (changes: readonly TaskChange[], notice: string | undefined) =>
+        Effect.gen(function* () {
+          const domain =
+            taskState.siteOrigin === undefined ? undefined : siteDomain(taskState.siteOrigin);
+          return taskUpdateAnswer("updated", {
+            task: {
+              revision: taskState.revision,
+              effect: buildEffect === "write" ? "write" : "read",
+              ...(taskState.siteOrigin === undefined ? {} : { siteOrigin: taskState.siteOrigin }),
+              ...(domain === undefined ? {} : { siteDomain: domain }),
+            },
+            repeatableRead,
+            ...(notice === undefined ? {} : { notice: yield* screenMintText(dependencies, notice) }),
+            instruction: updatedInstruction(changes),
+          });
+        });
       /** Guardian's review of a confirmed update, then the host's application of an allowed one. */
       const reviewAndApplyTaskUpdate = (submitted: TaskUpdateRequest) =>
         Effect.gen(function* () {
@@ -2301,12 +2337,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             summary: update.summary,
             changes: update.changes,
             confirmation,
+            requestDigest: taskUpdateDigest(submitted),
             ...(decision.reviewId === undefined ? {} : { reviewId: decision.reviewId }),
           };
           // The host binds the values the agent gave; reviews read the screened copy in `accepted`.
           const next = nextTaskState(submitted.changes, accepted);
+          // The host stores this checkpoint with its own bindings in one step, so a takeover
+          // restores either the whole update or none of it.
           const applied = yield* Effect.either(
-            apply({ current: taskState, next, update: accepted }),
+            apply({ current: taskState, next, update: accepted, harness: captureHarness(next) }),
           );
           if (applied._tag === "Left") {
             yield* reportFailure(applied.left, {
@@ -2340,9 +2379,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               instruction:
                 "The host cannot apply this update to this build, so nothing changed. Continue under the current task, or call mint_update with recommend new_mint if the caller's change needs a new build.",
             });
-          const effectChanged = result.state.effect === "write" && buildEffect !== "write";
-          const siteChanged = result.state.siteOrigin !== taskState.siteOrigin;
-          taskState = result.state;
+          const effectChanged = next.effect === "write" && buildEffect !== "write";
+          const siteChanged = next.siteOrigin !== taskState.siteOrigin;
+          taskState = next;
           if (effectChanged) {
             buildEffect = "write";
             repeatableRead = false;
@@ -2363,21 +2402,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               correlation: dependencies.reportCorrelation ?? "process",
             },
           );
-          const domain =
-            taskState.siteOrigin === undefined ? undefined : siteDomain(taskState.siteOrigin);
-          return taskUpdateAnswer("updated", {
-            task: {
-              revision: taskState.revision,
-              effect: buildEffect === "write" ? "write" : "read",
-              ...(taskState.siteOrigin === undefined ? {} : { siteOrigin: taskState.siteOrigin }),
-              ...(domain === undefined ? {} : { siteDomain: domain }),
-            },
-            repeatableRead,
-            ...(result.notice === undefined
-              ? {}
-              : { notice: yield* screenMintText(dependencies, result.notice) }),
-            instruction: updatedInstruction(submitted.changes),
-          });
+          return yield* updatedAnswer(submitted.changes, result.notice);
         });
       const actions: MintActions = {
         retainCapture: (input) =>
@@ -2653,6 +2678,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const evidence = executions.find(
                 (entry) => entry.executionId === proposed.executionId,
               );
+              // A build that moved to another site publishes only what ran on that site.
+              const siteRevision = Math.max(
+                0,
+                ...taskState.updates
+                  .filter((update) => update.changes.some((change) => change.setting === "site"))
+                  .map((update) => update.revision),
+              );
+              if (
+                evidence !== undefined &&
+                (revisions.get(evidence.executionId) ?? 0) < siteRevision
+              ) {
+                const reason = "example_before_site_change";
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    "This execution ran before the build moved to its current site, so it proves nothing there. Run a fresh reviewed example on the current site, then call finish_build with that new executionId.",
+                  executionContext: yield* executionContext(),
+                });
+              }
               const repair = dependencies.canPublishRepair?.(proposed.executionId) === true;
               const actStep =
                 evidence !== undefined && purposes.get(evidence.executionId) === "act";
@@ -3353,8 +3401,30 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         instruction:
                           "A recommended new build needs suggestedRequest: the request the caller could submit for it, in one or two plain sentences. Add it and call mint_update again.",
                       });
+                    // The same update again, as after a takeover, is already applied.
+                    if (taskState.updates.at(-1)?.requestDigest === taskUpdateDigest(submitted))
+                      return yield* updatedAnswer(
+                        submitted.changes,
+                        "This update was already applied; nothing changed again.",
+                      );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
+                    if (
+                      submitted.recommend === "update" &&
+                      submitted.confirmedBy.length === 0 &&
+                      submitted.changes.some(
+                        (change) =>
+                          change.setting === "site" ||
+                          change.setting === "login" ||
+                          change.setting === "effect",
+                      )
+                    )
+                      return taskUpdateAnswer("clarification_required", {
+                        source: "host",
+                        reason: "confirmation_required",
+                        instruction:
+                          "A change of the site, the login or the effect widens what this build may do, so it needs the caller's confirmation and nothing changed. Ask the caller with request_input, then call mint_update again naming the questions they answered in confirmedBy.",
+                      });
                     const unanswered = submitted.confirmedBy.filter(
                       (id) => !answeredQuestions.has(id),
                     );
@@ -3483,12 +3553,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         Effect.succeed(undefined);
       const retainRuntimeRecord = dependencies.diagnostics?.retainRuntimeRecord;
       const observeModelTrace = dependencies.diagnostics?.observeModelTrace;
-      const captureHarness = (): MintHarnessSnapshot => ({
+      /** The harness checkpoint, with `task` as its effective task. */
+      const captureHarness = (task: TaskState = taskState): MintHarnessSnapshot => ({
         executions: [...executions],
-        purposes: [...purposes].map(([executionId, purpose]) => ({
-          executionId,
-          purpose,
-        })),
+        purposes: [...purposes].map(([executionId, purpose]) => {
+          const taskRevision = revisions.get(executionId);
+          return { executionId, purpose, ...(taskRevision === undefined ? {} : { taskRevision }) };
+        }),
         diagnostics: [...diagnostics],
         ...(example === undefined ? {} : { exampleId: example.executionId }),
         exampleClaimed,
@@ -3508,7 +3579,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         diagnosticRetentionRetries,
         executionClosed,
         captchaChecks,
-        ...(taskState.revision === 0 ? {} : { taskState }),
+        ...(task.revision === 0 ? {} : { taskState: task }),
         ...(answeredQuestions.size === 0
           ? {}
           : {

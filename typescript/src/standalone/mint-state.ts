@@ -201,13 +201,13 @@ export const mintState = (
      * Everything bound to the build's site: the sign-in browser and recorder, the marker checks
      * and the build's start. A task update that moves the build to another site binds them anew.
      */
-    const bindSite = (siteOrigin: string) =>
+    const bindSite = (siteOrigin: string, authenticationOrigins: readonly string[]) =>
       Effect.gen(function* () {
         const signInBrowser = makeSignInBrowser({
           page: browser,
           keyboard: browser.keyboard,
           siteOrigin: siteOrigin,
-          authenticationOrigins: request.authenticationOrigins ?? [],
+          authenticationOrigins,
           onRequest: browser.onRequest,
           typing: session.signInTyping,
         });
@@ -274,7 +274,7 @@ export const mintState = (
         );
         return { recorder, markers, start };
       });
-    let bound = yield* bindSite(context.siteOrigin);
+    let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
     // A later binding lives as long as the first: until the request's scope closes.
     const scope = yield* Effect.scope;
     return {
@@ -298,9 +298,12 @@ export const mintState = (
       get start() {
         return bound.start;
       },
-      /** Binds the build to another site, for a task update the host applied. */
+      /**
+       * Binds the build to another site, for a task update the host applies, with no sign-in
+       * origins of its own; nothing switches unless it succeeds.
+       */
       rebindSite: (siteOrigin: string) =>
-        bindSite(siteOrigin).pipe(
+        bindSite(siteOrigin, []).pipe(
           Scope.extend(scope),
           Effect.map((rebound) => {
             bound = rebound;

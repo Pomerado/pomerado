@@ -534,6 +534,7 @@ test("a confirmed site change moves the build to the other site", async () => {
       answer: () => ({ site: "move" }),
       turns: [
         () => patch({ "src/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "src/look.mjs"), "before")],
         () => [
           call(
             "request_input",
@@ -574,10 +575,12 @@ test("a confirmed site change moves the build to the other site", async () => {
       status: "updated",
       task: { revision: 1, siteOrigin: sister.origin },
     });
-    // The build entered the new site, and its review authorizes that site alone.
+    // The build worked on the original site, then entered the new one, and the review after the
+    // change authorizes that site alone.
+    expect(JSON.stringify(toolResult(last, "before"))).toContain("Original");
     expect(JSON.stringify(toolResult(last, "explore"))).toContain("Sister");
-    expect(original.requests).toEqual([]);
-    const [explore] = executions(guardian.reviews);
+    const [before, explore] = executions(guardian.reviews);
+    expect(authorityOf(before!)["allowedOrigins"]).toEqual([original.origin]);
     expect(authorityOf(explore!)["allowedOrigins"]).toEqual([sister.origin]);
     expect(authorityOf(explore!)["taskUpdates"]).toMatchObject([
       { revision: 1, changes: [{ setting: "site", origin: sister.origin }] },
