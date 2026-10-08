@@ -210,8 +210,45 @@ it("allows a blocked report that names the caller input at fault and why", async
   );
   const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
   expect(input.trusted_review.policy).toContain(
-    'or when it asks the user for anything; the user then sees only a fixed sentence. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user. The rules below apply to questions, not to this report.\n',
+    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user. The rules below apply to questions, not to this report.\n',
   );
+});
+
+// Guardian judged a blocked report about a refused publication from the agent's words alone.
+it("gives the question review the host's publication refusals as trusted evidence", async () => {
+  const refusal = {
+    decisionId: "decision_one",
+    outcome: "refused",
+    code: "PublicationUnavailable",
+    reason: "write_not_submitted",
+    executionId: "act_one",
+    decidedAt: 1_000,
+    failedChecks: ["write_not_submitted"],
+    recovery: "write_completion",
+  } as const;
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  const candidate = await Effect.runPromise(
+    questionForReview(
+      {
+        questions: [
+          { id: "blocked", type: "text", prompt: "The site never took the request as asked." },
+        ],
+      },
+      { credentialsAvailable: false, blockedOutcome: true, publicationDecisions: [refusal] },
+      (text) => Effect.succeed(text),
+    ),
+  );
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      candidate,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as {
+    question_review: { publicationDecisions?: unknown };
+  };
+  expect(input.question_review.publicationDecisions).toEqual([refusal]);
 });
 
 it("rejects a question candidate smuggled into an execution review", async () => {

@@ -281,7 +281,7 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "contract_output_mismatch"
     /** The composed script does not run a confirm popup's action under the session's action id. */
     | "confirm_action_unmatched"
-    /** No act step recorded a confirmation or sent a non-read request. */
+    /** The session did not demonstrate the requested write. */
     | "write_not_submitted"
     /** Authored source holds a literal session token from the token view; recoverable. */
     | "session_token_literal"
@@ -1156,6 +1156,11 @@ export interface MintHarnessSnapshot {
   };
   /** When the current run of review outages began, in epoch milliseconds. */
   readonly reviewOutageStartedAt?: number;
+  /**
+   * The current review outage is a blocked explanation's, which `report_blocked` resubmits.
+   * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
+   */
+  readonly blockedReviewUnavailable?: true;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1163,7 +1168,12 @@ export interface MintHarnessSnapshot {
   readonly providerUnavailableRetries: number;
   /** When the current run of execution-provider outages began, in epoch milliseconds. */
   readonly providerOutageStartedAt?: number;
-  readonly diagnosticRetentionRetries: number;
+  /**
+   * Deprecated: nothing reads it. The harness always writes 0 only so an older worker, whose
+   * schema requires it, can restore a newer checkpoint across a release. Remove it once no older
+   * release runs.
+   */
+  readonly diagnosticRetentionRetries?: number;
   readonly executionClosed: boolean;
   readonly captchaChecks: number;
   /**
@@ -1283,13 +1293,15 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     update: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,
   inputFeedbackCoverage: Schema.String,
   providerUnavailableRetries: Schema.NonNegativeInt,
   providerOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
-  diagnosticRetentionRetries: Schema.NonNegativeInt,
+  // Deprecated, written as 0 for older workers and ignored on read; see the interface.
+  diagnosticRetentionRetries: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   executionClosed: Schema.Boolean,
   captchaChecks: Schema.NonNegativeInt,
   taskState: Schema.optionalWith(TaskStateSchema, { exact: true }),
@@ -1310,6 +1322,68 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     { exact: true },
   ),
 });
+
+/**
+ * How the minter can go on after a publication decision:
+ * - `none`: it published.
+ * - `retry`: a publication dependency stayed unavailable; call `finish_build` again.
+ * - `correct_source`: fix the source, contract or metadata, then call again without running the
+ *   write or example again.
+ * - `new_observation`: run a read or a live test first, never a completed write again.
+ * - `guardian_feedback`: act on Guardian's rationale and findings.
+ * - `write_completion`: the requested write was not demonstrated; continue the remaining
+ *   authorized work or ask about revising incompatible inputs.
+ * - `ended`: the decision ended the build.
+ */
+export type PublicationRecovery =
+  | "none"
+  | "retry"
+  | "correct_source"
+  | "new_observation"
+  | "guardian_feedback"
+  | "write_completion"
+  | "ended";
+
+/**
+ * One publication decision, a refusal or a publication, as typed host evidence. The harness
+ * writes it, never the agent, so a review reads what the host decided instead of the agent's
+ * account of it. Every field is finite host metadata: no source, output or rationale text.
+ */
+export interface PublicationDecision {
+  /** The harness's reference for this decision, unique in the build; tool results carry it. */
+  readonly decisionId: string;
+  readonly outcome: "published" | "refused";
+  /** `Published`, or the refusal's `MintFailure` code. */
+  readonly code: MintFailure["code"] | "Published";
+  /**
+   * The refusal's finite reason: a `MintFailure` reason such as `write_not_submitted`, Guardian's
+   * publication reason, or one of the harness's own, such as `missing_receipt`.
+   */
+  readonly reason?: string;
+  /** The retained execution the publication named, when the build holds it. */
+  readonly executionId?: string;
+  /** The Guardian publication review that decided it, when one did. */
+  readonly reviewId?: string;
+  /** When the harness decided, in epoch milliseconds. */
+  readonly decidedAt: number;
+  /**
+   * The finite checks that refused it: the reason, a registry issue, the publication gate's check,
+   * a route evidence gap and Guardian's finding categories. Empty for a publication.
+   */
+  readonly failedChecks: readonly string[];
+  readonly recovery: PublicationRecovery;
+}
+
+/**
+ * Where a host keeps publication decisions as indexed evidence. The harness records each decision
+ * as it makes it, and lists them for the reviews of a blocked explanation and of a question.
+ */
+export interface PublicationDecisionLog {
+  /** Keeps one decision, indexed by `decisionId`. A failure is a recorded gap; the build goes on. */
+  readonly record: (decision: PublicationDecision) => Effect.Effect<void, MintFailure>;
+  /** This build's decisions so far, oldest first, a takeover's predecessor's included. */
+  readonly list: Effect.Effect<readonly PublicationDecision[], MintFailure>;
+}
 
 export interface MintDependencies {
   readonly agentRecovery?: {
@@ -1388,6 +1462,11 @@ export interface MintDependencies {
       /** The agent's `report_blocked` explanation, reviewed before its caller reads it. */
       readonly blockedOutcome?: true;
       readonly requestId?: string;
+      /**
+       * The build's latest publication refusals, from `publicationDecisions`, so the review reads
+       * what the host refused instead of the agent's account of it. Absent when there are none.
+       */
+      readonly publicationDecisions?: readonly PublicationDecision[];
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
@@ -1558,6 +1637,8 @@ export interface MintDependencies {
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;
+  /** Host evidence of each publication decision; absent, reviews get none. */
+  readonly publicationDecisions?: PublicationDecisionLog;
 }
 
 /** What a browser recovery request did, as the agent reads it. */

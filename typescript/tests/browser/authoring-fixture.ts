@@ -9,7 +9,7 @@ import type {
   KernelOperation,
 } from "../../src/runtime/kernel-operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
-import { runKernelOperation } from "../support/kernel-run.js";
+import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 
 // The authoring examples, run through the runtime as the local runner wires a run, on the saved-DOM
 // stand-in for Kernel, which runs each call's code as Kernel does, with `page` in scope, here on a
@@ -42,7 +42,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
   const result = await Effect.runPromise(
     Effect.either(
       Effect.scoped(
-        runKernelOperation(operation, input, {
+        executeKernelOperation(operation, input, {
           kernel,
           sessionId: "session-1",
           ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),

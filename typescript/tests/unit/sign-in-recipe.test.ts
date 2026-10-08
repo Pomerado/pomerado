@@ -41,7 +41,37 @@ describe("decodeSignInRecipe", () => {
       },
     ],
     [
-      "version 3 with a private answer's question selector",
+      "version 1 with a private answer's question selector",
+      {
+        version: 1,
+        steps: [
+          ...steps,
+          {
+            page: "https://example.test/challenge",
+            fields: [
+              { selector: "#answer", slot: "private_answer", questionSelector: "#question" },
+            ],
+          },
+        ],
+        signedIn,
+      },
+    ],
+    [
+      "version 2 with a question selector on a secret field that is no private answer",
+      {
+        version: 2,
+        steps: [
+          {
+            page: "https://example.test/login",
+            fields: [{ selector: "#password", slot: "password", questionSelector: "#q" }],
+            popup: { opener: "primary", origin: "https://auth.example.test" },
+          },
+        ],
+        signedIn,
+      },
+    ],
+    [
+      "version 3, which this host wrote before it wrote question selectors in version 1 and 2",
       {
         version: 3,
         steps: [
@@ -70,21 +100,9 @@ describe("decodeSignInRecipe", () => {
     ["text that is no JSON", "{"],
     ["a recipe without steps", JSON.stringify({ version: 1, steps: [], signedIn })],
     ["a version that is no number", JSON.stringify({ version: "1", steps, signedIn })],
+    ["a version 3 recipe without steps", JSON.stringify({ version: 3, steps: [], signedIn })],
     [
-      "a question selector on a version 2 recipe",
-      JSON.stringify({
-        version: 2,
-        steps: [
-          {
-            page: "https://example.test/challenge",
-            fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#q" }],
-          },
-        ],
-        signedIn,
-      }),
-    ],
-    [
-      "a question selector on a field that is no private answer",
+      "a version 3 question selector on a field that is no private answer",
       JSON.stringify({
         version: 3,
         steps: [
@@ -153,7 +171,9 @@ describe("signInRecipe", () => {
     };
     expect(signInRecipe([recorded], signedIn).version).toBe(1);
     expect(signInRecipe([recorded, approval], signedIn).version).toBe(2);
-    expect(signInRecipe([recorded, answer], signedIn).version).toBe(3);
+    // A question selector rides in version 1 or 2, as other hosts write it; no version 3 is written.
+    expect(signInRecipe([recorded, answer], signedIn).version).toBe(1);
+    expect(signInRecipe([recorded, approval, answer], signedIn).version).toBe(2);
     // A private answer without a question selector needs nothing a version 1 worker lacks.
     expect(
       signInRecipe(

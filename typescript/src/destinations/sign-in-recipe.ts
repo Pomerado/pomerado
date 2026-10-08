@@ -1,15 +1,13 @@
 import { Deferred, Effect, Either, FiberId, Option, Schema } from "effect";
+import type { AutofillApproval, AutofillPopup, RejectedMarker } from "./autofill-contracts.js";
 import {
-  AutofillApproval,
-  AutofillPopup,
-  DateControl,
-  DateOfBirthFormat,
-  IdentifierKinds,
-  maximumStepFields,
-  RejectedMarker,
-  SecretSlots,
-  SignInMethodChoice,
-} from "./autofill-contracts.js";
+  autofillRecipe,
+  autofillRecipePath,
+  LegacyAutofillRecipe,
+  PopupAutofillRecipe,
+  publishedAutofillRecipe,
+  type AutofillRecipeStep,
+} from "./autofill-recipe.js";
 import type {
   AutofillField,
   AutofillInspection,
@@ -28,143 +26,46 @@ import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/aut
 import type { InputAsker } from "../runtime/input-request.js";
 import { sameSite } from "../runtime/same-site.js";
 
-/** The file a minted tool's sign-in recipe ships as, beside its source. */
-export const signInRecipePath = "auth-fill.json";
-
-const Selector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
 /**
- * A recorded field: an identifier field by every kind it accepts, which each run resolves against
- * its own login, or a secret field by its slot.
- */
-const RecipeField = Schema.Union(
-  Schema.Struct({
-    selector: Selector,
-    accepts: Schema.Array(IdentifierKinds).pipe(Schema.minItems(1), Schema.maxItems(4)),
-  }),
-  Schema.Struct({
-    selector: Selector,
-    slot: SecretSlots,
-    format: Schema.optional(DateOfBirthFormat),
-    control: Schema.optional(DateControl),
-  }),
-);
-
-/**
- * One recorded sign-in screen: the page it ran on (origin and path), the fields the host filled by
- * slot, and the control that submitted them, clicked by the host or, after a missed host click, by
- * the minter. A two-factor method choice records every method the screen offered, each with the
- * control that picks it, and its `submit` is the one the mint picked.
- */
-const RecipeStep = Schema.Struct({
-  rejectedMarkers: Schema.optional(
-    Schema.Array(RejectedMarker).pipe(Schema.maxItems(maximumStepFields)),
-  ),
-  page: Schema.String.pipe(Schema.maxLength(2_000)),
-  fields: Schema.Array(RecipeField).pipe(Schema.maxItems(maximumStepFields)),
-  submit: Schema.optional(Selector),
-  submittedBy: Schema.optional(Schema.Literal("host", "minter")),
-  methods: Schema.optional(
-    Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: Selector })).pipe(
-      Schema.minItems(1),
-      Schema.maxItems(8),
-    ),
-  ),
-});
-
-/**
- * A verified sign-in, value-free: selectors, slots, submits and pages, and the indicator the minter
- * found and the host checked. A run replays it with the host's own fill. `version` is what a run
- * checks before replaying: a host that does not know it refuses the recipe rather than dropping
- * step metadata or typing into a different page.
- */
-export const SignInRecipeV1 = Schema.Struct({
-  version: Schema.Literal(1),
-  steps: Schema.Array(RecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
-  /**
-   * The deterministic check that the sign-in worked: a marker on the page it lands on, or on the
-   * account page `openPath` the host opens first.
-   */
-  signedIn: Schema.Struct({
-    selector: Schema.optional(Selector),
-    urlPath: Schema.optional(Schema.String.pipe(Schema.maxLength(2_000))),
-    openPath: Schema.optional(Schema.String.pipe(Schema.maxLength(2_000))),
-  }),
-});
-const PopupRecipeStep = Schema.Struct({
-  ...RecipeStep.fields,
-  popup: Schema.optional(AutofillPopup),
-  approval: Schema.optional(AutofillApproval),
-});
-/** Version 2 keeps a host that does not know it from dropping popup metadata. */
-export const SignInRecipeV2 = Schema.Struct({
-  ...SignInRecipeV1.fields,
-  version: Schema.Literal(2),
-  steps: Schema.Array(PopupRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
-});
-const QuestionRecipeStep = Schema.Struct({
-  ...PopupRecipeStep.fields,
-  fields: Schema.Array(
-    Schema.Union(
-      RecipeField.members[0],
-      Schema.Struct({
-        ...RecipeField.members[1].fields,
-        questionSelector: Schema.optional(Selector),
-      }).pipe(
-        Schema.filter(
-          (field) => field.questionSelector === undefined || field.slot === "private_answer",
-          { message: () => "only a private answer names a question selector" },
-        ),
-      ),
-    ),
-  ).pipe(Schema.maxItems(maximumStepFields)),
-});
-/**
- * Version 3 adds a private answer's `questionSelector`, which a run reads again before it fills
- * the answer: a host that does not know it refuses the recipe rather than dropping that check.
+ * Version 3, which this host wrote for a private answer's question selector before it wrote that
+ * selector in version 1 or 2 as other hosts do. It is read as this host wrote it, so those tools
+ * still run, and never written.
  */
 export const SignInRecipeV3 = Schema.Struct({
-  ...SignInRecipeV1.fields,
+  ...PopupAutofillRecipe.fields,
   version: Schema.Literal(3),
-  steps: Schema.Array(QuestionRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
-});
-export const SignInRecipe = Schema.Union(SignInRecipeV1, SignInRecipeV2, SignInRecipeV3);
+}).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps.every((step) =>
+        step.fields.every((field) => !("questionSelector" in field) || field.slot === "private_answer"),
+      ),
+    { message: () => "only a private answer names a question selector" },
+  ),
+);
+/** A recipe this host reads: version 1 or 2 as every host writes it, or this host's version 3. */
+export const SignInRecipe = Schema.Union(LegacyAutofillRecipe, PopupAutofillRecipe, SignInRecipeV3);
 export type SignInRecipe = typeof SignInRecipe.Type;
-export type SignInRecipeStep = typeof QuestionRecipeStep.Type;
+export type SignInRecipeStep = AutofillRecipeStep;
 
 const knownVersions: readonly unknown[] = [1, 2, 3];
-/** Whether a recipe's steps name any question selector, which only version 3 holds. */
-const namesQuestion = (recipe: object) => {
-  const steps: unknown = Reflect.get(recipe, "steps");
-  return (
-    Array.isArray(steps) &&
-    steps.some((step: unknown) => {
-      const fields: unknown =
-        typeof step === "object" && step !== null ? Reflect.get(step, "fields") : undefined;
-      return (
-        Array.isArray(fields) &&
-        fields.some(
-          (field: unknown) =>
-            typeof field === "object" && field !== null && "questionSelector" in field,
-        )
-      );
-    })
-  );
-};
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. A version 1 or 2 recipe naming a question selector is invalid, since a
- * host reading it as that version would drop the question's check.
+ * not know, else `invalid`. Version 1 and 2 decode as every host reads them; version 3 is read
+ * only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
+  const shared = publishedAutofillRecipe(new Map([[autofillRecipePath, text]]));
+  if (shared !== undefined) return shared;
   const parsed = Schema.decodeUnknownEither(Schema.parseJson())(text);
   if (Either.isLeft(parsed) || typeof parsed.right !== "object" || parsed.right === null)
     return "invalid";
   const version: unknown = Reflect.get(parsed.right, "version");
   if (typeof version === "number" && !knownVersions.includes(version)) return "unknown_version";
-  if (version !== 3 && namesQuestion(parsed.right)) return "invalid";
+  if (version !== 3) return "invalid";
   return Option.getOrElse(
-    Schema.decodeUnknownOption(SignInRecipe)(parsed.right),
+    Schema.decodeUnknownOption(SignInRecipeV3)(parsed.right),
     () => "invalid" as const,
   );
 };
@@ -188,53 +89,18 @@ export interface RecordedSignInStep {
 }
 
 /**
- * A recorded screen as the recipe ships it: an identifier field by the kinds it accepts, never the
- * kind this login sent, which each run resolves against its own login. Only a private answer keeps
- * its question selector. Nothing else a host held of the screen ships.
- */
-export const recipeStep = (step: RecordedSignInStep): SignInRecipeStep => ({
-  page: step.page,
-  ...(step.approval === undefined ? {} : { approval: step.approval }),
-  ...(step.popup === undefined ? {} : { popup: step.popup }),
-  ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
-  fields: step.fields.map((field) =>
-    isSecret(field.slot)
-      ? {
-          selector: field.selector,
-          slot: field.slot,
-          ...(field.format === undefined ? {} : { format: field.format }),
-          ...(field.control === undefined ? {} : { control: field.control }),
-          ...(field.slot !== "private_answer" || field.questionSelector === undefined
-            ? {}
-            : { questionSelector: field.questionSelector }),
-        }
-      : { selector: field.selector, accepts: field.accepts ?? [field.slot] },
-  ),
-  ...(step.submit === undefined ? {} : { submit: step.submit }),
-  ...(step.submittedBy === undefined ? {} : { submittedBy: step.submittedBy }),
-  ...(step.methods === undefined ? {} : { methods: step.methods }),
-});
-
-/**
- * A verified sign-in's recipe in the lowest version that holds every step: version 3 only with a
- * question selector, else version 2 only with a popup or an approval, else version 1.
+ * A verified sign-in's recipe, as `autofillRecipe` writes it, with only the signed-in indicator's
+ * parts that are set.
  */
 export const signInRecipe = (
   steps: readonly RecordedSignInStep[],
   signedIn: AutofillSignedIn,
-): SignInRecipe => {
-  const shipped = steps.map(recipeStep);
-  const indicator = {
+): SignInRecipe =>
+  autofillRecipe(steps, {
     ...(signedIn.selector === undefined ? {} : { selector: signedIn.selector }),
     ...(signedIn.urlPath === undefined ? {} : { urlPath: signedIn.urlPath }),
     ...(signedIn.openPath === undefined ? {} : { openPath: signedIn.openPath }),
-  };
-  if (shipped.some((step) => step.fields.some((field) => "questionSelector" in field)))
-    return { version: 3, steps: shipped, signedIn: indicator };
-  if (shipped.some((step) => step.popup !== undefined || step.approval !== undefined))
-    return { version: 2, steps: shipped, signedIn: indicator };
-  return { version: 1, steps: shipped, signedIn: indicator };
-};
+  });
 
 /** A recipe screen in `recipeStep`'s key order, whatever order it was read in. */
 const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
