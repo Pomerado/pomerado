@@ -148,6 +148,10 @@
 - The shared skills give one rule for when to ask the caller, the one in `AGENTS.md`, and the forms and writes skills point to it and to the core skill's input schema rules instead of restating them. Tool descriptions briefly state their design decisions, limits and interpretations.
 - The minter's `execute` tool description and its credentials notice no longer mention Kernel Managed Auth, which no host offers.
 
+### Fixes
+
+- Guardian's source reads on the local host now find the SDK under `operation/`, where authored source imports it as `../../runtime/index.js` from `src/`. A read of `operation/runtime/index.js` or `operation/browser/form-controls.js` returns the trusted SDK file. It used to fail as unavailable. An authored file at the same path still comes first.
+
 ## 0.3.0
 
 This release lets the person answering a minting question use their own words on any choice, records each Guardian review attempt's timing, stops runs of a built integration from calling Guardian, and starts runs, live examples and a write session's first step from the site root. It changes answer and question shapes that 0.2.0 cannot read: upgrade every host that reads stored requests or answers before any that writes them.
