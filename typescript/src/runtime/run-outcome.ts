@@ -243,10 +243,15 @@ export const unconfirmedWrite = (view: RunEvidence) =>
   (unsettledEffect(view) || view.failure_reason === "worker_lost") &&
   (view.output === "valid" || view.output_drift === true);
 
-/** A run that did not end in a confirmed result: its code, write status and retry class. */
+/**
+ * A run that did not end in a confirmed result: its code, write status and retry class.
+ * `possibleCommit` follows the code and `writeStatus` follows the evidence, so they can differ:
+ * a code that carries no possible commit can still describe a write that `may_have_applied`.
+ * Either one means the website may have changed.
+ */
 export interface RunOutcome extends RunFailure {
   readonly writeStatus: WriteStatus | null;
-  /** True: a step may already have changed the website, so read it back before any retry. */
+  /** True: the code says a step may already have changed the website. */
   readonly possibleCommit: boolean;
   readonly retry: RunRetryClass;
 }

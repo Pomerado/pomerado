@@ -69,6 +69,17 @@ describe("a run that returned", () => {
     );
   });
 
+  // A served integration passes its tool's effect, and `pomerado run` passes none (above).
+  it("fails a write tool whose script declares no write and never calls verified()", () => {
+    expect(failureOf("write", returned({ effect: "possible", commits: [] })).outcome).toEqual({
+      code: "outcome_unknown",
+      details: {},
+      writeStatus: "may_have_applied",
+      possibleCommit: true,
+      retry: "never",
+    });
+  });
+
   it("fails a write that returned without its confirmation, keeping its output", () => {
     const failure = failureOf(
       undefined,
@@ -148,10 +159,40 @@ describe("a run that failed in its operation", () => {
       error: new LocalOperationFailure("Fixture failure", nothingSent),
       outcome: { code: "execution_failed", writeStatus: "not_attempted", possibleCommit: false },
     },
+    // A browser step already ran, so an unentered commit mark proves nothing sent only for a
+    // refusal, as the other host's job view also counts it.
     {
-      case: "a script error whose commit was never entered",
+      case: "a script error after a browser step, whose commit was never entered",
       error: new LocalOperationFailure("Fixture failure", commitNotEntered),
-      outcome: { code: "execution_failed", writeStatus: "not_attempted", possibleCommit: false },
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    {
+      case: "an expired deadline after a browser step, whose commit was never entered",
+      error: new LocalOperationFailure(
+        "Local operation deadline expired; execution was not replayed",
+        commitNotEntered,
+      ),
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    {
+      case: "an unanswered question after a browser step, whose commit was never entered",
+      error: new LocalOperationFailure("NoResponse", commitNotEntered, "NoResponse"),
+      outcome: {
+        code: "no_response",
+        details: { possible_commit: true },
+        writeStatus: "may_have_applied",
+        possibleCommit: true,
+      },
+    },
+    {
+      case: "invalid output after a browser step, whose commit was never entered",
+      error: new LocalOperationFailure("InvalidOutput", commitNotEntered, "InvalidOutput"),
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    {
+      case: "a sign-in failure raised during the operation",
+      error: new SignInRunFailed({ code: "CredentialsRejected", reason: "password" }),
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
     },
     {
       case: "an unanswered question before anything was dispatched",
@@ -210,6 +251,22 @@ describe("a run that failed in its operation", () => {
       possibleCommit: false,
     });
   });
+
+  it.each([
+    { declared: undefined, outcome: { code: "outcome_unknown", writeStatus: null, possibleCommit: true } },
+    {
+      declared: "read",
+      outcome: { code: "execution_failed", writeStatus: null, possibleCommit: false },
+    },
+  ] as const)(
+    "fails a $declared tool's sign-in failure during the operation closed",
+    ({ declared, outcome }) => {
+      expect(
+        fail(declared, new SignInRunFailed({ code: "RecipeFailed", reason: "submit_refused" }))
+          .outcome,
+      ).toMatchObject(outcome);
+    },
+  );
 
   it("fails closed when the tool's effect is unknown", () => {
     expect(

@@ -5,9 +5,11 @@
 ### Breaking changes
 
 - A run reports a write that returned without recording its declared confirmation as possibly applied, not as a success. A write declared `unverifiable` reports the same. This holds for `run`, `pomerado run` and a served integration MCP.
+  - A served write tool whose script declares no write and never calls `verified()` also fails as possibly applied. `pomerado run` is given no effect, so it still returns that script's output as a read.
   - `run` fails with the new `RunOutcomeFailure`. Its `outcome` has the code `outcome_unknown`, the write status `may_have_applied`, `possibleCommit: true` and the retry class `never`. Its `unconfirmed.output` keeps what the script returned.
   - Migrate by catching `RunOutcomeFailure` and reading the site back before any retry.
-- Every other run failure after sign-in also fails `run` with `RunOutcomeFailure`. Its `outcome` names a finite code, the write status, whether a step may have committed and a retry class. A sign-in failure still fails with `SignInRunFailed`.
+- Every other run failure that is not a sign-in failure also fails `run` with `RunOutcomeFailure`, including a failure before sign-in, such as the site check, the URL or the start page. Its `outcome` names a finite code, the write status, whether a step may have committed and a retry class. A sign-in failure still fails with `SignInRunFailed`.
+  - A write's declared commit steps that were never entered show that nothing was applied only when the site refused the input or the login. Any other failure after a browser step ran may have changed the website.
   - Migrate by reading `outcome.code` in place of the operation's own error.
 - A served run's failed job carries `code`, `write_status`, `possible_commit` and `retry`. Its `error` is one sentence for its code, and only a possible commit tells the caller to read the site back before any retry. The sentence that a dispatched action may have taken effect no longer follows every run failure.
   - Migrate by reading `possible_commit` and `retry` in place of parsing `error`.
@@ -16,8 +18,7 @@
 ### Other changes
 
 - `pomerado/core/runtime/run-outcome` holds the run outcome classifier other hosts share. It exports `classifyRun`, `runError`, `writeStatusOf`, `possibleCommit`, the commit evidence and confirmation checks, `runOutcomeCodes`, `runOutcomeRetry` and the `FailureRenderer` hook.
-- `pomerado/core/runtime/failure-renderer-contract` exports `failureRendererIssues`. It checks that a host's renderer words every code with its own text and retry class, and that every possible commit carries the host's read-back advice.
-
+- `pomerado/core/runtime/failure-renderer-contract` exports `failureRendererIssues`. It checks that a host's renderer words every code with its own text and retry class, and that every possible commit, and every write that may have applied, carries the host's read-back advice.
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.
 - When a supplied value is incompatible with what the site offers, such as an unavailable option, date or quantity, the minter asks the owner with `request_input` whether to revise it or stop. The question names the value and offers what the site has, and the minter never substitutes another value on its own. Work the request already covers proceeds without a question. Before calling a value unavailable, the minter checks where the site would show it for the requested scope; settled evidence for the requested option is enough.

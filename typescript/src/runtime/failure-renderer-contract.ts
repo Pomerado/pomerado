@@ -66,8 +66,8 @@ const bare = (text: string) => /^\s*(?:operation\s+)?(?:failed|succeeded)\W*$/iu
  * Every way `renderer` breaks the contract; empty when it holds. It must word exactly the
  * classifier's codes, with non-empty text of its own for each code, keep each outcome's retry
  * class, never answer a bare "failed" or "succeeded", and tell every outcome whose step may have
- * committed to read the website back before any retry. A code added to the classifier fails
- * every renderer until it is worded.
+ * committed, or whose write may have applied, to read the website back before any retry. A code
+ * added to the classifier fails every renderer until it is worded.
  */
 export const failureRendererIssues = (renderer: FailureRenderer): readonly string[] => {
   const issues: string[] = [];
@@ -94,7 +94,8 @@ export const failureRendererIssues = (renderer: FailureRenderer): readonly strin
     if (rendered.retry !== outcome.retry)
       issues.push(`${label}: retry ${rendered.retry}, expected ${outcome.retry}`);
     const text = `${rendered.message} ${rendered.remediation}`;
-    if (outcome.possibleCommit && !advises(renderer.readBackAdvice, text))
+    const mayHaveChanged = outcome.possibleCommit || outcome.writeStatus === "may_have_applied";
+    if (mayHaveChanged && !advises(renderer.readBackAdvice, text))
       issues.push(`${label}: no read-back advice`);
     const other = texts.get(text);
     if (other !== undefined && other !== outcome.code)

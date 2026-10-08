@@ -30,6 +30,20 @@ describe("the local failure renderer", () => {
         /read the site back before any retry/iu,
       );
   });
+
+  // `possibleCommit` follows the code and `writeStatus` the evidence, so a code that carries no
+  // possible commit can still describe a write that may have applied.
+  it("tells every write that may have applied to read the site back, whatever its code", () => {
+    const mayHaveApplied = classifiedOutcomes().filter(
+      (outcome) => outcome.writeStatus === "may_have_applied",
+    );
+    expect(mayHaveApplied.some((outcome) => !outcome.possibleCommit)).toBe(true);
+    for (const outcome of mayHaveApplied) {
+      const { message, remediation } = localFailureRenderer.render(outcome);
+      expect(remediation).toMatch(/read the site back before any retry/iu);
+      expect(`${message} ${remediation}`).not.toMatch(/nothing changed/iu);
+    }
+  });
 });
 
 /** A renderer that words every code with the advice and the code's own retry class. */
@@ -87,6 +101,20 @@ describe("the renderer contract", () => {
         remediation: "Run it again.",
       })),
     ).toContainEqual(expect.stringContaining("no read-back advice"));
+  });
+
+  it("fails a write that may have applied without the read-back advice", () => {
+    expect(
+      breaking((outcome: RunOutcome) =>
+        outcome.possibleCommit
+          ? wellFormed.render(outcome)
+          : { ...wellFormed.render(outcome), remediation: "Run it again." },
+      ),
+    ).toContainEqual(
+      expect.stringMatching(
+        /^\w+ \(possible_commit false, write_status may_have_applied\): no read-back advice$/u,
+      ),
+    );
   });
 
   it("fails a retry class the wording does not keep", () => {

@@ -15,10 +15,11 @@ const readBackAdvice = "read the site back before any retry";
 
 /**
  * What the outcome means for the website, then `step`: the next step when nothing changed or
- * after a read-back, or `confirmed` when the website confirmed the action.
+ * after a read-back, or `confirmed` when the website confirmed the action. A write that may have
+ * applied needs the read-back even when its code carries no possible commit.
  */
 const then = (outcome: RunOutcome, step: string, confirmed = "") => {
-  if (outcome.possibleCommit)
+  if (outcome.possibleCommit || outcome.writeStatus === "may_have_applied")
     return `A step may already have changed the website, so ${readBackAdvice}. Then ${step.charAt(0).toLowerCase()}${step.slice(1)}`;
   if (outcome.writeStatus === "applied")
     return `The website confirmed the action, so running the tool again would repeat it.${confirmed === "" ? "" : ` ${confirmed}`}`;

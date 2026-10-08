@@ -96,9 +96,10 @@ const operationReasons: Readonly<Record<string, string>> = {
 };
 
 /**
- * What a failed operation's journal shows. Only declared commit marks that were never entered
- * prove a write sent nothing: a refusal then changed nothing, and any other failure left the
- * write unattempted. A failure with no journal may have dispatched anything.
+ * What a failed operation's journal shows. A browser step that ran may have changed the website
+ * before any declared commit, so declared commit marks that were never entered prove nothing was
+ * applied only when the site refused the input or the login. A failure with no journal may have
+ * dispatched anything.
  */
 const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidence => {
   if (!(error instanceof LocalOperationFailure))
@@ -115,10 +116,8 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
   const effect =
     tool === "read" || journal.effect === "not_sent"
       ? "not_started"
-      : commitReportOf(journal).evidence === "not_entered"
-        ? refused
-          ? "rejected"
-          : "not_started"
+      : refused && commitReportOf(journal).evidence === "not_entered"
+        ? "rejected"
         : journalEffect(journal, tool === undefined ? undefined : { effect: tool });
   return {
     status: "completed",
