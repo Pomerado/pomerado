@@ -13,6 +13,7 @@ import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
+import { actionFor, quietReviewer } from "./guardian-context-fixture.js";
 
 // Where each live step of a local build starts: its page, tabs, cookies and storage. A local
 // fixture site records what every probe saw, and scripted models drive the build.
@@ -70,7 +71,11 @@ const guardian = () => {
       return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture" }))];
     if (sourcePending) {
       sourcePending = false;
-      return [message(JSON.stringify({ outcome: "allow", rationale: "Fixture review" }))];
+      return [
+        message(
+          JSON.stringify({ outcome: "allow", rationale: "Fixture review", ...actionFor(current) }),
+        ),
+      ];
     }
     sourcePending = true;
     const pending = objects(current).find((item) => typeof item["entrypoint"] === "string");
@@ -361,6 +366,7 @@ const build = (
           browser: { endpoint: site.endpoint },
           minterProvider: provider((model, index) => steps[index]?.(model) ?? [message("Done.")]),
           guardianProvider: guardian(),
+          outcomeReviewerProvider: quietReviewer,
           ask: makeInputAsker((asked) =>
             Effect.succeed(
               Object.fromEntries(

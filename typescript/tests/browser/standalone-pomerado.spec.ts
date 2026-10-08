@@ -28,6 +28,7 @@ import { pageControlsLimit, pageControlTextLimit } from "../../src/destinations/
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { writeArtifact } from "../../src/standalone/artifact-files.js";
 import {
+  actionFor,
   call as fixtureCall,
   currentOf,
   execution as fixtureExecution,
@@ -36,6 +37,7 @@ import {
   html,
   patch as patchFiles,
   probe,
+  quietReviewer,
   recordingGuardian,
   startSite,
 } from "./guardian-context-fixture.js";
@@ -119,6 +121,7 @@ const guardian = (
           JSON.stringify({
             outcome: reviewedNative(request) ? decided : "deny",
             rationale: "Recorded fixture review",
+            ...actionFor(current),
           }),
         ),
       ];
@@ -304,6 +307,7 @@ for (const [authentication, submitAfterInput] of [
               ...(remote === undefined ? {} : { browser: { endpoint: remote.wsEndpoint() } }),
               minterProvider: minter(mintRequests, authentication),
               guardianProvider: guardian(reviewRequests),
+              outcomeReviewerProvider: quietReviewer,
               ask: makeInputAsker((request) =>
                 Effect.sleep(authentication ? 0 : 11_000).pipe(
                   Effect.zipRight(
@@ -416,6 +420,7 @@ test("a run makes no Guardian or model call and returns the operation's output",
             ask: makeInputAsker(() => Effect.succeed({})),
             minterProvider: unreachableModel(calls, "minter"),
             guardianProvider: unreachableModel(calls, "guardian"),
+            outcomeReviewerProvider: quietReviewer,
             timeoutMs: 10_000,
           });
           return yield* service.run(
@@ -645,6 +650,7 @@ async ({kernel,sessionId,enteringCommit,verified}) => {
           const service = yield* createPomerado({
             minterProvider: model,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker(() => Effect.succeed({})),
           });
           const built = yield* service.mint({
@@ -807,6 +813,7 @@ async ({kernel,sessionId,input,ask,enteringCommit,verified}) => {
           const service = yield* createPomerado({
             minterProvider: model,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.sync(() => {
                 asked.push(request);
@@ -883,14 +890,16 @@ const receipt=objects(request.input).filter(item=>typeof item.executionId==='str
 if(!receipt)throw new Error('Missing actual execution receipt');
 return response([{type:'function_call',name:'finish_build',callId:'finish',status:'completed',arguments:JSON.stringify({intent:'Return the actual integration',entrypoint:'src/tool.mjs',executionId:receipt.executionId,metadata:{name:'read_fixture',description:'Read local fixture'},coverage:'Actual native example'})}]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
+const action=(current)=>{if(current?.trusted_review?.kind!=='execution')return {};const purpose=current.trusted_execution_context?.currentExecution?.purpose;return {action:purpose==='act'?'write':purpose==='authenticate'?'authentication':'read'};};
+const outcomeReviewerProvider={getModel:()=>({getResponse:async()=>response([{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:'No assessment yet.'}]}]),getStreamedResponse:()=>{throw new Error('Unused stream');}})};
 const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 appendFileSync(${JSON.stringify(ledger)},'guardian\\n');
 const current=objects(request.input).filter(item=>'submitted_call'in item).at(-1);
 if(current&&'question_review'in current)return response([message({outcome:'allow_business',rationale:'Caller answers a fixture question'})]);
-if(sourcePending){sourcePending=false;return response([message({outcome:${JSON.stringify(options.deny ? "deny" : "allow")},rationale:'Original Guardian fixture review'})]);}
+if(sourcePending){sourcePending=false;return response([message({outcome:${JSON.stringify(options.deny ? "deny" : "allow")},rationale:'Original Guardian fixture review',...action(current)})]);}
 sourcePending=true;return response([{type:'function_call',name:'read_source',callId:'source_'+index,status:'completed',arguments:JSON.stringify({path:objects(current).find(item=>typeof item.entrypoint==='string').entrypoint,offset:0})}]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
-export const startMcpCli=(args)=>start(args,{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,timeoutMs:${options.timeoutMs ?? 30_000},browser:${JSON.stringify(options.endpoint === undefined ? {} : { endpoint: options.endpoint })}});
+export const startMcpCli=(args)=>start(args,{policy:'Synthetic fixture policy {{ tenant_policy_config }}',minterProvider,guardianProvider,outcomeReviewerProvider,timeoutMs:${options.timeoutMs ?? 30_000},browser:${JSON.stringify(options.endpoint === undefined ? {} : { endpoint: options.endpoint })}});
 if(process.argv[2]==='mint'||process.argv[2]==='serve')startMcpCli(process.argv.slice(2));
 `,
   );
@@ -1754,6 +1763,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
               rationale: allowed
                 ? "The owner named their tenant for this read"
                 : "The tenant was not named by the owner",
+              ...actionFor(current),
             }),
           ),
         ];
@@ -1791,6 +1801,7 @@ export default defineOperation({name:"tenant_title",input:Schema.Struct({}),outp
               browser: { endpoint: remote.wsEndpoint() },
               minterProvider: minter,
               guardianProvider: reviewer,
+              outcomeReviewerProvider: quietReviewer,
               ask: makeInputAsker(() => Effect.succeed({})),
               timeoutMs: 10_000,
             });
@@ -1848,6 +1859,7 @@ test("a local mint sends Guardian the native policy and the minter the rendered 
           const service = yield* createPomerado({
             minterProvider: minter(mintRequests),
             guardianProvider: guardian(reviewRequests),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(request.questions.map((question) => [question.id, "read"])),
@@ -2090,6 +2102,7 @@ async ({kernel,sessionId}) => {
             browser: { endpoint: remote.wsEndpoint() },
             minterProvider,
             guardianProvider,
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(
@@ -2235,6 +2248,7 @@ const twoScreenSignIn = async (options: {
             browser: { endpoint: remote.wsEndpoint() },
             minterProvider: minter,
             guardianProvider: guardian([]),
+            outcomeReviewerProvider: quietReviewer,
             ask: makeInputAsker((request) =>
               Effect.succeed(
                 Object.fromEntries(

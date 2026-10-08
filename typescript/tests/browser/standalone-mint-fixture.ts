@@ -1,4 +1,4 @@
-import type { ModelRequest, ModelResponse } from "@openai/agents";
+import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
@@ -10,6 +10,7 @@ import {
   html,
   message,
   probe,
+  quietReviewer,
   recordingGuardian,
   scripted,
   startSite,
@@ -27,6 +28,8 @@ export const mint = async (options: {
   readonly url: string;
   readonly turns: readonly Turn[];
   readonly guardian: ReturnType<typeof recordingGuardian>;
+  /** The outcome reviewer; by default one that never assesses. */
+  readonly reviewer?: ModelProvider;
   readonly answer?: (request: InputRequest) => Record<string, unknown>;
   readonly input?: Readonly<Record<string, unknown>>;
   readonly intent?: string;
@@ -43,6 +46,7 @@ export const mint = async (options: {
         const service = yield* createPomerado({
           minterProvider: minter,
           guardianProvider: options.guardian.provider,
+          outcomeReviewerProvider: options.reviewer ?? quietReviewer,
           ask: makeInputAsker((request) =>
             Effect.sync(() => {
               asked.push(request);

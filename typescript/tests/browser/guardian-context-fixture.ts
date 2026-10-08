@@ -123,7 +123,8 @@ export const authorityOf = (review: RecordedReview) =>
  * A scripted Guardian that records each review's input. An execution review reads its entrypoint
  * (and the whole current page's capture when `readPage` is set) before deciding; a publication
  * review reads the first chunk of every file it indexes; a question is allowed. `decide` returns
- * an outcome, or a publication review's whole decision.
+ * an outcome, or a review's whole decision. An outcome alone gets the execution action its step's
+ * purpose implies.
  * `fail` makes a call throw, as a provider outage would.
  */
 export const recordingGuardian = (
@@ -197,7 +198,11 @@ export const recordingGuardian = (
       message(
         JSON.stringify(
           typeof decided === "string"
-            ? { outcome: decided, rationale: "Recorded fixture review" }
+            ? {
+                outcome: decided,
+                rationale: "Recorded fixture review",
+                ...actionFor(review.input),
+              }
             : decided,
         ),
       ),
@@ -205,6 +210,27 @@ export const recordingGuardian = (
   });
   return { provider, reviews, calls: () => calls };
 };
+
+/**
+ * The action label a fixture execution review gives a step by its purpose, as fields to spread
+ * into its decision; other kinds of review get none.
+ */
+export const actionFor = (input: Readonly<Record<string, unknown>> | undefined) => {
+  const review = input?.["trusted_review"] as Readonly<Record<string, unknown>> | undefined;
+  if (review?.["kind"] !== "execution") return {};
+  const context = input?.["trusted_execution_context"] as
+    | Readonly<Record<string, unknown>>
+    | undefined;
+  const purpose = (context?.["currentExecution"] as Readonly<Record<string, unknown>> | undefined)?.[
+    "purpose"
+  ];
+  return {
+    action: purpose === "act" ? "write" : purpose === "authenticate" ? "authentication" : "read",
+  };
+};
+
+/** An outcome reviewer that ends every turn without assessing. */
+export const quietReviewer: ModelProvider = scripted(() => [message("No assessment yet.")]);
 
 /** A local site; `handle` answers each request, and every request line is logged. */
 export const startSite = async (

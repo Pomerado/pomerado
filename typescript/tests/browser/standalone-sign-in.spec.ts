@@ -11,7 +11,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
-import { recordingGuardian } from "./guardian-context-fixture.js";
+import { actionFor, quietReviewer, recordingGuardian } from "./guardian-context-fixture.js";
 import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in, on the shop's one-screen and two-screen sign-ins: what the host
@@ -76,7 +76,11 @@ const guardian = () => {
       return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture" }))];
     if (sourcePending) {
       sourcePending = false;
-      return [message(JSON.stringify({ outcome: "allow", rationale: "Fixture review" }))];
+      return [
+        message(
+          JSON.stringify({ outcome: "allow", rationale: "Fixture review", ...actionFor(current) }),
+        ),
+      ];
     }
     sourcePending = true;
     const pending = objects(current).find((item) => typeof item["entrypoint"] === "string");
@@ -248,6 +252,7 @@ test("a local build asks for its login once and publishes its sign-in without a 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -612,6 +617,7 @@ test("a login URL that holds the login's email is refused at publication, naming
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -678,6 +684,7 @@ test("a second sign-in screen whose form posts to a URL holding the password is 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -748,6 +755,7 @@ test("a later build in the same session refuses a password screen before its own
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: guardian(),
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -810,6 +818,7 @@ test("a password screen that shows the typed email signs in, and Guardian reads 
             browser: { endpoint },
             minterProvider: minter,
             guardianProvider: reviewer.provider,
+            outcomeReviewerProvider: quietReviewer,
             ask: answers(asked),
             timeoutMs: 30_000,
           });
@@ -942,6 +951,7 @@ const markerSession = async (
           browser: { endpoint },
           minterProvider: minter,
           guardianProvider: guardian(),
+          outcomeReviewerProvider: quietReviewer,
           ask: answers([]),
           timeoutMs: 45_000,
         });
