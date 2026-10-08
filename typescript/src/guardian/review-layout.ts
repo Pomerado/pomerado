@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { AgentOutputType } from "@openai/agents";
 import { Effect } from "effect";
 import {
+  guardianActions,
   publicationFindingCategories,
   publicationReasons,
   routePointerParts,
@@ -47,7 +48,7 @@ const reviewOutcomes = {
 
 /** The decision fields besides outcome and rationale that each kind uses. */
 const reviewFields: Record<ReviewKind, readonly string[]> = {
-  execution: [],
+  execution: ["action"],
   recovery: [],
   question: [],
   publication: ["reason", "findings"],
@@ -75,6 +76,8 @@ export const guardianDecisionFormat: AgentOutputType = {
       },
       // A host-defined kind's finite code, one its policy lists; the host checks it.
       label: { anyOf: [{ type: "null" }, { type: "string" }] },
+      // An execution review's label of what the code does on the website.
+      action: { anyOf: [{ type: "null" }, { type: "string", enum: [...guardianActions] }] },
       findings: {
         anyOf: [
           { type: "null" },
@@ -116,7 +119,7 @@ export const guardianDecisionFormat: AgentOutputType = {
         ],
       },
     },
-    required: ["outcome", "rationale", "reason", "findings", "label"],
+    required: ["outcome", "rationale", "reason", "findings", "label", "action"],
     additionalProperties: false,
   },
 };

@@ -221,6 +221,11 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           allowedOrigins: [url.origin, ...(request.authenticationOrigins ?? [])],
           allowedEffects:
             step.currentExecution === undefined ? [] : allowedEffectsFor(step.currentExecution),
+          // Only a write build's write session may change the site.
+          writeAuthority:
+            buildEffect === "write" &&
+            step.currentExecution?.purpose === "act" &&
+            step.currentExecution.target === "liveBrowser",
           answeredQuestions: [...answeredQuestions.values()],
           ...stepResults.forReview(step.currentExecution),
           mintContext,

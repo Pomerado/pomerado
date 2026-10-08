@@ -171,8 +171,8 @@ it("compacts a long history while the minter waits on an execution, without bloc
         : call("finish_build", finish, 30_000);
     },
     {
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.promise(async () => {
               order.push("execution_started");
@@ -230,8 +230,8 @@ it("sends the next turn uncompacted while a compaction is still running, then ap
           : call("finish_build", finish, 40_000);
     },
     {
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.promise(async () => {
               executions++;

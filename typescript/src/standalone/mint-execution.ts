@@ -6,7 +6,9 @@ import {
   type LocalOperationJournal,
   type LocalOperationOutput,
 } from "../execution/local-operation.js";
+import type { GuardianAction } from "../guardian/review-contracts.js";
 import {
+  type AllowedExecution,
   type MintDependencies,
   type ExecutionEvidence,
   type ExecutionRequest,
@@ -25,6 +27,14 @@ import type { MintState } from "./mint-state.js";
 import { error, mintError } from "./errors.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
+/** The allow a dispatch fence follows: the review and Guardian's action label. */
+const allowedOf = (reviewed: {
+  readonly reviewId: string;
+  readonly decision: { readonly action?: GuardianAction | undefined };
+}): AllowedExecution | undefined =>
+  reviewed.decision.action === undefined
+    ? undefined
+    : { reviewId: reviewed.reviewId, action: reviewed.decision.action };
 const executeCommand = (
   state: MintState,
   execution: Extract<Execution, { purpose: "command" }>,
@@ -39,7 +49,7 @@ const executeCommand = (
       (yield* workspace.snapshot).map(([path, text]) => [`operation/${path}`, text]),
     );
     sources.set("operation/command.sh", execution.command);
-    yield* context.review(
+    const reviewed = yield* context.review(
       {
         entrypoint: "operation/command.sh",
         sources,
@@ -57,7 +67,7 @@ const executeCommand = (
       },
       "not_sent",
     );
-    yield* beforeDispatch ?? Effect.void;
+    yield* beforeDispatch?.(allowedOf(reviewed)) ?? Effect.void;
     const exec = workspace.session.exec?.bind(workspace.session);
     if (exec === undefined)
       return yield* Effect.fail(new Error("Workspace command execution unavailable"));
@@ -99,7 +109,8 @@ const executeAuthentication = (
     const step = yield* recorder.step(
       signIn,
       loginUrl,
-      Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
+      // The host fills the sign-in itself, after its own review of each screen.
+      Effect.zipRight(markers.beforeTyping, beforeDispatch?.(undefined) ?? Effect.void),
     );
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
@@ -345,7 +356,7 @@ const authoredExecution = (
       codes.length === 0
         ? undefined
         : browser.watchTyping(codes, (url) => trustedUrl(context.siteOrigin, signInOrigins, url));
-    yield* beforeDispatch ?? Effect.void;
+    yield* beforeDispatch?.(allowedOf(reviewed)) ?? Effect.void;
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.

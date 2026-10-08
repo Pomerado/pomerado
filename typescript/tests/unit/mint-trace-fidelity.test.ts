@@ -81,7 +81,7 @@ const recorded = () => {
       emitted.push({ name, details });
     });
   const reviewAndExecute: MintDependencies["reviewAndExecute"] = (input, beforeDispatch) =>
-    (beforeDispatch ?? Effect.void).pipe(
+    (beforeDispatch?.(undefined) ?? Effect.void).pipe(
       Effect.zipRight(
         Effect.sync(() => {
           executed.push(input);

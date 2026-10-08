@@ -68,7 +68,12 @@ import type {
   MintCompletion,
   MintReviewFeedback,
 } from "./input-feedback.js";
-import { PublicationFinding, PublicationReason } from "../guardian/review-contracts.js";
+import {
+  GuardianAction,
+  PublicationFinding,
+  PublicationReason,
+} from "../guardian/review-contracts.js";
+import type { OutcomeReviewHost, WriteOutcome } from "./outcome-review-contracts.js";
 import { CaptureScreeningDiagnostic } from "../runtime/capture-diagnostic.js";
 import type {
   diagnosticRetentionReason,
@@ -572,6 +577,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
       reviewId: Schema.String,
       outcome: Schema.Literal("allow", "deny", "escalate"),
       rationale: Schema.String,
+      action: Schema.optionalWith(GuardianAction, { exact: true }),
     }),
     { exact: true },
   ),
@@ -790,6 +796,11 @@ export type MintOutcome = {
   readonly example?: ExecutionEvidence;
   readonly currentInvocation?: CurrentInvocation;
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * Every execution Guardian labelled `write`, with the outcome reviewer's newest assessment.
+   * A write the reviewer never settled is `may_have_applied`; publication never waited for it.
+   */
+  readonly writes?: readonly WriteOutcome[];
   readonly summary: string;
   readonly diagnostics: readonly string[];
 };
@@ -893,6 +904,12 @@ export interface HostToolDescriptions {
 
 export interface MintTurn {
   readonly recovery?: MintAgentRecovery;
+  /**
+   * Receives a reader of the model's full in-memory history, oldest first: every item the run
+   * holds, the turns a compaction replaced in the request included. The outcome reviewer's history
+   * tools read it. The model registers it once, before its first request.
+   */
+  readonly history?: (read: () => readonly AgentInputItem[]) => void;
   /** Attempt-scoped bridge for SDK Promise callbacks; closes and joins before returning an outcome. */
   readonly runTool: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   readonly input: string;
@@ -1341,7 +1358,10 @@ export interface MintDependencies {
   >;
   /** Each call MUST perform fresh Guardian review, await beforeDispatch after approval,
    * and only then allocate execution resources/import authored code. Never swallow a
-   * failed dispatch fence or invoke it before the initial review succeeds. */
+   * failed dispatch fence or invoke it before the initial review succeeds. Pass the fence the
+   * allow it follows, with Guardian's action label; pass undefined only for a step no Guardian
+   * execution review allowed, such as a sign-in the host performs itself. A successful result
+   * carries the same allow, label included, as `review`. */
   readonly reviewAndExecute: (
     request:
       | ExecutionRequest
@@ -1350,7 +1370,7 @@ export interface MintDependencies {
           readonly target: "pureFiles";
           readonly command: string;
         },
-    beforeDispatch?: Effect.Effect<void, MintFailure>,
+    beforeDispatch?: (allowed: AllowedExecution | undefined) => Effect.Effect<void, MintFailure>,
     exampleJournal?: ExampleJournal,
   ) => Effect.Effect<ExecutionEvidence, MintFailure>;
   /** Persist before example/residual dispatch. Host binds input/account/authority, never tool args. */
@@ -1363,6 +1383,17 @@ export interface MintDependencies {
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;
+  /**
+   * The outcome reviewer's model, persistence and journal. Absent, writes are never assessed:
+   * each stays unresolved, is never repeated and is reported `may_have_applied`.
+   */
+  readonly outcomeReview?: OutcomeReviewHost;
+}
+
+/** The Guardian allow a dispatch fence follows: its review and Guardian's action label. */
+export interface AllowedExecution {
+  readonly reviewId: string;
+  readonly action: GuardianAction;
 }
 
 /** What a browser recovery request did, as the agent reads it. */

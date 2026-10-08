@@ -130,13 +130,13 @@ const passwordScreen = (refusals: readonly ScreenRefusal[]) => {
   return {
     executions: () => executions,
     bindingKeys,
-    reviewAndExecute: ((execution, beforeDispatch = Effect.void) =>
+    reviewAndExecute: ((execution, beforeDispatch = () => Effect.void) =>
       Effect.gen(function* () {
         executions++;
         const signIn = "signInStep" in execution ? execution.signInStep : undefined;
         if (signIn === undefined || !("fields" in signIn))
           return yield* Effect.die("The test signs in by autofill only");
-        const step = yield* recorder.step(signIn, undefined, beforeDispatch);
+        const step = yield* recorder.step(signIn, undefined, beforeDispatch(undefined));
         return {
           executionId: `sign_in_${executions}`,
           status: "completed" as const,
@@ -335,8 +335,8 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
     {
       autofillSignIn: true,
       executionAvailability: () => "open",
-      reviewAndExecute: (_execution, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_execution, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.suspend(() => {
               executions++;

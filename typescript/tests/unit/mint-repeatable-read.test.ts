@@ -60,8 +60,8 @@ const countingHost = () => {
     claimExample: Effect.sync(() => {
       counts.claims++;
     }),
-    reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-      beforeDispatch.pipe(
+    reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+      beforeDispatch(undefined).pipe(
         Effect.zipRight(
           Effect.sync(() => {
             counts.executions++;

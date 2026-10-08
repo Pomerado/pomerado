@@ -266,8 +266,8 @@ it("continues once after a claimed example's diagnostic screening failure, then 
       claimExample: Effect.sync(() => {
         claims++;
       }),
-      reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               dispatches++;
@@ -1780,8 +1780,8 @@ it.each(["example", "command"] as const)(
           return yield* new MintFailure({ code: "Unavailable" });
         }),
       {
-        reviewAndExecute: (_input, dispatch = Effect.void) =>
-          dispatch.pipe(
+        reviewAndExecute: (_input, dispatch = () => Effect.void) =>
+          dispatch(undefined).pipe(
             Effect.zipRight(Effect.sync(() => started.resolve())),
             Effect.zipRight(Effect.never),
             Effect.ensuring(
@@ -1825,8 +1825,8 @@ it("parent cancellation waits for an independently invoked SDK execution tool to
         return yield* Effect.never;
       }),
     {
-      reviewAndExecute: (_input, dispatch = Effect.void) =>
-        dispatch.pipe(
+      reviewAndExecute: (_input, dispatch = () => Effect.void) =>
+        dispatch(undefined).pipe(
           Effect.zipRight(Effect.sync(() => started.resolve())),
           Effect.zipRight(Effect.never),
           Effect.ensuring(
@@ -3238,8 +3238,8 @@ it.each(["metadata_free", "host_poison"] as const)(
     const f = await fixture(() => Effect.void, {
       skills: [{ name: "core", description: "Synthetic SDK fixture", content: "Use execute." }],
       ...(kind === "host_poison" ? { executionAvailability: () => availability } : {}),
-      reviewAndExecute: (_request, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (_request, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               executions++;

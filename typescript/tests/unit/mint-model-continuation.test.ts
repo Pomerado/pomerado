@@ -281,9 +281,9 @@ it("ends the build as sign_in_unavailable when the site keeps no signed-in sessi
       ][index] ?? prose("The site does not keep its session."),
     {
       // The example completes; the live test finds the session gone for good.
-      reviewAndExecute: (_submitted, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
         executions++ === 0
-          ? beforeDispatch.pipe(
+          ? beforeDispatch(undefined).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -466,7 +466,7 @@ it("still publishes a retained receipt after sign-in becomes unavailable", async
         call("finish_build", publication),
       ][index] ?? prose(),
     {
-      reviewAndExecute: (submitted, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
         submitted.purpose === "authenticate"
           ? Effect.fail(
               new MintFailure({
@@ -475,7 +475,7 @@ it("still publishes a retained receipt after sign-in becomes unavailable", async
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch.pipe(
+          : beforeDispatch(undefined).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -514,7 +514,7 @@ it("ends a build holding a retained receipt as sign_in_unavailable at the first 
         ),
       ][index] ?? prose("I will not publish; the site cannot be signed in."),
     {
-      reviewAndExecute: (submitted, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
         submitted.purpose === "authenticate"
           ? Effect.fail(
               new MintFailure({
@@ -523,7 +523,7 @@ it("ends a build holding a retained receipt as sign_in_unavailable at the first 
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch.pipe(
+          : beforeDispatch(undefined).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -592,10 +592,10 @@ it("gives no sign-in-unavailable ending to a sign-in whose cleanup is unconfirme
         ),
       ][index] ?? prose(),
     {
-      reviewAndExecute: (submitted, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
         submitted.purpose === "authenticate"
           ? Effect.fail(new MintFailure({ code: "Unavailable", authentication }))
-          : beforeDispatch.pipe(
+          : beforeDispatch(undefined).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -636,7 +636,7 @@ const receiptThenSpentSignIn = (
       );
     },
     {
-      reviewAndExecute: (submitted, beforeDispatch = Effect.void) =>
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
         submitted.purpose === "authenticate"
           ? Effect.fail(
               new MintFailure({
@@ -649,7 +649,7 @@ const receiptThenSpentSignIn = (
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch.pipe(
+          : beforeDispatch(undefined).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -751,8 +751,8 @@ it("carries a live test's agent-chosen input through the actual SDK tool boundar
         call("execute", liveTest, "caller_input"),
       ][index] ?? prose(),
     {
-      reviewAndExecute: (input, beforeDispatch = Effect.void) =>
-        beforeDispatch.pipe(
+      reviewAndExecute: (input, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(undefined).pipe(
           Effect.zipRight(
             Effect.sync(() => ({
               executionId: `execution_${received.push(input)}`,
@@ -834,8 +834,8 @@ it.each([false, true])(
         ][index] ?? prose(),
       {
         repeatableRead,
-        reviewAndExecute: (_input, beforeDispatch = Effect.void) =>
-          beforeDispatch.pipe(
+        reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(undefined).pipe(
             Effect.zipRight(
               Effect.sync(() => {
                 executions++;

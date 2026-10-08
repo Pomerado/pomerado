@@ -1927,28 +1927,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       const reviewedExecution: typeof dependencies.reviewAndExecute = (
         submitted,
-        onDispatch = Effect.void,
+        onDispatch = () => Effect.void,
       ) =>
         dependencies
           .reviewAndExecute(
             submitted,
             submitted.purpose === "example" ||
               (submitted.purpose === "act" && writeSession === "none")
-              ? Effect.uninterruptible(
-                  dependencies.claimExample.pipe(
-                    Effect.tap(() =>
-                      Effect.sync(() => {
-                        exampleClaimed = true;
-                        if (submitted.purpose === "act") writeSession = "open";
-                      }),
+              ? (allowed) =>
+                  Effect.uninterruptible(
+                    dependencies.claimExample.pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          exampleClaimed = true;
+                          if (submitted.purpose === "act") writeSession = "open";
+                        }),
+                      ),
+                      Effect.zipRight(onDispatch(allowed)),
                     ),
-                    Effect.zipRight(onDispatch),
-                  ),
-                )
+                  )
               : submitted.purpose === "act"
                 ? // Later steps continue the session's started claim; the journal never claims again.
-                  Effect.uninterruptible(onDispatch)
-                : Effect.void,
+                  (allowed) => Effect.uninterruptible(onDispatch(allowed))
+                : onDispatch,
           )
           .pipe(
             // A refusal the host returned before any review or dispatch shows neither Guardian
@@ -2306,8 +2307,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 submitted.purpose === "act" ||
                 submitted.purpose === "residual";
               let crossedDispatchBoundary = false;
-              const evidence = yield* reviewedExecution(
-                submitted,
+              const evidence = yield* reviewedExecution(submitted, () =>
                 Effect.sync(() => {
                   crossedDispatchBoundary = true;
                 }),
