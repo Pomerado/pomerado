@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { Effect, Either } from "effect";
+import { Effect, Either, Scope } from "effect";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { siteDomain } from "../../src/runtime/same-site.js";
@@ -10,6 +10,43 @@ import type {
 } from "../../src/runtime/kernel-operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
+import type { FileChannel } from "../../src/runtime/files.js";
+import { makeRunFiles } from "../../src/runtime/file-transfer.js";
+import { makeLocalFileHook } from "../../src/execution/local-files.js";
+
+/**
+ * The local host's file service on a test page, placing only `references` and keeping downloads
+ * under `downloads`, until `scope` closes.
+ */
+export const localFiles = (
+  page: Page,
+  options: {
+    readonly siteOrigin: string;
+    readonly references: readonly string[];
+    readonly downloads: string;
+    readonly scope: Scope.Scope;
+  },
+) => {
+  const local = makeLocalKernel(page);
+  const execute = (code: string, timeoutSec?: number) =>
+    Effect.promise(() =>
+      local.browsers.playwright.execute("session-1", {
+        code,
+        ...(timeoutSec === undefined ? {} : { timeout_sec: timeoutSec }),
+      }),
+    );
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const hook = yield* makeLocalFileHook({ execute, downloads: options.downloads });
+      return yield* makeRunFiles({
+        hook,
+        execute,
+        siteOrigin: options.siteOrigin,
+        resolve: (reference) => (options.references.includes(reference) ? reference : undefined),
+      });
+    }).pipe(Scope.extend(options.scope)),
+  );
+};
 
 // The authoring examples, run through the runtime as the local runner wires a run, on the saved-DOM
 // stand-in for Kernel, which runs each call's code as Kernel does, with `page` in scope, here on a
@@ -23,6 +60,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
     readonly siteOrigin?: string;
     readonly deadlineMs?: number;
     readonly dialogs?: DialogDecider;
+    readonly files?: FileChannel;
   } = {},
 ) => {
   const calls: string[] = [];
@@ -48,6 +86,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
           ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
           ...(domain === undefined ? {} : { siteDomain: domain }),
           ...(options.dialogs === undefined ? {} : { dialogs: options.dialogs }),
+          ...(options.files === undefined ? {} : { files: options.files }),
         }).pipe(
           Effect.provideService(ExecutionContext, {
             deadline: Deadline.after(options.deadlineMs ?? 10_000),

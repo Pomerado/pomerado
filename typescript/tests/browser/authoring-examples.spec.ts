@@ -1,10 +1,18 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
-import { Effect, Either, Schema } from "effect";
+import { Effect, Either, Exit, Schema, Scope } from "effect";
 import authEntry from "../../authoring/examples/auth-entry.js";
 import chooseAirport from "../../authoring/examples/custom-selection.js";
 import setDeparture from "../../authoring/examples/dates-and-dropdowns.js";
-import attachDocument, { pickTravelDate } from "../../authoring/examples/dates-and-files.js";
+import attachDocument, {
+  downloadStatement,
+  pickTravelDate,
+} from "../../authoring/examples/dates-and-files.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import deleteInvoice from "../../authoring/examples/native-dialog.js";
 import readHeading from "../../authoring/examples/native-page.js";
@@ -15,7 +23,7 @@ import createTask from "../../authoring/examples/write-readback.js";
 import placeOrder, { fillStep, placeStep } from "../../authoring/examples/write-session.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 
-import { runExample, failure } from "./authoring-fixture.js";
+import { runExample, failure, localFiles } from "./authoring-fixture.js";
 
 const dialogPickerFixture = async (page: Page, mode: "success" | "ambiguous" | "no_commit") => {
   await page.setContent(
@@ -902,19 +910,87 @@ test("calendar example moves to the requested month and reads the committed date
   ).toMatchObject({ _tag: "OperationFailure", message: "day_ambiguous" });
 });
 
-test("upload example decodes base64 in the call and reads back the chosen file", async ({
+/** A synthetic documents site on its own origin, with a file input and a statement export. */
+const documentsSite = async (page: Page) => {
+  const origin = "https://documents.example.test";
+  await page.route(`${origin}/**`, (route) =>
+    new URL(route.request().url()).pathname === "/statement.csv"
+      ? route.fulfill({
+          contentType: "text/csv",
+          headers: { "Content-Disposition": 'attachment; filename="statement.csv"' },
+          body: "date,amount\n2026-01-02,12.50\n",
+        })
+      : route.fulfill({
+          contentType: "text/html",
+          body: '<label>Documents<input type="file" accept=".txt"></label><a href="/statement.csv">Download statement</a>',
+        }),
+  );
+  await page.goto(`${origin}/`);
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-example-files-"));
+  const scope = Effect.runSync(Scope.make());
+  return {
+    origin,
+    directory,
+    scope,
+    close: async () => {
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+};
+
+test("upload example has the host place the caller's file and reads back the choice", async ({
   page,
 }) => {
-  await page.setContent('<label>Documents<input type="file"></label>');
-  const contentBase64 = Buffer.from("synthetic report").toString("base64");
-  const input = { name: "report.txt", mime_type: "text/plain", content_base64: contentBase64 };
-  expect((await runExample(page, attachDocument, input)).result).toEqual(
-    Either.right({ name: "report.txt", size: 16 }),
-  );
-  expect(failure((await runExample(page, attachDocument, input)).result)).toMatchObject({
-    _tag: "OperationFailure",
-    message: "already_selected",
-  });
+  const site = await documentsSite(page);
+  try {
+    const path = join(site.directory, "report.txt");
+    await writeFile(path, "synthetic report");
+    const reference = pathToFileURL(path).href;
+    const files = await localFiles(page, {
+      siteOrigin: site.origin,
+      references: [reference],
+      downloads: join(site.directory, "downloads"),
+      scope: site.scope,
+    });
+    const input = { document: reference };
+    const placed = await runExample(page, attachDocument, input, { files });
+    expect(placed.result).toEqual(Either.right({ name: "report.txt", size: 16 }));
+    // No call's code carries the file's bytes.
+    expect(placed.calls.join("\n")).not.toContain("synthetic report");
+    expect(failure((await runExample(page, attachDocument, input, { files })).result)).toMatchObject({
+      _tag: "OperationFailure",
+      message: "already_selected",
+    });
+  } finally {
+    await site.close();
+  }
+});
+
+test("download example returns the statement as a file object the host keeps", async ({ page }) => {
+  const site = await documentsSite(page);
+  try {
+    const files = await localFiles(page, {
+      siteOrigin: site.origin,
+      references: [],
+      downloads: join(site.directory, "downloads"),
+      scope: site.scope,
+    });
+    const { result } = await runExample(page, downloadStatement, {}, { files });
+    const statement = "date,amount\n2026-01-02,12.50\n";
+    expect(Either.getOrUndefined(result), JSON.stringify(failure(result))).toMatchObject({
+      statement: {
+        $file: {
+          name: "statement.csv",
+          media_type: "text/csv",
+          size: statement.length,
+          sha256: createHash("sha256").update(statement).digest("hex"),
+        },
+      },
+    });
+  } finally {
+    await site.close();
+  }
 });
 
 test("dialog example keeps the confirm open for the host and applies accept in the next call", async ({

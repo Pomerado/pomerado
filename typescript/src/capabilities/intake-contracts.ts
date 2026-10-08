@@ -4,7 +4,6 @@ export const IntakeReasonCode = Schema.Literal(
   "stateful_flow",
   "branching_form",
   "realtime_stream",
-  "file_download",
   "native_app_only",
   "long_running",
   "multi_account",

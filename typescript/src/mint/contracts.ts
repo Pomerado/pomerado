@@ -49,6 +49,7 @@ import type { RegistryIssue } from "../registry/issues.js";
 import type { ExecutionBoundaryError } from "../execution/boundary.js";
 import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import { AnsweredQuestion, type QuestionDecision } from "../guardian/question.js";
+import { MintFile } from "./file-handles.js";
 import {
   TaskChange,
   type PendingTaskUpdate,
@@ -289,6 +290,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "session_token_placeholder"
     /** Source to publish holds a `{{secret.…}}` handle, which only the build's own executions fill. */
     | "secret_handle"
+    /** Source to publish holds a `{{file.…}}` handle, which names a file only in this build. */
+    | "file_handle"
     /** The live page URL the sign-in used carries one-time authorization values; asked once. */
     | "login_url_one_time"
     /** The login URL to publish carries a registered credential; refused every time. */
@@ -350,6 +353,11 @@ export const MintRequest = Schema.Struct({
   businessInput: Schema.Unknown,
   observations: Schema.Unknown,
   siteOrigin: Schema.optional(Schema.String.pipe(Schema.maxLength(2048))),
+  /**
+   * The caller's files: each one's `{{file.fN}}` handle, which `businessInput` holds where the file
+   * stood, with its name, media type and size. Never its bytes.
+   */
+  files: Schema.optional(Schema.Array(MintFile)),
   /** `ask` means the owner has not answered yet. Nothing executes or publishes until they do. */
   effect: Schema.optionalWith(Schema.Literal("read", "write", "ask"), {
     default: () => "read" as const,

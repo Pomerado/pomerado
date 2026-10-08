@@ -4,6 +4,8 @@
 
 ### Breaking changes
 
+- `IntakeReasonCode` from `pomerado/core/capabilities/intake-contracts` no longer has `file_download`, since a tool can now return a downloaded file.
+  - Migrate by dropping any use of `file_download`. A stored intake decision with it no longer decodes.
 - `saveSessionCode` from `pomerado/core/runtime/start-state` is now a function of the primary tab's target ID and the site's origin. Its browser call returns a `SavedSession`, `{ state, sessionStorage }`: the context's storage state, and the primary tab's session storage from its frames on the site's registrable domain.
   - Migrate by calling `saveSessionCode(targetId, siteOrigin)`, decoding its result with `SavedSession`, and passing that as the `session` of a `restore` `PageStart`.
 - `resetPageCode` takes the primary origin, the site data, the session to restore and the tab storage to restore as separate arguments, then optional extra origins to clear, `cleanupOnly` and `keptCookiePrefixes`. Cookies whose names start with one of `keptCookiePrefixes` survive a clear. `PageStart`'s `restore` takes a `SavedSession`.
@@ -35,6 +37,11 @@
 
 ### Other changes
 
+- Operations take and return files. `FileInput` and `FileOutput` from `pomerado/runtime` type a file field, marked `format: "file"` in the published JSON Schema. A script's `files.place(reference, { field })` puts a caller's file into a file input on the tool's site, and `files.collect(trigger)` returns a download as `{ "$file": { id, name, media_type, size, sha256, download_url?, expires_at? } }`. Bytes never pass through page code, its results or JSON bodies.
+  - The local host takes a `file:` URL in the input and returns a download's `file:` URL. `PomeradoOptions.files` sets where downloads are kept and the caps, 25 MiB per file and 10 files or 50 MiB per run by default.
+  - Files are checked by their first bytes against the declared type and the input's `accept`, and programs are refused.
+  - The minter sees a caller's file as a `{{file.fN}}` handle with its name, type and size, listed in the new `MintRequest.files`. A live step or publication whose source holds a handle is refused, publication with the new reason `file_handle`.
+  - Other hosts implement `FileHostHook` and call `makeRunFiles` from the new `pomerado/core/runtime/file-transfer`, bind the result as the runner's `files`, and pass the minter handles from `issueFileHandles` in the new `pomerado/core/mint/file-handles`. `pomerado/core/runtime/files` and `pomerado/core/runtime/file-types` hold the contracts and the type checks.
 - A script's `ensureSignedIn` now signs in again on a local run or build when the page reads signed out. Before, the local host always answered that it didn't sign in again.
   - The host checks the recorded signed-in marker on the current page without moving it. A marker that names a path reads signed out only on that path.
   - On a page that reads signed out, it first checks without typing anything. It then replays the recorded sign-in on the same browser and page, with the login it already holds, and asks only for what the screens need.

@@ -4,6 +4,8 @@ import { makeSession } from "./session.js";
 import { requestContext } from "./request-context.js";
 import { mintRequest } from "./mint-host.js";
 import { runOperation } from "./run-operation.js";
+import { issueFileHandles } from "../mint/file-handles.js";
+import { isLocalFileReference, openLocalFile } from "../execution/local-files.js";
 export { Artifact } from "./contracts.js";
 export type {
   Pomerado,
@@ -22,8 +24,15 @@ export const createPomerado = (
       session.mutex.withPermits(1)(
         Effect.scoped(
           Effect.gen(function* () {
-            const context = yield* requestContext(session, request);
-            return yield* mintRequest(session, context, request);
+            // The build sees each of the caller's files as a handle, never its reference.
+            const issued = yield* issueFileHandles(
+              request.input ?? {},
+              isLocalFileReference,
+              openLocalFile,
+            );
+            const handled = { ...request, input: issued.input };
+            const context = yield* requestContext(session, handled);
+            return yield* mintRequest(session, context, handled, issued.handles);
           }),
         ),
       );

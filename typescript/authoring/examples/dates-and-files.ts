@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { CalendarDate, defineOperation } from "../../src/browser/index.js";
+import { CalendarDate, defineOperation, FileInput, FileOutput } from "../../src/browser/index.js";
 
 // An observed calendar popup: month panels carry data-month (YYYY-MM) and days carry the full
 // data-date, so day text alone never identifies a cell. Other sites need their own evidence.
@@ -68,60 +68,55 @@ export const pickTravelDate = defineOperation(
 );
 
 // Choosing a file can start an upload at once, so this is a write the host must authorize.
-// The bytes travel in the code as base64 and become a Buffer on Kernel's machine.
+// The bytes never enter the code: the input holds the caller's file reference, and files.place
+// has the host put that file into the one file input the locator names and read it back.
 export default defineOperation(
   {
     name: "attach_document",
     input: Schema.Struct({
-      name: Schema.NonEmptyString.annotations({
-        description: "File name for the document, with its extension",
-      }),
-      mime_type: Schema.NonEmptyString.annotations({
-        description: "The document's media type, such as application/pdf",
-      }),
-      content_base64: Schema.String.annotations({ description: "The document's bytes, base64" }),
+      document: FileInput.annotations({ description: "The document to attach" }),
     }),
     output: Schema.Struct({
       name: Schema.String.annotations({ description: "Name of the file the field now holds" }),
       size: Schema.Number.annotations({ description: "Size of that file in bytes" }),
     }),
   },
-  async ({ kernel, sessionId, input, errors }) => {
-    const answer = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 60,
-      code: `
-        const field = page.getByLabel("Documents", { exact: true });
-        const selected = () => field.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size })));
-        // Same name and size is not the same content, so never reuse an existing choice.
-        if ((await selected()).length > 0) return { failure: "already_selected" };
-        await field.setInputFiles(
-          {
-            name: ${JSON.stringify(input.name)},
-            mimeType: ${JSON.stringify(input.mime_type)},
-            buffer: Buffer.from(${JSON.stringify(input.content_base64)}, "base64"),
-          },
-          { timeout: 30000 },
-        );
-        return { files: await selected() };
-      `,
+  async ({ kernel, sessionId, input, files, errors }) => {
+    const field = 'page.getByLabel("Documents", { exact: true })';
+    const chosen = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 30,
+      code: `return await ${field}.evaluate((node) => node.files.length);`,
     });
-    if (!answer.success)
-      throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
-    const result = Schema.decodeUnknownSync(
-      Schema.Union(
-        Schema.Struct({
-          files: Schema.Array(Schema.Struct({ name: Schema.String, size: Schema.Number })),
-        }),
-        Schema.Struct({ failure: Schema.Literal("already_selected") }),
-      ),
-    )(answer.result);
-    if ("failure" in result)
-      throw new errors.OperationFailure(result.failure, { dispatch: "not_sent" });
-    const file = result.files[0];
-    const size = Buffer.from(input.content_base64, "base64").byteLength;
+    if (!chosen.success)
+      throw new errors.OperationFailure(String(chosen.error), { stderr: chosen.stderr });
+    // Same name and size is not the same content, so never reuse an existing choice.
+    if (chosen.result !== 0)
+      throw new errors.OperationFailure("already_selected", { dispatch: "not_sent" });
     // Selection is not proof the site accepted the upload; this reads back only the choice.
-    if (result.files.length !== 1 || file?.name !== input.name || file.size !== size)
-      throw new errors.OperationFailure("The chosen file did not read back", { dispatch: "sent" });
-    return file;
+    const placed = await files.place(input.document, { field });
+    return { name: placed.name, size: placed.size };
+  },
+);
+
+// A download returns as a file object: files.collect runs the call that starts it, and the host
+// keeps the bytes and returns their name, type, size and sha256 for the output.
+export const downloadStatement = defineOperation(
+  {
+    name: "download_statement",
+    input: Schema.Struct({}),
+    output: Schema.Struct({
+      statement: FileOutput.annotations({ description: "The statement the site exported" }),
+    }),
+  },
+  async ({ kernel, sessionId, files, errors }) => {
+    const statement = await files.collect(async () => {
+      const answer = await kernel.browsers.playwright.execute(sessionId, {
+        timeout_sec: 30,
+        code: `await page.getByRole("link", { name: "Download statement", exact: true }).click({ timeout: 30000 });`,
+      });
+      if (!answer.success)
+        throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+    });
+    return { statement };
   },
 );

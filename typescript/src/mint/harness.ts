@@ -3302,6 +3302,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     `Not published: ${path} holds a {{secret.…}} handle. A handle works only in this build's own executions, where the host fills in the caller's answer; published code never holds a handle or a value. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then call finish_build again.`,
                   );
                 }
+                if (error.reason === "file_handle")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    {},
+                    "Not published: the source holds a {{file.…}} handle, which names a caller's file only in this build. A tool takes each file from its input: type the field as FileInput and pass the input's value to files.place. Remove the handle from the source, then call finish_build again.",
+                  );
                 if (
                   error.reason === "session_token_literal" ||
                   error.reason === "session_token_placeholder"

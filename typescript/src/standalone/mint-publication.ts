@@ -17,6 +17,7 @@ import {
 import { contractExtractionNote } from "../mint/review-context.js";
 import { oneTimeLoginUrlParameters, refuseCredentialParts } from "../mint/login-url.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
+import { holdsFileHandle } from "../mint/file-handles.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
 import { checkWriteSession } from "../mint/write-session.js";
@@ -155,6 +156,11 @@ export const mintPublication =
               code: "PublicationUnavailable",
               reason: "secret_handle",
             }),
+          );
+        // Nor a file handle, which names a caller's file only in this build.
+        if ([...runnable.values()].some(holdsFileHandle))
+          return yield* Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "file_handle" }),
           );
         yield* context.review({
           entrypoint: `operation/${publication.entrypoint}`,

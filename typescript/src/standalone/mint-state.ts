@@ -13,6 +13,7 @@ import {
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
+import type { FileHandles } from "../mint/file-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
 import type { WriteStep } from "../mint/step-checks.js";
 import type { WriteSessionMarks } from "../mint/write-session.js";
@@ -197,6 +198,8 @@ export const mintState = (
   session: StandaloneSession,
   context: RequestContext,
   request: PomeradoRequest,
+  /** The handles the request's input holds where the caller's files stood. */
+  fileHandles: FileHandles,
 ) =>
   Effect.gen(function* () {
     const { options, ask, browser, secrets } = session;
@@ -374,6 +377,7 @@ export const mintState = (
       workspace,
       authoring,
       handles,
+      fileHandles,
       deadline,
       mintAsk,
       runs,
