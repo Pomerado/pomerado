@@ -213,9 +213,13 @@ it a result. A failure the host can prove sent nothing (its marks show no commit
 step entered and the page sent only reads) may retry on a new browser, and a retry
 that fails too goes to maintenance. Anything
 else, including a run that finished without its confirmation or lost its page
-before reporting its marks, returns `possibly_completed` with any unconfirmed
+before reporting its marks, returns <!-- pomerado:section writes.uncertain-status:start
+`may_have_applied`
+pomerado:section writes.uncertain-status:end --> with any unconfirmed
 result, and maintenance reads the site back and finishes the write at most once.
-An `unverifiable` write reports `possibly_completed` too, and nothing repairs it.
+An `unverifiable` write reports <!-- pomerado:section writes.unverifiable-status:start
+`may_have_applied`
+pomerado:section writes.unverifiable-status:end --> too, and nothing repairs it.
 A script that throws `errors.InvalidInput` (core skill) fails as the caller's input and
 nothing repairs it. Before any commit mark is entered, the run reports that it changed nothing.
 

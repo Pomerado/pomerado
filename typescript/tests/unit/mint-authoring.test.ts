@@ -387,6 +387,31 @@ it("lists every installed skill in the local workspace README", async () => {
   expect(skills.map(({ name }) => name).filter((name) => !named.has(name))).toStrictEqual([]);
 });
 
+// A run's uncertain write status is the host's own word, so the shared sentences leave it to a
+// host section: the local host says `may_have_applied`, and a composing host says its own.
+it("names the local host's own status for a run's uncertain write", async () => {
+  const local = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(/\s+/g, " ");
+  expect(local).toContain(
+    "before reporting its marks, returns `may_have_applied` with any unconfirmed result",
+  );
+  expect(local).toContain("An `unverifiable` write reports `may_have_applied` too");
+  expect(local).not.toContain("possibly_completed");
+  const root = await authoringCopy((path, text) =>
+    path.endsWith("/writes/SKILL.md")
+      ? text.replace(sectionMarker, (marker: string, id: string) =>
+          id.endsWith("-status") ? "`OTHER-STATUS`" : marker,
+        )
+      : text,
+  );
+  try {
+    const composed = ((await renderedTexts(root)).get("writes") ?? "").replace(/\s+/g, " ");
+    expect(composed).toContain("returns `OTHER-STATUS` with any unconfirmed result");
+    expect(composed).toContain("An `unverifiable` write reports `OTHER-STATUS` too");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 /*
  * The publication skill is one text for both hosts. The local builder reads the shared lines about
  * the private fallback, which its preamble lists as a hosted feature, and about the login URL
@@ -575,7 +600,7 @@ it("renders the pinned standalone authoring", async () => {
     ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["10b42b68c447e9134b3b038537b4ce7abdee0a93d62fb44da737bcf70a077f5a", "forms"],
-    ["5e9a79a86966ad3ca0f5021f5aa60f640d6b0e2348e22785ab5068d847e602e8", "writes"],
+    ["699de0a8f721e57ea98d186bf223aaf1a2bc36d4087776a723d8f10c2f1fd667", "writes"],
     ["c6878de60bdd26d977006dbe3cf429cd7e81e6390bee547dcc7edea1921f1892", "caller-input"],
     ["114d9fd8e6cf5c260a9d2848f8fe5aa7e13a4ec2ab5e898eaa3c4bcc12544645", "publication"],
     ["1e66be13f564cf110a5b8a066da4effb6f01856c2c7e4fda40adb5095e2c2731", "workspace/AGENTS.md"],
