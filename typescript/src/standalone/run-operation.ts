@@ -75,6 +75,8 @@ export const runOperation = (
       decideDialog: makeRunDialogDecider({
         ask,
         project: secrets.redact,
+        // The request's effect is enough here: only a write's build publishes acceptedConfirms,
+        // so a read tool has no record to accept from even when the request names no effect.
         readOnly: request.effect === "read",
         expectedConfirms: artifact.acceptedConfirms,
         incidents: noIncidents,

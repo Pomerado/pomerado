@@ -51,6 +51,18 @@ describe("expectedConfirmDigest", () => {
     });
     expect(JSON.stringify(expectedConfirmDigest(popup))).not.toContain("Place");
   });
+
+  it("keeps the digest every published record stores, byte for byte", () => {
+    // Records already published hold this value. A change to the tuple or its version would
+    // stop every one of them from matching, so it must be a deliberate new version.
+    expect(
+      expectedConfirmDigest({
+        message: "Place this order?",
+        origin: "https://shop.example",
+        step: "place-order",
+      }),
+    ).toEqual({ digest: "1c57922cd902196a39880efe21994ee30757d84c4aac47f81575c4c2f37ae9c5" });
+  });
 });
 
 describe("makeExpectedConfirms", () => {
