@@ -31,7 +31,6 @@ export const hostedFeatures: readonly HostedFeature[] = [
     name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
   },
   { features: ["F3"], name: "Honest run outcomes" },
-  { features: ["F4"], name: "Repeat-write protection" },
   { features: ["F5"], name: "Recorded confirm popups" },
   { features: ["F6"], name: "One-time login URL check" },
   { features: ["F7"], name: "Host incidents" },
