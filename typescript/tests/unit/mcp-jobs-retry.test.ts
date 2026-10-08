@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { LocalOperationFailure } from "../../src/execution/local-operation.js";
 import { makeFileJobStore } from "../../src/jobs/local-job-store.js";
 import { makeMcpJobs, mcpFailureMessage, type McpJobs } from "../../src/standalone/mcp-jobs.js";
+import { runOutcomeFailure } from "../../src/standalone/run-report.js";
 
 /** Polls a job until it leaves running, as a caller polling get_job does. */
 const finished = (jobs: McpJobs, id: string) =>
@@ -257,6 +258,65 @@ it("keeps a failed keyed job's commit marks and confirmation in its record", asy
       error: "Operation failed (NoResponse).",
     });
     expect(record?.confirmation).toBeUndefined();
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+it("keeps a keyed run's outcome and commit marks, and answers them after a restart", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pomerado-mcp-jobs-"));
+  try {
+    const first = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* makeFileJobStore(folder);
+          const jobs = yield* makeMcpJobs(1, "run", store);
+          const started = yield* jobs.start(
+            () =>
+              Effect.fail(
+                runOutcomeFailure("write", "operation")(
+                  new LocalOperationFailure(
+                    "The saved page did not load",
+                    { effect: "possible", commits: [{ name: "save", state: "sent" }] },
+                    "NoResponse",
+                  ),
+                ),
+              ),
+            keyed,
+          );
+          const view = yield* finished(jobs, started.job_id);
+          return { view, record: yield* store.get(started.job_id) };
+        }),
+      ),
+    );
+    expect(first.view).toMatchObject({
+      status: "failed",
+      code: "no_response",
+      write_status: "may_have_applied",
+      possible_commit: true,
+      retry: "new_key",
+    });
+    expect(first.view.error).toMatch(/read the site back before any retry/u);
+    expect(first.record).toMatchObject({
+      status: "failed",
+      effect: "possible",
+      commits: [{ name: "save", state: "sent" }],
+      error: first.view.error,
+    });
+    const after = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const jobs = yield* makeMcpJobs(1, "run", yield* makeFileJobStore(folder));
+          const runs = yield* Ref.make(0);
+          const again = yield* jobs.start(countingWork(runs), keyed);
+          return { again, view: yield* jobs.get(first.view.job_id), runs: yield* Ref.get(runs) };
+        }),
+      ),
+    );
+    expect(after.runs).toBe(0);
+    expect(after.again).toMatchObject({ rejoined: true, status: "failed" });
+    // The stored view answers the outcome the live job did, with no warning added to it.
+    expect(after.view).toEqual(first.view);
   } finally {
     await rm(folder, { recursive: true, force: true });
   }

@@ -23,12 +23,14 @@ import { localFailureText } from "./failure-text.js";
 /**
  * A run that did not end in a confirmed result. `outcome` says what it did to the website and how
  * to retry, and the message says the same in one sentence. A write that may have applied keeps
- * the output its script returned, unconfirmed.
+ * the output its script returned, unconfirmed. `journal` is what the operation reported about
+ * the website, when it reported anything, for a keyed job's record.
  */
 export class RunOutcomeFailure extends Data.TaggedError("RunOutcomeFailure")<{
   readonly outcome: RunOutcome;
   readonly text: string;
   readonly unconfirmed?: { readonly output: unknown };
+  readonly journal?: LocalOperationJournal;
 }> {
   override get message() {
     return this.text;
@@ -46,6 +48,10 @@ const revisionOf = (
   write === undefined
     ? { effect: declared }
     : { effect: "write", writeConfirmation: write.confirmation };
+
+/** The journal fields of an operation's result. */
+const journalOf = ({ effect, commits, confirmation }: LocalOperationJournal): LocalOperationJournal =>
+  confirmation === undefined ? { effect, commits } : { effect, commits, confirmation };
 
 /** The website effect a write's journal shows. */
 const journalEffect = (journal: LocalOperationJournal, revision: OutcomeRevision | undefined) =>
@@ -85,6 +91,7 @@ export const returnedRun = (declared: DeclaredEffect, result: LocalOperationOutp
       outcome,
       text: localFailureText(outcome, needs === "nothing" ? undefined : unconfirmedLead[needs]),
       ...(unconfirmedWrite(evidence) ? { unconfirmed: { output: result.output } } : {}),
+      journal: journalOf(result),
     }),
   );
 };
@@ -157,7 +164,11 @@ export const runOutcomeFailure =
         ? operationEvidence(declared, error)
         : beforeOperationEvidence(declared, error),
     );
-    return new RunOutcomeFailure({ outcome, text: localFailureText(outcome) });
+    return new RunOutcomeFailure({
+      outcome,
+      text: localFailureText(outcome),
+      ...(error instanceof LocalOperationFailure ? { journal: journalOf(error.journal) } : {}),
+    });
   };
 
 /**

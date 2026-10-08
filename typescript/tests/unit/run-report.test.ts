@@ -107,6 +107,14 @@ describe("a run that returned", () => {
     expect(failure.outcome).toMatchObject({ code: "outcome_unknown", writeStatus: "may_have_applied" });
   });
 
+  it("keeps an unconfirmed write's journal for a keyed job's record", () => {
+    const failure = failureOf(
+      "write",
+      returned(commitSent, { confirmation: "message", commits: ["save"] }),
+    );
+    expect(failure.journal).toEqual(commitSent);
+  });
+
   it("fails an unverifiable write as possibly completed", () => {
     const failure = failureOf("write", returned(commitSent, { confirmation: "unverifiable" }));
     expect(failure.outcome).toMatchObject({
@@ -267,6 +275,13 @@ describe("a run that failed in its operation", () => {
       ).toMatchObject(outcome);
     },
   );
+
+  it("keeps the operation's journal for a keyed job's record", () => {
+    expect(fail("write", new LocalOperationFailure("Fixture failure", commitSent)).journal).toEqual(
+      commitSent,
+    );
+    expect(fail("write", new Error("Fixture failure")).journal).toBeUndefined();
+  });
 
   it("fails closed when the tool's effect is unknown", () => {
     expect(

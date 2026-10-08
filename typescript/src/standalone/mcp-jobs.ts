@@ -6,7 +6,12 @@ import { modelFailureMetadata } from "../models/model-failure.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
 import { makeInputAsker } from "../inputs/callback.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
-import type { RunOutcomeCode, RunRetryClass, WriteStatus } from "../runtime/run-outcome.js";
+import type {
+  RunOutcome,
+  RunOutcomeCode,
+  RunRetryClass,
+  WriteStatus,
+} from "../runtime/run-outcome.js";
 import { RunOutcomeFailure } from "./run-report.js";
 import { submitJob, type JobStore, type RetrySubmission } from "../jobs/job-store.js";
 import {
@@ -62,6 +67,15 @@ export interface McpJobView {
   /** The call's retry key named this job, so the call started nothing new. */
   readonly rejoined?: true;
 }
+/** A failed run's outcome fields in its job view. */
+const outcomeView = (
+  outcome: Pick<RunOutcome, "code" | "writeStatus" | "possibleCommit" | "retry">,
+) => ({
+  code: outcome.code,
+  write_status: outcome.writeStatus,
+  possible_commit: outcome.possibleCommit,
+  retry: outcome.retry,
+});
 const terminalRetentionMs = 15 * 60_000;
 class McpJobFailure extends Data.TaggedError("McpJobFailure")<{
   readonly code: "busy" | "unknown_job" | "stale_input" | "invalid_answers" | "retry_conflict";
@@ -143,13 +157,7 @@ const snapshot = (
       ? { next: { tool: "get_job", arguments: { job_id: job.id } } }
       : {}),
     ...(job.status === "failed" && job.outcome !== undefined
-      ? {
-          error: job.outcome.message,
-          code: job.outcome.outcome.code,
-          write_status: job.outcome.outcome.writeStatus,
-          possible_commit: job.outcome.outcome.possibleCommit,
-          retry: job.outcome.outcome.retry,
-        }
+      ? { error: job.outcome.message, ...outcomeView(job.outcome.outcome) }
       : {}),
     ...(job.status === "failed" && job.outcome === undefined
       ? {
@@ -201,6 +209,14 @@ const jobAsker =
  * output, so a finished job answers its status alone.
  */
 const storedView = (record: LocalJobRecord): McpJobView => {
+  // A run's outcome text already says what it did to the website, so no warning is added to it.
+  if (record.status === "failed" && record.outcome !== undefined)
+    return {
+      job_id: record.id,
+      status: "failed",
+      ...(record.error === undefined ? {} : { error: record.error }),
+      ...outcomeView(record.outcome),
+    };
   const { output: _output, ...view } = snapshot({
     id: record.id,
     status: record.status,
@@ -274,7 +290,11 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint", store?: Loca
     const recordOutcome = (job: Job, cause?: Cause.Cause<unknown>) => {
       if (job.recorded !== true) return Effect.void;
       const failure = cause === undefined ? undefined : Cause.squash(cause);
-      const journal = failure instanceof LocalOperationFailure ? failure.journal : undefined;
+      const journal =
+        failure instanceof RunOutcomeFailure || failure instanceof LocalOperationFailure
+          ? failure.journal
+          : undefined;
+      const outcome = job.outcome?.outcome;
       // A record that can't be written stays running, and reads as lost after a restart.
       return records
         .update(job.id, {
@@ -282,6 +302,16 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint", store?: Loca
           ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
           ...(job.error === undefined ? {} : { error: job.error }),
           ...(job.beforeOperation === undefined ? {} : { beforeOperation: job.beforeOperation }),
+          ...(outcome === undefined
+            ? {}
+            : {
+                outcome: {
+                  code: outcome.code,
+                  writeStatus: outcome.writeStatus,
+                  possibleCommit: outcome.possibleCommit,
+                  retry: outcome.retry,
+                },
+              }),
           ...(journal === undefined
             ? {}
             : {
