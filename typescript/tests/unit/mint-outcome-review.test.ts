@@ -557,17 +557,11 @@ it("finds a confirmation from before a compaction after a takeover", async () =>
 
 // Fails when a range the archive could not store shifts every later offset after a takeover, or
 // reads as if nothing were missing.
-it("marks history the archive could not store as a gap after a takeover, keeping offsets", async () => {
-  /** The host's durable archive, which outlives the attempt and fails while the first runs. */
+it("marks history the archive could not store as a gap after a takeover, keeping offsets while it still fails", async () => {
+  /** The host's durable archive, which outlives the attempt and fails to store throughout. */
   const archived: AgentInputItem[] = [];
-  let storageDown = true;
   const historyArchive: MinterHistoryArchive = {
-    append: (offset, items) =>
-      storageDown
-        ? Effect.fail(new MintFailure({ code: "Unavailable" }))
-        : Effect.sync(() => {
-            archived.splice(offset, archived.length - offset, ...structuredClone(items));
-          }),
+    append: () => Effect.fail(new MintFailure({ code: "Unavailable" })),
     length: Effect.sync(() => archived.length),
     read: (offset, limit) =>
       Effect.sync(() => structuredClone(archived.slice(offset, offset + limit))),
@@ -601,7 +595,18 @@ it("marks history the archive could not store as a gap after a takeover, keeping
           );
         // The worker is lost after the new segment's checkpoint.
         if (index === 2) throw new Error("Synthetic worker loss");
-        if (index === 3) return minter("finish_build", publication("booking_1"));
+        // After the takeover the provider compacts again, and a final text starts a new segment.
+        if (index === 3)
+          return respond(
+            { type: "compaction", id: "cmp_synthetic_2", encrypted_content: "synthetic-summary" },
+            functionCall(
+              "execute",
+              { ...step("src/notes.ts", "explore"), target: "pureFiles", intent: "Check notes" },
+              "notes_again",
+            ),
+          );
+        if (index === 4) return respond(message("Notes checked."));
+        if (index === 5) return minter("finish_build", publication("booking_1"));
         return respond(message("Published."));
       },
       getStreamedResponse: () => {
@@ -677,8 +682,7 @@ it("marks history the archive could not store as a gap after a takeover, keeping
   expect(minterRequests).toHaveLength(3);
 
   // A new worker takes over from the last checkpoint, with the reviewer's saved state; the
-  // range the first attempt could not store is lost with it.
-  storageDown = false;
+  // range the first attempt could not store is lost with it, and storing still fails.
   const checkpoint = checkpoints.at(-1);
   const reviewState = review.saved.at(-1);
   if (checkpoint === undefined || reviewState === undefined) throw new Error("No checkpoint");
@@ -707,7 +711,11 @@ it("marks history the archive could not store as a gap after a takeover, keeping
     (toolOutput(final, callId) as { matches: readonly { offset: number }[] }).matches.map(
       (match) => match.offset,
     );
-  expect(offsets("compaction")).toEqual([start]);
+  const compactions = offsets("compaction");
+  expect(compactions).toHaveLength(2);
+  expect(compactions[0]).toBe(start);
+  // The second compaction's range is only buffered, and still reads at its own offsets.
+  expect(compactions[1]).toBeGreaterThan(start);
   expect(offsets("search")).toEqual([]);
   const read = toolOutput(final, "start") as {
     total: number;

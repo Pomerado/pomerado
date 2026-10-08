@@ -160,16 +160,23 @@ export const bufferedHistoryArchive = (
     read: (offset, limit) =>
       Effect.gen(function* () {
         yield* flush;
-        const start = pendingStart();
         const end = offset + limit;
-        const stored =
-          offset < start ? yield* durable.read(offset, Math.min(end, start) - offset) : [];
-        const buffered = pending.flatMap((range) => {
+        const start = Math.min(end, pendingStart());
+        const items: AgentInputItem[] = [
+          ...(offset < start ? yield* durable.read(offset, start - offset) : []),
+        ];
+        // Each buffered range sits at its own offset: what neither store holds before it, as a
+        // range lost with an earlier attempt, is a gap.
+        let at = offset + items.length;
+        for (const range of pending) {
           const from = Math.max(offset, range.offset);
           const to = Math.min(end, range.offset + range.items.length);
-          return from < to ? range.items.slice(from - range.offset, to - range.offset) : [];
-        });
-        return [...stored, ...buffered];
+          if (from >= to) continue;
+          items.push(...historyGaps(from - at));
+          items.push(...range.items.slice(from - range.offset, to - range.offset));
+          at = to;
+        }
+        return items;
       }),
   };
 };

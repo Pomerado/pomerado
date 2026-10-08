@@ -245,14 +245,8 @@ export const mintState = (
     /**
      * The build's one write session: whether its first act step dispatched, and the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-      readonly steps: (WriteSessionMarks & { readonly executionId: string })[];
-    } & ConfirmSession = {
-      started: false,
-      input: undefined,
-      steps: [],
-      acceptedConfirms: [],
-      confirmSteps: new Set(),
-    };
+     * one), its act steps in order for publication's checks, and the confirm popups its act
+     * steps accepted.
      */
     const writeSession: {
       started: boolean;
