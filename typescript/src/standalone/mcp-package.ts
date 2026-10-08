@@ -21,7 +21,8 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 /**
  * Top-level names authored source may not use, compared in lower case. They cover the packaging
  * files, the sign-in recipe, the TOML that 0.1.2 wrote and its docs told users to copy into Codex,
- * and the project config an MCP client might load from this folder.
+ * the folder that keeps keyed job records, and the project config an MCP client might load from
+ * this folder.
  */
 const reserved = new Set([
   "deployment.json",
@@ -30,6 +31,7 @@ const reserved = new Set([
   "mcp.json",
   "readme.md",
   "codex-mcp.toml",
+  ".jobs",
   ".mcp.json",
   ".vscode",
   ".cursor",
@@ -146,7 +148,11 @@ A call that needs an answer or more time returns a job ID. Continue that job wit
 provide_input and cancel_job. Polling never resubmits an operation.
 
 Answers sent through provide_input are visible to your MCP client and its model provider.
-Restarting the server loses live jobs.
+Restarting the server stops live jobs.
+
+Send an idempotency_key with each write. A call that repeats the key and input answers the
+first job and writes nothing, even after a restart. The .jobs folder keeps each keyed job's
+status for a day, with no input or output.
 
 ## Paths
 
