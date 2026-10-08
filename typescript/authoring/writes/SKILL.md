@@ -211,7 +211,9 @@ tell, never submit again. Guardian reviews every
 A run of the published write ends one of three ways. A recorded confirmation makes
 it a result. A failure the host can prove sent nothing (its marks show no commit
 step entered and the page sent only reads) may retry on a new browser, and a retry
-that fails too goes to maintenance. Anything
+that fails too goes to maintenance. A failure whose marks show no commit step entered
+reports that it changed nothing, and its repair fixes the code without reading the site
+back. Anything
 else, including a run that finished without its confirmation or lost its page
 before reporting its marks, returns <!-- pomerado:section writes.uncertain-status:start
 `may_have_applied`
