@@ -7,10 +7,10 @@ import { isAuthoredSourcePath } from "./operation-source.js";
  * so the host refuses such source before a live step runs and before it publishes.
  *
  * The check is a static scan of the source text, code strings included. In every build it
- * refuses setting a file input, a file chooser, saving a download and reading a file's contents
- * (`FileReader`, `readAs*`, `getAsFile`, object URLs, `createReadStream`). In a build that holds
- * a caller's file or uses the file API it also refuses taking a download outside the host,
- * `DataTransfer`, reading an input's files, `FormData`, request bodies and any request routing,
+ * refuses saving a download and reading a file's contents (`FileReader`, `readAs*`,
+ * `getAsFile`, object URLs, `createReadStream`). In a build that holds a caller's file or uses
+ * the file API it also refuses setting a file input or a file chooser itself, taking a download
+ * outside the host, `DataTransfer`, reading an input's files, `FormData`, request bodies and any request routing,
  * which could send the site's own upload, file included, elsewhere. It does not see property
  * names built at run time, a route set up through such a name, or a second fetch of a
  * download's address. Guardian's file-handle rule and its off-site rule are the backstop.
@@ -19,8 +19,6 @@ import { isAuthoredSourcePath } from "./operation-source.js";
 const quote = String.raw`\\?["'\x60]`;
 /** Ways to move or read files outside the host, refused in any live step or published source. */
 const alwaysRefused: readonly (readonly [RegExp, string])[] = [
-  [/\bsetInputFiles\b/u, "sets a file input itself (use files.place)"],
-  [new RegExp(String.raw`\bfilechooser\b`, "u"), "handles a file chooser (use files.place)"],
   [/\.saveAs\s*\(/u, "saves a download (use files.collect)"],
   [/\bcreateReadStream\b/u, "reads a file"],
   [/\bFileReader\b/u, "reads a file's contents"],
@@ -36,6 +34,10 @@ const arrayMethods =
   "map|filter|forEach|some|every|find|findIndex|findLast|reduce|flatMap|includes|indexOf|slice|join|concat|at|sort|toSorted|push|flat";
 /** Ways to read a placed file back or move a file, refused in source of a build that has files. */
 const refusedWithFiles: readonly (readonly [RegExp, string])[] = [
+  // Without files a build may still set an input from its own bytes, as tools built before
+  // files.place did from base64 input; that pattern is deprecated, so their repairs still run.
+  [/\bsetInputFiles\b/u, "sets a file input itself (use files.place)"],
+  [new RegExp(String.raw`\bfilechooser\b`, "u"), "handles a file chooser (use files.place)"],
   [
     new RegExp(String.raw`(?:waitForEvent|\bon|\bonce|addListener)\s*\(\s*${quote}download`, "u"),
     "handles a download (use files.collect)",

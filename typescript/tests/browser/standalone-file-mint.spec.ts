@@ -228,3 +228,52 @@ async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a build without files may still set a file input from base64 input, and one with files may not", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Two recorded builds, one live step and one refused step",
+  });
+  test.setTimeout(60_000);
+  const site = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-file-mint-"));
+  const file = join(directory, "receipt.txt");
+  await writeFile(file, receipt);
+  // The deprecated pattern of tools built before files.place: the bytes arrive as base64 input.
+  const probe = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({name:Schema.String,content_base64:Schema.String}),output:Schema.Unknown},
+async ({kernel,sessionId,input}) => kernel.browsers.playwright.execute(sessionId,{code:"const field = page.getByLabel('Receipt', { exact: true }); await field.setInputFiles({ name: " + JSON.stringify(input.name) + ", mimeType: 'text/plain', buffer: Buffer.from(" + JSON.stringify(input.content_base64) + ", 'base64') }); return await field.evaluate((node) => node.files.length);",timeout_sec:10}));`;
+  const turns = [
+    () => patch({ "explore/probe.mjs": probe }),
+    () => [call("execute", { ...act("explore/probe.mjs"), purpose: "explore" }, "probe")],
+  ];
+  const content_base64 = Buffer.from(receipt).toString("base64");
+  try {
+    const repair = await mint({
+      effect: "write",
+      url: site.url,
+      guardian: recordingGuardian(),
+      intent: "Upload my receipt",
+      input: { name: "receipt.txt", content_base64 },
+      turns,
+    });
+    const ran = toolResult(repair.last, "probe");
+    expect(ran, JSON.stringify(ran)).toMatchObject({ status: "completed" });
+    expect(JSON.stringify(ran)).toContain('\\"result\\":1');
+    const withFiles = await mint({
+      effect: "write",
+      url: site.url,
+      guardian: recordingGuardian(),
+      intent: "Upload my receipt",
+      input: { name: "receipt.txt", content_base64, receipt: pathToFileURL(file).href },
+      turns,
+    });
+    expect(JSON.stringify(toolResult(withFiles.last, "probe"))).toContain(
+      "sets a file input itself (use files.place)",
+    );
+  } finally {
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -161,7 +161,10 @@ from `files.collect(trigger)`, where `trigger` makes the execute call that start
 see only its name, type, size and sha256. A downloaded file meant for the caller goes
 through `files.collect`. Never write a handle in source, set file inputs, handle downloads
 yourself, route the page's requests or read a file's contents back (`.files` items,
-`FileReader`, `FormData`, a request body): the host refuses such source.
+`FileReader`, `FormData`, a request body): the host refuses such source. An older tool that
+sets a file input from base64 input with `setInputFiles` uses a deprecated pattern the host
+still allows while the build has no file handle and no `FileInput`: a repair keeps its input
+as it is, and a new tool takes a `FileInput` and uses `files.place`.
 
 ## Multi-step forms
 

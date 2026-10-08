@@ -43,3 +43,13 @@ it("refuses in a file build any routing of the page's requests", () => {
       "routes the page's requests, which can send its upload elsewhere",
     );
 });
+
+it("lets a build without files set an input from base64 input, deprecated, and refuses it with files", () => {
+  const source =
+    'await page.getByLabel("Receipt").setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from(input.content_base64, "base64") });';
+  expect(scan(source, false)).toBeUndefined();
+  expect(scan(source, true)).toBe("sets a file input itself (use files.place)");
+  expect(scan(`${source}\nconst unused = FileInput;`, false)).toBe(
+    "sets a file input itself (use files.place)",
+  );
+});
