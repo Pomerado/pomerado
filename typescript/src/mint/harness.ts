@@ -2083,9 +2083,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           )
             return undefined;
           const applied = settled.assessments.some((assessment) => assessment?.outcome === "done");
-          return applied
+          // A read-back that reuses the write's file is refused as this same repeat.
+          const newFile = earlier.some((write) => write.entrypoint === submitted.entrypoint)
+            ? ` Write a read-back as a new file: any step that runs ${submitted.entrypoint} again is refused as this repeat.`
+            : "";
+          return (applied
             ? `This step repeats a write that already changed the site (${earlier.map((write) => write.executionId).join(", ")}), as the outcome review found. Never run it again: continue with the next step, read back the result, or publish. Nothing was executed.`
-            : `This step repeats a write that may already have changed the site (${earlier.map((write) => write.executionId).join(", ")}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the account or page in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`;
+            : `This step repeats a write that may already have changed the site (${earlier.map((write) => write.executionId).join(", ")}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the account or page in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`) + newFile;
         });
       const reviewedExecution: typeof dependencies.reviewAndExecute = (
         submitted,

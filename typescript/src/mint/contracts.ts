@@ -1195,6 +1195,11 @@ export interface MintDependencies {
   readonly agentRecovery?: {
     readonly initial?: { readonly agent: MintAgentSnapshot; readonly harness: MintHarnessSnapshot };
     readonly bindHarness?: (capture: () => MintHarnessSnapshot) => Effect.Effect<void, MintFailure>;
+    /**
+     * Rejoins or reads a tool call a takeover found started but not returned. A recovered
+     * execution's evidence must carry the `review` the host journaled, `action` included: a write
+     * is tracked, and its repeat refused, only when its evidence says Guardian labelled it one.
+     */
     readonly recoverTool?: (call: RecoveryToolCall) => Effect.Effect<
       | {
           readonly execution?: {

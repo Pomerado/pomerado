@@ -61,6 +61,16 @@ export interface MinterHistory {
   readonly read: (offset: number, limit: number) => Effect.Effect<readonly unknown[], MintFailure>;
 }
 
+/** What a history item the host could not store reads as, so later offsets stay right. */
+export const historyGapText =
+  "[history gap: the host could not store this item of the minter's history, so it is missing; its absence is no evidence either way]";
+const historyGaps = (count: number): AgentInputItem[] =>
+  Array.from({ length: Math.max(0, count) }, () => ({
+    type: "message" as const,
+    role: "system" as const,
+    content: historyGapText,
+  }));
+
 /**
  * The minter's whole history: the archive up to where the run state starts, and the run state
  * from there. Reads wait until the model has registered its run state, so a restored turn never
@@ -80,10 +90,10 @@ export const minterHistory = (
       Effect.gen(function* () {
         const current = yield* held;
         const end = offset + limit;
-        const archived =
-          offset < current.offset
-            ? yield* archive.read(offset, Math.min(end, current.offset) - offset)
-            : [];
+        const wanted = Math.max(0, Math.min(end, current.offset) - offset);
+        const stored = wanted === 0 ? [] : yield* archive.read(offset, wanted);
+        // What the archive lacks below the run state, as after a lost write to it, is a gap.
+        const archived = [...stored, ...historyGaps(wanted - stored.length)];
         const fromLive =
           end > current.offset
             ? current.items.slice(Math.max(0, offset - current.offset), end - current.offset)
@@ -105,14 +115,25 @@ export const bufferedHistoryArchive = (
   /** Ranges not yet stored durably, oldest first and contiguous. */
   let pending: { offset: number; items: readonly AgentInputItem[] }[] = [];
   let failing = false;
+  /** Where the durable archive ends, once known. */
+  let durableEnd: number | undefined;
   const flush = Effect.gen(function* () {
     while (pending.length > 0) {
       const [next] = pending;
       if (next === undefined) return;
-      const stored = yield* Effect.either(durable.append(next.offset, next.items));
+      const stored = yield* Effect.either(
+        Effect.gen(function* () {
+          durableEnd ??= yield* durable.length;
+          // A range an earlier attempt could not store is missing: marked, so offsets hold.
+          const start = Math.min(durableEnd, next.offset);
+          yield* durable.append(start, [...historyGaps(next.offset - start), ...next.items]);
+          durableEnd = next.offset + next.items.length;
+        }),
+      );
       if (stored._tag === "Left") {
         if (!failing) yield* recordGap(stored.left);
         failing = true;
+        durableEnd = undefined;
         return;
       }
       failing = false;

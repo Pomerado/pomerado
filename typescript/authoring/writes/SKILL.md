@@ -156,7 +156,7 @@ Guardian labels each step it allows `read`, `write` or `authentication`, and eve
 that changes what the site keeps is a write, a draft, a saved field or a cart included.
 A separate outcome reviewer then judges each write from your history and the host's
 records. The host refuses a step that runs an earlier write's entrypoint again until
-that review finds the write did not happen, so read back in a step of its own. When a
+that review finds the write did not happen, so write a read-back as a new file. When a
 tool result's `hostNotices` holds an `outcome_review_observation`, the reviewer needs
 that readback: run it in a step that changes nothing when you can.
 

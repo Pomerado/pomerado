@@ -555,6 +555,169 @@ it("finds a confirmation from before a compaction after a takeover", async () =>
   ]);
 });
 
+// Fails when a range the archive could not store shifts every later offset after a takeover, or
+// reads as if nothing were missing.
+it("marks history the archive could not store as a gap after a takeover, keeping offsets", async () => {
+  /** The host's durable archive, which outlives the attempt and fails while the first runs. */
+  const archived: AgentInputItem[] = [];
+  let storageDown = true;
+  const historyArchive: MinterHistoryArchive = {
+    append: (offset, items) =>
+      storageDown
+        ? Effect.fail(new MintFailure({ code: "Unavailable" }))
+        : Effect.sync(() => {
+            archived.splice(offset, archived.length - offset, ...structuredClone(items));
+          }),
+    length: Effect.sync(() => archived.length),
+    read: (offset, limit) =>
+      Effect.sync(() => structuredClone(archived.slice(offset, offset + limit))),
+  };
+  /** The host's checkpoints: each saved before a model call, as a recovery store does. */
+  const checkpoints: { agent: MintAgentSnapshot; harness: MintHarnessSnapshot }[] = [];
+  const recoveryFactory: MintRecoveryFactory = (store) =>
+    Effect.succeed({
+      model: (state, counters, invoke) =>
+        store
+          .save({ version: 1, sdkVersion: "0.18.0", sdkState: state(), ...counters, tools: [] })
+          .pipe(Effect.zipRight(invoke)),
+      tool: (_call, invoke) => invoke,
+    });
+  const minterRequests: ModelRequest[] = [];
+  const minterProvider: ModelProvider = {
+    getModel: () => ({
+      getResponse: async (request) => {
+        minterRequests.push(request);
+        const index = minterRequests.length - 1;
+        if (index === 0) return minter("execute", step("src/book.ts"), "book");
+        // The provider compacts the context; the next segment starts at its item.
+        if (index === 1)
+          return respond(
+            { type: "compaction", id: "cmp_synthetic", encrypted_content: "synthetic-summary" },
+            functionCall(
+              "execute",
+              { ...step("src/notes.ts", "explore"), target: "pureFiles", intent: "Check notes" },
+              "notes",
+            ),
+          );
+        // The worker is lost after the new segment's checkpoint.
+        if (index === 2) throw new Error("Synthetic worker loss");
+        if (index === 3) return minter("finish_build", publication("booking_1"));
+        return respond(message("Published."));
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  };
+  const minterModel = () =>
+    makeOpenAIMinter(minterProvider, "medium", { segmentTurns: 2 }, { recoveryFactory });
+  const reviewer = scriptedReviewer((request) => {
+    const turn = turnOf(request);
+    if (!turn.final) return respond(message("No assessment yet."));
+    const items = Array.isArray(request.input) ? request.input : [];
+    if (!items.some((item) => item.type === "function_call_result"))
+      return respond(
+        functionCall("search_history", { query: "[compaction:", limit: 5 }, "compaction"),
+        functionCall("search_history", { query: "SYN-1042", limit: 5 }, "search"),
+        functionCall("read_history", { offset: 0, limit: 2 }, "start"),
+      );
+    if (!items.some((item) => item.type === "function_call_result" && item.callId === "assess"))
+      return respond(
+        functionCall(
+          "submit_assessment",
+          {
+            executionId: turn.unresolvedWrites[0]?.executionId,
+            outcome: "unknown",
+            explanation: "The booking's result is in a part of the history the host lost.",
+            evidence: ["history:0"],
+          },
+          "assess",
+        ),
+      );
+    return respond(message("Assessed."));
+  });
+  const review = reviewHost(reviewer.provider);
+  const steps = allowedStep(
+    (entrypoint) =>
+      Effect.succeed(
+        entrypoint === "src/book.ts"
+          ? {
+              executionId: "booking_1",
+              status: "completed",
+              effect: "possible",
+              resultRef: "booking_result",
+              observations: { page: "Table booked. Confirmation number SYN-1042." },
+            }
+          : {
+              executionId: "notes_1",
+              status: "completed",
+              effect: "not_sent",
+              observations: { notes: "none" },
+            },
+      ),
+    (entrypoint) => (entrypoint === "src/book.ts" ? "write" : "read"),
+  );
+  const agentRecovery = {
+    save: (agent: MintAgentSnapshot, harness: MintHarnessSnapshot) =>
+      Effect.sync(() => {
+        checkpoints.push({ agent, harness });
+      }),
+  };
+  const first = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: minterModel(),
+      reviewAndExecute: steps,
+      agentRecovery,
+      outcomeReview: { ...review.host, historyArchive },
+    },
+    { effect: "write" },
+  );
+  await first.run().catch(() => undefined);
+  expect(minterRequests).toHaveLength(3);
+
+  // A new worker takes over from the last checkpoint, with the reviewer's saved state; the
+  // range the first attempt could not store is lost with it.
+  storageDown = false;
+  const checkpoint = checkpoints.at(-1);
+  const reviewState = review.saved.at(-1);
+  if (checkpoint === undefined || reviewState === undefined) throw new Error("No checkpoint");
+  const second = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: minterModel(),
+      reviewAndExecute: steps,
+      agentRecovery: { ...agentRecovery, initial: checkpoint },
+      outcomeReview: {
+        ...review.host,
+        historyArchive,
+        initial: reviewState,
+      },
+    },
+    { effect: "write" },
+  );
+  const outcome = await second.run();
+
+  expect(outcome.build).toBe("published");
+  // The restored run state starts at the compaction, at the checkpoint's history offset.
+  const start = checkpoint.agent.historyOffset ?? 0;
+  expect(start).toBeGreaterThan(0);
+  const final = reviewer.requests.at(-2) as ModelRequest;
+  const offsets = (callId: string) =>
+    (toolOutput(final, callId) as { matches: readonly { offset: number }[] }).matches.map(
+      (match) => match.offset,
+    );
+  expect(offsets("compaction")).toEqual([start]);
+  expect(offsets("search")).toEqual([]);
+  const read = toolOutput(final, "start") as {
+    total: number;
+    items: readonly { offset: number; text: string }[];
+  };
+  expect(read.items.map((item) => item.offset)).toEqual([0, 1]);
+  for (const item of read.items) expect(item.text).toContain("history gap");
+  expect(outcome.diagnostics.some((entry) => entry.includes("history_archive_gap"))).toBe(true);
+});
+
 /**
  * A recovery store as a host keeps one: a checkpoint before each model call and around each tool
  * call. Restored from `initial`, it replays the saved response and rejoins a tool call that
