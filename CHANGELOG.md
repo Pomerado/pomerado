@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Guardian's execution review returns a required `action` label, `read`, `write` or `authentication`, in the shared output format. An execution allow without one fails to decode and is retried like an outage. An allowed `write` on a step without the new `PendingExecution.writeAuthority` becomes a denial.
+  - Migrate recorded Guardian responses by adding `action` to every execution allow, and set `writeAuthority` on the steps that may write.
+- `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows: `beforeDispatch(allowed: AllowedExecution | undefined)`. Pass the review ID and Guardian's label, or undefined for a step no Guardian execution review allowed.
+- The local host's dispatch-based repeat guard and `replayedWriteStep`, `writeStepDigest` and `WriteStep` from `pomerado/core/mint/step-checks` are removed. The harness now refuses a step that repeats an earlier write's entrypoint until the outcome review finds that write did not happen.
+- A local write session's `write_not_submitted` now means no act step Guardian labelled a write ran on the site, or the outcome review found that each did not happen.
+
 ### Other changes
+
+- A separate outcome reviewer judges each write after it runs, from the minter's whole history and the host's records, and records `done`, `not_done` or `unknown`. `MintOutcome.writes` reports every write with its newest assessment. See `MintDependencies.outcomeReview` and `pomerado/core/mint/outcome-review-contracts`.
+- `MintTurn.history` gives the harness a reader of the minter's full in-memory history, the items a compaction replaced in later requests included.
 
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.

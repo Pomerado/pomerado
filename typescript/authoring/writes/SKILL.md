@@ -136,8 +136,8 @@ the named step recorded the declared confirmation, then publishes. A
 `not_published` reason of `confirmation_undeclared`, `confirmation_unrecorded` or
 `contract_input_mismatch` means correct the source and call `finish_build` again;
 never run the write again.<!-- pomerado:section writes.finish --> `write_not_submitted` means no
-`act` step recorded a confirmation, sent a non-read request or entered a commit mark;
-an unmarked GET or websocket commit is invisible to that check. Read back first. If
+`act` step that Guardian labelled a write ran on the site, or the outcome review found
+that every one of them did not happen. Read back first. If
 the write happened, publish with `readback`. If the read-back shows it did not, do the
 write once, marking its commit step, and read its confirmation. If no read-back can tell,
 never submit again: publish it as `unverifiable`. Filling a form or an offline example
@@ -151,6 +151,14 @@ running a commit again, run an `act` step that only reads the site or the accoun
 whether the earlier commit landed, and never resubmit one that did. If no read-back can
 tell, never submit again. Guardian reviews every
 `act` step and denies one that would repeat a finished commit.
+
+Guardian labels each step it allows `read`, `write` or `authentication`, and every step
+that changes what the site keeps is a write, a draft, a saved field or a cart included.
+A separate outcome reviewer then judges each write from your history and the host's
+records. The host refuses a step that runs an earlier write's entrypoint again until
+that review finds the write did not happen, so read back in a step of its own. When a
+tool result's `hostNotices` holds an `outcome_review_observation`, the reviewer needs
+that readback: run it in a step that changes nothing when you can.
 
 ## What runs do with it
 

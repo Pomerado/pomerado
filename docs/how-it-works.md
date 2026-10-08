@@ -40,6 +40,10 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
   - It can also give the `labels` its decision may carry and a `private` flag.
   - It returns `{ outcome, rationale, label? }`. The host refuses any other outcome or label.
   - A private kind's evidence, transcript and rationale reach no readable diagnostic. Later reviews' readable model records show its exchange only as a placeholder, including after a compaction.
+- **Action label.** An execution review's decision carries `action`: `read`, `write` or `authentication`, by what the code does to the site's persistent state, not by HTTP method or button names. A write includes intermediate changes, such as adding to a cart or saving a draft.
+  - An allow without a label is a malformed review, retried like an outage.
+  - An allowed `write` on a step without `PendingExecution.writeAuthority` becomes a denial, as out of authority. The local host gives write authority only to a write build's live `act` steps.
+  - The host passes the allow and its label to the dispatch fence, `beforeDispatch(allowed)`, and the execution's receipt carries it as `review.action`.
 - **Required read.** `PendingExecution.entrypoint` is the agent's own file. A host that runs it through a wrapper describes the wrapper in `hostWrapper`; Guardian may read it but needn't. An execution review puts the entrypoint's first chunk in its request, so a typical review takes one model call.
   - If the host's read fails, the source is left out and Guardian reads it itself.
   - If only keeping the screened copy fails, the source stays in the request and the gap is recorded as `guardian.source_failed`.
@@ -60,6 +64,19 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - Input feedback, such as an account's own number listed as an enum member, goes back to the minter, which gets two rounds to fix it. An `exampleInput` key that the input schema doesn't list comes back the same way. If the feedback remains after that, the build ends unpublished with Guardian's categories and rationale, and `pomerado mint` exits 1.
 - Any other denial goes back to the minter with Guardian's reason and findings.
 - A host that returns its own `policy` from `specialize` for a publication review keeps exactly the policy, input and turn limit it sends. The core policy, `trusted_publication` and the 32 turns apply only without one. A host can also decode publication decisions itself with `decodePublication`, and end unresolved input feedback its own way with an `InputFeedbackFallback`.
+
+## The outcome reviewer
+
+- Guardian judges each action before it runs and never sees its result. A separate model session, the outcome reviewer, judges afterwards whether each write Guardian labelled actually changed the site: `done`, `not_done` or `unknown`, with a short explanation and the evidence it rests on.
+- It runs beside the minter as its own continuing conversation, on GPT-6 Luna, with Guardian's session building blocks: provider compaction, and an interrupted turn closed before the next.
+- Its tools only read. It searches and reads the minter's whole history, the turns a compaction replaced in later requests included. It lists and reads the host's records of executions, generated source, screened captures and publication decisions, and reads the original request, the accepted answers and the task's current state. It records an assessment, and it can ask the minter for a readback, which the minter runs through its normal reviewed execution. It has no browser, shell or website access.
+- It wakes when a write returns, fails or loses its result, when a later live execution may hold a readback, when an answer changes the remaining work, and when `finish_build` runs with a write unresolved.
+- It takes one turn at a time per mint. Events that arrive during a turn are coalesced into the next. Its turns are not minter activity.
+- A failed turn is retried after a wait, without limit, and never invents an outcome. The newest assessment of a write replaces the older one.
+- The minter keeps working meanwhile. The only step that waits for the reviewer is one that would run an earlier write's step again, and it runs only once the review found that write `not_done`.
+- Publication never waits. When `finish_build` leaves a write unresolved, the reviewer gets one final turn as the attempt ends, and its answer stands. The outcome's `writes` lists every write with its newest assessment: `applied`, `not_applied`, or `may_have_applied` when the review found it `unknown` or never settled it.
+- The local host runs the reviewer and decides whether a write session submitted its write from the labels and assessments. Commit marks and declared confirmations remain the write contract's evidence.
+- A host supplies the reviewer through `MintDependencies.outcomeReview`: the model (`makeOpenAIOutcomeReviewer` from `pomerado/core/mint/outcome-review-openai`), a `save` hook for the reviewer's state beside the minter's run state, a `recordAssessment` journal hook, and optionally its own records around the harness's evidence. The contracts are in `pomerado/core/mint/outcome-review-contracts`.
 
 ## The runtime
 
@@ -131,7 +148,7 @@ await Effect.runPromise(
 
 - `makeInputAsker` adapts your own chat callback. The callback receives an `InputRequest` and returns raw answers keyed by question ID.
 - `makePomeradoMcp` and `makeIntegrationMcp` expose the two local MCP modes as library functions. Their Effect scopes own cleanup.
-- `minterProvider` and `guardianProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
+- `minterProvider`, `guardianProvider` and `outcomeReviewerProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
 - Importing a core module starts no browser, MCP listener or workspace.
 
 The package has these entry points.
