@@ -6,7 +6,11 @@ import {
   type LocalOperationJournal,
   type LocalOperationOutput,
 } from "../execution/local-operation.js";
+import type { GuardianAction } from "../guardian/review-contracts.js";
+import type { MintReviewFeedback } from "../mint/input-feedback.js";
 import {
+  hostAuthentication,
+  type AllowedExecution,
   type MintDependencies,
   type ExecutionEvidence,
   type ExecutionRequest,
@@ -26,7 +30,7 @@ import {
   draftQuestionDeclarations,
 } from "../mint/draft-questions.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
-import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
+import { stepInput } from "../mint/step-checks.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
@@ -37,6 +41,17 @@ import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
+/**
+ * The allow a dispatch fence follows: the review and Guardian's action label. An execution allow
+ * always carries one, as Guardian's review decodes it.
+ */
+const allowedOf = (reviewed: {
+  readonly reviewId: string;
+  readonly decision: { readonly action?: GuardianAction | undefined };
+}): Effect.Effect<AllowedExecution, Error> =>
+  reviewed.decision.action === undefined
+    ? Effect.fail(new Error("Guardian's allow carried no action label"))
+    : Effect.succeed({ reviewId: reviewed.reviewId, action: reviewed.decision.action });
 const executeCommand = (
   state: MintState,
   execution: Extract<Execution, { purpose: "command" }>,
@@ -51,7 +66,7 @@ const executeCommand = (
       (yield* workspace.snapshot).map(([path, text]) => [`operation/${path}`, text]),
     );
     sources.set("operation/command.sh", execution.command);
-    yield* context.review(
+    const reviewed = yield* context.review(
       {
         entrypoint: "operation/command.sh",
         sources,
@@ -69,7 +84,9 @@ const executeCommand = (
       },
       "not_sent",
     );
-    yield* beforeDispatch ?? Effect.void;
+    yield* allowedOf(reviewed).pipe(
+      Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
+    );
     const exec = workspace.session.exec?.bind(workspace.session);
     if (exec === undefined)
       return yield* Effect.fail(new Error("Workspace command execution unavailable"));
@@ -111,7 +128,8 @@ const executeAuthentication = (
     const step = yield* recorder.step(
       signIn,
       loginUrl,
-      Effect.zipRight(markers.beforeTyping, beforeDispatch ?? Effect.void),
+      // The host fills the sign-in itself, after its own review of each screen.
+      Effect.zipRight(markers.beforeTyping, beforeDispatch?.(hostAuthentication) ?? Effect.void),
     );
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
@@ -195,12 +213,16 @@ const scriptQuestions = (
 
 /**
  * What an act step's effect journal shows about its write. The journal reads `not_sent` only
- * while the step made no browser call, so anything else may have sent the write: the step is
- * `possiblySent`, since the local host counts no requests. A step whose child did not report its
- * own result has `unreported` commit evidence, and the marks it streamed count only once a later
- * step confirms.
+ * while the step made no browser call, so anything else may have reached the site: the step is
+ * `possiblySent`. Whether it was a write is Guardian's label, `action`. A step whose child did
+ * not report its own result has `unreported` commit evidence, and the marks it streamed count
+ * only once a later step confirms. Only a failed step Guardian labelled a write asks the minter
+ * to read back before writing again.
  */
-const actOutcome = (executed: Either.Either<LocalOperationOutput, Error>) => {
+const actOutcome = (
+  executed: Either.Either<LocalOperationOutput, Error>,
+  action: GuardianAction | undefined,
+) => {
   const failure = Either.isLeft(executed) ? executed.left : undefined;
   const journal: LocalOperationJournal = Either.isRight(executed)
     ? executed.right
@@ -215,15 +237,15 @@ const actOutcome = (executed: Either.Either<LocalOperationOutput, Error>) => {
   const sent = journal.effect === "not_sent" ? 0 : undefined;
   const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
   return {
-    stateChanging: journal.effect !== "not_sent",
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
+      ...(action === undefined ? {} : { action }),
       possiblySent: journal.effect !== "not_sent",
       enteredMarks: reported ? entered : [],
       ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
     },
     writeSession:
-      failure !== undefined && commitUncertain(sent, commit)
+      failure !== undefined && action === "write" && commitUncertain(sent, commit)
         ? { verifyFirst: true as const, notice: verifyFirstNotice(sent, commit) }
         : undefined,
   };
@@ -242,12 +264,20 @@ interface ReceiptInput {
     readonly decision: {
       readonly outcome: "allow" | "deny" | "escalate";
       readonly rationale: string;
+      readonly action?: GuardianAction | undefined;
     };
   };
   readonly journal: Journal;
   /** A failed act step that may have committed its write: read back before writing again. */
   readonly writeSession?: { readonly verifyFirst: true; readonly notice: string };
 }
+/** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
+const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
+  reviewId,
+  outcome: decision.outcome,
+  rationale: decision.rationale,
+  ...(decision.action === undefined ? {} : { action: decision.action }),
+});
 const failedReceipt = (
   receipt: ReceiptInput,
   failure: Error,
@@ -278,6 +308,7 @@ const failedReceipt = (
       output: undefined,
       purpose: execution.purpose,
       journal: failureJournal,
+      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     const evidence: ExecutionEvidence = {
       executionId: id,
@@ -297,7 +328,7 @@ const failedReceipt = (
           : {}),
         ...(writeSession === undefined ? {} : { writeSession }),
       },
-      review: { reviewId: reviewed.reviewId, ...reviewed.decision },
+      review: reviewFeedback(reviewed),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
       ...(unanswered || (failure instanceof LocalOperationFailure && failure.code === "NoResponse")
         ? { noResponse: { possibleCommit: execution.purpose === "act" } }
@@ -325,7 +356,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
         inputSchema: result.schemas.input,
         outputSchema: result.schemas.output,
       }),
-      review: { reviewId: reviewed.reviewId, ...reviewed.decision },
+      review: reviewFeedback(reviewed),
     };
     runs.set(id, {
       sources,
@@ -335,6 +366,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       output: result.output,
       purpose: execution.purpose,
       journal: result,
+      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     yield* journal?.record(evidence) ?? Effect.void;
     return evidence;
@@ -368,7 +400,6 @@ const authoredExecution = (
     const entrypointSource = files.get(execution.entrypoint) ?? "";
     const refusal =
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
-      replayedWriteStep(execution, files, writeSession.steps) ??
       draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
@@ -405,7 +436,9 @@ const authoredExecution = (
       codes.length === 0
         ? undefined
         : browser.watchTyping(codes, (url) => trustedUrl(context.siteOrigin, signInOrigins, url));
-    yield* beforeDispatch ?? Effect.void;
+    yield* allowedOf(reviewed).pipe(
+      Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
+    );
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.
@@ -468,20 +501,15 @@ const authoredExecution = (
           yield* context.observe;
           if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
-        const act = execution.purpose === "act" ? actOutcome(executed) : undefined;
+        const act =
+          execution.purpose === "act" ? actOutcome(executed, reviewed.decision.action) : undefined;
         // A write keeps the confirms its act steps accepted, for its runs to accept again.
         if (act !== undefined)
           recordConfirmSteps(
             writeSession,
             yield* acceptedConfirmsKept({ write: true, accepted, screen: secrets.assertAbsent }),
           );
-        if (act !== undefined)
-          writeSession.steps.push({
-            entrypoint: execution.entrypoint,
-            sourceDigest: writeStepDigest(files, execution.entrypoint),
-            stateChanging: act.stateChanging,
-            ...act.marks,
-          });
+        if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
         const receipt = {

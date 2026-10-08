@@ -68,29 +68,23 @@ describe("a write session's marks", () => {
     ]).toEqual([]);
   });
 
-  it("sent its write on a confirmation, a non-read request or an entered mark", () => {
-    const none: WriteSessionMarks = { enteredMarks: [], streamedMarks: ["place-order"] };
-    expect(sessionSentWrite({ steps: [], nonReadRequests: 0 })).toBe(false);
-    expect(sessionSentWrite({ steps: [none], nonReadRequests: 0 })).toBe(false);
-    expect(sessionSentWrite({ steps: [none], nonReadRequests: 1 })).toBe(true);
-    expect(
-      sessionSentWrite({ steps: [{ enteredMarks: ["place-order"] }], nonReadRequests: 0 }),
-    ).toBe(true);
-    expect(
-      sessionSentWrite({
-        steps: [{ enteredMarks: [], confirmation: "message" }],
-        nonReadRequests: 0,
-      }),
-    ).toBe(true);
+  it("sent its write on a confirmation or a write Guardian labelled that may have reached the site", () => {
+    const write: WriteSessionMarks = { enteredMarks: [], action: "write", possiblySent: true };
+    expect(sessionSentWrite({ steps: [] })).toBe(false);
+    expect(sessionSentWrite({ steps: [write] })).toBe(true);
+    expect(sessionSentWrite({ steps: [{ enteredMarks: [], confirmation: "message" }] })).toBe(true);
+    // A write that never reached the site, or a step Guardian labelled a read, sent nothing.
+    expect(sessionSentWrite({ steps: [{ ...write, possiblySent: false }] })).toBe(false);
+    expect(sessionSentWrite({ steps: [{ ...write, action: "read" }] })).toBe(false);
+    // Commit marks are the contract's evidence, never whether the write was sent.
+    expect(sessionSentWrite({ steps: [{ enteredMarks: ["place-order"] }] })).toBe(false);
   });
 
-  it("sent its write when a host that counts no requests marked a step possibly sent", () => {
-    expect(
-      sessionSentWrite({ steps: [{ enteredMarks: [], possiblySent: true }], nonReadRequests: 0 }),
-    ).toBe(true);
-    expect(
-      sessionSentWrite({ steps: [{ enteredMarks: [], possiblySent: false }], nonReadRequests: 0 }),
-    ).toBe(false);
+  it("sent its write unless the outcome review found every labelled write did not happen", () => {
+    const write: WriteSessionMarks = { enteredMarks: [], action: "write", possiblySent: true };
+    expect(sessionSentWrite({ steps: [{ ...write, assessment: "not_done" }] })).toBe(false);
+    expect(sessionSentWrite({ steps: [{ ...write, assessment: "unknown" }] })).toBe(true);
+    expect(sessionSentWrite({ steps: [{ ...write, assessment: "not_done" }, write] })).toBe(true);
   });
 });
 
@@ -107,7 +101,7 @@ describe("a write session's publication check", () => {
     let extractions = 0;
     const result = Effect.runSyncExit(
       checkWriteSession({
-        session: { steps, nonReadRequests: 0 },
+        session: { steps },
         step: named,
         extract: Effect.sync(() => {
           extractions++;
@@ -134,7 +128,7 @@ describe("a write session's publication check", () => {
 
   it("refuses the contract, not the sent check, for a step that may have sent its write", () => {
     const { result, extractions } = check(
-      [{ enteredMarks: [], possiblySent: true }],
+      [{ enteredMarks: [], action: "write", possiblySent: true }],
       contract({ confirmation: "readback", commits: ["place-order"] }),
     );
     expect(reason(result)).toBe("commit_marks_unentered");
@@ -181,7 +175,7 @@ describe("a write session's publication check", () => {
     const confirmsAt = (extracted: ReturnType<typeof withFiles>, steps: readonly string[]) =>
       Effect.runSyncExit(
         checkWriteSession({
-          session: { steps: [confirmed], nonReadRequests: 0 },
+          session: { steps: [confirmed] },
           step: confirmed,
           extract: Effect.succeed(extracted),
           confirms: { steps, entrypoint: "src/tool.mjs" },
@@ -216,7 +210,7 @@ describe("a write session's publication check", () => {
     it("checks them only after the contract, as the contract's refusal comes first", () => {
       const exit = Effect.runSyncExit(
         checkWriteSession({
-          session: { steps: [confirmed], nonReadRequests: 0 },
+          session: { steps: [confirmed] },
           step: confirmed,
           extract: Effect.succeed({ ...contract(), files: new Map([["src/tool.mjs", ""]]) }),
           confirms: { steps: ["place-order"], entrypoint: "src/tool.mjs" },
@@ -228,7 +222,7 @@ describe("a write session's publication check", () => {
 
   it("publishes an unverifiable write whose step entered its mark and confirmed nothing", () => {
     const { result } = check(
-      [{ enteredMarks: ["place-order"] }],
+      [{ enteredMarks: ["place-order"], action: "write", possiblySent: true }],
       contract({ confirmation: "unverifiable", commits: ["place-order"] }),
     );
     expect(Exit.isSuccess(result) && result.value.declared).toBe("unverifiable");

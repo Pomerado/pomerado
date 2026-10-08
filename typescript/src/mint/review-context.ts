@@ -5,6 +5,7 @@ import { MintFailure } from "./contracts.js";
 import { executedSourceClosure } from "./operation-source.js";
 import type { MintProjection } from "./projection.js";
 import { screenMintText } from "./workspace.js";
+import type { WriteOutcome } from "./outcome-review-contracts.js";
 
 /**
  * What a host tells Guardian about one mint review beyond the submitted call: the step's own
@@ -36,6 +37,8 @@ export interface MintReviewHost {
    * sign-in; empty once a sign-in is verified. Only execution reviews carry them.
    */
   readonly signInCodes: () => readonly string[];
+  /** This build's tracked writes and their newest assessments; only execution reviews carry them. */
+  readonly writes?: () => readonly WriteOutcome[];
 }
 
 /**
@@ -114,6 +117,7 @@ export const mintReviewContext = (
     const page = host.observedPage();
     const schema = reviewsSource ? host.inputSchema() : undefined;
     const signInCodes = currentExecution === undefined ? [] : host.signInCodes();
+    const writes = currentExecution === undefined ? [] : (host.writes?.() ?? []);
     return {
       repeatableRead: host.repeatableRead(),
       operationSources: [...step.sources.keys()],
@@ -130,6 +134,16 @@ export const mintReviewContext = (
         ? {}
         : { currentPage: page }),
       executions: [...host.executions()],
+      ...(writes.length === 0
+        ? {}
+        : {
+            writes: writes.map(({ write, assessment }) => ({
+              executionId: write.executionId,
+              purpose: write.purpose,
+              ...(write.entrypoint === undefined ? {} : { entrypoint: write.entrypoint }),
+              outcome: assessment?.outcome ?? ("unassessed" as const),
+            })),
+          }),
     };
   });
 
