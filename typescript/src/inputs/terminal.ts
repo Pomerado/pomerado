@@ -4,7 +4,13 @@ import { makeInputAsker } from "./callback.js";
 import { InputRequestFailure, publicOptionLabel } from "../runtime/input-request.js";
 import type { InputAnswers, Question } from "../runtime/input-request.js";
 
-const cancelled = () => new InputRequestFailure({ code: "NoResponse" });
+/**
+ * The owner pressed Ctrl-C or Ctrl-D, or closed the input, at a question. It stays `NoResponse` for
+ * everything that reads the code. A run's popup decision tells it apart from a window that ended
+ * unanswered: the owner's cancel stops the step, where an unanswered popup is dismissed.
+ */
+export class OwnerCancelled extends InputRequestFailure {}
+const cancelled = () => new OwnerCancelled({ code: "NoResponse" });
 const cancelKeys = new Set<string | undefined>(["c", "d"]);
 const submitKeys = new Set<string | undefined>(["return", "enter"]);
 const containsControlCharacters = (text: string) =>
