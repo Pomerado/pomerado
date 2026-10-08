@@ -14,18 +14,18 @@ import {
 import { loadStandaloneAuthoring, loadWorkspaceGuide } from "../../src/mint/skills.js";
 
 const sample = [
-  { features: ["F14", "F22"], name: "Anti-bot and proxies" },
-  { features: ["F12"], name: "savedDOM tests" },
+  { id: "anti-bot", name: "Anti-bot and proxies" },
+  { id: "saved-dom-tests", name: "savedDOM tests" },
 ] as const;
 
 describe("hosted features the local host lacks", () => {
-  it("lists each entry once, with the features it covers", () => {
+  it("lists each entry once, by a descriptive id a change can delete it by", () => {
     expect(hostedFeatures.length).toBeGreaterThan(0);
     expect(new Set(hostedFeatures.map(({ name }) => name)).size).toBe(hostedFeatures.length);
-    for (const { features, name } of hostedFeatures) {
+    expect(new Set(hostedFeatures.map(({ id }) => id)).size).toBe(hostedFeatures.length);
+    for (const { id, name } of hostedFeatures) {
       expect(name).toMatch(/^\S.*\S$/u);
-      expect(features.length).toBeGreaterThan(0);
-      for (const feature of features) expect(feature).toMatch(/^F(?:[1-9]|1\d|2[0-2])$/u);
+      expect(id).toMatch(/^[a-z]+(?:-[a-z]+)*$/u);
     }
   });
 
@@ -47,7 +47,7 @@ describe("hosted features the local host lacks", () => {
     const list = hostedFeatures.filter(({ name }) => name.includes("`stateChangingRequests`"));
     expect(list).toEqual([
       {
-        features: ["F2"],
+        id: "state-changing-requests",
         name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
       },
     ]);

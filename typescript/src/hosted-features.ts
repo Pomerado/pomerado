@@ -4,44 +4,41 @@
  * ignore, and at the end of its Guardian's execution policy, as protections not to count on. A
  * host that supplies them all renders neither.
  *
- * Each entry is one line and names the features it covers. A change that brings a feature to the
- * local host deletes that feature's entry here, and nothing else needs to change.
+ * Each entry is one line, with an id a change uses to find it. A change that brings a feature to
+ * the local host deletes that feature's entry here, and nothing else needs to change.
  */
 export interface HostedFeature {
-  readonly features: readonly FeatureId[];
+  readonly id: string;
   readonly name: string;
 }
 
-/** A feature's ID in the design that splits hosted and local features. */
-export type FeatureId = `F${number}`;
-
 export const hostedFeatures: readonly HostedFeature[] = [
-  { features: ["F14", "F22"], name: "Anti-bot, CAPTCHA, proxies and browser replacement" },
-  { features: ["F16"], name: "Saved logins" },
-  { features: ["F13", "F15", "F12"], name: "HTTP recording, captures, HTTP versions and savedHTTP" },
-  { features: ["F21"], name: "Maintenance and repair" },
-  { features: ["F17"], name: "Saved browser profiles" },
-  { features: ["F1"], name: "Mid-run re-sign-in" },
-  { features: ["F2"], name: "Read-back after an uncertain commit" },
+  { id: "anti-bot", name: "Anti-bot, CAPTCHA, proxies and browser replacement" },
+  { id: "saved-logins", name: "Saved logins" },
+  { id: "http-recording", name: "HTTP recording, captures, HTTP versions and savedHTTP" },
+  { id: "maintenance", name: "Maintenance and repair" },
+  { id: "saved-browser-profiles", name: "Saved browser profiles" },
+  { id: "mid-run-sign-in", name: "Mid-run re-sign-in" },
+  { id: "uncertain-commit-read-back", name: "Read-back after an uncertain commit" },
   // Covers the shared text about `stateChangingRequests`: the core skill's "State-changing
   // requests" section and the write session's rule to read it on every step. It stays when
   // read-back after an uncertain commit comes to the local host.
   {
-    features: ["F2"],
+    id: "state-changing-requests",
     name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
   },
-  { features: ["F3"], name: "Honest run outcomes" },
-  { features: ["F5"], name: "Recorded confirm popups" },
-  { features: ["F6"], name: "One-time login URL check" },
-  { features: ["F7"], name: "Host incidents" },
-  { features: ["F8"], name: "Sandboxed offline commands" },
-  { features: ["F9"], name: "Protected answers" },
-  { features: ["F10"], name: "Direct sign-in" },
-  { features: ["F11"], name: "Private fallback publication" },
-  { features: ["F12"], name: "savedDOM tests" },
-  { features: ["F18"], name: "Execution capacity" },
-  { features: ["F19"], name: "Browser retirement" },
-  { features: ["F20"], name: "Write fencing" },
+  { id: "run-outcomes", name: "Honest run outcomes" },
+  { id: "recorded-confirm-popups", name: "Recorded confirm popups" },
+  { id: "login-url-check", name: "One-time login URL check" },
+  { id: "host-incidents", name: "Host incidents" },
+  { id: "offline-command-sandbox", name: "Sandboxed offline commands" },
+  { id: "protected-answers", name: "Protected answers" },
+  { id: "direct-sign-in", name: "Direct sign-in" },
+  { id: "private-fallback-publication", name: "Private fallback publication" },
+  { id: "saved-dom-tests", name: "savedDOM tests" },
+  { id: "execution-capacity", name: "Execution capacity" },
+  { id: "browser-retirement", name: "Browser retirement" },
+  { id: "write-fencing", name: "Write fencing" },
 ];
 
 /** What the local minter reads first: the features to ignore, one per line. */
