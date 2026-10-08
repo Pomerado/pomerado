@@ -508,10 +508,11 @@ async ({ ask }) => ({ note: await ask("note") }));`;
     const recorded = await run(literal, { note });
     expect(recorded.result._tag === "Right" && recorded.result.right).toEqual({ note: "kept" });
     expect(recorded.asked).toHaveLength(1);
-    // The script asks something other than what publication recorded: nobody is asked.
+    // The script asks something other than what publication recorded: its ask fails as
+    // Undeclared, so the run fails with nobody asked.
     const differs = await run(literal, { note: { ...note, prompt: "Which note?" } });
     expect(differs.result._tag === "Left" && differs.result.left).toMatchObject({
-      code: "Undeclared",
+      _tag: "RunOutcomeFailure",
     });
     expect(differs.asked).toEqual([]);
     // An artifact saved without its questions asks what its entrypoint declares as a literal.
@@ -520,7 +521,7 @@ async ({ ask }) => ({ note: await ask("note") }));`;
     expect(saved.asked).toHaveLength(1);
     const computed = await run(asking("computed"));
     expect(computed.result._tag === "Left" && computed.result.left).toMatchObject({
-      code: "Undeclared",
+      _tag: "RunOutcomeFailure",
     });
     expect(computed.asked).toEqual([]);
     expect(calls).toEqual([]);
