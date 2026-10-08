@@ -654,7 +654,7 @@ export const PublicationRequest = Schema.Struct({
     /** Required only while the site's integration has no name yet; a later one is ignored. */
     siteName: Schema.optional(
       SiteNaming.fields.name.annotations({
-        description: "The site's everyday name, as people say it, such as Google Flights",
+        description: "The site's everyday name, as people say it, such as Example Flights",
       }),
     ),
     siteSummary: Schema.optional(
