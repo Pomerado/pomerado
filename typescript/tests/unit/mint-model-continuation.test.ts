@@ -1,4 +1,8 @@
-import { makeMintContinuationFixture, portableJobSession } from "../support/mint-fixtures.js";
+import {
+  makeMintContinuationFixture,
+  readAllow,
+  portableJobSession,
+} from "../support/mint-fixtures.js";
 import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Clock, Effect } from "effect";
@@ -27,12 +31,7 @@ const prose = (text = "I stopped before publication."): ModelResponse => ({
   ],
 });
 
-const intentTools = new Set([
-  "execute",
-  "finish_build",
-  "request_input",
-  "report_blocked",
-]);
+const intentTools = new Set(["execute", "finish_build", "request_input", "report_blocked"]);
 
 /** One free-text question, as the agent asks it. */
 const ask = (prompt: string) => ({ questions: [{ id: "report", type: "text", prompt }] });
@@ -283,7 +282,7 @@ it("ends the build as sign_in_unavailable when the site keeps no signed-in sessi
       // The example completes; the live test finds the session gone for good.
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
         executions++ === 0
-          ? beforeDispatch(undefined).pipe(
+          ? beforeDispatch(readAllow).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -475,7 +474,7 @@ it("still publishes a retained receipt after sign-in becomes unavailable", async
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch(undefined).pipe(
+          : beforeDispatch(readAllow).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -523,7 +522,7 @@ it("ends a build holding a retained receipt as sign_in_unavailable at the first 
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch(undefined).pipe(
+          : beforeDispatch(readAllow).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -595,7 +594,7 @@ it("gives no sign-in-unavailable ending to a sign-in whose cleanup is unconfirme
       reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
         submitted.purpose === "authenticate"
           ? Effect.fail(new MintFailure({ code: "Unavailable", authentication }))
-          : beforeDispatch(undefined).pipe(
+          : beforeDispatch(readAllow).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -649,7 +648,7 @@ const receiptThenSpentSignIn = (
                 spentSignIn: "relogin_spent",
               }),
             )
-          : beforeDispatch(undefined).pipe(
+          : beforeDispatch(readAllow).pipe(
               Effect.as({
                 executionId: "execution_one",
                 status: "completed" as const,
@@ -752,7 +751,7 @@ it("carries a live test's agent-chosen input through the actual SDK tool boundar
       ][index] ?? prose(),
     {
       reviewAndExecute: (input, beforeDispatch = () => Effect.void) =>
-        beforeDispatch(undefined).pipe(
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.sync(() => ({
               executionId: `execution_${received.push(input)}`,
@@ -835,7 +834,7 @@ it.each([false, true])(
       {
         repeatableRead,
         reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
-          beforeDispatch(undefined).pipe(
+          beforeDispatch(readAllow).pipe(
             Effect.zipRight(
               Effect.sync(() => {
                 executions++;

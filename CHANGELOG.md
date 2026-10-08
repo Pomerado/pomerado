@@ -6,14 +6,14 @@
 
 - Guardian's execution review returns a required `action` label, `read`, `write` or `authentication`, in the shared output format. An execution allow without one fails to decode and is retried like an outage. An allowed `write` on a step without the new `PendingExecution.writeAuthority` becomes a denial.
   - Migrate recorded Guardian responses by adding `action` to every execution allow, and set `writeAuthority` on the steps that may write.
-- `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows: `beforeDispatch(allowed: AllowedExecution | undefined)`. Pass the review ID and Guardian's label, or undefined for a step no Guardian execution review allowed.
+- `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows, so every dispatch carries a label: `beforeDispatch(allowed: AllowedExecution)`. Pass the review ID and Guardian's label, or `hostAuthentication` for a sign-in screen the host fills itself.
 - The local host's dispatch-based repeat guard and `replayedWriteStep`, `writeStepDigest` and `WriteStep` from `pomerado/core/mint/step-checks` are removed. The harness now refuses a step that repeats an earlier write's entrypoint until the outcome review finds that write did not happen.
 - A local write session's `write_not_submitted` now means no act step Guardian labelled a write ran on the site, or the outcome review found that each did not happen.
 
 ### Other changes
 
 - A separate outcome reviewer judges each write after it runs, from the minter's whole history and the host's records, and records `done`, `not_done` or `unknown`. `MintOutcome.writes` reports every write with its newest assessment. See `MintDependencies.outcomeReview` and `pomerado/core/mint/outcome-review-contracts`.
-- `MintTurn.history` gives the harness a reader of the minter's full in-memory history, the items a compaction replaced in later requests included.
+- `MintTurn.history` gives the minter a history archive and takes a reader of its run state, so the outcome reviewer reads the minter's whole history, the items before a compaction included, after a takeover too. `OutcomeReviewHost.historyArchive` is the host's durable archive, and `MintAgentSnapshot.historyOffset` records where the run state starts in the whole history; a recovery factory stores the counters' `historyOffset` in it.
 - A served write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, in parallel, from a second server on the same folder, and after a restart. The same key with other input is refused with a retry-conflict message, and nothing runs. A call without a key is still a new website action.
   - `pomerado-mcp serve` keeps each keyed job's record in the integration folder's `.jobs` for a day, with the key, a digest of the input, the job ID, its status and a failed run's commit marks, never the input or output. `get_job` finds a keyed job after a restart with its status but not its output, and a keyed job a stopped server left running reads as failed and is never run again.
   - `.jobs` is reserved, so an artifact may not use the name. `IntegrationMcpOptions` gains `directory`, the folder those records live in. Only a write tool keeps records there, and `.jobs` is for servers on one machine.

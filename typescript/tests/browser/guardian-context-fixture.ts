@@ -219,11 +219,10 @@ export const actionFor = (input: Readonly<Record<string, unknown>> | undefined) 
   const review = input?.["trusted_review"] as Readonly<Record<string, unknown>> | undefined;
   if (review?.["kind"] !== "execution") return {};
   const context = input?.["trusted_execution_context"] as
-    | Readonly<Record<string, unknown>>
-    | undefined;
-  const purpose = (context?.["currentExecution"] as Readonly<Record<string, unknown>> | undefined)?.[
-    "purpose"
-  ];
+    Readonly<Record<string, unknown>> | undefined;
+  const purpose = (
+    context?.["currentExecution"] as Readonly<Record<string, unknown>> | undefined
+  )?.["purpose"];
   return {
     action: purpose === "act" ? "write" : purpose === "authenticate" ? "authentication" : "read",
   };

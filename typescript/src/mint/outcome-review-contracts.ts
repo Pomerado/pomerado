@@ -1,6 +1,6 @@
 import type { Duration, Effect } from "effect";
 import { Schema } from "effect";
-import type { ModelProvider } from "@openai/agents";
+import type { AgentInputItem, ModelProvider } from "@openai/agents";
 import { GuardianSessionSnapshot } from "../guardian/session.js";
 import { GuardianAction } from "../guardian/review-contracts.js";
 import type { MintFailure } from "./contracts.js";
@@ -278,9 +278,47 @@ export interface OutcomeReviewerModel {
  * What a host supplies for the outcome reviewer. Absent, no write is ever assessed: every write
  * stays unresolved, is never repeated and publishes as `may_have_applied`.
  */
+/**
+ * Durable storage for the minter's history items its run state no longer holds: those before a
+ * provider compaction, once a new run segment starts from the compacted history. Offsets are
+ * positions in the minter's whole history, oldest first. The minter stores each range before
+ * the run state that holds it is replaced, and records the offset its run state starts at in
+ * the recovery checkpoint (`MintAgentSnapshot.historyOffset`), so after a takeover the outcome
+ * reviewer reads the earlier items here and the later ones from the restored run state. The
+ * archive can grow far past any checkpoint, to millions of tokens.
+ */
+export interface MinterHistoryArchive {
+  /**
+   * Stores `items` from `offset`, which is at most the archive's length. A range stored again,
+   * as after a takeover from an earlier checkpoint, holds the same items and replaces them.
+   */
+  readonly append: (
+    offset: number,
+    items: readonly AgentInputItem[],
+  ) => Effect.Effect<void, MintFailure>;
+  /** How many items the archive holds. */
+  readonly length: Effect.Effect<number, MintFailure>;
+  /** At most `limit` items from `offset`, oldest first. */
+  readonly read: (
+    offset: number,
+    limit: number,
+  ) => Effect.Effect<readonly AgentInputItem[], MintFailure>;
+}
+
+/** What the minter's run state holds now: its items and the history offset of the first. */
+export interface LiveMinterHistory {
+  readonly offset: number;
+  readonly items: readonly AgentInputItem[];
+}
+
 export interface OutcomeReviewHost {
   /** The reviewer's model; `makeOpenAIOutcomeReviewer` is the core one. */
   readonly model: OutcomeReviewerModel;
+  /**
+   * Durable storage for the minter's history from before a compaction, which a takeover's
+   * restored run state leaves out. Without one, the harness keeps it in memory for the attempt.
+   */
+  readonly historyArchive?: MinterHistoryArchive;
   /** Restored state from the recovery checkpoint, beside the minter's RunState. */
   readonly initial?: OutcomeReviewSnapshot;
   /**

@@ -77,7 +77,11 @@ it("reviews again when an execution allow carries no action label", async () => 
     decision({ outcome: "allow", rationale: "Clicks save.", action: "read" }),
   ]);
   const reviewed = await Effect.runPromise(guardian().review(pending, reader));
-  expect(reviewed.decision).toEqual({ outcome: "allow", rationale: "Clicks save.", action: "read" });
+  expect(reviewed.decision).toEqual({
+    outcome: "allow",
+    rationale: "Clicks save.",
+    action: "read",
+  });
   expect(requests).toHaveLength(2);
 });
 

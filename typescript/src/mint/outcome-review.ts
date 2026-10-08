@@ -11,7 +11,11 @@ import {
   SearchHistoryInput,
   SubmitAssessmentInput,
 } from "./outcome-review-contracts.js";
+import type { AgentInputItem } from "@openai/agents";
+import type { MintFailure } from "./contracts.js";
 import type {
+  LiveMinterHistory,
+  MinterHistoryArchive,
   ObservationRequest,
   OutcomeAssessment,
   OutcomeEvidence,
@@ -24,6 +28,57 @@ import type {
   WriteExecutionStatus,
   WriteOutcome,
 } from "./outcome-review-contracts.js";
+
+/** History items one search reads at a time. */
+const searchPage = 200;
+
+/** A history archive in memory: a host without a durable one keeps it for the attempt. */
+export const memoryHistoryArchive = (): MinterHistoryArchive => {
+  const items: AgentInputItem[] = [];
+  return {
+    append: (offset, appended) =>
+      Effect.sync(() => {
+        items.splice(offset, appended.length, ...appended);
+      }),
+    length: Effect.sync(() => items.length),
+    read: (offset, limit) => Effect.sync(() => items.slice(offset, offset + limit)),
+  };
+};
+
+/** The minter's whole history as the outcome reviewer reads it, oldest first. */
+export interface MinterHistory {
+  readonly length: Effect.Effect<number, MintFailure>;
+  readonly read: (offset: number, limit: number) => Effect.Effect<readonly unknown[], MintFailure>;
+}
+
+/**
+ * The minter's whole history: the archive up to where the run state starts, and the run state
+ * from there. Before the model registers its run state, the archive alone.
+ */
+export const minterHistory = (
+  archive: MinterHistoryArchive,
+  live: () => LiveMinterHistory,
+): MinterHistory => {
+  const liveStart = (held: LiveMinterHistory) =>
+    held.items.length === 0 ? Number.POSITIVE_INFINITY : held.offset;
+  return {
+    length: Effect.map(archive.length, (archived) => {
+      const held = live();
+      return Math.max(archived, held.items.length === 0 ? 0 : held.offset + held.items.length);
+    }),
+    read: (offset, limit) =>
+      Effect.gen(function* () {
+        const held = live();
+        const start = liveStart(held);
+        const end = offset + limit;
+        const archived =
+          offset < start ? yield* archive.read(offset, Math.min(end, start) - offset) : [];
+        const current =
+          end > start ? held.items.slice(Math.max(0, offset - start), end - start) : [];
+        return [...archived, ...current];
+      }),
+  };
+};
 
 /** What one history item reads as, at most this many characters. */
 const historyItemChars = 8_000;
@@ -155,8 +210,8 @@ export interface OutcomeReviewer {
 export const makeOutcomeReviewer = (options: {
   readonly host: OutcomeReviewHost | undefined;
   readonly evidence: OutcomeEvidence;
-  /** The minter's full in-memory history, oldest first; empty before the model starts. */
-  readonly history: () => readonly unknown[];
+  /** The minter's whole history, turns before a compaction included. */
+  readonly history: MinterHistory;
 }): Effect.Effect<OutcomeReviewer, never, Scope.Scope> =>
   Effect.gen(function* () {
     const { host, evidence } = options;
@@ -214,49 +269,64 @@ export const makeOutcomeReviewer = (options: {
       });
     const tools: OutcomeReviewTools = {
       searchHistory: (input) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const request = decoded(SearchHistoryInput, input);
           if (request._tag === "Left") return invalid("query and limit (1 to 20) are required");
           const words = request.right.query.toLowerCase().split(/\s+/u).filter(Boolean);
-          const items = options.history();
+          const total = yield* options.history.length;
           const matches: { offset: number; excerpt: string }[] = [];
-          for (let offset = 0; offset < items.length; offset++) {
-            const itemText = historyItemText(items[offset]);
-            const lower = itemText.toLowerCase();
-            if (!words.every((word) => lower.includes(word))) continue;
-            const at = lower.indexOf(words[0] ?? "");
-            const start = Math.max(0, at - excerptChars / 2);
-            matches.push({ offset, excerpt: itemText.slice(start, start + excerptChars) });
-            if (matches.length >= request.right.limit) break;
+          for (
+            let page = 0;
+            page < total && matches.length < request.right.limit;
+            page += searchPage
+          ) {
+            const items = yield* options.history.read(page, Math.min(searchPage, total - page));
+            for (let index = 0; index < items.length; index++) {
+              const itemText = historyItemText(items[index]);
+              const lower = itemText.toLowerCase();
+              if (!words.every((word) => lower.includes(word))) continue;
+              const at = lower.indexOf(words[0] ?? "");
+              const start = Math.max(0, at - excerptChars / 2);
+              matches.push({
+                offset: page + index,
+                excerpt: itemText.slice(start, start + excerptChars),
+              });
+              if (matches.length >= request.right.limit) break;
+            }
           }
           return JSON.stringify({
             status: "ok",
-            total: items.length,
+            total,
             matches,
             instruction:
               "Read a match's surroundings with read_history from a few items before its offset.",
           });
         }),
       readHistory: (input) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const request = decoded(ReadHistoryInput, input);
           if (request._tag === "Left") return invalid("offset and limit (1 to 50) are required");
-          const items = options.history();
           const { offset, limit } = request.right;
+          const total = yield* options.history.length;
+          const items = yield* options.history.read(
+            offset,
+            Math.max(0, Math.min(limit, total - offset)),
+          );
           const read: { offset: number; text: string }[] = [];
           let chars = 0;
           let next = offset;
-          for (; next < Math.min(items.length, offset + limit); next++) {
-            const itemText = historyItemText(items[next]);
+          for (const item of items) {
+            const itemText = historyItemText(item);
             if (read.length > 0 && chars + itemText.length > historyReadChars) break;
             read.push({ offset: next, text: itemText });
             chars += itemText.length;
+            next++;
           }
           return JSON.stringify({
             status: "ok",
-            total: items.length,
+            total,
             items: read,
-            nextOffset: next < items.length ? next : null,
+            nextOffset: next < total ? next : null,
           });
         }),
       listRecords: (input) =>
@@ -264,7 +334,10 @@ export const makeOutcomeReviewer = (options: {
           const request = decoded(ListRecordsInput, input);
           if (request._tag === "Left")
             return invalid("kind is execution, source, capture or publication");
-          return JSON.stringify({ status: "ok", records: yield* evidence.list(request.right.kind) });
+          return JSON.stringify({
+            status: "ok",
+            records: yield* evidence.list(request.right.kind),
+          });
         }),
       readRecord: (input) =>
         Effect.gen(function* () {
@@ -287,7 +360,9 @@ export const makeOutcomeReviewer = (options: {
             );
           const write = writes.get(request.right.executionId);
           if (write === undefined)
-            return invalid("executionId names no write this build tracks; list the writes in the turn's message");
+            return invalid(
+              "executionId names no write this build tracks; list the writes in the turn's message",
+            );
           const assessment: OutcomeAssessment = {
             ...request.right,
             version: (assessments.get(write.executionId)?.version ?? 0) + 1,
@@ -334,40 +409,40 @@ export const makeOutcomeReviewer = (options: {
     /** One attempt at a turn over every event after the cursor; true when it completed. */
     const attempt = (model: OutcomeReviewHost["model"]) =>
       Effect.gen(function* () {
-      const batch = events.filter((event) => event.seq > cursor);
-      const through = batch.at(-1)?.seq ?? cursor;
-      const final = batch.some((event) => event.kind === "finish");
-      yield* SubscriptionRef.update(status, (current) => ({ ...current, running: true }));
-      yield* report({ phase: "turn_started", events: batch.length, final });
-      const result = yield* Effect.either(
-        model.turn({
-          input: turnInput(batch, final),
-          final,
-          conversation: {
-            initial: conversation,
-            save: (next) =>
-              Effect.suspend(() => {
-                conversation = next;
-                return save;
-              }),
-          },
-          tools,
-        }),
-      );
-      if (result._tag === "Right") cursor = through;
-      yield* report(
-        result._tag === "Right"
-          ? { phase: "turn_completed", cursor }
-          : { phase: "turn_failed", code: result.left.code },
-      );
-      yield* save;
-      yield* SubscriptionRef.set(status, {
-        running: false,
-        outage: result._tag === "Left",
-        cursor,
+        const batch = events.filter((event) => event.seq > cursor);
+        const through = batch.at(-1)?.seq ?? cursor;
+        const final = batch.some((event) => event.kind === "finish");
+        yield* SubscriptionRef.update(status, (current) => ({ ...current, running: true }));
+        yield* report({ phase: "turn_started", events: batch.length, final });
+        const result = yield* Effect.either(
+          model.turn({
+            input: turnInput(batch, final),
+            final,
+            conversation: {
+              initial: conversation,
+              save: (next) =>
+                Effect.suspend(() => {
+                  conversation = next;
+                  return save;
+                }),
+            },
+            tools,
+          }),
+        );
+        if (result._tag === "Right") cursor = through;
+        yield* report(
+          result._tag === "Right"
+            ? { phase: "turn_completed", cursor }
+            : { phase: "turn_failed", code: result.left.code },
+        );
+        yield* save;
+        yield* SubscriptionRef.set(status, {
+          running: false,
+          outage: result._tag === "Left",
+          cursor,
+        });
+        return result._tag === "Right";
       });
-      return result._tag === "Right";
-    });
 
     /** Waits until the status satisfies `done`; the current status counts. */
     const until = (done: (current: Status) => boolean) =>
@@ -398,7 +473,9 @@ export const makeOutcomeReviewer = (options: {
       });
     const fiber = host === undefined ? undefined : yield* Effect.forkScoped(worker(host.model));
     const outcomes = () =>
-      [...writes.values()].map((write) => writeOutcomeOf(write, assessments.get(write.executionId)));
+      [...writes.values()].map((write) =>
+        writeOutcomeOf(write, assessments.get(write.executionId)),
+      );
 
     return {
       write: (write) =>

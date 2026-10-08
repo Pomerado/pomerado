@@ -1,5 +1,5 @@
 import { Usage } from "@openai/agents";
-import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
+import type { AgentInputItem, ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { MintFailure } from "../../src/mint/contracts.js";
@@ -7,10 +7,13 @@ import type { ExecutionEvidence, MintDependencies } from "../../src/mint/contrac
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { makeOpenAIOutcomeReviewer } from "../../src/mint/outcome-review-openai.js";
 import type {
+  MinterHistoryArchive,
   OutcomeAssessment,
   OutcomeReviewHost,
   OutcomeReviewSnapshot,
 } from "../../src/mint/outcome-review-contracts.js";
+import type { MintAgentSnapshot, MintRecoveryFactory } from "../../src/mint/recovery-contracts.js";
+import type { MintHarnessSnapshot } from "../../src/mint/contracts.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
@@ -23,8 +26,7 @@ afterEach(async () => {
 });
 const fixture = makeMintContinuationFixture(cleanups, portableJobSession, makeOpenAIMinter);
 
-const usage = () =>
-  new Usage({ requests: 1, inputTokens: 2, outputTokens: 1, totalTokens: 3 });
+const usage = () => new Usage({ requests: 1, inputTokens: 2, outputTokens: 1, totalTokens: 3 });
 type Item = ModelResponse["output"][number];
 const functionCall = (name: string, input: object, callId = name): Item => ({
   type: "function_call",
@@ -87,8 +89,7 @@ const toolOutput = (request: ModelRequest, callId: string): Record<string, unkno
   if (result === undefined || result.type !== "function_call_result")
     throw new Error(`No result for ${callId}`);
   const output = result.output;
-  const text =
-    typeof output === "string" ? output : "text" in output ? String(output.text) : "";
+  const text = typeof output === "string" ? output : "text" in output ? String(output.text) : "";
   return JSON.parse(text) as Record<string, unknown>;
 };
 
@@ -358,8 +359,7 @@ it("coalesces the events that arrive during a turn into the next turn", async ()
     if (turns.length === 1) {
       firstStarted.resolve();
       await firstTurn.promise;
-    }
-    else secondTurn.resolve();
+    } else secondTurn.resolve();
     running--;
     return respond(message("Waiting for a readback."));
   });
@@ -401,5 +401,155 @@ it("coalesces the events that arrive during a turn into the next turn", async ()
   expect(turns[1]).toEqual([
     expect.objectContaining({ kind: "write" }),
     expect.objectContaining({ kind: "execution", action: "read" }),
+  ]);
+});
+
+// Fails when the minter's history from before a compaction lives only in the attempt's memory: a
+// takeover restores the run state, which starts at the compaction, and the confirmation is gone.
+it("finds a confirmation from before a compaction after a takeover", async () => {
+  /** The host's durable archive, which outlives the attempt. */
+  const archived: AgentInputItem[] = [];
+  const historyArchive: MinterHistoryArchive = {
+    append: (offset, items) =>
+      Effect.sync(() => {
+        archived.splice(offset, items.length, ...structuredClone(items));
+      }),
+    length: Effect.sync(() => archived.length),
+    read: (offset, limit) =>
+      Effect.sync(() => structuredClone(archived.slice(offset, offset + limit))),
+  };
+  /** The host's checkpoints: each saved before a model call, as a recovery store does. */
+  const checkpoints: { agent: MintAgentSnapshot; harness: MintHarnessSnapshot }[] = [];
+  const recoveryFactory: MintRecoveryFactory = (store) =>
+    Effect.succeed({
+      model: (state, counters, invoke) =>
+        store
+          .save({ version: 1, sdkVersion: "0.18.0", sdkState: state(), ...counters, tools: [] })
+          .pipe(Effect.zipRight(invoke)),
+      tool: (_call, invoke) => invoke,
+    });
+  const minterRequests: ModelRequest[] = [];
+  const minterProvider: ModelProvider = {
+    getModel: () => ({
+      getResponse: async (request) => {
+        minterRequests.push(request);
+        const index = minterRequests.length - 1;
+        if (index === 0) return minter("execute", step("src/book.ts"), "book");
+        // The provider compacts the context; the next segment starts at its item.
+        if (index === 1)
+          return respond(
+            { type: "compaction", id: "cmp_synthetic", encrypted_content: "synthetic-summary" },
+            functionCall(
+              "execute",
+              { ...step("src/notes.ts", "explore"), target: "pureFiles", intent: "Check notes" },
+              "notes",
+            ),
+          );
+        // The worker is lost after the new segment's checkpoint.
+        if (index === 2) throw new Error("Synthetic worker loss");
+        if (index === 3) return minter("finish_build", publication("booking_1"));
+        return respond(message("Published."));
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  };
+  const minterModel = () =>
+    makeOpenAIMinter(minterProvider, "medium", { segmentTurns: 2 }, { recoveryFactory });
+  const reviewer = scriptedReviewer((request) => {
+    const turn = turnOf(request);
+    if (!turn.final) return respond(message("No assessment yet."));
+    const items = Array.isArray(request.input) ? request.input : [];
+    if (!items.some((item) => item.type === "function_call_result"))
+      return respond(functionCall("search_history", { query: "SYN-1042", limit: 5 }, "search"));
+    if (!items.some((item) => item.type === "function_call_result" && item.callId === "assess")) {
+      const found = toolOutput(request, "search") as { matches: readonly { offset: number }[] };
+      return respond(
+        functionCall(
+          "submit_assessment",
+          {
+            executionId: turn.unresolvedWrites[0]?.executionId,
+            outcome: found.matches.length > 0 ? "done" : "unknown",
+            explanation:
+              found.matches.length > 0
+                ? "The booking step's result shows the confirmation number."
+                : "No confirmation is in the history.",
+            evidence: found.matches.map((match) => `history:${match.offset}`),
+          },
+          "assess",
+        ),
+      );
+    }
+    return respond(message("Assessed."));
+  });
+  const review = reviewHost(reviewer.provider);
+  const steps = allowedStep(
+    (entrypoint) =>
+      Effect.succeed(
+        entrypoint === "src/book.ts"
+          ? {
+              executionId: "booking_1",
+              status: "completed",
+              effect: "possible",
+              resultRef: "booking_result",
+              observations: { page: "Table booked. Confirmation number SYN-1042." },
+            }
+          : {
+              executionId: "notes_1",
+              status: "completed",
+              effect: "not_sent",
+              observations: { notes: "none" },
+            },
+      ),
+    (entrypoint) => (entrypoint === "src/book.ts" ? "write" : "read"),
+  );
+  const agentRecovery = {
+    save: (agent: MintAgentSnapshot, harness: MintHarnessSnapshot) =>
+      Effect.sync(() => {
+        checkpoints.push({ agent, harness });
+      }),
+  };
+  const first = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: minterModel(),
+      reviewAndExecute: steps,
+      agentRecovery,
+      outcomeReview: { ...review.host, historyArchive },
+    },
+    { effect: "write" },
+  );
+  await first.run().catch(() => undefined);
+  expect(minterRequests).toHaveLength(3);
+
+  // A new worker takes over from the last checkpoint, with the reviewer's saved state.
+  const checkpoint = checkpoints.at(-1);
+  const reviewState = review.saved.at(-1);
+  if (checkpoint === undefined || reviewState === undefined) throw new Error("No checkpoint");
+  const second = await fixture(
+    () => respond(message("Unused.")),
+    {
+      model: minterModel(),
+      reviewAndExecute: steps,
+      agentRecovery: { ...agentRecovery, initial: checkpoint },
+      outcomeReview: {
+        ...review.host,
+        historyArchive,
+        initial: reviewState,
+      },
+    },
+    { effect: "write" },
+  );
+  const outcome = await second.run();
+
+  expect(outcome.build).toBe("published");
+  // The restored run state starts at the compaction: the confirmation is not in it.
+  expect(JSON.stringify(minterRequests[3]?.input)).not.toContain("SYN-1042");
+  expect(outcome.writes).toEqual([
+    expect.objectContaining({
+      status: "applied",
+      assessment: expect.objectContaining({ outcome: "done" }),
+    }),
   ]);
 });

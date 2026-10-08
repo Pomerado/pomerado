@@ -111,9 +111,7 @@ it("reads every skill and guide file through a host's render, with its key", asy
     expect(keys.slice(skills.length)).toEqual(["agents", "guide"]);
     const refused = { _tag: "Left", left: { code: "Unavailable" } };
     expect(
-      await Effect.runPromise(
-        Effect.either(loadAuthoringSkills("typescript/authoring", composed)),
-      ),
+      await Effect.runPromise(Effect.either(loadAuthoringSkills("typescript/authoring", composed))),
     ).toMatchObject(refused);
     expect(
       await Effect.runPromise(Effect.either(loadWorkspaceGuide("typescript/authoring", composed))),

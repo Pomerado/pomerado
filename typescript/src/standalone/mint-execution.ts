@@ -9,6 +9,7 @@ import {
 import type { GuardianAction } from "../guardian/review-contracts.js";
 import type { MintReviewFeedback } from "../mint/input-feedback.js";
 import {
+  hostAuthentication,
   type AllowedExecution,
   type MintDependencies,
   type ExecutionEvidence,
@@ -28,14 +29,17 @@ import type { MintState } from "./mint-state.js";
 import { error, mintError } from "./errors.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
-/** The allow a dispatch fence follows: the review and Guardian's action label. */
+/**
+ * The allow a dispatch fence follows: the review and Guardian's action label. An execution allow
+ * always carries one, as Guardian's review decodes it.
+ */
 const allowedOf = (reviewed: {
   readonly reviewId: string;
   readonly decision: { readonly action?: GuardianAction | undefined };
-}): AllowedExecution | undefined =>
+}): Effect.Effect<AllowedExecution, Error> =>
   reviewed.decision.action === undefined
-    ? undefined
-    : { reviewId: reviewed.reviewId, action: reviewed.decision.action };
+    ? Effect.fail(new Error("Guardian's allow carried no action label"))
+    : Effect.succeed({ reviewId: reviewed.reviewId, action: reviewed.decision.action });
 const executeCommand = (
   state: MintState,
   execution: Extract<Execution, { purpose: "command" }>,
@@ -68,7 +72,9 @@ const executeCommand = (
       },
       "not_sent",
     );
-    yield* beforeDispatch?.(allowedOf(reviewed)) ?? Effect.void;
+    yield* allowedOf(reviewed).pipe(
+      Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
+    );
     const exec = workspace.session.exec?.bind(workspace.session);
     if (exec === undefined)
       return yield* Effect.fail(new Error("Workspace command execution unavailable"));
@@ -111,7 +117,7 @@ const executeAuthentication = (
       signIn,
       loginUrl,
       // The host fills the sign-in itself, after its own review of each screen.
-      Effect.zipRight(markers.beforeTyping, beforeDispatch?.(undefined) ?? Effect.void),
+      Effect.zipRight(markers.beforeTyping, beforeDispatch?.(hostAuthentication) ?? Effect.void),
     );
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
@@ -246,7 +252,8 @@ const failedReceipt = (
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: undefined,
       purpose: execution.purpose,
-      journal: failureJournal,      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      journal: failureJournal,
+      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     const evidence: ExecutionEvidence = {
       executionId: id,
@@ -298,7 +305,8 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
       purpose: execution.purpose,
-      journal: result,      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      journal: result,
+      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     yield* journal?.record(evidence) ?? Effect.void;
     return evidence;
@@ -363,7 +371,9 @@ const authoredExecution = (
       codes.length === 0
         ? undefined
         : browser.watchTyping(codes, (url) => trustedUrl(context.siteOrigin, signInOrigins, url));
-    yield* beforeDispatch?.(allowedOf(reviewed)) ?? Effect.void;
+    yield* allowedOf(reviewed).pipe(
+      Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
+    );
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.

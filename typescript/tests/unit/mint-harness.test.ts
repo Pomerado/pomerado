@@ -1,4 +1,4 @@
-import { makeMintHarnessFixture, portableJobSession } from "../support/mint-fixtures.js";
+import { makeMintHarnessFixture, readAllow, portableJobSession } from "../support/mint-fixtures.js";
 import { portableMintProjection } from "../support/portable-mint.js";
 import { solModel } from "../../src/models/models.js";
 import { writeFile } from "node:fs/promises";
@@ -267,7 +267,7 @@ it("continues once after a claimed example's diagnostic screening failure, then 
         claims++;
       }),
       reviewAndExecute: (_input, beforeDispatch = () => Effect.void) =>
-        beforeDispatch(undefined).pipe(
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               dispatches++;
@@ -1781,7 +1781,7 @@ it.each(["example", "command"] as const)(
         }),
       {
         reviewAndExecute: (_input, dispatch = () => Effect.void) =>
-          dispatch(undefined).pipe(
+          dispatch(readAllow).pipe(
             Effect.zipRight(Effect.sync(() => started.resolve())),
             Effect.zipRight(Effect.never),
             Effect.ensuring(
@@ -1826,7 +1826,7 @@ it("parent cancellation waits for an independently invoked SDK execution tool to
       }),
     {
       reviewAndExecute: (_input, dispatch = () => Effect.void) =>
-        dispatch(undefined).pipe(
+        dispatch(readAllow).pipe(
           Effect.zipRight(Effect.sync(() => started.resolve())),
           Effect.zipRight(Effect.never),
           Effect.ensuring(
@@ -3239,7 +3239,7 @@ it.each(["metadata_free", "host_poison"] as const)(
       skills: [{ name: "core", description: "Synthetic SDK fixture", content: "Use execute." }],
       ...(kind === "host_poison" ? { executionAvailability: () => availability } : {}),
       reviewAndExecute: (_request, beforeDispatch = () => Effect.void) =>
-        beforeDispatch(undefined).pipe(
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.sync(() => {
               executions++;

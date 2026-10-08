@@ -276,7 +276,11 @@ it("allows in one model call with the agent's file in view and the host wrapper 
   const reads: string[] = [];
   const reader = sourcesOf(files());
   const reviewed = await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {}).review(
+    makeGuardian(
+      makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+      undefined,
+      {},
+    ).review(
       {
         ...pending,
         hostWrapper: {
@@ -303,7 +307,10 @@ it("ends an allow without the entrypoint in view as EntrypointNotRead after two 
   const result = await Effect.runPromise(
     Effect.either(
       makeGuardian(
-        { ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), retry: guardianOutageRetry },
+        {
+          ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+          retry: guardianOutageRetry,
+        },
         diagnostics,
         {},
       ).review(pending, sourcesOf(files())),
@@ -321,10 +328,11 @@ it("asks for the entrypoint again after a compaction in the review and accepts a
     [allow],
   ]);
   const reviewed = await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {}).review(
-      pending,
-      sourcesOf(files()),
-    ),
+    makeGuardian(
+      makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+      undefined,
+      {},
+    ).review(pending, sourcesOf(files())),
   );
   expect(reviewed.decision.outcome).toBe("allow");
   expect(requests).toHaveLength(3);
@@ -367,7 +375,11 @@ it("marks an executed source unchanged since Guardian read it, and not once it c
       executions: [],
     },
   };
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), undefined, {});
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
   const reader = sourcesOf(workspace);
   await Effect.runPromise(guardian.review(executed, reader));
   await Effect.runPromise(guardian.review({ ...executed, screenedInput: '{"day":2}' }, reader));
@@ -445,7 +457,11 @@ it("reports model diagnostics and token counts for session reviews", async () =>
 it("reports each wait for the session as an interval", async () => {
   scripted([[allow], [allow]]);
   const { diagnostics, events } = recording();
-  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), diagnostics, {});
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    diagnostics,
+    {},
+  );
   const reader = sourcesOf(files());
   await Effect.runPromise(
     Effect.all(
@@ -511,7 +527,10 @@ it("ends EntrypointNotRead, without retrying, when the entrypoint can't be inclu
   const result = await Effect.runPromise(
     Effect.either(
       makeGuardian(
-        { ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native), retry: guardianOutageRetry },
+        {
+          ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+          retry: guardianOutageRetry,
+        },
         diagnostics,
         {},
       ).review(pending, () => Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))),
@@ -671,7 +690,10 @@ it.each([
       Effect.either(
         makeGuardian(
           {
-            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, { ...native, observerFactory }),
+            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, {
+              ...native,
+              observerFactory,
+            }),
             // One retry: the second wait alone outlasts the budget.
             retry: { delays: ["1 millis", "1 second"], budget: "1 second" },
           },

@@ -41,10 +41,7 @@ const reviewerInterruption = {
 };
 
 /** The reviewer's tools, each a thin call into the harness's read-only implementation. */
-const reviewerTools = (
-  tools: OutcomeReviewTools,
-  signal: () => AbortSignal,
-) => {
+const reviewerTools = (tools: OutcomeReviewTools, signal: () => AbortSignal) => {
   const entry = (
     name: string,
     description: string,
@@ -74,7 +71,10 @@ const reviewerTools = (
       // are its to correct.
       errorFunction: (_context, error) => {
         if (error instanceof MintFailure || signal().aborted) throw error;
-        return JSON.stringify({ status: "invalid", detail: "The call's arguments did not decode." });
+        return JSON.stringify({
+          status: "invalid",
+          detail: "The call's arguments did not decode.",
+        });
       },
     });
   return [

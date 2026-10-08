@@ -1026,12 +1026,7 @@ export const makeGuardian = (
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry("recovery", (run) =>
-          review(
-            run,
-            { ...pending, recoveryCandidate: { rationale } },
-            readSource,
-            decodeDecision,
-          ),
+          review(run, { ...pending, recoveryCandidate: { rationale } }, readSource, decodeDecision),
         );
       }),
     /**

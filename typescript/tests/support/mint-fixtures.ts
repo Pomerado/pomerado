@@ -29,6 +29,8 @@ export const fixtureAllow = (purpose: string): AllowedExecution => ({
   reviewId: `review_${purpose}`,
   action: purpose === "act" ? "write" : purpose === "authenticate" ? "authentication" : "read",
 });
+/** A Guardian read allow, for scripted steps whose label a test does not depend on. */
+export const readAllow: AllowedExecution = { reviewId: "review_fixture", action: "read" };
 const unanswered = (possibleCommit = false) =>
   new MintFailure({ code: "Unavailable", noResponse: { possibleCommit } });
 export const makeMintHarnessFixture = <W extends SandboxSession & { close: () => Promise<void> }>(
@@ -97,7 +99,7 @@ export const makeMintHarnessFixture = <W extends SandboxSession & { close: () =>
       reviewAndExecute: (input, beforeDispatch = () => Effect.void) =>
         Effect.gen(function* () {
           let crossed = false;
-          const dispatch = (allowed: AllowedExecution | undefined) =>
+          const dispatch = (allowed: AllowedExecution) =>
             beforeDispatch(allowed).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {

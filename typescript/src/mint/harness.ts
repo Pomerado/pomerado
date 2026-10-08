@@ -55,8 +55,12 @@ import type {
 } from "./contracts.js";
 import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
 import type { RecoveryToolCall } from "./recovery-contracts.js";
-import { makeOutcomeReviewer } from "./outcome-review.js";
-import type { OutcomeEvidence, WriteExecutionStatus } from "./outcome-review-contracts.js";
+import { makeOutcomeReviewer, memoryHistoryArchive, minterHistory } from "./outcome-review.js";
+import type {
+  LiveMinterHistory,
+  OutcomeEvidence,
+  WriteExecutionStatus,
+} from "./outcome-review-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
@@ -1972,7 +1976,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           if (submitted.purpose !== "command")
             entrypoints.set(evidence.executionId, submitted.entrypoint);
           const action = evidence.review?.action ?? allowed?.action;
-          const reviewId = evidence.review?.reviewId ?? allowed?.reviewId;
+          const reviewId =
+            evidence.review?.reviewId ??
+            (allowed !== undefined && "reviewId" in allowed ? allowed.reviewId : undefined);
           if (action === "write" && submitted.purpose !== "command")
             return reviewer.write({
               executionId: evidence.executionId,
@@ -2000,9 +2006,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * `not_done`. This is the one place the minter waits for the reviewer, and an outage leaves
        * the write unresolved, so it is not repeated.
        */
-      const repeatedWriteRefusal = (submitted: Parameters<typeof dependencies.reviewAndExecute>[0]) =>
+      const repeatedWriteRefusal = (
+        submitted: Parameters<typeof dependencies.reviewAndExecute>[0],
+      ) =>
         Effect.gen(function* () {
-          if (submitted.purpose === "command" || submitted.target !== "liveBrowser") return undefined;
+          if (submitted.purpose === "command" || submitted.target !== "liveBrowser")
+            return undefined;
           const earlier = reviewer
             .tracked()
             .filter(
@@ -2426,35 +2435,35 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
                     const lost: ExecutionEvidence = {
-                        executionId: `unresolved_${randomUUID()}`,
-                        status: "failed",
-                        effect:
-                          submitted.purpose === "example" || submitted.purpose === "act"
-                            ? crossedDispatchBoundary
-                              ? "possible"
-                              : "not_sent"
-                            : reviewPreventedExecution || submitted.purpose === "authenticate"
-                              ? "not_sent"
-                              : "possible",
-                        ...(submitted.purpose === "authenticate" && !reviewPreventedExecution
-                          ? {
-                              authentication: {
-                                state: "failed" as const,
-                                // Possible only while the sign-in's outcome is unknown.
-                                effect:
-                                  Cause.isFailType(result.cause) &&
-                                  (result.cause.error.code === "CredentialsRejected" ||
-                                    (result.cause.error.authentication !== undefined &&
-                                      signInFailureFeedback(result.cause.error.authentication)
-                                        .signInOutcome === "signed_out"))
-                                    ? ("verified" as const)
-                                    : ("possible" as const),
-                              },
-                            }
-                          : {}),
-                        observations:
-                          "Execution did not produce a result. Reconcile using the host's durable execution journal.",
-                      };
+                      executionId: `unresolved_${randomUUID()}`,
+                      status: "failed",
+                      effect:
+                        submitted.purpose === "example" || submitted.purpose === "act"
+                          ? crossedDispatchBoundary
+                            ? "possible"
+                            : "not_sent"
+                          : reviewPreventedExecution || submitted.purpose === "authenticate"
+                            ? "not_sent"
+                            : "possible",
+                      ...(submitted.purpose === "authenticate" && !reviewPreventedExecution
+                        ? {
+                            authentication: {
+                              state: "failed" as const,
+                              // Possible only while the sign-in's outcome is unknown.
+                              effect:
+                                Cause.isFailType(result.cause) &&
+                                (result.cause.error.code === "CredentialsRejected" ||
+                                  (result.cause.error.authentication !== undefined &&
+                                    signInFailureFeedback(result.cause.error.authentication)
+                                      .signInOutcome === "signed_out"))
+                                  ? ("verified" as const)
+                                  : ("possible" as const),
+                            },
+                          }
+                        : {}),
+                      observations:
+                        "Execution did not produce a result. Reconcile using the host's durable execution journal.",
+                    };
                     record(lost, submitted.purpose);
                     // Only an execution that crossed its dispatch fence ran; a write whose result
                     // was lost is exactly what the outcome reviewer settles.
@@ -3290,8 +3299,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ),
             }),
       };
-      /** The minter's full in-memory history, which the model registers before its first request. */
-      let minterHistory: () => readonly unknown[] = () => [];
+      /** The minter's history from before a compaction, which its run state no longer holds. */
+      const historyArchive = dependencies.outcomeReview?.historyArchive ?? memoryHistoryArchive();
+      /** What the minter's run state holds, which the model registers before its first request. */
+      let liveHistory: () => LiveMinterHistory = () => ({ offset: 0, items: [] });
       /** Each piece of the harness's evidence as the outcome reviewer reads it. */
       const recordChunk = (ref: string, text: string, range: { offset: number; limit: number }) => {
         const end = Math.min(text.length, range.offset + range.limit);
@@ -3304,27 +3315,33 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         };
       };
       /** A workspace file through the minter's own screened source read. */
-      const workspaceChunk = (ref: string, path: string, range: { offset: number; limit: number }) =>
-        actions.readSource(path, { offset: range.offset, limit: Math.min(range.limit, 64_000) }).pipe(
-          Effect.map((read) => {
-            const chunk = decodeJsonObject(read);
-            if (chunk._tag === "Left") return undefined;
-            const source = chunk.right["source"];
-            const total = chunk.right["total"];
-            const next = chunk.right["nextOffset"];
-            return typeof source !== "string" || typeof total !== "number"
-              ? undefined
-              : {
-                  ref,
-                  text: source,
-                  offset: range.offset,
-                  total,
-                  nextOffset: typeof next === "number" ? next : null,
-                };
-          }),
-          // A file the workspace does not hold is a record the reviewer cannot read, not a failure.
-          Effect.catchAll(() => Effect.succeed(undefined)),
-        );
+      const workspaceChunk = (
+        ref: string,
+        path: string,
+        range: { offset: number; limit: number },
+      ) =>
+        actions
+          .readSource(path, { offset: range.offset, limit: Math.min(range.limit, 64_000) })
+          .pipe(
+            Effect.map((read) => {
+              const chunk = decodeJsonObject(read);
+              if (chunk._tag === "Left") return undefined;
+              const source = chunk.right["source"];
+              const total = chunk.right["total"];
+              const next = chunk.right["nextOffset"];
+              return typeof source !== "string" || typeof total !== "number"
+                ? undefined
+                : {
+                    ref,
+                    text: source,
+                    offset: range.offset,
+                    total,
+                    nextOffset: typeof next === "number" ? next : null,
+                  };
+            }),
+            // A file the workspace does not hold is a record the reviewer cannot read, not a failure.
+            Effect.catchAll(() => Effect.succeed(undefined)),
+          );
       const executionRecord = (entry: ExecutionEvidence) => ({
         ...entry,
         purpose: purposes.get(entry.executionId),
@@ -3352,13 +3369,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               return [...new Set(entrypoints.values())].map((path) => ({
                 ref: `source:${path}`,
                 kind,
-                summary: "An entrypoint an execution ran; read any other workspace path the same way.",
+                summary:
+                  "An entrypoint an execution ran; read any other workspace path the same way.",
               }));
             if (kind === "capture") {
-              const index = yield* workspaceChunk("capture:captures/index.json", "captures/index.json", {
-                offset: 0,
-                limit: 1,
-              });
+              const index = yield* workspaceChunk(
+                "capture:captures/index.json",
+                "captures/index.json",
+                {
+                  offset: 0,
+                  limit: 1,
+                },
+              );
               return index === undefined
                 ? []
                 : [
@@ -3415,7 +3437,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const reviewer = yield* makeOutcomeReviewer({
         host: dependencies.outcomeReview,
         evidence: dependencies.outcomeReview?.evidence?.(baseEvidence) ?? baseEvidence,
-        history: () => minterHistory(),
+        history: minterHistory(historyArchive, () => liveHistory()),
       });
       /** The outcome reviewer's readback requests, beside the host's own notices. */
       const drainNotices = () => {
@@ -3569,8 +3591,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               : reviewedActions,
             drainNotices,
           ),
-          history: (read) => {
-            minterHistory = read;
+          history: {
+            archive: historyArchive,
+            live: (read) => {
+              liveHistory = read;
+            },
           },
           screen: (value) => screenMintText(dependencies, value),
           isComplete: () =>

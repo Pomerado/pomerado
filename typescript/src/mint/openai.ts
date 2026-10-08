@@ -765,22 +765,28 @@ export const makeOpenAIMinter = (
             let finalsWithoutTool = turn.recovery?.initial?.finalsWithoutTool ?? 0;
             let activeState: RunState<unknown, typeof agent> | undefined;
             /**
-             * The items a provider compaction replaced before the current segment started: a
-             * segment continues from the SDK's history, which starts at the latest compaction.
+             * The history offset of the run state's first item. A new segment starts from the SDK's
+             * history, which starts at the latest compaction; the items before it go to the
+             * history archive first, and the offset moves with the segment's state.
              */
-            let archived: AgentInputItem[] = [];
+            let liveOffset = turn.recovery?.initial?.historyOffset ?? 0;
+            let nextOffset = liveOffset;
             type HeldState = Parameters<typeof untrimmedHistory>[0];
-            const fullHistory = (state: HeldState) => [
-              ...archived,
-              ...untrimmedHistory(state),
-            ];
-            /** Keeps what the next segment's input leaves out: the items before `state`'s compaction. */
-            const archiveBeforeSegment = (state: HeldState) => {
-              const full = fullHistory(state);
-              const compaction = full.findLastIndex((item) => item.type === "compaction");
-              if (compaction > 0) archived = full.slice(0, compaction);
+            /** Archives what the next segment's input leaves out: the items before `state`'s compaction. */
+            const archiveBeforeSegment = async (state: HeldState) => {
+              const items = untrimmedHistory(state);
+              const compaction = items.findLastIndex((item) => item.type === "compaction");
+              if (compaction <= 0) return;
+              if (turn.history !== undefined)
+                await turn.runTool(
+                  turn.history.archive.append(liveOffset, items.slice(0, compaction)),
+                );
+              nextOffset = liveOffset + compaction;
             };
-            turn.history?.(() => (activeState === undefined ? archived : fullHistory(activeState)));
+            turn.history?.live(() => ({
+              offset: liveOffset,
+              items: activeState === undefined ? [] : untrimmedHistory(activeState),
+            }));
             const totalUsage = new Usage();
             /** Finite per-call counts, so the host can store the cache hit rate per call. */
             const reportUsage = (
@@ -892,7 +898,11 @@ export const makeOpenAIMinter = (
                             throw new MintFailure({ code: "Unavailable" });
                           return activeState.toString();
                         },
-                        { modelCalls: modelCalls + 1, finalsWithoutTool },
+                        {
+                          modelCalls: modelCalls + 1,
+                          finalsWithoutTool,
+                          historyOffset: liveOffset,
+                        },
                         Effect.tryPromise({
                           try: invoke,
                           catch: sdkFailure,
@@ -930,6 +940,7 @@ export const makeOpenAIMinter = (
                 if (!(input instanceof RunState))
                   input = new RunState(new RunContext(), input, agent, turnsPerSegment);
                 activeState = input;
+                liveOffset = nextOffset;
                 const segment: { readonly value: SegmentResult } | { readonly error: unknown } =
                   await runSegment(input).then(
                     (value) => ({ value }),
@@ -940,7 +951,7 @@ export const makeOpenAIMinter = (
                   if (!(error instanceof MaxTurnsExceededError) || error.state === undefined)
                     throw error;
                   const history: AgentInputItem[] = error.state.history;
-                  archiveBeforeSegment(error.state);
+                  await archiveBeforeSegment(error.state);
                   if (turn.isComplete()) {
                     totalUsage.add(error.state.usage);
                     diagnostics?.completed(history, totalUsage);
@@ -999,7 +1010,7 @@ export const makeOpenAIMinter = (
                     modelCalls,
                   }) ?? Effect.void,
                 );
-                archiveBeforeSegment(result.state);
+                await archiveBeforeSegment(result.state);
                 input = [
                   ...result.history,
                   {

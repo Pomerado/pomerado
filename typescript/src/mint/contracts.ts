@@ -73,7 +73,12 @@ import {
   PublicationFinding,
   PublicationReason,
 } from "../guardian/review-contracts.js";
-import type { OutcomeReviewHost, WriteOutcome } from "./outcome-review-contracts.js";
+import type {
+  LiveMinterHistory,
+  MinterHistoryArchive,
+  OutcomeReviewHost,
+  WriteOutcome,
+} from "./outcome-review-contracts.js";
 import { CaptureScreeningDiagnostic } from "../runtime/capture-diagnostic.js";
 import type {
   diagnosticRetentionReason,
@@ -908,11 +913,15 @@ export interface HostToolDescriptions {
 export interface MintTurn {
   readonly recovery?: MintAgentRecovery;
   /**
-   * Receives a reader of the model's full in-memory history, oldest first: every item the run
-   * holds, the turns a compaction replaced in the request included. The outcome reviewer's history
-   * tools read it. The model registers it once, before its first request.
+   * The minter's whole history for the outcome reviewer, turns before a compaction included. The
+   * model stores in `archive` the items before a compaction as a new run segment leaves them out,
+   * and registers with `live` a reader of what its run state holds, once, before its first
+   * request.
    */
-  readonly history?: (read: () => readonly AgentInputItem[]) => void;
+  readonly history?: {
+    readonly archive: MinterHistoryArchive;
+    readonly live: (read: () => LiveMinterHistory) => void;
+  };
   /** Attempt-scoped bridge for SDK Promise callbacks; closes and joins before returning an outcome. */
   readonly runTool: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   readonly input: string;
@@ -1362,9 +1371,9 @@ export interface MintDependencies {
   /** Each call MUST perform fresh Guardian review, await beforeDispatch after approval,
    * and only then allocate execution resources/import authored code. Never swallow a
    * failed dispatch fence or invoke it before the initial review succeeds. Pass the fence the
-   * allow it follows, with Guardian's action label; pass undefined only for a step no Guardian
-   * execution review allowed, such as a sign-in the host performs itself. A successful result
-   * carries the same allow, label included, as `review`. */
+   * allow it follows, so every dispatch carries an action label: Guardian's review and label,
+   * or the host's own authentication allow for a sign-in screen the host fills itself. A
+   * successful result carries Guardian's allow, label included, as `review`. */
   readonly reviewAndExecute: (
     request:
       | ExecutionRequest
@@ -1373,7 +1382,7 @@ export interface MintDependencies {
           readonly target: "pureFiles";
           readonly command: string;
         },
-    beforeDispatch?: (allowed: AllowedExecution | undefined) => Effect.Effect<void, MintFailure>,
+    beforeDispatch?: (allowed: AllowedExecution) => Effect.Effect<void, MintFailure>,
     exampleJournal?: ExampleJournal,
   ) => Effect.Effect<ExecutionEvidence, MintFailure>;
   /** Persist before example/residual dispatch. Host binds input/account/authority, never tool args. */
@@ -1393,11 +1402,16 @@ export interface MintDependencies {
   readonly outcomeReview?: OutcomeReviewHost;
 }
 
-/** The Guardian allow a dispatch fence follows: its review and Guardian's action label. */
-export interface AllowedExecution {
-  readonly reviewId: string;
-  readonly action: GuardianAction;
-}
+/**
+ * The allow a dispatch fence follows, so every dispatch carries an action label: a Guardian
+ * execution review and its label, or the host's own allow for a sign-in screen it fills itself
+ * after its own review, which is always `authentication`.
+ */
+export type AllowedExecution =
+  | { readonly reviewId: string; readonly action: GuardianAction }
+  | { readonly host: true; readonly action: "authentication" };
+/** The host's allow for a sign-in screen it fills itself. */
+export const hostAuthentication: AllowedExecution = { host: true, action: "authentication" };
 
 /** What a browser recovery request did, as the agent reads it. */
 export type MintBrowserRecoveryResult =

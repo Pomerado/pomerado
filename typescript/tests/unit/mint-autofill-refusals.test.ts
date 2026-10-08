@@ -3,15 +3,22 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Exit, Scope } from "effect";
 import { afterEach, expect, it } from "vitest";
 import type { AutofillPage } from "../../src/destinations/autofill-step.js";
-import type { CredentialKeyboard, InsertionRefusal } from "../../src/destinations/credential-keyboard.js";
-import { MintFailure, type MintDependencies } from "../../src/mint/contracts.js";
+import type {
+  CredentialKeyboard,
+  InsertionRefusal,
+} from "../../src/destinations/credential-keyboard.js";
+import {
+  hostAuthentication,
+  MintFailure,
+  type MintDependencies,
+} from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure, signInFailureFeedback } from "../../src/mint/sign-in-failure.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { mintError } from "../../src/standalone/errors.js";
-import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
+import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -136,7 +143,7 @@ const passwordScreen = (refusals: readonly ScreenRefusal[]) => {
         const signIn = "signInStep" in execution ? execution.signInStep : undefined;
         if (signIn === undefined || !("fields" in signIn))
           return yield* Effect.die("The test signs in by autofill only");
-        const step = yield* recorder.step(signIn, undefined, beforeDispatch(undefined));
+        const step = yield* recorder.step(signIn, undefined, beforeDispatch(hostAuthentication));
         return {
           executionId: `sign_in_${executions}`,
           status: "completed" as const,
@@ -275,7 +282,12 @@ it("starts the count again when a different refusal breaks the run", async () =>
 // replaced, the binding did not resolve, or the browser rejected the text. The agent hears the
 // cause and a next step for it, never the binding, the selector or the value.
 it("tells the agent why the host's insertion inserted nothing, by its cause", async () => {
-  const causes = ["focus_moved", "document_changed", "binding_not_found", "insertion_rejected"] as const;
+  const causes = [
+    "focus_moved",
+    "document_changed",
+    "binding_not_found",
+    "insertion_rejected",
+  ] as const;
   const notices: string[] = [];
   for (const cause of causes) {
     const screen = passwordScreen([cause]);
@@ -336,7 +348,7 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
       autofillSignIn: true,
       executionAvailability: () => "open",
       reviewAndExecute: (_execution, beforeDispatch = () => Effect.void) =>
-        beforeDispatch(undefined).pipe(
+        beforeDispatch(readAllow).pipe(
           Effect.zipRight(
             Effect.suspend(() => {
               executions++;
