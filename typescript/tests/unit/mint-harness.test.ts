@@ -626,6 +626,140 @@ it("writes the retired retention counter on a new checkpoint for an older worker
   });
 });
 
+const blockedReport = { reason: "site_lacks_capability", explanation: "The site has no such form." };
+const freshAgent = {
+  version: 1,
+  sdkVersion: "0.18.0",
+  sdkState: "",
+  modelCalls: 0,
+  finalsWithoutTool: 0,
+  tools: [],
+} as const;
+const unavailableReview = () =>
+  Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" }));
+
+// A takeover in the middle of a blocked explanation's review outage keeps it resubmittable, so the
+// build can still end blocked instead of looping on the refusal until it runs out of calls.
+it("ends blocked after a takeover during a blocked explanation's review outage", async () => {
+  let capture: (() => MintHarnessSnapshot) | undefined;
+  const first = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "review_unavailable",
+          retryable: true,
+        });
+      }),
+    {
+      reviewQuestion: unavailableReview,
+      agentRecovery: {
+        bindHarness: (bound) =>
+          Effect.sync(() => {
+            capture = bound;
+          }),
+        save: () => Effect.void,
+      },
+    },
+  );
+  await first.run();
+  const harness = Schema.decodeUnknownSync(MintHarnessSnapshot)(
+    JSON.parse(JSON.stringify(capture?.())),
+  );
+  const replies: unknown[] = [];
+  const takeover = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        replies.push(JSON.parse(yield* reportBlocked(blockedReport)));
+      }),
+    {
+      reviewQuestion: () =>
+        Effect.succeed({ outcome: "allow_business" as const, rationale: "Plain." }),
+      agentRecovery: { initial: { agent: freshAgent, harness }, save: () => Effect.void },
+    },
+  );
+  const outcome = await takeover.run();
+  expect(replies).toEqual([expect.objectContaining({ status: "blocked" })]);
+  expect(outcome.blocked).toEqual(blockedReport);
+});
+
+// A checkpoint from an older worker has no record of whose outage it was; once the outage budget
+// is spent, report_blocked still goes through and ends blocked with the reason's fixed sentence.
+it("lets report_blocked end blocked once a review outage outlasts its budget", async () => {
+  const time = steppedClock();
+  const start = Effect.runSync(time.clock.currentTimeMillis);
+  const harness: MintHarnessSnapshot = {
+    executions: [],
+    purposes: [],
+    diagnostics: [],
+    exampleClaimed: false,
+    writeSession: "none",
+    unavailableOutputRefusals: 0,
+    unavailableCauseRecorded: false,
+    reviewUnavailableRetries: { execution: 0, publication: 0, question: 1 },
+    reviewOutageStartedAt: start - 20 * 60_000,
+    destinationEvidenceRefusals: 0,
+    inputFeedbackRounds: 0,
+    inputFeedbackPublicTool: false,
+    inputFeedbackCoverage: "",
+    providerUnavailableRetries: 0,
+    executionClosed: false,
+    captchaChecks: 0,
+  };
+  const takeover = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "blocked",
+          explanationShown: false,
+        });
+      }).pipe(Effect.withClock(time.clock)),
+    {
+      reviewQuestion: unavailableReview,
+      agentRecovery: { initial: { agent: freshAgent, harness }, save: () => Effect.void },
+    },
+  );
+  expect((await takeover.run()).blocked).toEqual({ reason: "site_lacks_capability" });
+});
+
+// Another review's outage is not the blocked explanation's: resubmit that call first.
+it("refuses report_blocked again once a different review hits an outage", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "review_unavailable",
+        });
+        expect(
+          JSON.parse(yield* turn.actions.execute({ ...execution, purpose: "explore" })),
+        ).toMatchObject({ status: "review_unavailable" });
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "blocked_refused",
+          reason: "review_unavailable_pending",
+        });
+      }),
+    {
+      reviewQuestion: unavailableReview,
+      reviewAndExecute: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "ReviewUnavailable",
+            reviewFailure: "Unavailable",
+            reviewDispatch: "not_sent",
+          }),
+        ),
+    },
+  );
+  expect((await f.run()).blocked).toBeUndefined();
+});
+
 // A source path the host refused to publish, such as one holding a credential, is the minter's to
 // fix: never an outage to retry until its budget ends the build.
 it("keeps a path screening refusal fixable, never a retryable outage", async () => {

@@ -837,7 +837,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** When the current run of review outages began; cleared by any completed review. */
       let reviewOutageStartedAt = recovered?.reviewOutageStartedAt;
       /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
-      let blockedReviewUnavailable = false;
+      let blockedReviewUnavailable = recovered?.blockedReviewUnavailable === true;
       const reviewCompleted = Effect.sync(() => {
         reviewOutageStartedAt = undefined;
         blockedReviewUnavailable = false;
@@ -1726,6 +1726,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ) =>
         (error: MintFailure) =>
           Effect.gen(function* () {
+            // This outage is another review's, which is resubmitted before report_blocked.
+            blockedReviewUnavailable = false;
             if (error.modelOutage === "quota_exhausted") return yield* spentQuotaReview(error);
             const retentionFailure = error.reviewPhase === "diagnostic_retention";
             if (stopUnavailableHost() || (yield* reviewRetryExhausted()))
@@ -2226,7 +2228,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * still get past is not impossible as asked, and the screened explanation keeps its bound,
        * which screening's longer markers can break, so a takeover's checkpoint still reads it.
        */
-      const blockedRefusal = (screenedExplanation: string) => {
+      const blockedRefusal = (screenedExplanation: string, now: number) => {
         const refused = (reason: string, instruction: string) =>
           JSON.stringify({
             status: "blocked_refused",
@@ -2239,7 +2241,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "sign_in_unresolved",
             "The last sign-in failed and is unresolved. Resolve it as its result says, with authenticate once its cause is fixed, before deciding the task is impossible as asked.",
           );
-        if (reviewOutageStartedAt !== undefined && !blockedReviewUnavailable)
+        // Another review's outage is resubmitted first, until it outlasts its budget.
+        if (
+          reviewOutageStartedAt !== undefined &&
+          !blockedReviewUnavailable &&
+          now - reviewOutageStartedAt < reviewOutageBudgetMs
+        )
           return refused(
             "review_unavailable_pending",
             "A Guardian review was unavailable and may be resubmitted. Submit that same call again first; an unavailable review is not a reason the task is impossible.",
@@ -2804,7 +2811,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 if (error.code === "CaptureUnavailable") {
                   const retryable = !(stopUnavailableHost() || (yield* reviewRetryExhausted()));
                   if (!retryable)
-                    terminal ??= {
+                    terminal = {
                       build: "incomplete",
                       hostFailure: "publication_unavailable",
                       summary:
@@ -3295,7 +3302,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, submitted.explanation),
                     );
-                    const refusal = blockedRefusal(explanation);
+                    const refusal = blockedRefusal(explanation, yield* Clock.currentTimeMillis);
                     if (refusal !== undefined) return refusal;
                     const review = yield* reviewBlockedExplanation(explanation);
                     yield* active("publication");
@@ -3449,6 +3456,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         unavailableCauseRecorded,
         reviewUnavailableRetries: { ...reviewUnavailableRetries },
         ...(reviewOutageStartedAt === undefined ? {} : { reviewOutageStartedAt }),
+        ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,

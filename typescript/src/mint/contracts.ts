@@ -1030,6 +1030,11 @@ export interface MintHarnessSnapshot {
   };
   /** When the current run of review outages began, in epoch milliseconds. */
   readonly reviewOutageStartedAt?: number;
+  /**
+   * The current review outage is a blocked explanation's, which `report_blocked` resubmits.
+   * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
+   */
+  readonly blockedReviewUnavailable?: true;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1134,6 +1139,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     question: Schema.NonNegativeInt,
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,
