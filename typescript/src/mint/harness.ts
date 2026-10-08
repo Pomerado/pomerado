@@ -1317,8 +1317,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         buildEffect === "write" &&
         executions.some((entry) => {
           const purpose = purposes.get(entry.executionId);
-          return (purpose === "example" || purpose === "residual") && entry.effect !== "not_sent";
+          return (
+            (purpose === "example" || purpose === "residual") &&
+            entry.effect !== "not_sent" &&
+            // A read example from before the build became a write committed nothing.
+            (revisions.get(entry.executionId) ?? 0) >= latestRevisionChanging("effect")
+          );
         });
+      /** The revision of the latest accepted update that changed `setting`; 0 for none. */
+      const latestRevisionChanging = (setting: TaskChange["setting"]) =>
+        Math.max(
+          0,
+          ...taskState.updates
+            .filter((update) => update.changes.some((change) => change.setting === setting))
+            .map((update) => update.revision),
+        );
       /**
        * Why the host refuses a task update before review, as its reason and the agent's next step,
        * or undefined. A recommended new build is never refused here: it changes nothing.
@@ -1345,18 +1358,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             return {
               reason: "offline_build",
               instruction: "An offline build has no website to change. Finish it as a read.",
-            };
-          // The job's one example claim is either reads or the write's; a job that already ran a
-          // live read example can never start a write session.
-          if (
-            !repeatableRead ||
-            exampleClaimed ||
-            (dependencies.priorReadExecutions ?? []).length > 0
-          )
-            return {
-              reason: "read_example_ran",
-              instruction:
-                "This build already ran a live read example, so it cannot become a write: its example is a read. Finish what a read can do, or call mint_update with recommend new_mint and a suggestedRequest for a write build. Change the effect before running a live example.",
             };
         }
         if (settings.has("site")) {
@@ -2264,7 +2265,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(domain === undefined ? {} : { siteDomain: domain }),
             },
             repeatableRead,
-            ...(notice === undefined ? {} : { notice: yield* screenMintText(dependencies, notice) }),
+            ...(notice === undefined
+              ? {}
+              : { notice: yield* screenMintText(dependencies, notice) }),
             instruction: updatedInstruction(changes),
           });
         });
@@ -2345,7 +2348,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           // The host stores this checkpoint with its own bindings in one step, so a takeover
           // restores either the whole update or none of it.
           const applied = yield* Effect.either(
-            apply({ current: taskState, next, update: accepted, harness: captureHarness(next) }),
+            apply({
+              current: taskState,
+              next,
+              update: accepted,
+              harness: captureHarness(next),
+            }),
           );
           if (applied._tag === "Left") {
             yield* reportFailure(applied.left, {
@@ -2385,6 +2393,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           if (effectChanged) {
             buildEffect = "write";
             repeatableRead = false;
+            // A read example's claim was the read's, and a read ran no write session: the write
+            // session takes its own claim.
+            exampleClaimed = false;
+            writeSession = "none";
           }
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.task_updated", {
@@ -2678,26 +2690,37 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const evidence = executions.find(
                 (entry) => entry.executionId === proposed.executionId,
               );
-              // A build that moved to another site publishes only what ran on that site.
-              const siteRevision = Math.max(
-                0,
-                ...taskState.updates
-                  .filter((update) => update.changes.some((change) => change.setting === "site"))
-                  .map((update) => update.revision),
-              );
-              if (
-                evidence !== undefined &&
-                (revisions.get(evidence.executionId) ?? 0) < siteRevision
-              ) {
-                const reason = "example_before_site_change";
-                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+              // A build that moved to another site publishes only what ran on that site, and a
+              // build that became a write only what its write session did.
+              const ranAt = evidence === undefined ? 0 : (revisions.get(evidence.executionId) ?? 0);
+              const stale =
+                evidence === undefined
+                  ? undefined
+                  : ranAt < latestRevisionChanging("site")
+                    ? ({
+                        reason: "example_before_site_change",
+                        instruction:
+                          "This execution ran before the build moved to its current site, so it proves nothing there. Run a fresh reviewed example on the current site, then call finish_build with that new executionId.",
+                      } as const)
+                    : ranAt < latestRevisionChanging("effect")
+                      ? ({
+                          reason: "example_before_effect_change",
+                          instruction:
+                            "This execution ran while the build was a read, so it is not the write the task now asks for. Perform the write through purpose act steps, then call finish_build with the step that confirmed it.",
+                        } as const)
+                      : undefined;
+              if (stale !== undefined) {
+                yield* diagnose({
+                  phase: "publication",
+                  code: "PublicationUnavailable",
+                  reason: stale.reason,
+                });
                 return JSON.stringify({
                   status: "not_published",
                   code: "PublicationUnavailable",
-                  reason,
+                  reason: stale.reason,
                   userInputRequired: false,
-                  instruction:
-                    "This execution ran before the build moved to its current site, so it proves nothing there. Run a fresh reviewed example on the current site, then call finish_build with that new executionId.",
+                  instruction: stale.instruction,
                   executionContext: yield* executionContext(),
                 });
               }
@@ -3562,8 +3585,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }),
         diagnostics: [...diagnostics],
         ...(example === undefined ? {} : { exampleId: example.executionId }),
-        exampleClaimed,
-        writeSession,
+        // A build becoming a write leaves its read example's claim behind.
+        ...(task.effect === "write" && buildEffect !== "write"
+          ? { exampleClaimed: false, writeSession: "none" as const }
+          : { exampleClaimed, writeSession }),
         unavailableOutputRefusals,
         ...(terminal === undefined ? {} : { terminal }),
         ...(noResponse === undefined ? {} : { noResponse }),

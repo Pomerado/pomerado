@@ -764,8 +764,8 @@ export type TaskUpdateRequest = typeof TaskUpdateRequest.Type;
  * - `new_mint_recommended`: the change belongs in a new build. This build ends blocked with the
  *   recommendation and a suggested request.
  * - `review_unavailable`: the review did not complete; resubmit within the review outage budget.
- * - `update_refused`: the harness or host cannot apply this change to this build, such as a read
- *   becoming a write after a live read example ran. Nothing changed.
+ * - `update_refused`: the harness or host cannot apply this change to this build, such as a site
+ *   change once the build cannot run another live example. Nothing changed.
  * - `update_invalid`: the request does not decode. Nothing changed.
  */
 export const taskUpdateStatuses = [
@@ -1445,7 +1445,9 @@ export interface MintDependencies {
    *   supply or choose one first, such as when the account's one-login-per-site rule leaves no
    *   usable login for the new site;
    * - for an `effect` change, record the build's effect as `write`, so every later execution is
-   *   reviewed under write authority and the write build rules.
+   *   reviewed under write authority and the write build rules. The write session takes its own
+   *   example claim: the harness calls `claimExample` again when its first act step starts, so
+   *   the host must accept that claim even when a live read example already claimed one.
    * From then on every Guardian review of the build reads the effective task: the original intent
    * with `PendingExecution.taskUpdates` and the rebound `allowedOrigins`. The host never erases
    * recorded executions, claims, unresolved writes or Guardian decisions, and each recorded

@@ -462,12 +462,6 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     ): Effect.Effect<TaskUpdateHostResult, Error> =>
       Effect.gen(function* () {
         const { next, update } = application;
-        if (next.effect === "write" && buildEffect !== "write" && !host.repeatableRead())
-          return {
-            outcome: "refused",
-            reason: "change_unsupported",
-            notice: "Only a read build that has not run its live example can become a write.",
-          } as const;
         const moved =
           next.siteOrigin !== undefined && next.siteOrigin !== site.siteOrigin
             ? yield* requestSite(session, { url: `${next.siteOrigin}/` })
@@ -483,7 +477,11 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
           observedUrl = undefined;
         }
         input = next.businessInput;
-        if (next.effect === "write") buildEffect = "write";
+        if (next.effect === "write" && buildEffect !== "write") {
+          buildEffect = "write";
+          // A read example's claim was the read's; the write session takes its own.
+          claimed = false;
+        }
         taskUpdates.push({
           revision: update.revision,
           summary: update.summary,

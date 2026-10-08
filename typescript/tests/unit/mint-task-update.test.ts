@@ -520,6 +520,38 @@ it("publishes after a site change only an example that ran on the new site", asy
   expect(f.counts().published).toBe(1);
 });
 
+it("lets a read build that ran its live example become a write, and publishes only the write", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "read"),
+        call("request_input", saveQuestion, "ask"),
+        call("mint_update", toWrite, "update"),
+        call("finish_build", { ...publication, executionId: "execution_1" }, "stale"),
+        call("execute", { ...example, purpose: "act", target: "liveBrowser" }, "act"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ save: "save" }]),
+      repeatableRead: false,
+      reviewAndExecute: numberedExecutions(),
+    },
+    { effect: "read", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "read")).toMatchObject({ status: "completed" });
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, effect: "write" },
+  });
+  expect(resultOf(f.requests, "stale")).toMatchObject({
+    status: "not_published",
+    reason: "example_before_effect_change",
+  });
+  expect(resultOf(f.requests, "act")).toMatchObject({ status: "completed" });
+});
+
 it("refuses a site change once the build cannot run another live example", async () => {
   const updates = updateHost(["allow"]);
   const f = await fixture(

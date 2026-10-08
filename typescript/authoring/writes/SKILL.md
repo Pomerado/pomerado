@@ -30,8 +30,8 @@ saves data on the site, save or submit anything; a task that needs that is a wri
 When a read build's task turns out to need that (a form that saves each step, a search
 that is really a booking), ask the caller with `request_input` whether the build may make
 that change, saying in one or two plain sentences what it would change on the site and why
-the task needs it. Ask as soon as exploration shows it, and before any live `example`: a job
-that ran a live read example cannot become a write. Once they confirm, by picking your option
+the task needs it. Ask as soon as exploration shows it; a live read example that already ran
+is fine, though it never stands in for the write. Once they confirm, by picking your option
 or in their own words, call `mint_update` with the change `{"setting": "effect", "effect":
 "write"}` and the answered question in `confirmedBy`. Guardian reviews it. An `updated` result
 makes this a write build in place: every later step is reviewed under write authority and the

@@ -446,7 +446,7 @@ it("renders the pinned standalone authoring", async () => {
     ["c056088dd5ce577c203f9dbbd7b834e7095ae070a2c68e398212ef977522aac2", "auth"],
     ["bdf5324413e06a4b016719eb5b4aff0746603a121b657ff22a69515a5ba6e33d", "pagination"],
     ["b99772eda1e62e6181b6c88684ed7b101550eb335549dc28fda482116954e397", "forms"],
-    ["2f06fe15d23d322644c901087ec1f841d6c879aa6849c55df2d64de776d55acd", "writes"],
+    ["f1bb59ba57c89091186703a0e48136463c820bf777f675d3d794f4ffa7a87206", "writes"],
     ["fbe89bf0980002d81d36dde0d131a412887c55eeb87a0a21502cbf5865a15bc9", "caller-input"],
     ["b6c17fb7b3bdabea246b4894d341d4812945d059f60cb73efec3cfe272ce0554", "publication"],
     ["3cec5503f572c8682fd3aaeea28ba2151b55fc446d5bc50189316d2698380d7b", "workspace/AGENTS.md"],

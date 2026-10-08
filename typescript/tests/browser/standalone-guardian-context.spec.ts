@@ -95,7 +95,6 @@ test("a read build's reviews carry each step's own context", async () => {
         () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{}" }), "test")],
         () => [call("execute", execution("example", "src/tool.mjs"), "example_1")],
         () => [call("execute", execution("example", "src/tool.mjs"), "example_2")],
-        () => [call("mint_update", toWrite(["note"]), "update")],
         (request) => [
           call("finish_build", {
             intent: "Return the fixture integration",
@@ -194,15 +193,10 @@ test("a read build's reviews carry each step's own context", async () => {
       "example:completed",
     ]);
 
-    // A read build may run its example again; once it ran one, it can no longer become a write.
+    // A read build may run its example again.
     expect(toolResult(last, "test")).toMatchObject({ status: "completed" });
     expect(toolResult(last, "example_2")).toMatchObject({ status: "completed" });
     expect(JSON.stringify(objects(last?.input))).not.toContain("AlreadyExecuted");
-    expect(toolResult(last, "update")).toMatchObject({
-      status: "update_refused",
-      reason: "read_example_ran",
-    });
-    expect(guardian.reviews.some((review) => review.kind === "update")).toBe(false);
   } finally {
     await site.close();
   }
@@ -512,6 +506,38 @@ test("a confirmed update turns a read build into a write build, and later review
       ["explore", undefined],
       ["act", 1],
     ]);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a read build that ran its live example becomes a write and runs the write", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ save: "save" }),
+      turns: [
+        () => patch({ "src/act.mjs": saveStep, "src/look.mjs": probe() }),
+        () => [call("execute", execution("example", "src/look.mjs"), "example")],
+        () => [call("request_input", saveQuestion, "ask")],
+        () => [call("mint_update", toWrite(["save"]), "update")],
+        () => [call("execute", execution("act", "src/act.mjs"), "act")],
+      ],
+    });
+    expect(toolResult(last, "example")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "update")).toMatchObject({
+      status: "updated",
+      task: { revision: 1, effect: "write" },
+    });
+    // The read example's claim does not block the write session's own.
+    expect(toolResult(last, "act")).toMatchObject({ status: "completed" });
+    expect(fixture.writes()).toBe(1);
   } finally {
     await site.close();
   }
