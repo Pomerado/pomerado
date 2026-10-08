@@ -44,8 +44,6 @@ export interface PendingQuestion {
   readonly notice?: string;
   /** Host fact only. No credential values or authentication result are exposed. */
   readonly credentialsAvailable: boolean;
-  /** Host fact: the request asks the owner to turn this read build into a write build. */
-  readonly writeUpgrade?: true;
   /**
    * Host fact: not a question but the agent's report that the task is impossible as asked, which
    * the caller reads as the build's outcome (`report_blocked`); its one prompt is the report.
@@ -77,7 +75,6 @@ export const questionForReview = <E>(
   request: Pick<InputRequest, "notice" | "questions">,
   facts: {
     readonly credentialsAvailable: boolean;
-    readonly writeUpgrade?: true;
     readonly blockedOutcome?: true;
   },
   screen: (text: string) => Effect.Effect<string, E>,
@@ -124,7 +121,6 @@ export const questionForReview = <E>(
       questions,
       ...(notice === undefined ? {} : { notice }),
       credentialsAvailable: facts.credentialsAvailable,
-      ...(facts.writeUpgrade === true ? { writeUpgrade: true as const } : {}),
       ...(facts.blockedOutcome === true ? { blockedOutcome: true as const } : {}),
     };
   });

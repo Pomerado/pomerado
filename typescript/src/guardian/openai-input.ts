@@ -51,6 +51,7 @@ export const guardianReviewInput = (
         })),
       ),
       ownerNamedOrigins: absentWhenEmpty(ownerNamedOrigins(turn.pending)),
+      taskUpdates: absentWhenEmpty(turn.pending.taskUpdates ?? []),
     },
     ...extra,
     ...(turn.pending.questionCandidate === undefined
@@ -64,12 +65,14 @@ export const guardianReviewInput = (
                 : { notice: turn.pending.questionCandidate.notice }),
             },
             credentialsAvailable: turn.pending.questionCandidate.credentialsAvailable,
-            ...(turn.pending.questionCandidate.writeUpgrade === true ? { writeUpgrade: true } : {}),
             ...(turn.pending.questionCandidate.blockedOutcome === true
               ? { blockedOutcome: true }
               : {}),
           },
         }),
+    ...(turn.pending.updateCandidate === undefined
+      ? {}
+      : { update_review: turn.pending.updateCandidate }),
     ...(turn.pending.hostReview === undefined
       ? {}
       : { host_review: turn.pending.hostReview.evidence }),

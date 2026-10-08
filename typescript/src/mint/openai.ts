@@ -41,6 +41,7 @@ import {
   MintFailure,
   PublicationRequest,
   SignedInMarkerCheckRequest,
+  TaskUpdateRequest,
 } from "./contracts.js";
 import type { MintModel } from "./contracts.js";
 
@@ -638,6 +639,22 @@ export const makeOpenAIMinter = (
                 additionalProperties: true as const,
               },
             });
+            const updateTask = turn.actions.updateTask;
+            const mintUpdate =
+              updateTask === undefined
+                ? undefined
+                : tool({
+                    ...hostTool(
+                      "mint_update",
+                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write (effect), the target site or the login. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why). No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision. intent states the evidence for the change.",
+                      "The task was not updated. Inspect the finite failure; correct the request or continue under the current task.",
+                      (request) => updateTask(request),
+                    ),
+                    // Input values are free-form JSON, which strict mode cannot express; the
+                    // harness decodes the request itself.
+                    strict: false,
+                    parameters: looseParameters(withIntent(TaskUpdateRequest)),
+                  });
             const readCaptchaState = turn.actions.captchaState;
             const captchaState =
               readCaptchaState === undefined
@@ -725,6 +742,7 @@ export const makeOpenAIMinter = (
                     finish,
                     ...(blocked === undefined ? [] : [blocked]),
                     requestInput,
+                    ...(mintUpdate === undefined ? [] : [mintUpdate]),
                     ...(captchaState === undefined ? [] : [captchaState]),
                     ...(requestBrowserRecovery === undefined ? [] : [requestBrowserRecovery]),
                     ...(checkSignedInMarker === undefined ? [] : [checkSignedInMarker]),
