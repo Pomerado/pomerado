@@ -2,8 +2,23 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- A sign-in through a security question is saved in `auth-fill.json` as recipe version 1, or version 2 with a popup or approval, with the question's selector on its field. It was version 3. This version still reads version 3 recipes, so nothing has to be built again. Version 0.3.0 and earlier refuse a version 1 or 2 recipe that names a question selector.
+  - Migrate by running such an integration with this version or later, and not rolling back once one is built.
+
 ### Other changes
 
+- New exports let another host share these modules instead of keeping a copy.
+  - `pomerado/core/guardian/publication` holds the publication decision decoder.
+  - `pomerado/core/runtime/kernel-operation-run` holds `executeKernelOperation`, which runs a script under the execution context's deadline, capture, events and journal. A host with its own implementation of an operation passes it as the optional `first` runner. The local host never does.
+  - `pomerado/core/destinations/autofill-recipe` holds the `auth-fill.json` schemas, `recipeStep` and `autofillRecipe`.
+  - `pomerado/core/mint/login-url` holds `oneTimeLoginUrlParameters` and `refuseCredentialParts`.
+  - `canonicalSchema` and `withReferences` join `pomerado/core/registry/schema-references`, and `described` and `siteInput` join `pomerado/core/mcp/schema`.
+- Publication asks once about a login URL that is one authorization request, such as an identity provider's authorize URL or one carrying `state`, `nonce` or `SAMLRequest`. The first `finish_build` fails `login_url_one_time` with the URL's one-time parameters. Finishing again with the same URL publishes it.
+- Publication refuses a name, description, `siteName` or `siteSummary` that holds a value the build was given, with `metadata_contains_credential`.
+- A live run counts as possibly sent from its start, so one that fails before its first browser call reports `possible` where it reported `not_sent`. A run with no browser still reports `not_sent`. A run whose own deadline passes fails `DeadlineExceeded`.
+- A built integration's MCP server serves an input schema that recurses, with its references under `$defs` at the call schema's root. It used to fail to start with "Invalid operation schema.". The input is titled `<tool> input` and its description adds a summary of its top-level fields.
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.
 - Before ending blocked because a value the request gave is unavailable or invalid on the site, the minter asks the owner with `request_input`.

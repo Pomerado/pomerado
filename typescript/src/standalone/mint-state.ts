@@ -245,6 +245,8 @@ export const mintState = (
       input: Readonly<Record<string, unknown>> | undefined;
       readonly steps: WriteStep[];
     } = { started: false, input: undefined, steps: [] };
+    /** Each one-time login URL publication already asked about, so finishing again publishes it. */
+    const oneTimeLoginUrlsAsked = new Set<string>();
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     const markers = makeMarkerChecks({
       page: browser,
@@ -278,6 +280,7 @@ export const mintState = (
       runs,
       recorder,
       writeSession,
+      oneTimeLoginUrlsAsked,
       start,
       afterSubmit,
       markers,

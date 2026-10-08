@@ -323,6 +323,9 @@ export const runLocalOperation = (
         timeoutMs,
         mode: options.mode ?? "run",
         ...(options.validateInput === undefined ? {} : { validateInput: options.validateInput }),
+        ...(options.target === "pureFiles" || options.browser === undefined
+          ? { offline: true }
+          : {}),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
       });

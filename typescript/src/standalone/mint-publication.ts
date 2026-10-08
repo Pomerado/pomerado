@@ -14,6 +14,7 @@ import {
   type ExampleOutputSource,
 } from "../mint/publication-review.js";
 import { contractExtractionNote } from "../mint/review-context.js";
+import { oneTimeLoginUrlParameters, refuseCredentialParts } from "../mint/login-url.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
@@ -62,23 +63,56 @@ const outputEvidence = (state: MintState, sample: Run, source: ExampleOutputSour
 
 /**
  * The build's verified sign-in as it ships, value-free: its recipe and the address its runs start
- * from. A login URL holding a sign-in value the build was given is refused, naming the login URL
- * and never the value, so the minter can sign in again from a URL without it. A recipe holding one
- * is refused too.
+ * from. The login URL, name, description and site naming are refused every time one holds a
+ * sign-in value the build was given, naming the part and never the value (`refuseCredentialParts`),
+ * and a recipe holding one is refused too. A login URL that is one authorization request is asked
+ * about once per URL (`login_url_one_time`); finishing again publishes it as it is.
  */
 export const screenedSignIn = <E>(
   signIn: PublishedSignIn | undefined,
+  metadata: {
+    readonly name: string;
+    readonly description: string;
+    readonly siteName?: string | undefined;
+    readonly siteSummary?: string | undefined;
+  },
   assertAbsent: (text: string) => Effect.Effect<void, E>,
+  oneTimeLoginUrlsAsked: Set<string>,
 ) =>
   Effect.gen(function* () {
+    yield* refuseCredentialParts(
+      {
+        // This host registers values without their kinds, so a match names a credential.
+        registeredSecretMatches: (text) =>
+          Effect.either(assertAbsent(text)).pipe(
+            Effect.map((absent) =>
+              Either.isLeft(absent) ? [{ entity: "credential", supplied: true }] : [],
+            ),
+          ),
+      },
+      {
+        loginUrl: signIn?.entryUrl,
+        name: metadata.name,
+        description: metadata.description,
+        site:
+          metadata.siteName === undefined || metadata.siteSummary === undefined
+            ? undefined
+            : { name: metadata.siteName, summary: metadata.siteSummary },
+      },
+    );
     if (signIn === undefined) return undefined;
-    if (Either.isLeft(yield* Effect.either(assertAbsent(signIn.entryUrl))))
+    yield* assertAbsent(JSON.stringify(signIn.recipe));
+    // One-time authorization values are not secrets, so this is advice: asked once, and finishing
+    // again with the same URL publishes it as it is.
+    const oneTimeParameters = oneTimeLoginUrlParameters(signIn.entryUrl);
+    if (oneTimeParameters.length > 0 && !oneTimeLoginUrlsAsked.has(signIn.entryUrl)) {
+      oneTimeLoginUrlsAsked.add(signIn.entryUrl);
       return yield* new MintFailure({
         code: "PublicationUnavailable",
-        reason: "login_url_contains_credential",
-        publicationFeedback: { parts: [{ part: "loginUrl", credentialKinds: ["credential"] }] },
+        reason: "login_url_one_time",
+        publicationFeedback: { oneTimeParameters },
       });
-    yield* assertAbsent(JSON.stringify(signIn.recipe));
+    }
     return signIn;
   });
 
@@ -99,7 +133,12 @@ export const mintPublication =
       const files = savedOperationFiles(snapshot, publication.entrypoint);
       const sources = [...files];
       for (const [, text] of sources) yield* secrets.assertAbsent(text);
-      const signIn = yield* screenedSignIn(state.recorder.published(), secrets.assertAbsent);
+      const signIn = yield* screenedSignIn(
+        state.recorder.published(),
+        publication.metadata,
+        secrets.assertAbsent,
+        state.oneTimeLoginUrlsAsked,
+      );
       // Published code never holds a handle: no saved file the operation could run may hold one,
       // whatever its extension. That is every saved file when Node could load one its imports
       // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only

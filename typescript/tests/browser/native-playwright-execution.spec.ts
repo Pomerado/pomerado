@@ -18,7 +18,7 @@ import invoiceHeading from "../../authoring/examples/native-page.js";
 import { detailNavigation } from "../../authoring/examples/navigation.js";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
-import { runKernelOperation } from "../support/kernel-run.js";
+import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
@@ -807,7 +807,7 @@ test("unchanged authored operations run through schema validation and native exe
     expect(
       await Effect.runPromise(
         Effect.scoped(
-          runKernelOperation(invoiceHeading, {}, browser).pipe(
+          executeKernelOperation(invoiceHeading, {}, browser).pipe(
             Effect.provideService(ExecutionContext, execution),
           ),
         ),
@@ -816,7 +816,7 @@ test("unchanged authored operations run through schema validation and native exe
     expect(
       await Effect.runPromise(
         Effect.scoped(
-          runKernelOperation(detailNavigation, { record_id: "alpha" }, browser).pipe(
+          executeKernelOperation(detailNavigation, { record_id: "alpha" }, browser).pipe(
             Effect.provideService(ExecutionContext, execution),
           ),
         ),
@@ -824,7 +824,7 @@ test("unchanged authored operations run through schema validation and native exe
     ).toEqual({ record_id: "alpha", title: "Requested record" });
     const refusedInput = await Effect.runPromise(
       Effect.scoped(
-        runKernelOperation(detailNavigation, { record_id: "bad/id" }, browser).pipe(
+        executeKernelOperation(detailNavigation, { record_id: "bad/id" }, browser).pipe(
           Effect.provideService(ExecutionContext, execution),
           Effect.either,
         ),
@@ -1025,6 +1025,47 @@ export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct
       code: "Unavailable",
       journal: { effect: "not_sent", commits: [] },
     },
+  });
+});
+
+// A live run may have reached the site once its script starts, whether or not it called the
+// browser yet; an offline run never can.
+test("local operation reports a started live run as possibly sent, and an offline run as unsent", async () => {
+  const run = (target: "browser" | "pureFiles") =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const workspace = yield* createLocalWorkspace();
+          return yield* runLocalOperation({
+            workspace,
+            entrypoint: "operation/src/tool.mjs",
+            sources: [
+              [
+                "operation/src/tool.mjs",
+                `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => {
+  throw new Error("Stopped before any browser call");
+});`,
+              ],
+            ],
+            input: {},
+            browser: {
+              sessionId: "session-1",
+              executeResponse: () => Effect.fail(new Error("No browser call was expected")),
+            },
+            target,
+          }).pipe(Effect.either);
+        }),
+      ),
+    );
+  expect(await run("browser")).toMatchObject({
+    _tag: "Left",
+    left: { name: "LocalOperationFailure", journal: { effect: "possible", commits: [] } },
+  });
+  expect(await run("pureFiles")).toMatchObject({
+    _tag: "Left",
+    left: { name: "LocalOperationFailure", journal: { effect: "not_sent", commits: [] } },
   });
 });
 

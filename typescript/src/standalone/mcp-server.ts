@@ -5,8 +5,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import { Effect, Schema, type Scope } from "effect";
-import { standard } from "../mcp/schema.js";
-import { inlineLocalRefs } from "../registry/schema-references.js";
+import { siteInput, standard } from "../mcp/schema.js";
+import { canonicalSchema } from "../registry/schema-references.js";
 import { InputAnswers } from "../runtime/input-request.js";
 import { createPomerado } from "./pomerado.js";
 import { type MintArtifact, type PomeradoOptions, type PomeradoRequest } from "./contracts.js";
@@ -183,7 +183,12 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
     return server;
   });
 const SchemaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown });
-const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
+/**
+ * The integration tool's call schema: the operation's input nested under `input`, titled and
+ * summarised, and validated as published. A recursive input keeps its references, with its
+ * definitions at the call schema's root, where they resolve.
+ */
+const businessInput = (name: string, inputSchema: unknown, outputSchema: unknown) =>
   Effect.gen(function* () {
     const input = yield* Schema.decodeUnknown(SchemaObject)(inputSchema).pipe(
       Effect.mapError((cause) => new Error("Invalid operation input schema.", { cause })),
@@ -195,9 +200,14 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
       try: (): StandardSchemaWithJSON<{ input: unknown }, { input: unknown }> => {
         const validator = new AjvJsonSchemaValidator();
         validator.getValidator(output);
+        const canonical = canonicalSchema(input);
+        if (canonical === undefined) throw new Error("The input schema names a missing reference.");
         const json = {
           type: "object",
-          properties: { input: inlineLocalRefs(input) },
+          ...(Object.keys(canonical.definitions).length > 0
+            ? { $defs: canonical.definitions }
+            : {}),
+          properties: { input: siteInput(name, canonical) },
           required: ["input"],
           additionalProperties: false,
         };
@@ -234,7 +244,11 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
     const deployment = yield* Schema.decodeUnknown(Deployment)(options.deployment).pipe(
       Effect.mapError((cause) => new Error("Invalid integration deployment.", { cause })),
     );
-    const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema);
+    const inputSchema = yield* businessInput(
+      deployment.name,
+      artifact.inputSchema,
+      artifact.outputSchema,
+    );
     const { server, jobs, waitMs } = yield* makeServer(deployment.name, options, "run");
     if (helperNames.includes(deployment.name))
       return yield* Effect.fail(

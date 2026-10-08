@@ -585,7 +585,7 @@ it("asks a new code after the site rejected one, and ends once three were reject
   );
 });
 
-it("records a private answer's question selector as version 3, never its question or answer", async () => {
+it("records a private answer's question selector in version 1, never its question or answer", async () => {
   const host = harness({
     held: account,
     questions: ["What was your first pet's name?"],
@@ -606,7 +606,7 @@ it("records a private answer's question selector as version 3, never its questio
       return recorder.published();
     }),
   );
-  expect(published?.recipe.version).toBe(3);
+  expect(published?.recipe.version).toBe(1);
   expect(published?.recipe.steps[1]?.fields).toEqual([
     { selector: "#answer", slot: "private_answer", questionSelector: "#question" },
   ]);

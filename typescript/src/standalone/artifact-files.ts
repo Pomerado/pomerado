@@ -1,9 +1,6 @@
 import { Effect, Schema } from "effect";
-import {
-  decodeSignInRecipe,
-  signInRecipePath,
-  signInRecipeText,
-} from "../destinations/sign-in-recipe.js";
+import { autofillRecipePath } from "../destinations/autofill-recipe.js";
+import { decodeSignInRecipe, signInRecipeText } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
@@ -16,12 +13,12 @@ const Metadata = Schema.Struct({
   outputSchema: Schema.Unknown,
   /** Where the build's sign-in recipe is (`auth-fill.json`) and where its runs start. */
   signIn: Schema.optionalWith(
-    Schema.Struct({ recipe: Schema.Literal(signInRecipePath), entryUrl: PageUrl }),
+    Schema.Struct({ recipe: Schema.Literal(autofillRecipePath), entryUrl: PageUrl }),
     { exact: true },
   ),
 });
 /** The artifact's own files beside its source, which no source path may name. */
-const metadataFiles = new Set(["pomerado.json", signInRecipePath]);
+const metadataFiles = new Set(["pomerado.json", autofillRecipePath]);
 const HttpUrl = Schema.String.pipe(
   Schema.filter((value) => {
     if (!URL.canParse(value)) return false;
@@ -43,10 +40,7 @@ export const Deployment = Schema.Struct({
 });
 export type Deployment = typeof Deployment.Type;
 
-/**
- * A sign-in recipe as given, decoded as a recipe file is: version 1 or 2 naming a question
- * selector is refused rather than read without it.
- */
+/** A sign-in recipe as given, decoded as a recipe file is, so one this host cannot read is refused. */
 const givenRecipe = (value: unknown) => {
   const signIn: unknown =
     typeof value === "object" && value !== null ? Reflect.get(value, "signIn") : undefined;
@@ -113,7 +107,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
     const workspace = yield* createLocalWorkspace({ root: directory });
     for (const file of checked.files) yield* workspace.write(file.path, file.content);
     if (checked.signIn !== undefined)
-      yield* workspace.write(signInRecipePath, signInRecipeText(checked.signIn.recipe));
+      yield* workspace.write(autofillRecipePath, signInRecipeText(checked.signIn.recipe));
     yield* workspace.write(
       "pomerado.json",
       `${JSON.stringify(
@@ -124,7 +118,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           outputSchema: checked.outputSchema,
           ...(checked.signIn === undefined
             ? {}
-            : { signIn: { recipe: signInRecipePath, entryUrl: checked.signIn.entryUrl } }),
+            : { signIn: { recipe: autofillRecipePath, entryUrl: checked.signIn.entryUrl } }),
         },
         null,
         2,

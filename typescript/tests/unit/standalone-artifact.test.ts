@@ -89,7 +89,7 @@ it("reads an artifact written without a sign-in as it always was", () =>
 
 it.each([
   [{ ...signIn.recipe, version: 4 }, "unknown_version"],
-  [{ ...signIn.recipe, version: 2 }, "invalid"],
+  [{ ...signIn.recipe, steps: [] }, "invalid"],
   ["not json", "invalid"],
   [undefined, "missing"],
 ])("refuses an artifact whose recipe it cannot read (%#)", (recipe, reason) =>
@@ -110,11 +110,11 @@ it.each([
     expect(failure.message).toContain("doesn't run signed out");
   }));
 
-it("refuses a version 2 recipe that names a question selector before writing it", () =>
+it("refuses a recipe it cannot read before writing it", () =>
   scratch(async (directory) => {
     await expect(
-      run(writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 2 } } } as never)),
-    ).rejects.toThrow("sign-in recipe");
+      run(writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 4 } } } as never)),
+    ).rejects.toThrow();
     expect(await readdir(directory)).toEqual([]);
   }));
 
@@ -207,29 +207,112 @@ it("writes a version 1 recipe's file in the same bytes as the recipe the build p
     );
   }));
 
-it("refuses to publish a login URL that holds a sign-in value, naming the login URL and never the value", async () => {
+it("refuses to publish a login URL that holds a sign-in value every time, naming the login URL and never the value", async () => {
   const secrets = makeRunSecrets();
   secrets.register("ada@example.test");
+  const asked = new Set<string>();
+  const metadata = { name: "orders", description: "Reads the account's orders." };
+  const screen = (screened: typeof signIn | undefined, named = metadata) =>
+    Effect.runPromise(Effect.either(screenedSignIn(screened, named, secrets.assertAbsent, asked)));
   const held = { ...signIn, entryUrl: "https://example.test/login?email=ada%40example.test" };
-  const refused = await Effect.runPromise(Effect.either(screenedSignIn(held, secrets.assertAbsent)));
-  if (Either.isRight(refused)) throw new Error("The login URL was published");
-  expect(refused.left).toMatchObject({
-    code: "PublicationUnavailable",
-    reason: "login_url_contains_credential",
-    publicationFeedback: { parts: [{ part: "loginUrl", credentialKinds: ["credential"] }] },
-  });
-  expect(JSON.stringify(refused.left)).not.toContain("ada");
+  for (const attempt of [1, 2]) {
+    const refused = await screen(held);
+    if (Either.isRight(refused)) throw new Error(`The login URL was published on attempt ${attempt}`);
+    expect(refused.left).toMatchObject({
+      code: "PublicationUnavailable",
+      reason: "login_url_contains_credential",
+      publicationFeedback: { parts: [{ part: "loginUrl", credentialKinds: ["credential"] }] },
+    });
+    expect(JSON.stringify(refused.left)).not.toContain("ada");
+  }
   // A recipe that holds one is refused too, and a sign-in that holds none publishes as it is.
   const named = {
     ...signIn,
     recipe: { ...signIn.recipe, signedIn: { selector: "[data-user='ada@example.test']" } },
   };
-  expect(
-    Either.isLeft(await Effect.runPromise(Effect.either(screenedSignIn(named, secrets.assertAbsent)))),
-  ).toBe(true);
-  expect(await Effect.runPromise(screenedSignIn(signIn, secrets.assertAbsent))).toBe(signIn);
-  expect(await Effect.runPromise(screenedSignIn(undefined, secrets.assertAbsent))).toBeUndefined();
+  expect(Either.isLeft(await screen(named))).toBe(true);
+  expect(await screen(signIn)).toEqual(Either.right(signIn));
+  expect(await screen(undefined)).toEqual(Either.right(undefined));
 });
+
+it("refuses a name or description that holds a sign-in value, naming the part", async () => {
+  const secrets = makeRunSecrets();
+  secrets.register("ada@example.test");
+  const refused = await Effect.runPromise(
+    Effect.either(
+      screenedSignIn(
+        undefined,
+        { name: "orders", description: "Reads orders for ada@example.test." },
+        secrets.assertAbsent,
+        new Set(),
+      ),
+    ),
+  );
+  if (Either.isRight(refused)) throw new Error("The description was published");
+  expect(refused.left).toMatchObject({
+    code: "PublicationUnavailable",
+    reason: "metadata_contains_credential",
+    publicationFeedback: { parts: [{ part: "description", credentialKinds: ["credential"] }] },
+  });
+  expect(JSON.stringify(refused.left)).not.toContain("ada@example.test");
+});
+
+it("asks once before publishing a login URL that is one authorization request, then publishes it", async () => {
+  const secrets = makeRunSecrets();
+  const asked = new Set<string>();
+  const metadata = { name: "orders", description: "Reads the account's orders." };
+  const authorize = {
+    ...signIn,
+    entryUrl:
+      "https://login.example.test/oauth2/v1/authorize?client_id=portal&state=af0ifjsldkj81d2c9b7e",
+  };
+  const screen = (screened: typeof signIn) =>
+    Effect.runPromise(Effect.either(screenedSignIn(screened, metadata, secrets.assertAbsent, asked)));
+  const first = await screen(authorize);
+  if (Either.isRight(first)) throw new Error("The one-time login URL was published unasked");
+  expect(first.left).toMatchObject({
+    code: "PublicationUnavailable",
+    reason: "login_url_one_time",
+    publicationFeedback: { oneTimeParameters: ["/oauth2/v1/authorize", "state"] },
+  });
+  expect(await screen(authorize)).toEqual(Either.right(authorize));
+  // Another one-time URL is asked about again; a stable one never is.
+  const other = { ...authorize, entryUrl: "https://idp.example.test/sso?SAMLRequest=fZJNb9sw" };
+  expect(await screen(other)).toMatchObject(Either.left({ reason: "login_url_one_time" }));
+  expect(await screen(signIn)).toEqual(Either.right(signIn));
+});
+
+it("reads a version 1 recipe that names a security question, as other hosts write it", () =>
+  scratch(async (directory) => {
+    const recipe = signInRecipe(
+      [
+        {
+          page: "https://example.test/login",
+          fields: [
+            { selector: "#user", slot: "username", accepts: ["username"] },
+            { selector: "#password", slot: "password" },
+          ],
+          submit: "#sign-in",
+          submittedBy: "host",
+        },
+        {
+          page: "https://example.test/challenge",
+          fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
+          submit: "#continue",
+        },
+      ],
+      { selector: "#account-menu" },
+    );
+    expect(recipe.version).toBe(1);
+    await run(writeArtifact(directory, { ...source, signIn: { recipe, entryUrl: signIn.entryUrl } }));
+    expect(await readFile(join(directory, "auth-fill.json"), "utf8")).toBe(
+      JSON.stringify(recipe, null, 2),
+    );
+    expect((await run(readArtifact(directory))).signIn).toEqual({
+      recipe,
+      entryUrl: signIn.entryUrl,
+    });
+  }));
 
 it("preserves an artifact roundtrip and refuses metadata collisions before writing source", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pomerado-artifact-"));

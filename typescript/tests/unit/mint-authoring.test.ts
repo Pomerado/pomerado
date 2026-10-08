@@ -20,7 +20,7 @@ import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.j
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { offlineKernel } from "../support/offline-kernel.js";
-import { runKernelOperation } from "../support/kernel-run.js";
+import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
 
@@ -540,7 +540,7 @@ it("accepts authoritative empty invoices and rejects absent/invalid bodies", asy
     return Effect.runPromise(
       Effect.either(
         Effect.scoped(
-          runKernelOperation(
+          executeKernelOperation(
             parser,
             { body },
             { kernel: offlineKernel, sessionId: "offline" },
@@ -672,7 +672,7 @@ it("reacquires a destroyed observation context without replaying the auth-entry 
   const journal = await Effect.runPromise(makeEffectJournal);
   const result = await Effect.runPromise(
     Effect.scoped(
-      runKernelOperation(
+      executeKernelOperation(
         authEntry,
         {},
         {
