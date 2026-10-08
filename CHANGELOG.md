@@ -2,7 +2,26 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- `saveSessionCode` from `pomerado/core/runtime/start-state` is now a function of the primary tab's target ID and the site's origin. Its browser call returns a `SavedSession`, `{ state, sessionStorage }`: the context's storage state, and the primary tab's session storage from its frames on the site's registrable domain.
+  - Migrate by calling `saveSessionCode(targetId, siteOrigin)`, decoding its result with `SavedSession`, and passing that as the `session` of a `restore` `PageStart`.
+- `resetPageCode` takes the primary origin, the site data, the session to restore and the tab storage to restore as separate arguments, then optional extra origins to clear, `cleanupOnly` and `keptCookiePrefixes`. Cookies whose names start with one of `keptCookiePrefixes` survive a clear. `PageStart`'s `restore` takes a `SavedSession`.
+  - Migrate by calling `startPage`, which builds the call from a `PageStart`, or by passing the arguments in the new order.
+
 ### Other changes
+
+- A script's `ensureSignedIn` now signs in again on a local run or build when the page reads signed out. Before, the local host always answered that it didn't sign in again.
+  - The host checks the recorded signed-in marker on the current page without moving it. A marker that names a path reads signed out only on that path.
+  - On a page that reads signed out, it first checks without typing anything. It then replays the recorded sign-in on the same browser and page, with the login it already holds, and asks only for what the screens need.
+  - A run makes at most 3 such sign-ins. A build makes at most 4 per attempt and 1 per check. Past that, the operation fails with the session not kept.
+  - The operation's deadline pauses meanwhile. No sign-in step starts after the sign-in's bound, and a question it asks waits no longer than that bound.
+- A signed-in build checks its signed-in marker after each reset that restores its saved session. When the reset's load signed the site out, the build signs in again before the step runs, saves that session and resets once more.
+  - A marker that the site's root doesn't show reads as signed out there, so such a build signs in again after every reset. Choose a marker the site shows on every signed-in page.
+  - A site whose load signs out a fresh sign-in starts each later step on the page its sign-in left.
+- The session a signed-in build saves now holds the tab's session storage too, unless it is larger than 1 MiB. A reset that restores the session puts it back.
+- `pomerado/core/runtime/session-sign-in` holds the re-sign-in rules hosts share: the allowances, how a marker check reads the session, the bounds of a sign-in a script waits for, and the start check after a reset. `SessionSignInHook` is the host side of a script's `ensureSignedIn`.
+- `pomerado/testing/session-sign-in-contract` holds cases that any host's re-sign-in can run against the controlled shop. The shop fixture's home now shows an account link to a signed-in session. It adds an `/orders` page, a `signOutOn` path whose next signed-in load signs the session out, and a count of sign-in page loads.
 
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.
