@@ -35,6 +35,11 @@ export interface LocalOperationOptions {
   readonly mode?: "run" | "contract";
   readonly validateInput?: boolean;
   readonly target?: "browser" | "pureFiles";
+  /**
+   * A mint step: the run counts as possibly sent from its first browser call, so a step that
+   * stopped before one reads `not_sent`. Without it, a live run counts from its start.
+   */
+  readonly dispatchAtFirstCall?: boolean;
   readonly ask?: InputAsker;
   readonly decideDialog?: DialogDecider;
   /**
@@ -385,6 +390,10 @@ export const runLocalOperation = (
         timeoutMs,
         mode: options.mode ?? "run",
         ...(options.validateInput === undefined ? {} : { validateInput: options.validateInput }),
+        ...(options.target === "pureFiles" || options.browser === undefined
+          ? { offline: true }
+          : {}),
+        ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.signIn !== undefined &&

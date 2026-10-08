@@ -419,9 +419,9 @@ for (const [name, form, selector, account, failed] of [
     );
   });
 
-// A verified sign-in through a private answer records its question selector, so the recipe is
-// version 3, with no question text, answer or login value in it.
-test("records a sign-in through a security question as a version 3 recipe without its question or answer", async ({ page }) => {
+// A verified sign-in through a private answer records its question selector in a version 1
+// recipe, with no question text, answer or login value in it.
+test("records a sign-in through a security question as a version 1 recipe without its question or answer", async ({ page }) => {
   const site = "https://bank.example.test";
   await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
     '<form method="post" action="/session"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>' }));
@@ -445,7 +445,7 @@ test("records a sign-in through a security question as a version 3 recipe withou
   const published = auth.recorder.published();
   expect(published).toEqual({
     recipe: {
-      version: 3,
+      version: 1,
       steps: [
         {
           page: `${site}/login`,
@@ -469,8 +469,9 @@ test("records a sign-in through a security question as a version 3 recipe withou
     expect(text).not.toContain(held);
 });
 
-// A run replays that recipe: it asks for the login and the private answer on each run, from the
-// question the screen shows then, and keeps neither once the run's sign-in is done.
+// A run replays such a recipe, here the version 3 an earlier build wrote: it asks for the login and
+// the private answer on each run, from the question the screen shows then, and keeps neither once
+// the run's sign-in is done.
 test("a run's replay asks the private answer on every run, from the question its screen shows then", async ({ page }) => {
   test.slow();
   const site = "https://bank.example.test";

@@ -244,6 +244,8 @@ export const mintState = (
       acceptedConfirms: [],
       confirmSteps: new Set(),
     };
+    /** Each one-time login URL publication already asked about, so finishing again publishes it. */
+    const oneTimeLoginUrlsAsked = new Set<string>();
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     // The build's automatic sign-ins, counted for the whole attempt: a task update that moves
     // the build to another site starts no new allowance.
@@ -376,6 +378,7 @@ export const mintState = (
       mintAsk,
       runs,
       writeSession,
+      oneTimeLoginUrlsAsked,
       afterSubmit,
       get recorder() {
         return bound.recorder;

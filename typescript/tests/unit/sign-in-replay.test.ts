@@ -375,8 +375,9 @@ const questionStep = {
   submittedBy: "host" as const,
 };
 
-it("asks a security answer on every run, from the question the screen shows then", async () => {
-  const recipe: SignInRecipe = { ...recipeOf(), version: 3, steps: [loginStep, questionStep] };
+// Version 1 is how every host writes a question selector now; version 3 is how this host wrote it before.
+it.each([1, 3] as const)("asks a security answer on every run, from the question the screen shows then (version %i)", async (version) => {
+  const recipe: SignInRecipe = { ...recipeOf(), version, steps: [loginStep, questionStep] };
   const prompts: string[] = [];
   for (const shown of ["What was the name of your first pet?", "Which city were you born in?"]) {
     const fake = fakeSite({ question: true, questions: [question, shown] });
@@ -414,7 +415,7 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
 
 it.each([
   ["an unknown version", { ...recipeOf(), version: 4 }, "unknown_version"],
-  ["a version 1 recipe naming a question", { ...recipeOf(), steps: [loginStep, questionStep] }, "invalid"],
+  ["a recipe without steps", { ...recipeOf(), steps: [] }, "invalid"],
 ])("refuses %s with MissingRecipe before opening anything", async (_case, recipe, reason) => {
   const fake = fakeSite();
   const { ask, asked } = owner();

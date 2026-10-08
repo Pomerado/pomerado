@@ -14,6 +14,7 @@ import { makeRunDialogDecider } from "../../src/inputs/dialog.js";
 import { noIncidents } from "../../src/runtime/incidents.js";
 import { InputRequestFailure, type InputRequest } from "../../src/runtime/input-request.js";
 import { createPomerado } from "../../src/standalone/pomerado.js";
+import { RunOutcomeFailure } from "../../src/standalone/run-report.js";
 import { call, executionIdOf, recordingGuardian, toolResult } from "./guardian-context-fixture.js";
 import { act, mint } from "./standalone-mint-fixture.js";
 import { runExample } from "./authoring-fixture.js";
@@ -172,7 +173,7 @@ const runOrder = async (
   choice: "accept" | "dismiss",
 ) => {
   const asked: InputRequest[] = [];
-  const output = await Effect.runPromise(
+  const result = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* createPomerado({
@@ -192,9 +193,9 @@ const runOrder = async (
           input: {},
         });
       }),
-    ),
+    ).pipe(Effect.either),
   );
-  return { output, asked: asked.filter(dialogQuestion) };
+  return { result, asked: asked.filter(dialogQuestion) };
 };
 
 const withOrderSite = async (
@@ -224,13 +225,22 @@ test("a write's run accepts the confirm its build accepted, and asks about a cha
       }),
     ]);
     const run = await runOrder(site, artifact, "dismiss");
-    expect(run.output).toEqual({ placed: true });
+    expect(run.result).toEqual(Either.right({ placed: true }));
     expect(run.asked).toEqual([]);
     expect(site.state.orders).toBe(2);
     // The page now asks something else at the same step: the caller decides, and dismisses.
     site.state.message = "Place this order and subscribe?";
     const changed = await runOrder(site, artifact, "dismiss");
-    expect(changed.output).toEqual({ placed: false });
+    // The script entered its declared commit before the confirm and records no confirmation
+    // after the dismissal, so the run reports the write as possibly applied, keeping its output.
+    const declined = Either.isLeft(changed.result) ? changed.result.left : undefined;
+    if (!(declined instanceof RunOutcomeFailure)) throw new Error(JSON.stringify(changed.result));
+    expect(declined.outcome).toMatchObject({
+      code: "outcome_unknown",
+      writeStatus: "may_have_applied",
+      possibleCommit: true,
+    });
+    expect(declined.unconfirmed).toEqual({ output: { placed: false } });
     expect(changed.asked).toHaveLength(1);
     expect(changed.asked[0]?.notice).toContain("Place this order and subscribe?");
     expect(site.state.orders).toBe(2);

@@ -12,8 +12,8 @@ import {
   makeFileJobStore,
   type LocalJobStore,
 } from "../runtime/local-job-store.js";
-import { standard } from "../mcp/schema.js";
-import { inlineLocalRefs } from "../registry/schema-references.js";
+import { siteInput, standard } from "../mcp/schema.js";
+import { canonicalSchema } from "../registry/schema-references.js";
 import { InputAnswers } from "../runtime/input-request.js";
 import { createPomerado } from "./pomerado.js";
 import { type MintArtifact, type PomeradoOptions, type PomeradoRequest } from "./contracts.js";
@@ -222,7 +222,17 @@ interface BusinessCall {
   readonly input: unknown;
   readonly idempotency_key?: string;
 }
-const businessInput = (inputSchema: unknown, outputSchema: unknown, write: boolean) =>
+/**
+ * The integration tool's call schema: the operation's input nested under `input`, titled and
+ * summarised, and validated as published, with a write's retry key beside it. A recursive input
+ * keeps its references, with its definitions at the call schema's root, where they resolve.
+ */
+const businessInput = (
+  name: string,
+  inputSchema: unknown,
+  outputSchema: unknown,
+  write: boolean,
+) =>
   Effect.gen(function* () {
     const input = yield* Schema.decodeUnknown(SchemaObject)(inputSchema).pipe(
       Effect.mapError((cause) => new Error("Invalid operation input schema.", { cause })),
@@ -234,10 +244,15 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown, write: boole
       try: (): StandardSchemaWithJSON<BusinessCall, BusinessCall> => {
         const validator = new AjvJsonSchemaValidator();
         validator.getValidator(output);
+        const canonical = canonicalSchema(input);
+        if (canonical === undefined) throw new Error("The input schema names a missing reference.");
         const json = {
           type: "object",
+          ...(Object.keys(canonical.definitions).length > 0
+            ? { $defs: canonical.definitions }
+            : {}),
           properties: {
-            input: inlineLocalRefs(input),
+            input: siteInput(name, canonical),
             ...(write ? { idempotency_key: idempotencyKey } : {}),
           },
           required: ["input"],
@@ -277,7 +292,12 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
       Effect.mapError((cause) => new Error("Invalid integration deployment.", { cause })),
     );
     const write = deployment.request.effect === "write";
-    const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema, write);
+    const inputSchema = yield* businessInput(
+      deployment.name,
+      artifact.inputSchema,
+      artifact.outputSchema,
+      write,
+    );
     // Only a write takes an idempotency_key, so only a write keeps its jobs in the folder.
     const store =
       options.directory === undefined || !write
