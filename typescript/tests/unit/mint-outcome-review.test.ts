@@ -340,3 +340,66 @@ it("leaves a write unresolved through a reviewer outage, and the build publishes
   // reviewer's saved state for a host to report.
   expect(review.saved.at(-1)).toMatchObject({ finishRequested: true, assessments: [] });
 });
+
+// Fails when the reviewer runs a turn per event, or two turns at once, instead of one turn at a
+// time with the events that arrived during a turn coalesced into the next.
+it("coalesces the events that arrive during a turn into the next turn", async () => {
+  const firstStarted = Promise.withResolvers<void>();
+  const firstTurn = Promise.withResolvers<void>();
+  const secondTurn = Promise.withResolvers<void>();
+  let running = 0;
+  let overlapped = false;
+  const turns: (readonly unknown[])[] = [];
+  const reviewer = scriptedReviewer(async (request) => {
+    const turn = turnOf(request) as unknown as { readonly events: readonly unknown[] };
+    running++;
+    if (running > 1) overlapped = true;
+    turns.push(turn.events);
+    if (turns.length === 1) {
+      firstStarted.resolve();
+      await firstTurn.promise;
+    }
+    else secondTurn.resolve();
+    running--;
+    return respond(message("Waiting for a readback."));
+  });
+  const review = reviewHost(reviewer.provider);
+  const f = await fixture(
+    async (_request, index) => {
+      if (index === 0) return minter("execute", step("src/add-to-cart.ts"), "cart");
+      if (index === 1) {
+        await firstStarted.promise;
+        return minter("execute", step("src/save-draft.ts"), "draft");
+      }
+      if (index === 2) return minter("execute", step("src/read-cart.ts"), "read");
+      if (index === 3) {
+        firstTurn.resolve();
+        await secondTurn.promise;
+      }
+      return respond(message("Stopped."));
+    },
+    {
+      reviewAndExecute: allowedStep(
+        (entrypoint) =>
+          Effect.succeed({
+            executionId: entrypoint.replace(/\W/gu, "_"),
+            status: "completed",
+            effect: "possible",
+            resultRef: `${entrypoint}_result`,
+            observations: { page: "Done." },
+          }),
+        (entrypoint) => (entrypoint === "src/read-cart.ts" ? "read" : "write"),
+      ),
+      outcomeReview: review.host,
+    },
+    { effect: "write" },
+  );
+  await f.run();
+
+  expect(overlapped).toBe(false);
+  expect(turns.map((events) => events.length)).toEqual([1, 2]);
+  expect(turns[1]).toEqual([
+    expect.objectContaining({ kind: "write" }),
+    expect.objectContaining({ kind: "execution", action: "read" }),
+  ]);
+});
