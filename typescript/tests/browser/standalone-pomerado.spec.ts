@@ -18,6 +18,7 @@ import { Usage } from "@openai/agents";
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect, Schema } from "effect";
 import { createPomerado } from "../../src/standalone/pomerado.js";
+import { RunOutcomeFailure } from "../../src/standalone/run-report.js";
 import { CalendarDate } from "../../src/browser/index.js";
 import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
@@ -1552,7 +1553,8 @@ test("a generated integration serves and runs with no model key or provider", as
     } finally {
       await connection.client.close();
     }
-    // An unclassified run failure names no model, because a run makes no model request.
+    // A read's failure names no model, because a run makes no model request, and no possible
+    // website change, because a read holds no write authority.
     const failing = await saveMcpFixture(
       directory,
       "failing_fixture",
@@ -1569,7 +1571,11 @@ test("a generated integration serves and runs with no model key or provider", as
       expect(result.structuredContent, failed.stderr()).toMatchObject({
         status: "failed",
         error:
-          "Operation failed. Check the local browser and integration configuration. A dispatched website action may have taken effect; this job will not be replayed.",
+          "The run did not produce a validated result. Nothing changed on the website. Check the local browser and the tool, then run it again.",
+        code: "execution_failed",
+        write_status: null,
+        possible_commit: false,
+        retry: "never",
       });
     } finally {
       await failed.client.close();
@@ -1582,7 +1588,7 @@ test("a generated integration serves and runs with no model key or provider", as
   }
 });
 
-test("today a write that never records its confirmation reports plain success from run and MCP", async () => {
+test("a write that never records its confirmation reports possibly applied from run and MCP, with its output", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "A native write through the library and the served stdio MCP; a real POST each",
@@ -1613,8 +1619,10 @@ export default defineOperation({name:"save_fixture",input:Schema.Struct({}),outp
 enteringCommit("save");const result=await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:2});
 if(!result.success||result.result!==true)throw new Error("Save not reached");return {saved:true};});`;
   const directory = await mkdtemp(join(tmpdir(), "pomerado-unconfirmed-write-"));
+  const error =
+    "The write returned without recording its confirmation, so it may have changed the website. Read the site back before any retry to see whether the action happened, and run the tool again only if it did not.";
   try {
-    const output = await Effect.runPromise(
+    const failure = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const service = yield* createPomerado({
@@ -1633,9 +1641,19 @@ if(!result.success||result.result!==true)throw new Error("Save not reached");ret
             { url, intent: "Save the fixture once", effect: "write", input: {} },
           );
         }),
-      ),
+      ).pipe(Effect.flip),
     );
-    expect(output).toEqual({ saved: true });
+    expect(failure).toBeInstanceOf(RunOutcomeFailure);
+    expect(failure).toMatchObject({
+      message: error,
+      outcome: {
+        code: "outcome_unknown",
+        writeStatus: "may_have_applied",
+        possibleCommit: true,
+        retry: "never",
+      },
+      unconfirmed: { output: { saved: true } },
+    });
     expect(writes).toBe(1);
     const saved = await saveMcpFixture(directory, "save_fixture", url, "write", source);
     const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href;
@@ -1646,11 +1664,36 @@ if(!result.success||result.result!==true)throw new Error("Save not reached");ret
         arguments: { input: {} },
       });
       expect(result.isError, JSON.stringify(result) + connection.stderr()).toBeFalsy();
-      expect(result.structuredContent).toEqual({ saved: true });
+      expect(result.structuredContent).toEqual({
+        job_id: expect.any(String),
+        status: "failed",
+        output: { saved: true },
+        error,
+        code: "outcome_unknown",
+        write_status: "may_have_applied",
+        possible_commit: true,
+        retry: "never",
+      });
       expect(writes).toBe(2);
     } finally {
       await connection.client.close();
     }
+    // The terminal prints the unconfirmed output, then the outcome, and exits 1.
+    await Effect.runPromise(
+      Effect.scoped(
+        writeArtifact(join(directory, "artifact"), {
+          entrypoint: "src/tool.mjs",
+          files: [{ path: "src/tool.mjs", content: source }],
+          inputSchema: {},
+          outputSchema: {},
+        }),
+      ),
+    );
+    const ran = await terminal(["run", "--artifact", join(directory, "artifact"), "--url", url]);
+    expect(ran.code, ran.stderr).toBe(1);
+    expect(JSON.parse(ran.stdout)).toEqual({ saved: true });
+    expect(ran.stderr.trim()).toBe(error);
+    expect(writes).toBe(3);
     expect(calls).toEqual([]);
   } finally {
     await new Promise<void>((resolve, reject) =>

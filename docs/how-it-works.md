@@ -100,7 +100,13 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - Restarting the server loses running jobs and keeps saved integrations.
-- A failed job is never replayed. A website action it already sent may have taken effect.
+- A failed job is never replayed.
+- A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
+  - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
+  - A refused input whose declared commit steps were never entered reports `not_applied`.
+  - A read never reports a possible website change.
+  - Only `possible_commit: true` tells the caller to read the site back before any retry.
+- A failed mint's job still warns that a website action it already sent may have taken effect.
 - The integration's folder is reserved before the mint starts, so a name collision can't run the task and then fail to save it. An unpublished mint removes the folder.
 
 ## Library and terminal

@@ -27,7 +27,9 @@ export interface Pomerado {
   /**
    * Runs a minted artifact on `url` with no Guardian review and no model request. Guardian
    * reviewed the artifact when it was minted. `intent`, `effect` and `authenticationOrigins` are
-   * not checked here, so run only artifacts you minted or trust.
+   * not checked here, so run only artifacts you minted or trust. A read or a confirmed write
+   * returns its output. A failed sign-in fails with `SignInRunFailed`, and any other run with
+   * `RunOutcomeFailure`, which says what it did to the website and how to retry.
    */
   readonly run: (
     artifact: MintArtifact,

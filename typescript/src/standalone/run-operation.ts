@@ -12,12 +12,15 @@ import { localSignInLogin, makeSignInBrowser } from "./authentication.js";
 import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
 import { requestSite } from "./request-context.js";
+import { beforeOperationFailure, returnedRun, runOutcomeFailure } from "./run-report.js";
 
 /**
  * Runs an already-built artifact. Guardian reviewed its source when it was minted, so a run makes
  * no Guardian review and no model request, and needs no model key. An artifact that recorded a
  * sign-in signs in first with it, asking the owner for the login only when the session is not
- * signed in, and never runs signed out.
+ * signed in, and never runs signed out. A read or a confirmed write returns its output. A sign-in
+ * that fails fails with its `SignInRunFailed`; any other run fails with a `RunOutcomeFailure`
+ * that says what it did to the website and how to retry.
  */
 export const runOperation = (
   session: StandaloneSession,
@@ -72,6 +75,6 @@ export const runOperation = (
       timeoutMs: options.timeoutMs ?? 1_200_000,
       ask,
       decideDialog: makeDialogDecider(ask, secrets.redact),
-    });
-    return result.output;
-  });
+    }).pipe(Effect.mapError(runOutcomeFailure(request.effect, "operation")));
+    return yield* returnedRun(request.effect, result);
+  }).pipe(Effect.mapError(beforeOperationFailure(request.effect)));

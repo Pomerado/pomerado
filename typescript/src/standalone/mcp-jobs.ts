@@ -6,6 +6,8 @@ import { modelFailureMetadata } from "../models/model-failure.js";
 import { LocalOperationFailure } from "../execution/local-operation.js";
 import { makeInputAsker } from "../inputs/callback.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
+import type { RunOutcomeCode, RunRetryClass, WriteStatus } from "../runtime/run-outcome.js";
+import { RunOutcomeFailure } from "./run-report.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,
@@ -31,6 +33,8 @@ interface Job {
   error?: string;
   /** The job failed signing in, before the operation it runs could act on the website. */
   beforeOperation?: true;
+  /** A run that did not end in a confirmed result: what it did to the website and how to retry. */
+  outcome?: RunOutcomeFailure;
   fiber?: Fiber.RuntimeFiber<void>;
 }
 export interface McpJobView {
@@ -40,6 +44,13 @@ export interface McpJobView {
   readonly pending_input?: InputRequest & { readonly expires_at: string };
   readonly next?: { readonly tool: string; readonly arguments: Record<string, unknown> };
   readonly error?: string;
+  /** A failed run's finite code. */
+  readonly code?: RunOutcomeCode;
+  /** What a failed write did to the website; null for a read or a tool of unknown effect. */
+  readonly write_status?: WriteStatus | null;
+  /** True: a step may already have changed the website, so read it back before any retry. */
+  readonly possible_commit?: boolean;
+  readonly retry?: RunRetryClass;
 }
 const terminalRetentionMs = 15 * 60_000;
 class McpJobFailure extends Data.TaggedError("McpJobFailure")<{
@@ -59,6 +70,7 @@ export const mcpFailureMessage = (
 ): string => {
   const error = Cause.squash(cause);
   if (error instanceof McpJobFailure) return requestErrors[error.code];
+  if (error instanceof RunOutcomeFailure) return error.message;
   if (error instanceof ReviewFailure) return `Guardian review failed (${error.code}).`;
   if (error instanceof MintFailure) return `Mint failed (${error.code}).`;
   if (error instanceof InputRequestFailure) return `Input could not be completed (${error.code}).`;
@@ -109,10 +121,23 @@ const snapshot = (job: Job): McpJobView => {
     job_id: job.id,
     status: job.status,
     ...(job.status === "completed" ? { output: job.output } : {}),
+    // A write that may have applied keeps the output its script returned, unconfirmed.
+    ...(job.status === "failed" && job.outcome?.unconfirmed !== undefined
+      ? { output: job.outcome.unconfirmed.output }
+      : {}),
     ...(job.status === "running"
       ? { next: { tool: "get_job", arguments: { job_id: job.id } } }
       : {}),
-    ...(job.status === "failed"
+    ...(job.status === "failed" && job.outcome !== undefined
+      ? {
+          error: job.outcome.message,
+          code: job.outcome.outcome.code,
+          write_status: job.outcome.outcome.writeStatus,
+          possible_commit: job.outcome.outcome.possibleCommit,
+          retry: job.outcome.outcome.retry,
+        }
+      : {}),
+    ...(job.status === "failed" && job.outcome === undefined
       ? {
           error:
             job.beforeOperation === true
@@ -164,7 +189,9 @@ const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, 
         Effect.gen(function* () {
           job.status = Cause.isInterruptedOnly(cause) ? "cancelled" : "failed";
           job.error = mcpFailureMessage(cause, kind);
-          if (Cause.squash(cause) instanceof SignInRunFailed) job.beforeOperation = true;
+          const failure = Cause.squash(cause);
+          if (failure instanceof SignInRunFailed) job.beforeOperation = true;
+          if (failure instanceof RunOutcomeFailure) job.outcome = failure;
           job.finishedAt = yield* Clock.currentTimeMillis;
           yield* signalChange(job);
         }),
