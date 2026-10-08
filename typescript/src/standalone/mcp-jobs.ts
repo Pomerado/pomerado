@@ -8,6 +8,12 @@ import { makeInputAsker } from "../inputs/callback.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import type { RunOutcomeCode, RunRetryClass, WriteStatus } from "../runtime/run-outcome.js";
 import { RunOutcomeFailure } from "./run-report.js";
+import { submitJob, type JobStore, type RetrySubmission } from "../jobs/job-store.js";
+import {
+  makeMemoryJobStore,
+  type LocalJobRecord,
+  type LocalJobStore,
+} from "../jobs/local-job-store.js";
 import {
   InputRequestFailure,
   maximumInputWaitMs,
@@ -35,6 +41,8 @@ interface Job {
   beforeOperation?: true;
   /** A run that did not end in a confirmed result: what it did to the website and how to retry. */
   outcome?: RunOutcomeFailure;
+  /** A retry key started the job, so the job store keeps its record. */
+  readonly recorded?: true;
   fiber?: Fiber.RuntimeFiber<void>;
 }
 export interface McpJobView {
@@ -51,16 +59,20 @@ export interface McpJobView {
   /** True: a step may already have changed the website, so read it back before any retry. */
   readonly possible_commit?: boolean;
   readonly retry?: RunRetryClass;
+  /** The call's retry key named this job, so the call started nothing new. */
+  readonly rejoined?: true;
 }
 const terminalRetentionMs = 15 * 60_000;
 class McpJobFailure extends Data.TaggedError("McpJobFailure")<{
-  readonly code: "busy" | "unknown_job" | "stale_input" | "invalid_answers";
+  readonly code: "busy" | "unknown_job" | "stale_input" | "invalid_answers" | "retry_conflict";
 }> {}
 const requestErrors = {
   busy: "The server is busy. Wait for or cancel its active job.",
   unknown_job: "Unknown or expired job.",
   stale_input: "This input request is no longer pending.",
   invalid_answers: "Answers do not match the pending questions.",
+  retry_conflict:
+    "This idempotency key was already used for a different request. Repeat the original request with that key, or use a new key for a new request.",
 };
 /** What a server's jobs do. A run makes no model request, so its messages never mention one. */
 export type McpJobKind = "mint" | "run";
@@ -103,7 +115,9 @@ const signalChange = (job: Job) =>
     job.changed = yield* Deferred.make<void>();
     yield* Deferred.succeed(previous, undefined);
   });
-const snapshot = (job: Job): McpJobView => {
+const snapshot = (
+  job: Pick<Job, "id" | "status" | "pending" | "output" | "error" | "beforeOperation" | "outcome">,
+): McpJobView => {
   if (job.pending !== undefined)
     return {
       job_id: job.id,
@@ -182,7 +196,29 @@ const jobAsker =
         sourceEndsAt: expiresAt,
       });
     });
-const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, Scope.Scope>) =>
+/**
+ * A job's view from its kept record, when this server holds no live job for it. A record keeps no
+ * output, so a finished job answers its status alone.
+ */
+const storedView = (record: LocalJobRecord): McpJobView => {
+  const { output: _output, ...view } = snapshot({
+    id: record.id,
+    status: record.status,
+    ...(record.lost === true
+      ? { error: "The server stopped before this job finished." }
+      : record.error === undefined
+        ? {}
+        : { error: record.error }),
+    ...(record.beforeOperation === undefined ? {} : { beforeOperation: record.beforeOperation }),
+  });
+  return view;
+};
+const settle = (
+  job: Job,
+  kind: McpJobKind,
+  work: Effect.Effect<unknown, Error, Scope.Scope>,
+  recordOutcome: (job: Job, cause?: Cause.Cause<unknown>) => Effect.Effect<void>,
+) =>
   Effect.scoped(work).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) =>
@@ -193,6 +229,7 @@ const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, 
           if (failure instanceof SignInRunFailed) job.beforeOperation = true;
           if (failure instanceof RunOutcomeFailure) job.outcome = failure;
           job.finishedAt = yield* Clock.currentTimeMillis;
+          yield* recordOutcome(job, cause);
           yield* signalChange(job);
         }),
       onSuccess: (output) =>
@@ -200,14 +237,21 @@ const settle = (job: Job, kind: McpJobKind, work: Effect.Effect<unknown, Error, 
           job.output = output;
           job.status = "completed";
           job.finishedAt = yield* Clock.currentTimeMillis;
+          yield* recordOutcome(job);
           yield* signalChange(job);
         }),
     }),
   );
-/** Jobs survive individual tool calls, but never their owning stdio server scope. */
-export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint") =>
+/**
+ * Jobs survive individual tool calls, but never their owning stdio server scope. A job started with
+ * a retry key also keeps a record in `store`, so the key rejoins it instead of acting again, and a
+ * persistent store keeps that record across a restart.
+ */
+export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint", store?: LocalJobStore) =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
+    const records = store ?? (yield* makeMemoryJobStore());
+    const submitPermit = yield* Effect.makeSemaphore(1);
     const jobs = new Map<string, Job>();
     const prune = (now: number) => {
       for (const [id, job] of jobs)
@@ -224,16 +268,44 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint") =>
           ? yield* Effect.fail(new McpJobFailure({ code: "unknown_job" }))
           : job;
       });
-    const start = (work: (ask: InputAsker) => Effect.Effect<unknown, Error, Scope.Scope>) =>
+    const busy = () =>
+      [...jobs.values()].filter((job) => job.finishedAt === undefined).length >= maxJobs;
+    /** Writes a recorded job's outcome, and a failed run's journal, to its record. */
+    const recordOutcome = (job: Job, cause?: Cause.Cause<unknown>) => {
+      if (job.recorded !== true) return Effect.void;
+      const failure = cause === undefined ? undefined : Cause.squash(cause);
+      const journal = failure instanceof LocalOperationFailure ? failure.journal : undefined;
+      // A record that can't be written stays running, and reads as lost after a restart.
+      return records
+        .update(job.id, {
+          status: job.status,
+          ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+          ...(job.error === undefined ? {} : { error: job.error }),
+          ...(job.beforeOperation === undefined ? {} : { beforeOperation: job.beforeOperation }),
+          ...(journal === undefined
+            ? {}
+            : {
+                effect: journal.effect,
+                commits: journal.commits,
+                ...(journal.confirmation === undefined
+                  ? {}
+                  : { confirmation: journal.confirmation }),
+              }),
+        })
+        .pipe(Effect.ignore);
+    };
+    const launch = (
+      id: string,
+      work: (ask: InputAsker) => Effect.Effect<unknown, Error, Scope.Scope>,
+      recorded: boolean,
+    ) =>
       Effect.gen(function* () {
-        prune(yield* Clock.currentTimeMillis);
-        if ([...jobs.values()].filter((job) => job.finishedAt === undefined).length >= maxJobs)
-          return yield* Effect.fail(new McpJobFailure({ code: "busy" }));
         const job: Job = {
-          id: randomUUID(),
+          id,
           status: "running",
           changed: yield* Deferred.make<void>(),
           inputPermit: yield* Effect.makeSemaphore(1),
+          ...(recorded ? { recorded: true as const } : {}),
         };
         jobs.set(job.id, job);
         job.fiber = yield* Effect.forkIn(
@@ -241,14 +313,71 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint") =>
             job,
             kind,
             Effect.suspend(() => work(jobAsker(job))),
+            recordOutcome,
           ).pipe(Effect.interruptible),
           scope,
         );
         return snapshot(job);
-      }).pipe(Effect.uninterruptible);
+      });
+    /**
+     * The shared retry-key rule over the job store. A key that names no job is refused while the
+     * server is busy, but a key that names one rejoins it even then, so a retry finds its job.
+     */
+    const keyedStore: JobStore<RetrySubmission, LocalJobRecord, Error | McpJobFailure> = {
+      insert: (submission) =>
+        Effect.gen(function* () {
+          if ((yield* records.lookup(submission)) !== undefined) return undefined;
+          if (busy()) return yield* new McpJobFailure({ code: "busy" });
+          return yield* records.insert(submission);
+        }),
+      findByRetryKey: records.findByRetryKey,
+    };
+    /**
+     * Starts a job. A call with a retry key that names an earlier job with the same request
+     * fingerprint rejoins it and starts nothing; the same key with another fingerprint is refused.
+     */
+    const start = (
+      work: (ask: InputAsker) => Effect.Effect<unknown, Error, Scope.Scope>,
+      submission?: RetrySubmission,
+    ) =>
+      submitPermit
+        .withPermits(1)(
+          Effect.gen(function* () {
+            prune(yield* Clock.currentTimeMillis);
+            if (submission?.retryKey === undefined) {
+              if (busy()) return yield* Effect.fail(new McpJobFailure({ code: "busy" }));
+              return yield* launch(randomUUID(), work, false);
+            }
+            const submitted = yield* submitJob(keyedStore, submission).pipe(
+              Effect.catchTag("RetryConflict", () =>
+                Effect.fail(new McpJobFailure({ code: "retry_conflict" })),
+              ),
+            );
+            if (!submitted.rejoined) return yield* launch(submitted.job.id, work, true);
+            const live = jobs.get(submitted.job.id);
+            const view = live === undefined ? storedView(submitted.job) : snapshot(live);
+            return { ...view, rejoined: true as const };
+          }),
+        )
+        .pipe(Effect.uninterruptible);
+    /** A job this server holds no live job for: its record, polled while another server runs it. */
+    const recordedJob = (id: string, waitMs: number) =>
+      Effect.gen(function* () {
+        const until = (yield* Clock.currentTimeMillis) + waitMs;
+        let record = yield* records.get(id);
+        while (record?.status === "running" && (yield* Clock.currentTimeMillis) < until) {
+          yield* Effect.sleep(250);
+          record = yield* records.get(id);
+        }
+        return record === undefined
+          ? yield* Effect.fail(new McpJobFailure({ code: "unknown_job" }))
+          : storedView(record);
+      });
     const get = (id: string, waitMs = 0) =>
       Effect.gen(function* () {
-        const job = yield* find(id);
+        prune(yield* Clock.currentTimeMillis);
+        const job = jobs.get(id);
+        if (job === undefined) return yield* recordedJob(id, waitMs);
         if (job.status === "running" && job.pending === undefined && waitMs > 0)
           yield* Effect.raceFirst(Deferred.await(job.changed), Effect.sleep(waitMs));
         return snapshot(job);
@@ -276,6 +405,7 @@ export const makeMcpJobs = (maxJobs = 1, kind: McpJobKind = "mint") =>
           job.status = "cancelled";
           job.finishedAt = yield* Clock.currentTimeMillis;
           delete job.pending;
+          yield* recordOutcome(job);
           yield* signalChange(job);
         }
         return snapshot(job);

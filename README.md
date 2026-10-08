@@ -151,7 +151,8 @@ Each integration appears to your agent as its own MCP server.
 - It also has `get_job`, `provide_input` and `cancel_job` for calls that need an answer or more time
 - A call returns output that matches the schema in `pomerado.json`, or a job ID to follow up on
 - A failed call returns a job with a `code`, `write_status`, `possible_commit` and `retry`. Read the site back before calling again when `possible_commit` is true
-- Each call is a new run. With write authority, calling again performs the write again
+- Each call without an `idempotency_key` is a new run. With write authority, calling again performs the write again
+- A write tool takes an optional `idempotency_key`. A call that repeats the key and input answers the first job and writes nothing, even after a server restart
 - An integration whose build signed in signs in on each call. It asks for the login, and any code or answer the site needs, and saves none of them
 - The integration runs on the Pomerado installation that minted it. For a stable path, install globally with `npm install -g pomerado` and use `pomerado-mcp` in place of `npx -y -p pomerado pomerado-mcp`
 
