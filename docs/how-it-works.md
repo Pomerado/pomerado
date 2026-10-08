@@ -19,6 +19,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.
+- A step's script asks you only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. A declaration held in a variable, imported or computed declares nothing, so its ask fails as `Undeclared` and reaches neither Guardian nor you.
 - It gets 20 minutes of active work. Time spent waiting for your answers doesn't count.
 - Its prompts and examples come from `typescript/authoring/`.
 
@@ -65,6 +66,7 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 
 - A saved integration runs as its own MCP stdio server. Its `mcp.mjs` launcher loads the Pomerado installation that minted it and serves the integration's folder, as `pomerado-mcp serve --artifact` does.
 - The server validates each call's input against the integration's input schema before it runs anything.
+- A run asks only the questions publication reviewed, which `pomerado.json` keeps. Any other ask fails as `Undeclared` and asks nobody. An integration saved without them asks only what its entrypoint declares as a plain literal.
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.

@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- A local build's step asks only the questions its entrypoint declares as a plain literal in its one `defineOperation` call. The host reads them from the source, not from the running script. An ask whose id, prompt or bounds differ fails as `Undeclared` before Guardian's question review, and nobody is asked. A declaration held in a variable, imported or computed declares nothing.
+  - Migrate by writing `questions` as an object literal inside the entrypoint's `defineOperation` call.
+- A step whose literal `questions` names an invalid id is refused before review, with each id it names.
+- A run asks only the questions publication reviewed. A published artifact keeps them as `questions`, and `pomerado.json` saves them. An artifact without them asks only what its entrypoint declares as a plain literal.
+
 ### Other changes
+
+- A misplaced secret handle's refusal now tells the minter to write the handle as the whole string literal in the Playwright code of a `kernel.browsers.playwright.execute` call.
+- `exampleInputRefusal` takes an optional `maintenance` flag. A host sets it while it repairs a published tool, which runs its failing case's own input, so `exampleInput` is refused. The local host never sets it.
+- New exports let other hosts drop their copies of these checks.
+  - `pomerado/core/mint/step-checks` exports `testInputNotJson`.
+  - `pomerado/core/mint/publication-review` exports `unlistedExampleInputKeys` and `exampleInputFeedback`.
+  - `pomerado/core/mint/draft-questions` exports `draftQuestionDeclarations` and `draftQuestionDeclarationFailure`.
+  - `pomerado/core/execution/declared-questions` exports `asksAsDeclared`.
 
 - The authoring text and the write examples call `verified()` with no argument and declare `write: { confirmation: "readback" }`, whether the write read the site's confirmation or the saved state. The runtime still accepts `{ confirmation: "message" }` from operations published before.
 - The minter reaches every page of a browser version and its probes through the site's own search, forms and links, never through a URL that holds the caller's input. The detail-read example `navigation.ts` types the identifier into the site's search, follows the one matching result link and checks the final path against that link's `href`. Only the site's own word that no record matches fails as `InvalidInput`. A search still loading, or one that failed, does not.

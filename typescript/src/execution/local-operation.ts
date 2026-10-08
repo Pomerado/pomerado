@@ -10,6 +10,7 @@ import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
+import { asksAsDeclared } from "./declared-questions.js";
 import { createLocalProcess, type LocalProcess, type LocalProcessResult } from "./local-process.js";
 import { localError, localOutputLimit } from "./local-path.js";
 import { LocalOperationMessage, type LocalOperationResult } from "./local-operation-protocol.js";
@@ -29,6 +30,13 @@ export interface LocalOperationOptions {
   readonly validateInput?: boolean;
   readonly target?: "browser" | "pureFiles";
   readonly ask?: InputAsker;
+  /**
+   * The questions the host read itself: a build step's literal declarations, or the ones
+   * publication reviewed. The host puts a script's request to its caller only when every question
+   * matches one of them (`asksAsDeclared`); otherwise the script's `ask` fails as `Undeclared` and
+   * nobody is asked. Absent, no script question is asked.
+   */
+  readonly declaredQuestions?: ScriptQuestionDeclarations;
   readonly decideDialog?: DialogDecider;
 }
 export interface LocalOperationJournal {
@@ -96,15 +104,23 @@ const handleRequest = (
         return Effect.fail(new Error("Local operation browser session mismatch"));
       return options.browser.executeResponse(message.body.code, message.body.timeout_sec);
     }
-    if (message.kind === "ask")
-      return options.ask === undefined
-        ? Effect.fail(new Error("Local operation input is unavailable"))
-        : suspended(deadline, options.ask(message.request)).pipe(
-            // ScriptInput validates raw answers in the child; the host has already typed them.
-            Effect.map((answers) =>
-              Object.fromEntries(Object.entries(answers).map(([id, answer]) => [id, answer.value])),
-            ),
-          );
+    if (message.kind === "ask") {
+      if (options.ask === undefined)
+        return Effect.fail(new Error("Local operation input is unavailable"));
+      // The child runs minted code, so only the declarations the host read decide what is asked.
+      if (!asksAsDeclared(message.request, options.declaredQuestions ?? {}))
+        return Effect.fail(
+          Object.assign(new Error("Local operation asked beyond its declared questions"), {
+            code: "Undeclared",
+          }),
+        );
+      return suspended(deadline, options.ask(message.request)).pipe(
+        // ScriptInput validates raw answers in the child; the host has already typed them.
+        Effect.map((answers) =>
+          Object.fromEntries(Object.entries(answers).map(([id, answer]) => [id, answer.value])),
+        ),
+      );
+    }
     return options.decideDialog === undefined
       ? Effect.fail(new Error("Local operation dialog decision is unavailable"))
       : suspended(deadline, options.decideDialog({ ...message.report, interactionId: message.id }));

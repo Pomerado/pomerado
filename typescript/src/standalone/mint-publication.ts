@@ -204,6 +204,7 @@ export const mintPublication =
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
           ...(signIn === undefined ? {} : { signIn }),
+          ...(result.schemas.questions === undefined ? {} : { questions: result.schemas.questions }),
         },
         diagnostics: [],
       };

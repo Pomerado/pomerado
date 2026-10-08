@@ -1,6 +1,7 @@
 import type { Effect } from "effect";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { PublicationFinding } from "../guardian/review-contracts.js";
+import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import type { MintFailure, PublicationDiagnosticGap } from "./contracts.js";
 
 /** Credential-screened Guardian feedback for a completed model decision. */
@@ -107,6 +108,11 @@ export interface MintArtifact {
   readonly outputSchema: unknown;
   /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
   readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
+  /**
+   * The questions publication reviewed, the only ones a run asks its caller. An artifact without
+   * them asks only what its entrypoint declares as a plain literal.
+   */
+  readonly questions?: ScriptQuestionDeclarations;
 }
 
 /** Completion uses the same review/receipt loop in each composition. */

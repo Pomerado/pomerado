@@ -5,6 +5,7 @@ import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
 import type { InputAsker } from "../runtime/input-request.js";
+import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 export interface PomeradoOptions {
   readonly ask: InputAsker;
   readonly browser?: PlaywrightOptions;
@@ -57,5 +58,7 @@ export const Artifact = Schema.Struct({
   signIn: Schema.optionalWith(Schema.Struct({ recipe: SignInRecipe, entryUrl: PageUrl }), {
     exact: true,
   }),
+  /** The questions publication reviewed, the only ones a run asks. */
+  questions: Schema.optionalWith(ScriptQuestionDeclarations, { exact: true }),
 });
 export type { MintArtifact, MintOutcome };

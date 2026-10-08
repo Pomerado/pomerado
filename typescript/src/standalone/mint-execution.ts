@@ -16,6 +16,10 @@ import { localCommandTimeoutMs } from "../execution/local-workspace.js";
 import { localOutputLimit } from "../execution/local-path.js";
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
+import {
+  draftQuestionDeclarationFailure,
+  draftQuestionDeclarations,
+} from "../mint/draft-questions.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
 import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
@@ -307,9 +311,13 @@ const authoredExecution = (
     );
     const files = new Map(sources);
     const live = execution.target === "liveBrowser";
+    // The step asks only what its entrypoint declares as a plain literal, read from its source,
+    // never from what its running script reports.
+    const entrypointSource = files.get(execution.entrypoint) ?? "";
     const refusal =
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
-      replayedWriteStep(execution, files, writeSession.steps);
+      replayedWriteStep(execution, files, writeSession.steps) ??
+      draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
       callerInput: request.input ?? {},
@@ -380,6 +388,7 @@ const authoredExecution = (
             mode: "run",
             target: live ? "browser" : "pureFiles",
             ask: scriptAsk,
+            declaredQuestions: draftQuestionDeclarations(execution.entrypoint, entrypointSource),
             decideDialog: makeDialogDecider(mintAsk, secrets.redact),
           }),
         );

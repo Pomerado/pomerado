@@ -23,7 +23,9 @@ const refused = (reason: string): Refusal => ({ supported: false, reason });
 
 /** Live read tests an attempt may run on an input the agent chose. */
 const maximumAgentTestInputs = 2;
-const testInputNotJson = "testInput must be the tool's input as JSON text. Nothing was executed.";
+/** Why an agent-chosen test input that is not JSON text never runs. */
+export const testInputNotJson =
+  "testInput must be the tool's input as JSON text. Nothing was executed.";
 const JsonText = Schema.parseJson();
 
 /**
@@ -75,14 +77,27 @@ interface SessionInput {
   readonly input: InputObject | undefined;
 }
 
+/** The build an `exampleInput` would run in. */
+interface ExampleInputScope {
+  readonly buildEffect: MintRequest["effect"] | undefined;
+  readonly callerInput: unknown;
+  /**
+   * Set by a host while it repairs a published tool, which runs on its failing case's own input.
+   * The local host never repairs one, so it never sets it.
+   */
+  readonly maintenance?: boolean;
+}
+
 /** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
 const exampleInputPlaceRefusal = (
   purpose: ExecutionRequest["purpose"],
-  scope: { readonly buildEffect: MintRequest["effect"] | undefined; readonly callerInput: unknown },
+  scope: ExampleInputScope,
 ) => {
   const act = purpose === "act";
   if (purpose !== "example" && !act)
     return "exampleInput is valid only on a read's example or a write's act step.";
+  if (scope.maintenance === true)
+    return "exampleInput is not for maintenance, which repairs the tool on its failing case's own input.";
   if (scope.buildEffect !== (act ? "write" : "read"))
     return act
       ? "exampleInput is valid on act steps only in a write build."
@@ -112,11 +127,7 @@ const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
-  scope: {
-    readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly callerInput: unknown;
-    readonly writeSession: SessionInput;
-  },
+  scope: ExampleInputScope & { readonly writeSession: SessionInput },
 ): Refusal | undefined => {
   if (submitted.exampleInput === undefined) return undefined;
   const decoded = intentDerivedInput(submitted);

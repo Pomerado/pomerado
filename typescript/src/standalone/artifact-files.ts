@@ -6,6 +6,7 @@ import {
 } from "../destinations/sign-in-recipe.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
+import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
 
@@ -19,6 +20,8 @@ const Metadata = Schema.Struct({
     Schema.Struct({ recipe: Schema.Literal(signInRecipePath), entryUrl: PageUrl }),
     { exact: true },
   ),
+  /** The questions publication reviewed, the only ones a run asks. */
+  questions: Schema.optionalWith(ScriptQuestionDeclarations, { exact: true }),
 });
 /** The artifact's own files beside its source, which no source path may name. */
 const metadataFiles = new Set(["pomerado.json", signInRecipePath]);
@@ -125,6 +128,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           ...(checked.signIn === undefined
             ? {}
             : { signIn: { recipe: signInRecipePath, entryUrl: checked.signIn.entryUrl } }),
+          ...(checked.questions === undefined ? {} : { questions: checked.questions }),
         },
         null,
         2,

@@ -335,6 +335,52 @@ async ({ ask }) => ({ note: await ask("note") }));`,
   }
 });
 
+test("a step asks only what its entrypoint declares as a plain literal", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { last, asked } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      answer: () => ({ note: "plain" }),
+      turns: [
+        () =>
+          patch({
+            // The running module declares the question, but the host reads no literal it can trust.
+            "explore/computed.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+const questions = {note:{type:"text",prompt:"Which note should I keep?"}};
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions},
+async ({ ask }) => ({ note: await ask("note") }));`,
+            "explore/invalid.mjs": `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{Note:{type:"text",prompt:"Which note should I keep?"}}},
+async ({ ask }) => ({ note: await ask("Note") }));`,
+          }),
+        () => [call("execute", execution("explore", "explore/computed.mjs"), "computed")],
+        () => [call("execute", execution("explore", "explore/invalid.mjs"), "invalid")],
+      ],
+    });
+    // The computed declaration ran, but its ask reached neither Guardian nor the owner.
+    expect(toolResult(last, "computed")).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(toolResult(last, "computed"))).toContain("Undeclared");
+    expect(guardian.reviews.filter((review) => review.kind === "question")).toEqual([]);
+    expect(asked).toEqual([]);
+    // An invalid literal id is refused before review, and nothing runs.
+    expect(toolResult(last, "invalid")).toMatchObject({
+      status: "unsupported",
+      observations: expect.stringContaining('Invalid script question id: "Note".'),
+    });
+    expect(executions(guardian.reviews)).toHaveLength(1);
+  } finally {
+    await site.close();
+  }
+});
+
 test("a question a step asks after its page reset never shows Guardian the page the last step left", async () => {
   test.setTimeout(90_000);
   const site = await startSite((request, response) =>

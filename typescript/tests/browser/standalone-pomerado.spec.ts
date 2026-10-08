@@ -451,6 +451,85 @@ test("a run makes no Guardian or model call and returns the operation's output",
   }
 });
 
+test("a run asks only the questions its artifact recorded, or that its entrypoint declares as a literal", async () => {
+  // Four runs, each in its own browser session.
+  test.setTimeout(90_000);
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Run fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const note = { type: "text" as const, prompt: "Which note should I keep?" };
+  const asking = (questions: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+const computed = {note:{type:"text",prompt:"Which note should I keep?"}};
+export default defineOperation({name:"ask_note",input:Schema.Struct({}),output:Schema.Struct({note:Schema.String}),questions:${questions}},
+async ({ ask }) => ({ note: await ask("note") }));`;
+  const literal = asking(JSON.stringify({ note }));
+  const calls: string[] = [];
+  const run = (content: string, questions?: Readonly<Record<string, unknown>>) => {
+    const asked: InputRequest[] = [];
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            ask: makeInputAsker((request) =>
+              Effect.sync(() => {
+                asked.push(request);
+                return { note: "kept" };
+              }),
+            ),
+            minterProvider: unreachableModel(calls, "minter"),
+            guardianProvider: unreachableModel(calls, "guardian"),
+            timeoutMs: 10_000,
+          });
+          return yield* Effect.either(
+            service.run(
+              {
+                entrypoint: "src/tool.mjs",
+                files: [{ path: "src/tool.mjs", content }],
+                inputSchema: {},
+                outputSchema: {},
+                ...(questions === undefined ? {} : { questions }),
+              } as Parameters<typeof service.run>[0],
+              { url: `http://127.0.0.1:${address.port}/`, intent: "Read fixture", input: {} },
+            ),
+          );
+        }),
+      ),
+    ).then((result) => ({ result, asked }));
+  };
+  try {
+    // Publication recorded the question: the run asks it.
+    const recorded = await run(literal, { note });
+    expect(recorded.result._tag === "Right" && recorded.result.right).toEqual({ note: "kept" });
+    expect(recorded.asked).toHaveLength(1);
+    // The script asks something other than what publication recorded: nobody is asked.
+    const differs = await run(literal, { note: { ...note, prompt: "Which note?" } });
+    expect(differs.result._tag === "Left" && differs.result.left).toMatchObject({
+      code: "Undeclared",
+    });
+    expect(differs.asked).toEqual([]);
+    // An artifact saved without its questions asks what its entrypoint declares as a literal.
+    const saved = await run(literal);
+    expect(saved.result._tag).toBe("Right");
+    expect(saved.asked).toHaveLength(1);
+    const computed = await run(asking("computed"));
+    expect(computed.result._tag === "Left" && computed.result.left).toMatchObject({
+      code: "Undeclared",
+    });
+    expect(computed.asked).toEqual([]);
+    expect(calls).toEqual([]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("terminal CLI help requires no provider credentials", async () => {
   const child = spawn(process.execPath, ["dist/typescript/src/standalone/cli.js", "--help"], {
     env: { PATH: process.env["PATH"] ?? "" },

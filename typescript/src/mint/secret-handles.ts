@@ -186,5 +186,5 @@ export const secretHandleRefusal = (
   const misplaced = handles.misplaced(files, siteOrigin);
   return misplaced === undefined
     ? undefined
-    : `${misplaced.path} line ${misplaced.line}: ${misplacedHandleRule}. Write the handle as a string literal, with no escaped quotes, inside the code string passed to the runtime's page-execute call, kernel.browsers.playwright.execute: the whole value passed to fill, type or pressSequentially, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.`;
+    : `${misplaced.path} line ${misplaced.line}: ${misplacedHandleRule}. Write the handle as the whole string literal in the Playwright code of a kernel.browsers.playwright.execute call, such as page.getByLabel("Code").fill("{{secret.s1}}"). Nothing was executed.`;
 };
