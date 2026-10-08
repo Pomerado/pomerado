@@ -15,7 +15,12 @@ import { randomUUID } from "node:crypto";
 import { Cause, Clock, Data, Duration, Effect, Option, Schema } from "effect";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
-import { cutToLimit, PublicationFinding, PublicationReason } from "./review-contracts.js";
+import {
+  cutToLimit,
+  GuardianAction,
+  PublicationFinding,
+  PublicationReason,
+} from "./review-contracts.js";
 import type { PublicationScope, PublicationFileBlock } from "./review-contracts.js";
 import {
   decisionForKind,
@@ -95,6 +100,11 @@ export const GuardianDecision = Schema.Struct({
   /** A publication review's finite reason; execution reviews have none. */
   reason: Schema.optional(Schema.suspend(() => PublicationReason)),
   findings: Schema.optional(Schema.Array(Schema.suspend(() => PublicationFinding))),
+  /**
+   * An execution review's label of what the code does on the website. Every execution allow
+   * carries one; a deny or escalate may. Other kinds have none.
+   */
+  action: Schema.optional(Schema.suspend(() => GuardianAction)),
 });
 export type GuardianDecision = typeof GuardianDecision.Type;
 export class ReviewFailure extends Data.TaggedError("ReviewFailure")<{
@@ -232,6 +242,12 @@ export interface PendingExecution {
   readonly updateCandidate?: PendingTaskUpdate;
   readonly allowedEffects: readonly string[];
   /**
+   * Execution reviews only: whether this step's authority includes a website write, as a write
+   * build's write step has. An allow Guardian labels `write` without it is refused as out of
+   * authority. Absent means no write authority.
+   */
+  readonly writeAuthority?: boolean;
+  /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.
    * Protected answers (secrets and logins) and a read-or-write choice are left out.
@@ -343,6 +359,17 @@ export interface PendingExecution {
         readonly state: "authenticated" | "failed";
         readonly effect: "possible" | "verified";
       };
+    }[];
+    /**
+     * Execution reviews only: this build's earlier write executions and the outcome review's
+     * newest finding for each, so a step that would commit the same change again is denied.
+     * `unassessed`: no assessment yet.
+     */
+    readonly writes?: readonly {
+      readonly executionId: string;
+      readonly purpose: string;
+      readonly entrypoint?: string;
+      readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
     }[];
   };
 }
@@ -500,9 +527,35 @@ const decisionFailure = (error: unknown) =>
     code: "InvalidDecision",
   });
 
-const decodeExecution = (raw: unknown) =>
+const decodeDecision = (raw: unknown) =>
   Schema.decodeUnknown(GuardianDecision)(boundedRationale(raw)).pipe(
     Effect.mapError(decisionFailure),
+  );
+
+/** What the host tells Guardian when it refuses a write label the step has no authority for. */
+export const writeOutOfAuthority =
+  "Out of authority: this review labelled the execution a write, and this step has no write authority. A read build, and every step outside a write build's write session, may only read. Change the source so it makes no persistent change on the website, or end the build if the task needs one.";
+
+/**
+ * An execution review's decision. An allow without an action label is malformed, so the review
+ * runs again under the outage retry; a `write` allow on a step without write authority becomes a
+ * denial.
+ */
+const decodeExecution = (pending: PendingExecution) => (raw: unknown) =>
+  decodeDecision(raw).pipe(
+    Effect.flatMap((decision) =>
+      decision.outcome !== "allow"
+        ? Effect.succeed(decision)
+        : decision.action === undefined
+          ? Effect.fail(decisionFailure(new Error("An execution allow has no action label")))
+          : decision.action === "write" && pending.writeAuthority !== true
+            ? Effect.succeed({
+                outcome: "deny" as const,
+                rationale: writeOutOfAuthority,
+                action: decision.action,
+              })
+            : Effect.succeed(decision),
+    ),
   );
 
 const decodeHost = (request: HostReview) => {
@@ -972,7 +1025,7 @@ export const makeGuardian = (
         return withOutageRetry(scope === undefined ? "execution" : "publication", (run) =>
           review(run, pending, readSource, (raw) =>
             scope === undefined
-              ? decodeExecution(raw)
+              ? decodeExecution(pending)(raw)
               : (options.decodePublication ?? decodePublicationDecision)(
                   scope,
                   boundedRationale(raw),
@@ -999,12 +1052,7 @@ export const makeGuardian = (
         )
           return Effect.fail(new ReviewFailure({ code: "InvalidDecision" }));
         return withOutageRetry("recovery", (run) =>
-          review(
-            run,
-            { ...pending, recoveryCandidate: { rationale } },
-            readSource,
-            decodeExecution,
-          ),
+          review(run, { ...pending, recoveryCandidate: { rationale } }, readSource, decodeDecision),
         );
       }),
     /**
