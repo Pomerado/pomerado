@@ -18,6 +18,7 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
   - The `signedIn` step refuses a marker that one of those signed-out pages shows.
 - A failed write step that may have committed tells the minter to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
 - Publishing a write first checks that its session may have sent the write. A step that recorded a confirmation, entered a commit mark or made a browser call counts. Only then is the composed contract read, reviewed and checked against the session.
+- The composed script must then name each step where you accepted a confirm popup. A run matches a recorded confirm by its step, so a renamed step is refused.
 - It finishes by publishing an entrypoint with JSON Schemas for the input and the output.
 - The saved integration holds every file under `src/`, the entrypoint, and the files under `explore/`, `test/` or `scratch/` that they import. Every file under those four folders is saved instead when the workspace has a `package.json` or one of the folders holds `node_modules`, when a saved module reads or loads files another way, such as through `fs`, `createRequire`, a `#` import or Playwright's internal modules, or when one of the files they import is a WebAssembly module, a native addon, or an extensionless file that isn't JavaScript. Paths match in any letter case, as macOS loads files.
 - It asks you questions through the job when it needs a login, a code or a choice.

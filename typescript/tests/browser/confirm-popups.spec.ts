@@ -14,7 +14,7 @@ import { makeRunDialogDecider } from "../../src/inputs/dialog.js";
 import { noIncidents } from "../../src/runtime/incidents.js";
 import { InputRequestFailure, type InputRequest } from "../../src/runtime/input-request.js";
 import { createPomerado } from "../../src/standalone/pomerado.js";
-import { call, executionIdOf, recordingGuardian } from "./guardian-context-fixture.js";
+import { call, executionIdOf, recordingGuardian, toolResult } from "./guardian-context-fixture.js";
 import { act, mint } from "./standalone-mint-fixture.js";
 import { runExample } from "./authoring-fixture.js";
 import {
@@ -234,6 +234,65 @@ test("a write's run accepts the confirm its build accepted, and asks about a cha
     expect(changed.asked).toHaveLength(1);
     expect(changed.asked[0]?.notice).toContain("Place this order and subscribe?");
     expect(site.state.orders).toBe(2);
+  });
+});
+
+test("a write whose composed script raises its accepted confirm under another step is not published", async () => {
+  test.setTimeout(120_000);
+  await withOrderSite(async (site) => {
+    const created = (path: string, content: string) => ({
+      type: "apply_patch_call" as const,
+      callId: `patch_${path}`,
+      status: "completed" as const,
+      operation: {
+        type: "create_file" as const,
+        path,
+        diff: `${content
+          .split("\n")
+          .map((line) => `+${line}`)
+          .join("\n")}\n`,
+      },
+    });
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      intent: "Place the order",
+      guardian: recordingGuardian(),
+      browser: { endpoint: site.browser.wsEndpoint() },
+      answer: (request) => (dialogQuestion(request) ? { choice: "accept" } : {}),
+      turns: [
+        () => [
+          created("src/order.mjs", placeOrder),
+          created(
+            "src/composed.mjs",
+            placeOrder.replace('step:"place-order"', 'step:"submit-order"'),
+          ),
+        ],
+        () => [call("execute", act("src/order.mjs", {}), "place")],
+        (request) => [
+          call(
+            "finish_build",
+            {
+              intent: "Return the order write without running it",
+              entrypoint: "src/composed.mjs",
+              executionId: executionIdOf(request, "place"),
+              metadata: { name: "place_order", description: "Place the order once" },
+              coverage: "One confirmed act session that accepted the order confirm",
+            },
+            "publish",
+          ),
+        ],
+      ],
+    });
+    expect(site.state.orders).toBe(1);
+    // A run would see the confirm under step submit-order and never match the record, so the
+    // build refuses the composed script, as another host's does.
+    expect(toolResult(last, "publish")).toMatchObject({
+      status: "not_published",
+      reason: "confirm_action_unmatched",
+      confirmActionIds: ["place-order"],
+    });
+    expect(built.build).not.toBe("published");
   });
 });
 
