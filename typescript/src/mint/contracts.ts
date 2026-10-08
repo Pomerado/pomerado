@@ -1535,6 +1535,13 @@ export interface MintDependencies {
   readonly applyTaskUpdate?: (
     application: TaskUpdateApplication,
   ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
+  /**
+   * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
+   * `owner` when the person the repair's questions reach may manage the tool, otherwise `none`.
+   * The harness asks it before review; `none`, a failure or an absent hook refuses the update as
+   * `owner_unavailable`, so a repair without the owner keeps the registered contract.
+   */
+  readonly taskUpdateConfirmer?: () => Effect.Effect<"owner" | "none", MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;

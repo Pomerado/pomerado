@@ -1501,14 +1501,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const taskUpdateRefusal = (
         submitted: TaskUpdateRequest,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
-        if (request.mode === "maintenance")
+        const settings = new Set(submitted.changes.map((change) => change.setting));
+        // A repair keeps the published tool's task. Only a change to its contract, which the
+        // tool's owner confirms, may apply: a requirement, the purpose or an output field.
+        if (
+          request.mode === "maintenance" &&
+          (submitted.recommend === "new_mint" ||
+            [...settings].some(
+              (setting) =>
+                setting !== "requirement" && setting !== "purpose" && setting !== "output",
+            ))
+        )
           return {
-            reason: "maintenance",
+            reason: "maintenance_setting",
             instruction:
-              "Maintenance repairs the published tool under its own task, which does not change. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change the tool's owner confirms; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+          };
+        if (request.mode !== "maintenance" && settings.has("output"))
+          return {
+            reason: "output_outside_maintenance",
+            instruction:
+              "An output change loosens a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
           };
         if (submitted.recommend === "new_mint") return undefined;
-        const settings = new Set(submitted.changes.map((change) => change.setting));
         if (settings.has("effect")) {
           if (buildEffect === "write")
             return {
@@ -2424,6 +2439,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction: updatedInstruction(changes),
           });
         });
+      /** Who may confirm a maintenance contract change; a failure or no hook means nobody. */
+      const maintenanceConfirmer = (
+        dependencies.taskUpdateConfirmer?.() ?? Effect.succeed("none" as const)
+      ).pipe(
+        Effect.catchAll((error) =>
+          reportFailure(error, {
+            component: "mint",
+            operation: "taskUpdateConfirmer",
+            phase: "task_update",
+            subCause: "mint_host_dependency_failed",
+            correlation: dependencies.reportCorrelation ?? "process",
+          }).pipe(Effect.as("none" as const)),
+        ),
+      );
       /** Guardian's review of a confirmed update, then the host's application of an allowed one. */
       const reviewAndApplyTaskUpdate = (submitted: TaskUpdateRequest) =>
         Effect.gen(function* () {
@@ -2449,6 +2478,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               confirmation,
               effect: buildEffect === "write" ? "write" : "read",
               ...(yield* publicationRefusals),
+              // The harness reviews a maintenance update only once the owner may confirm it.
+              ...(request.mode === "maintenance"
+                ? { maintenance: { confirmer: "owner" as const } }
+                : {}),
             },
             {
               text: (text) => screenMintText(dependencies, text),
@@ -3693,6 +3726,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
+                    if (request.mode === "maintenance") {
+                      // Only the tool's owner confirms a change to its registered contract.
+                      const confirmer = yield* maintenanceConfirmer;
+                      if (confirmer !== "owner")
+                        return taskUpdateAnswer("update_refused", {
+                          reason: "owner_unavailable",
+                          instruction:
+                            "No one who owns this tool can confirm a contract change now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field, or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
+                        });
+                      if (submitted.confirmedBy.length === 0)
+                        return taskUpdateAnswer("clarification_required", {
+                          source: "host",
+                          reason: "confirmation_required",
+                          instruction:
+                            "A change to the published tool's contract needs its owner's confirmation, and nothing changed. Ask with request_input, naming the change and what the site no longer shows, then call mint_update again naming the questions answered in confirmedBy.",
+                        });
+                    }
                     if (
                       submitted.recommend === "update" &&
                       submitted.confirmedBy.length === 0 &&
