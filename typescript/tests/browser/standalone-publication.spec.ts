@@ -73,6 +73,7 @@ async ({kernel,sessionId}) => {
     path: "operation/src/tool.mjs",
     ...byteRange(tool, "jane.roe@example.com"),
     category: "customer_data",
+    explanation: "The source hard-codes one person's email address; take it from the input.",
   };
   const guardian = recordingGuardian({
     decide: (review) =>
@@ -260,6 +261,7 @@ test("an account-specific enum Guardian returns as input feedback is fixed and p
                 path: definitionPath,
                 ...byteRange(definition, "acct-4417"),
                 category: "account_specific_enum",
+                explanation: "The account input lists one account's number; make it free-form.",
               },
             ],
           }
@@ -354,7 +356,7 @@ const guardianProvider={getModel:()=>({getResponse:async(request)=>{
 const items=typeof request.input==='string'?[request.input]:request.input;
 const start=items.findLastIndex(item=>objects(item).some(value=>'submitted_call' in value));
 const current=objects(items[start]).find(value=>'submitted_call' in value);
-if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum'}]})]);}
+if('trusted_publication' in current){appendFileSync(ledger,'publication\\n');return response([message({outcome:'escalate',reason:'input_feedback',rationale:'The account input lists one account number as its only value.',findings:[{path:'publication/definition.json',byteStart:0,byteEnd:1,category:'account_specific_enum',explanation:'Make the account input free-form.'}]})]);}
 if(objects(items.slice(start+1)).some(value=>value.type==='function_call_result'))return response([message({outcome:'allow',rationale:'Fixture review'})]);
 return response([call('read_source',{path:current.submitted_call.entrypoint,offset:0},'read')]);
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};

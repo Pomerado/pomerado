@@ -3043,7 +3043,7 @@ const inputFeedback = (...categories: ("account_specific_enum" | "input_option")
         byteStart: 0,
         byteEnd: 1,
         category,
-        explanation: "Make the account an input.",
+        explanation: "The account input lists one value; make it free-form.",
       })),
     },
   });

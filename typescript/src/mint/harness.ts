@@ -1066,6 +1066,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * A review as the minter reads it: the rationale and each finding's explanation screened
        * like any Guardian text, and each finding's file as the minter's workspace names it.
        */
+      const minterFindings = (findings: readonly PublicationFinding[]) =>
+        Effect.forEach(findings, (finding) =>
+          screenRationale(finding.explanation).pipe(
+            Effect.map((explanation) => ({
+              ...finding,
+              file: workspacePath(finding.path),
+              explanation,
+            })),
+          ),
+        );
       const minterReview = <
         Review extends {
           readonly rationale: string;
@@ -1076,17 +1086,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           const rationale = yield* screenRationale(review.rationale);
-          if (review.findings === undefined) return { ...review, rationale };
-          const findings = yield* Effect.forEach(review.findings, (finding) =>
-            screenRationale(finding.explanation).pipe(
-              Effect.map((explanation) => ({
-                ...finding,
-                file: workspacePath(finding.path),
-                explanation,
-              })),
-            ),
-          );
-          return { ...review, rationale, findings };
+          return review.findings === undefined
+            ? { ...review, rationale }
+            : { ...review, rationale, findings: yield* minterFindings(review.findings) };
         });
       const screenAssumptions = (proposedAssumptions: PublicationRequest["assumptions"] = []) =>
         Effect.gen(function* () {
@@ -3167,7 +3169,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   const fallback = dependencies.inputFeedbackFallback;
                   const privateFallback = fallback?.kept() === true;
                   inputFeedbackPublicTool = fallback !== undefined && !privateFallback;
-                  const { findings = [] } = yield* minterReview(error.review);
+                  const findings = error.review.findings ?? [];
                   const inRounds = inputFeedbackRounds <= maximumInputFeedbackRounds;
                   // The minter reads the screened rationale in each round, and a build with no
                   // fallback ends on it; a fallback's last round never reads it.
@@ -3185,7 +3187,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       error.code,
                       "input_feedback",
                       {
-                        findings,
+                        findings: yield* minterFindings(findings),
                         rationale,
                         reviewId: error.review.reviewId,
                         feedbackRoundsRemaining: maximumInputFeedbackRounds - inputFeedbackRounds,
@@ -3213,7 +3215,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     "host_owned",
                     {
-                      findings: (yield* minterReview(error.review)).findings ?? [],
+                      findings: yield* minterFindings(error.review.findings ?? []),
                       rationale: yield* screenRationale(error.review.rationale),
                       reviewId: error.review.reviewId,
                     },
