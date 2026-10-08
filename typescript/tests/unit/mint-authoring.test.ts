@@ -276,10 +276,18 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // A format read from one sample breaks on the next value, so the minter reads it off the page.
+  // An option the code reads no results for yet throws rather than returning another option's
+  // results, and a format read from one sample breaks on the next value, so the minter reads it
+  // off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Never derive a format from one sample: not an input format, an element key, a selector or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+  ],
+  // The minter reads typed output, kept rows and required row facts before it writes the schema
+  // and the parser, so a row whose fact the code could not read fails the output check.
+  [
+    "core",
+    'Typed output: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Prefer giving each fact a caller would filter, sort or compare on its own field: a price as integer minor units with `currency`, times as ISO 8601 with the offset, durations in minutes, counts as integers, and codes and names as their own strings. A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m, $244" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331, "price_minor": 24400, "currency": "USD" }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - Type a date-only value as the runtime\'s `CalendarDate` (forms skill). - Prefer keeping every result row the page shows. - Make the facts every result row has required output fields, such as a listing\'s price or a flight\'s fare in each mode the tool offers. Type each so a value the code could not read fails the output check, as `Schema.Int` or `Schema.NonEmptyString`, rather than an optional, nullable or plain `Schema.Number` field. A run whose output fails its schema goes to repair. **Search results.**',
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -606,7 +614,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["3f841159d3a3eb5d3e4e7080c889475f2c2e15b6dae03c28a5377d125b1591b1", "core"],
+    ["cd5e78395714cadfcfcfb02a7178b868f6f15976fdf896f1b5888ae68521e8ff", "core"],
     ["246e7f720fe27ec2fcc19a3efdd2cb1b264f6eef2b65d518bf9d56aeb099241d", "auth"],
     ["0d31d5eec1d1afabe7ea87bfa7bb010a41a72cf9f34a029e68cf0c2d5e7f67d7", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
