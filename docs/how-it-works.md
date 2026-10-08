@@ -70,7 +70,8 @@ Guardian reviews four built-in kinds of request: execution, question, browser re
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction.
 - A write's run accepts a confirm from its `acceptedConfirms` once, at the same step on the same origin with the same message. Every other popup asks the caller. A read run accepts nothing from the record.
-- A popup whose answer never comes is dismissed, and the run goes on. Nothing is accepted without an answer or a record.
+- A popup whose question's window ends unanswered is dismissed, and the run goes on. A cancel at the terminal still stops the step. Nothing is accepted without an answer or a record.
+- A run reads a popup's origin from the page address the script reports. A frame from another site inside that page counts as the page.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
 - Authored code, offline commands and page-code workers run with your user account's file and network access. Guardian review and file checks are not an operating system sandbox. Clearing a worker's `process.env` hides environment variables from that API but doesn't isolate host credentials.
@@ -147,7 +148,7 @@ The package has these entry points.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
-- `pomerado/testing/confirm-popups-contract` holds a fixture page with five confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.
+- `pomerado/testing/confirm-popups-contract` holds a fixture page with eight confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.
 
 `npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.
 

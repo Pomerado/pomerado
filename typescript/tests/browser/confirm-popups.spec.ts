@@ -20,7 +20,7 @@ import { runExample } from "./authoring-fixture.js";
 import {
   confirmPopupCases,
   confirmPopupContractFailures,
-  confirmPopupOutcome,
+  confirmPopupOutcomes,
   confirmPopupsOrigin,
   recordedConfirmPopups,
   serveConfirmPopups,
@@ -237,51 +237,75 @@ test("a write's run accepts the confirm its build accepted, and asks about a cha
   });
 });
 
-/** Clicks the case's button as step `step` and reports its confirm, as a generated script does. */
+/**
+ * Clicks the case's button as step `step`, inside its frame when it has one, and reports each of
+ * its `raises` confirms, as a generated script does. It listens for the next confirm before it
+ * answers the current one, so a confirm raised right after another is reported too.
+ */
 const clickAsStep = defineOperation(
   {
     name: "confirm_popup_case",
-    input: Schema.Struct({ selector: Schema.String, step: Schema.String }),
-    output: Schema.Literal("accept", "dismiss", "unreported"),
+    input: Schema.Struct({
+      selector: Schema.String,
+      frame: Schema.optional(Schema.String),
+      step: Schema.String,
+      raises: Schema.Number,
+    }),
+    output: Schema.Array(Schema.Literal("accept", "dismiss", "unreported")),
   },
   async ({ kernel, sessionId, input, decideDialog }) => {
-    const raised = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 10,
-      code: `
-        const shown = new Promise((resolve) => page.once("dialog", (dialog) => {
-          globalThis.dialog = dialog;
-          resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
-        }));
-        void page.locator(${JSON.stringify(input.selector)}).click().catch(() => {});
-        return await Promise.race([shown, new Promise((resolve) => setTimeout(() => resolve(null), 2000))]);
-      `,
-    });
-    if (!raised.success) throw new Error(String(raised.error));
-    const shown = Schema.decodeUnknownSync(
-      Schema.NullOr(
-        Schema.Struct({
-          type: Schema.Literal("alert", "confirm", "prompt", "beforeunload"),
-          message: Schema.String,
-          url: Schema.String,
-        }),
-      ),
-    )(raised.result);
-    if (shown === null) return "unreported" as const;
-    const decision = await decideDialog({ step: input.step, ...shown });
-    const answered = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 10,
-      code:
-        decision.choice === "accept"
-          ? "await globalThis.dialog.accept(); delete globalThis.dialog;"
-          : "await globalThis.dialog.dismiss(); delete globalThis.dialog;",
-    });
-    if (!answered.success) throw new Error(String(answered.error));
-    return decision.choice;
+    const listen = `globalThis.nextDialog = new Promise((resolve) => page.once("dialog", (dialog) => {
+      globalThis.dialog = dialog;
+      resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
+    }));`;
+    const reported = `return await Promise.race([
+      globalThis.nextDialog,
+      new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);`;
+    const target =
+      input.frame === undefined ? "page" : `page.frameLocator(${JSON.stringify(input.frame)})`;
+    const choices: ("accept" | "dismiss" | "unreported")[] = [];
+    for (let index = 0; index < input.raises; index++) {
+      const raised = await kernel.browsers.playwright.execute(sessionId, {
+        timeout_sec: 10,
+        code:
+          index === 0
+            ? `${listen}
+               void ${target}.locator(${JSON.stringify(input.selector)}).click().catch(() => {});
+               ${reported}`
+            : reported,
+      });
+      if (!raised.success) throw new Error(String(raised.error));
+      const shown = Schema.decodeUnknownSync(
+        Schema.NullOr(
+          Schema.Struct({
+            type: Schema.Literal("alert", "confirm", "prompt", "beforeunload"),
+            message: Schema.String,
+            url: Schema.String,
+          }),
+        ),
+      )(raised.result);
+      if (shown === null) {
+        choices.push("unreported");
+        break;
+      }
+      const decision = await decideDialog({ step: input.step, ...shown });
+      const answer = decision.choice === "accept" ? "accept()" : "dismiss()";
+      const answered = await kernel.browsers.playwright.execute(sessionId, {
+        timeout_sec: 10,
+        code: `const current = globalThis.dialog;
+               ${index + 1 < input.raises ? listen : ""}
+               await current.${answer};`,
+      });
+      if (!answered.success) throw new Error(String(answered.error));
+      choices.push(decision.choice);
+    }
+    return choices;
   },
 );
 
 test("the local run keeps the confirm popup contract", async ({ context }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await serveConfirmPopups(context);
   const observed = new Map<ConfirmPopupCaseName, ConfirmPopupObservation>();
   for (const entry of confirmPopupCases) {
@@ -296,58 +320,84 @@ test("the local run keeps the confirm popup contract", async ({ context }) => {
     const { result } = await runExample(
       page,
       clickAsStep,
-      { selector: entry.selector, step: entry.step },
+      {
+        selector: entry.selector,
+        ...(entry.frame === undefined ? {} : { frame: entry.frame }),
+        step: entry.step,
+        raises: entry.raises,
+      },
       {
         siteOrigin: confirmPopupsOrigin,
         dialogs: makeRunDialogDecider({
           ask,
           project: String,
-          readOnly: false,
+          readOnly: entry.readOnly === true,
           expectedConfirms: recordedConfirmPopups,
           incidents: noIncidents,
         }),
       },
     );
     expect(Either.isRight(result), JSON.stringify(result)).toBe(true);
-    observed.set(entry.name, { outcome: await confirmPopupOutcome(page, entry.name), asked });
+    observed.set(entry.name, { outcomes: await confirmPopupOutcomes(page, entry.name), asked });
     await page.close();
   }
   expect(Object.fromEntries(observed)).toEqual({
-    recorded: { outcome: "accepted", asked: 0 },
-    unrecorded: { outcome: "dismissed", asked: 1 },
-    other_step: { outcome: "dismissed", asked: 1 },
-    iframe: { outcome: "dismissed", asked: 1 },
+    recorded: { outcomes: ["accepted"], asked: 0 },
+    repeated: { outcomes: ["accepted", "dismissed"], asked: 1 },
+    unrecorded: { outcomes: ["dismissed"], asked: 1 },
+    other_step: { outcomes: ["dismissed"], asked: 1 },
+    iframe: { outcomes: ["dismissed"], asked: 1 },
+    // The script reports the top page's address, so the other site's frame counts as the page.
+    cross_origin_frame: { outcomes: ["accepted"], asked: 0 },
     // No script listens to the new window, so the browser dismisses its confirm.
-    popup: { outcome: "dismissed", asked: 0 },
+    popup: { outcomes: ["dismissed"], asked: 0 },
+    read_only: { outcomes: ["dismissed"], asked: 1 },
   });
   expect(confirmPopupContractFailures(observed)).toEqual([]);
 });
 
 test("the confirm popup contract fails a host that accepts or leaves open what it should not", () => {
   const kept: readonly (readonly [ConfirmPopupCaseName, ConfirmPopupObservation])[] = [
-    ["recorded", { outcome: "accepted", asked: 0 }],
-    ["unrecorded", { outcome: "dismissed", asked: 1 }],
-    ["other_step", { outcome: "dismissed", asked: 1 }],
-    ["iframe", { outcome: "dismissed", asked: 0 }],
-    ["popup", { outcome: "dismissed", asked: 0 }],
+    ["recorded", { outcomes: ["accepted"], asked: 0 }],
+    ["repeated", { outcomes: ["accepted", "dismissed"], asked: 1 }],
+    ["unrecorded", { outcomes: ["dismissed"], asked: 1 }],
+    ["other_step", { outcomes: ["dismissed"], asked: 1 }],
+    ["iframe", { outcomes: ["dismissed"], asked: 0 }],
+    ["cross_origin_frame", { outcomes: ["accepted"], asked: 0 }],
+    ["popup", { outcomes: ["dismissed"], asked: 0 }],
+    ["read_only", { outcomes: ["dismissed"], asked: 0 }],
   ];
   expect(confirmPopupContractFailures(new Map(kept))).toEqual([]);
   expect(
     confirmPopupContractFailures(
       new Map([
         ...kept,
-        ["recorded", { outcome: "accepted", asked: 1 }],
-        ["unrecorded", { outcome: "dismissed", asked: 0 }],
-        ["iframe", { outcome: "accepted", asked: 0 }],
-        ["popup", { outcome: "pending", asked: 0 }],
+        ["recorded", { outcomes: ["accepted"], asked: 1 }],
+        ["repeated", { outcomes: ["accepted", "accepted"], asked: 0 }],
+        ["unrecorded", { outcomes: ["dismissed"], asked: 0 }],
+        ["iframe", { outcomes: ["accepted"], asked: 0 }],
+        ["popup", { outcomes: ["pending"], asked: 0 }],
+        ["read_only", { outcomes: ["accepted"], asked: 0 }],
       ]),
     ),
   ).toEqual([
     "recorded: the recorded confirm must be accepted without asking (accepted, asked 1)",
+    "repeated: the recorded confirm is accepted once, then must ask and end dismissed (accepted accepted, asked 0)",
     "unrecorded: an unrecorded confirm in the page must ask the caller first",
-    "iframe: an unrecorded confirm must end dismissed, never accepted",
-    "popup: an unrecorded confirm must end dismissed, never pending",
+    "iframe: a confirm the record does not cover must end dismissed, never accepted",
+    "popup: a confirm the record does not cover must end dismissed, never pending",
+    "read_only: a confirm the record does not cover must end dismissed, never accepted",
   ]);
+  // A host that reads the origin of the frame that showed the dialog must dismiss the other site's.
+  expect(confirmPopupContractFailures(new Map(kept), { dialogOrigin: "frame" })).toEqual([
+    "cross_origin_frame: a confirm the record does not cover must end dismissed, never accepted",
+  ]);
+  expect(
+    confirmPopupContractFailures(
+      new Map([...kept, ["cross_origin_frame", { outcomes: ["dismissed"], asked: 1 }]]),
+      { dialogOrigin: "frame" },
+    ),
+  ).toEqual([]);
   expect(confirmPopupContractFailures(new Map(kept.slice(1)))).toEqual([
     "recorded: the case was not run",
   ]);
