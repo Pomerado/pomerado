@@ -112,9 +112,9 @@ const operationReasons: Readonly<Record<string, string>> = {
  * A run that couldn't sign in again (the host refused the sign-in a script waited for, as when
  * its sign-ins were spent or the sign-in failed) reports the sign-in unavailable, to retry with
  * the same request. That holds for a read and for a run that sent nothing or entered none of its
- * declared commit steps, and never once the journal shows a commit step entered, whatever the
- * request says. A write that may have applied keeps the outcome its journal shows, so a retry
- * can't repeat it.
+ * declared commit steps, and never once the journal shows a commit step entered or reports its
+ * marks unreadably, whatever the request says. A write that may have applied keeps the outcome
+ * its journal shows, so a retry can't repeat it.
  */
 const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidence => {
   if (!(error instanceof LocalOperationFailure))
@@ -134,7 +134,7 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
   const unentered = base === "may_have_dispatched" && commits === "not_entered";
   const signedOut =
     error.sessionLoss === "session_not_kept" &&
-    commits !== "entered" &&
+    (commits === "not_entered" || commits === "undeclared") &&
     (base === "not_started" || unentered);
   const reason = signedOut ? "login_check_unavailable" : operationReasons[error.code ?? ""];
   const refused = signedOut || reason === "invalid_input" || reason === "credentials_rejected";
