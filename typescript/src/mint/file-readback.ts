@@ -6,10 +6,14 @@ import { isAuthoredSourcePath } from "./operation-source.js";
  * back would put its bytes in the result, and during a build in the model's context and traces,
  * so the host refuses such source before a live step runs and before it publishes.
  *
- * The check is a static scan of the source text, code strings included. It catches the usual
- * ways to read a file back, set a file input or take a download outside the host; it is not sound
- * against code written to hide them, such as names built at run time or a second fetch of a
- * download's address, which Guardian's file rule is the backstop for.
+ * The check is a static scan of the source text, code strings included. In every build it
+ * refuses setting a file input, a file chooser, saving a download and reading a file's contents
+ * (`FileReader`, `readAs*`, `getAsFile`, object URLs, `createReadStream`). In a build that holds
+ * a caller's file or uses the file API it also refuses taking a download outside the host,
+ * `DataTransfer`, reading an input's files, `FormData`, request bodies and any request routing,
+ * which could send the site's own upload, file included, elsewhere. It does not see property
+ * names built at run time, a route set up through such a name, or a second fetch of a
+ * download's address. Guardian's file-handle rule and its off-site rule are the backstop.
  */
 
 const quote = String.raw`\\?["'\x60]`;
@@ -17,24 +21,40 @@ const quote = String.raw`\\?["'\x60]`;
 const alwaysRefused: readonly (readonly [RegExp, string])[] = [
   [/\bsetInputFiles\b/u, "sets a file input itself (use files.place)"],
   [new RegExp(String.raw`\bfilechooser\b`, "u"), "handles a file chooser (use files.place)"],
-  [
-    new RegExp(String.raw`(?:waitForEvent|\bon|\bonce|addListener)\s*\(\s*${quote}download`, "u"),
-    "handles a download (use files.collect)",
-  ],
   [/\.saveAs\s*\(/u, "saves a download (use files.collect)"],
   [/\bcreateReadStream\b/u, "reads a file"],
   [/\bFileReader\b/u, "reads a file's contents"],
   [/\breadAs(?:DataURL|Text|ArrayBuffer|BinaryString)\b/u, "reads a file's contents"],
-  [/\bDataTransfer\b/u, "moves files between inputs"],
   [/\bgetAsFile\b/u, "reads a file's contents"],
   [/\bcreateObjectURL\b/u, "reads a file's contents"],
 ];
-/** Ways to read a placed file back, refused in source of a build or tool that handles files. */
+/**
+ * Array methods a `FileList` lacks: JSON's `files` list may call them, an input's files cannot.
+ * Indexing (`data.files[0]`) stays refused, since an input's files are read that way too.
+ */
+const arrayMethods =
+  "map|filter|forEach|some|every|find|findIndex|findLast|reduce|flatMap|includes|indexOf|slice|join|concat|at|sort|toSorted|push|flat";
+/** Ways to read a placed file back or move a file, refused in source of a build that has files. */
 const refusedWithFiles: readonly (readonly [RegExp, string])[] = [
-  [/\.files\b(?!\s*\.\s*(?:length|place|collect)\b)/u, "reads an input's files"],
+  [
+    new RegExp(String.raw`(?:waitForEvent|\bon|\bonce|addListener)\s*\(\s*${quote}download`, "u"),
+    "handles a download (use files.collect)",
+  ],
+  [/\bDataTransfer\b/u, "moves files between inputs"],
+  [
+    new RegExp(
+      String.raw`\.files\b(?!\s*\??\.\s*(?:length|place|collect|${arrayMethods})\b)`,
+      "u",
+    ),
+    "reads an input's files",
+  ],
   [new RegExp(String.raw`\[\s*${quote}files${quote}\s*\]`, "u"), "reads an input's files"],
   [/\bFormData\b/u, "reads a form's files"],
   [/\bpostData(?:Buffer|JSON)?\b/u, "reads a request body, which can carry a file"],
+  [
+    /\b(?:route|unroute|unrouteAll|routeFromHAR|routeWebSocket)\s*\(/u,
+    "routes the page's requests, which can send its upload elsewhere",
+  ],
 ];
 const usesFiles = /\bfiles\s*\.\s*(?:place|collect)\b|\bFile(?:Input|Output)\b/u;
 

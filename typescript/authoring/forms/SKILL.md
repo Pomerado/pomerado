@@ -158,9 +158,10 @@ as given to `files.place(input.receipt, { field: { label: "Receipt" } })`; `fiel
 the `<input type="file">` as data, its label or a `selector`, never code. The host checks
 the file and puts it there, and never anywhere else. Return a download as a `FileOutput`
 from `files.collect(trigger)`, where `trigger` makes the execute call that starts it; you
-see only its name, type, size and sha256. Never write a handle in source, set file inputs,
-handle downloads yourself or read a file's contents back (`.files` items, `FileReader`,
-`FormData`, a request body): the host refuses such source.
+see only its name, type, size and sha256. A downloaded file meant for the caller goes
+through `files.collect`. Never write a handle in source, set file inputs, handle downloads
+yourself, route the page's requests or read a file's contents back (`.files` items,
+`FileReader`, `FormData`, a request body): the host refuses such source.
 
 ## Multi-step forms
 

