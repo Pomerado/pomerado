@@ -23,7 +23,13 @@ export const hostedFeatures: readonly HostedFeature[] = [
   { features: ["F17"], name: "Saved browser profiles" },
   { features: ["F1"], name: "Mid-run re-sign-in" },
   { features: ["F2"], name: "Read-back after an uncertain commit" },
-  { features: ["F2"], name: "Per-step list of requests that could change the site" },
+  // Covers the shared text about `stateChangingRequests`: the core skill's "State-changing
+  // requests" section and the write session's rule to read it on every step. It stays when
+  // read-back after an uncertain commit comes to the local host.
+  {
+    features: ["F2"],
+    name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
+  },
   { features: ["F3"], name: "Honest run outcomes" },
   { features: ["F4"], name: "Repeat-write protection" },
   { features: ["F5"], name: "Recorded confirm popups" },

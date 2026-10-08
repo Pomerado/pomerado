@@ -43,6 +43,26 @@ describe("hosted features the local host lacks", () => {
     expect(hostedProtectionsLine).toBe(renderHostedProtectionsLine(hostedFeatures));
   });
 
+  it("names the request list by the field the shared text uses", async () => {
+    const list = hostedFeatures.filter(({ name }) => name.includes("`stateChangingRequests`"));
+    expect(list).toEqual([
+      {
+        features: ["F2"],
+        name: "Per-step list of requests that could change the site (`stateChangingRequests`)",
+      },
+    ]);
+    expect(hostedFeaturesPreamble).toContain(`\n- ${list[0]?.name}`);
+    // The shared text the entry covers: the core skill's section and the write session's rule.
+    const local = await Effect.runPromise(loadStandaloneAuthoring("typescript/authoring"));
+    const skill = (name: string) =>
+      new TextDecoder().decode(
+        local.skills.find((entry) => entry.name === name)?.content as Uint8Array,
+      );
+    expect(skill("core")).toContain("## State-changing requests");
+    expect(skill("core")).toContain("A live execute result may carry `stateChangingRequests`");
+    expect(skill("writes")).toContain("Read `stateChangingRequests` on every step.");
+  });
+
   it("renders nothing once every feature is local", () => {
     expect(renderHostedFeaturesPreamble([])).toBe("");
     expect(renderHostedProtectionsLine([])).toBe("");
