@@ -168,7 +168,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - It first checks without values, and asks nothing when the session already shows the account. A served call starts in a fresh browser context, so it asks.
   - Otherwise it asks for the login, and for any code, date of birth, ZIP code or security answer a screen needs. It keeps them in memory for that call only.
   - A rejected username or password is asked again at most twice, and a rejected value is never sent again.
-  - When the tool's `ensureSignedIn` finds the page signed out in the middle of the call, the host signs in again on the same page with the login it asked for, at most 3 times per call. The call's deadline pauses meanwhile.
+  - When the tool's `ensureSignedIn` finds the page signed out in the middle of the call, the host signs in again on the same page with the login it asked for, at most 3 times per call. The call's deadline pauses meanwhile. Past that, or when that sign-in fails, the call fails as below.
   - A recipe the host can't read, or a sign-in that fails, stops the call before the tool runs. Its job's error then carries no warning that a website action may have taken effect.
   - A run trusts `auth-fill.json` as it trusts `src/`, and edits to either aren't reviewed. An edited recipe still sends values only to the site and its configured sign-in origins. There it can pick a form that sends a value in the page address, as a form that submits with GET does, where the site's logs may keep it.
 - A write tool takes an optional `idempotency_key`. A call that repeats the key and input rejoins the first job and acts on nothing, even while that job still runs. The same key with other input is refused, and nothing runs.
@@ -180,6 +180,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
 - A failed run's job names its `code`, `write_status`, `possible_commit` and `retry` class. Its `error` says the same in one sentence.
   - A write that returned without recording its confirmation fails as `outcome_unknown` with `may_have_applied`. Its job keeps the script's output, unconfirmed.
   - A refused input or login whose declared commit steps were never entered reports `not_applied`, unless the write already recorded its confirmation. Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
+  - A call that can't sign in again, because its sign-ins are spent or the sign-in failed, reports `website_sign_in_unavailable` with the retry class `same_key`. That holds for a read, and for a write that sent nothing (`not_attempted`) or entered none of its declared commit steps (`not_applied`). A call whose journal shows a commit step entered, or commit marks it can't read, never reports it. Any other write keeps the outcome its journal shows, `outcome_unknown` while it may have applied.
   - A read never reports a possible website change.
   - Only `possible_commit: true` tells the caller to read the site back before any retry.
   - `retry` is one of four classes. `never`: don't repeat the call as is. `fix_input`: correct the input or the login, then call again. `new_key`: calling again is a new run, after reading the site back when `possible_commit` is true. `same_key`: the request itself may be repeated.
