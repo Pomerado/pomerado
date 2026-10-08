@@ -9,6 +9,7 @@ import {
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
+import { makeOpenAIOutcomeReviewer } from "../mint/outcome-review-openai.js";
 import {
   exampleInputRefusal,
   preflightTestInput,
@@ -127,6 +128,19 @@ const mintDependencies = (state: MintState) => {
     reviewAndExecute: mintExecution(state),
     checkSignedInMarker: state.markers.check,
     publish: mintPublication(state),
+    // The local host keeps no recovery checkpoint; its write completion reads the assessments.
+    outcomeReview: {
+      model: makeOpenAIOutcomeReviewer(
+        options.outcomeReviewerProvider === undefined
+          ? {}
+          : { modelProvider: options.outcomeReviewerProvider },
+      ),
+      save: () => Effect.void,
+      recordAssessment: (assessment) =>
+        Effect.sync(() => {
+          state.assessments.set(assessment.executionId, assessment);
+        }),
+    },
   };
   return dependencies;
 };

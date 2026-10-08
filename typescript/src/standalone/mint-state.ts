@@ -13,7 +13,8 @@ import {
 import { MintFailure, type ExecutionRequest } from "../mint/contracts.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
-import type { WriteStep } from "../mint/step-checks.js";
+import type { GuardianAction } from "../guardian/review-contracts.js";
+import type { OutcomeAssessment } from "../mint/outcome-review-contracts.js";
 import { loadStandaloneAuthoring } from "../mint/skills.js";
 import { screenMintText } from "../mint/workspace.js";
 import { Deadline } from "../runtime/deadline.js";
@@ -184,8 +185,12 @@ export const mintState = (
         readonly output: unknown;
         readonly purpose: ExecutionRequest["purpose"];
         readonly journal: LocalOperationJournal;
+        /** Guardian's label of the step's website effect. */
+        readonly action?: GuardianAction;
       }
     >();
+    /** The outcome reviewer's newest assessment of each write, by execution. */
+    const assessments = new Map<string, OutcomeAssessment>();
     const signInBrowser = makeSignInBrowser({
       page: browser,
       keyboard: browser.keyboard,
@@ -236,15 +241,14 @@ export const mintState = (
         markers.signedOutShows(indicator) ? markerOnSignedOutPage : undefined,
     });
     /**
-     * The build's one write session: whether its first act step dispatched, the agent's
+     * The build's one write session: whether its first act step dispatched, and the agent's
      * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one), and its act steps in order for the blind-repeat guard.
+     * one).
      */
     const writeSession: {
       started: boolean;
       input: Readonly<Record<string, unknown>> | undefined;
-      readonly steps: WriteStep[];
-    } = { started: false, input: undefined, steps: [] };
+    } = { started: false, input: undefined };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     const markers = makeMarkerChecks({
       page: browser,
@@ -276,6 +280,7 @@ export const mintState = (
       deadline,
       mintAsk,
       runs,
+      assessments,
       recorder,
       writeSession,
       start,

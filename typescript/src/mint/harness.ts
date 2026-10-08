@@ -44,6 +44,7 @@ import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
 import type {
+  AllowedExecution,
   AgentInputRequest,
   BuildAssumption,
   ExecutionEvidence,
@@ -54,6 +55,8 @@ import type {
 } from "./contracts.js";
 import { pickedOption, type ValidAnswers } from "../runtime/input-request.js";
 import type { RecoveryToolCall } from "./recovery-contracts.js";
+import { makeOutcomeReviewer } from "./outcome-review.js";
+import type { OutcomeEvidence, WriteExecutionStatus } from "./outcome-review-contracts.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
@@ -1035,6 +1038,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         Effect.gen(function* () {
           const askAgain = yield* recordInputAnswer(submitted, answers);
           const visibleAnswers = yield* answersForModel(answers);
+          acceptedAnswers.push({
+            questions: submitted.questions.map((question) => question.prompt),
+            answers: visibleAnswers,
+          });
+          yield* reviewer.taskUpdated("The caller answered a question.");
           const handles = Object.values(answers).some((answer) => answer.type === "secret");
           if (askAgain !== undefined)
             return JSON.stringify({
@@ -1177,6 +1185,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             exampleClaimed = true;
             if (purpose === "act" && writeSession === "none") writeSession = "open";
           }
+          // A write that ran before a takeover, which the restored reviewer does not yet track.
+          if (
+            evidence.review?.action === "write" &&
+            !reviewer.tracked().some((write) => write.executionId === evidence.executionId)
+          )
+            yield* reviewer.write({
+              executionId: evidence.executionId,
+              reviewId: evidence.review.reviewId,
+              purpose,
+              status: evidence.status,
+              effect: evidence.effect,
+              ...(evidence.confirmation === undefined
+                ? {}
+                : { confirmation: evidence.confirmation }),
+            });
           return yield* executionResult(evidence, purpose);
         });
       /** A diagnostic copy that could not be written, kept as a gap in the outcome. */
@@ -1388,6 +1411,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }
           buildEffect = "write";
           repeatableRead = false;
+          acceptedAnswers.push({ approvedChange: asked.change, answers: asked.answers });
+          yield* reviewer.taskUpdated("The owner approved turning the build into a write build.");
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.effect_upgraded", {
               priorExecutions: purposes.size,
@@ -1925,6 +1950,72 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "The host could not safely retain execution diagnostics. End this attempt without publication or another execution. The website action may have completed; preserve existing receipts and reconcile prior effects. Site code changes, credentials and user clarification cannot repair this infrastructure failure. No unscreened observations are available.",
           });
         });
+      /** The entrypoint each execution ran, so a repeat of a write's step can be recognized. */
+      const entrypoints = new Map<string, string>();
+      /** Every finish_build result as the minter received it, for the outcome reviewer. */
+      const publications: string[] = [];
+      /** The caller's accepted answers and approved changes, in order, for the outcome reviewer. */
+      const acceptedAnswers: unknown[] = [];
+      /**
+       * Tells the outcome reviewer about an execution that ran: a write Guardian labelled is
+       * tracked and wakes it, and a later live execution wakes it while a write is unresolved,
+       * since it may hold a readback.
+       */
+      const observeExecution = (
+        submitted: Parameters<typeof dependencies.reviewAndExecute>[0],
+        evidence: ExecutionEvidence,
+        allowed: AllowedExecution | undefined,
+        status: WriteExecutionStatus,
+      ) =>
+        Effect.suspend(() => {
+          if (evidence.status === "unsupported") return Effect.void;
+          if (submitted.purpose !== "command")
+            entrypoints.set(evidence.executionId, submitted.entrypoint);
+          const action = evidence.review?.action ?? allowed?.action;
+          const reviewId = evidence.review?.reviewId ?? allowed?.reviewId;
+          if (action === "write" && submitted.purpose !== "command")
+            return reviewer.write({
+              executionId: evidence.executionId,
+              ...(reviewId === undefined ? {} : { reviewId }),
+              purpose: submitted.purpose,
+              entrypoint: submitted.entrypoint,
+              status,
+              effect: evidence.effect,
+              ...(evidence.confirmation === undefined
+                ? {}
+                : { confirmation: evidence.confirmation }),
+            });
+          return submitted.target === "liveBrowser"
+            ? reviewer.execution({
+                executionId: evidence.executionId,
+                purpose: submitted.purpose,
+                ...(action === undefined ? {} : { action }),
+                status,
+              })
+            : Effect.void;
+        });
+      /**
+       * Why a step is refused as a repeat of a write: it runs the entrypoint of an earlier write
+       * that may have reached the site, and the outcome reviewer has not assessed every such write
+       * `not_done`. This is the one place the minter waits for the reviewer, and an outage leaves
+       * the write unresolved, so it is not repeated.
+       */
+      const repeatedWriteRefusal = (submitted: Parameters<typeof dependencies.reviewAndExecute>[0]) =>
+        Effect.gen(function* () {
+          if (submitted.purpose === "command" || submitted.target !== "liveBrowser") return undefined;
+          const earlier = reviewer
+            .tracked()
+            .filter(
+              (write) => write.entrypoint === submitted.entrypoint && write.effect !== "not_sent",
+            );
+          if (earlier.length === 0) return undefined;
+          const assessed = yield* reviewer.settle(earlier.map((write) => write.executionId));
+          if (assessed.every((assessment) => assessment?.outcome === "not_done")) return undefined;
+          const applied = assessed.some((assessment) => assessment?.outcome === "done");
+          return applied
+            ? `This step repeats a write that already changed the site (${earlier.map((write) => write.executionId).join(", ")}), as the outcome review found. Never run it again: continue with the next step, read back the result, or publish. Nothing was executed.`
+            : `This step repeats a write that may already have changed the site (${earlier.map((write) => write.executionId).join(", ")}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the account or page in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`;
+        });
       const reviewedExecution: typeof dependencies.reviewAndExecute = (
         submitted,
         onDispatch = () => Effect.void,
@@ -2274,11 +2365,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (writeSession === "closed" || (writeSession === "none" && exampleClaimed))
               )
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
-              const availability = yield* dependencies
-                .preflight(submitted)
-                .pipe(
-                  Effect.tapError((error) => diagnoseExecution(submitted, { code: error.code })),
-                );
+              const repeated = yield* repeatedWriteRefusal(submitted);
+              const availability =
+                repeated === undefined
+                  ? yield* dependencies
+                      .preflight(submitted)
+                      .pipe(
+                        Effect.tapError((error) =>
+                          diagnoseExecution(submitted, { code: error.code }),
+                        ),
+                      )
+                  : { supported: false as const, reason: repeated };
               if (!availability.supported) {
                 const evidence: ExecutionEvidence = {
                   executionId: randomUUID(),
@@ -2307,26 +2404,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 submitted.purpose === "act" ||
                 submitted.purpose === "residual";
               let crossedDispatchBoundary = false;
-              const evidence = yield* reviewedExecution(submitted, () =>
+              /** The allow the host's dispatch fence followed, with Guardian's action label. */
+              let allowed: AllowedExecution | undefined;
+              const evidence = yield* reviewedExecution(submitted, (fenced) =>
                 Effect.sync(() => {
                   crossedDispatchBoundary = true;
+                  allowed = fenced;
                 }),
               ).pipe(
                 Effect.onExit((result) =>
-                  Effect.sync(() => {
+                  Effect.suspend(() => {
                     if (
                       (!effectful && submitted.purpose !== "authenticate") ||
                       Exit.isSuccess(result)
                     )
-                      return;
+                      return Effect.void;
                     // A defect or interruption can occur after dispatch just like a typed failure.
                     const reviewPreventedExecution =
                       Cause.isFailType(result.cause) &&
                       (result.cause.error.code === "ReviewDenied" ||
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
-                    record(
-                      {
+                    const lost: ExecutionEvidence = {
                         executionId: `unresolved_${randomUUID()}`,
                         status: "failed",
                         effect:
@@ -2355,12 +2454,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           : {}),
                         observations:
                           "Execution did not produce a result. Reconcile using the host's durable execution journal.",
-                      },
-                      submitted.purpose,
-                    );
+                      };
+                    record(lost, submitted.purpose);
+                    // Only an execution that crossed its dispatch fence ran; a write whose result
+                    // was lost is exactly what the outcome reviewer settles.
+                    return crossedDispatchBoundary
+                      ? observeExecution(submitted, lost, allowed, "result_lost")
+                      : Effect.void;
                   }),
                 ),
               );
+              yield* observeExecution(submitted, evidence, allowed, evidence.status);
               return yield* executionResult(evidence, submitted.purpose);
             }).pipe(
               // The owner never answered a sign-in request: the build ends as no_response.
@@ -2797,7 +2901,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     {},
-                    "Not published: no act step of this build's session recorded a confirmation, sent a non-read request or entered a commit mark. A commit that check cannot see, such as a GET link or a websocket message, may still have run. Read back first, in an act step that reads the page or the account. If the write happened, record it with verified() in that step and call finish_build naming it. If the read-back shows it did not happen, submit it once with the caller's values, marking its commit step, and read its confirmation (a step that only filled the form, or an offline example, never submitted it). If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed.",
+                    "Not published: no act step of this build's session that Guardian labelled a write ran on the site, or the outcome review found that every one of them did not happen. Read back first, in an act step that reads the page or the account. If the write happened, record it with verified() in that step and call finish_build naming it. If the read-back shows it did not happen, submit it once with the caller's values, marking its commit step, and read its confirmation (a step that only filled the form, or an offline example, never submitted it). If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed.",
                   );
                 if (
                   error.reason === "confirmation_undeclared" ||
@@ -3186,6 +3290,160 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ),
             }),
       };
+      /** The minter's full in-memory history, which the model registers before its first request. */
+      let minterHistory: () => readonly unknown[] = () => [];
+      /** Each piece of the harness's evidence as the outcome reviewer reads it. */
+      const recordChunk = (ref: string, text: string, range: { offset: number; limit: number }) => {
+        const end = Math.min(text.length, range.offset + range.limit);
+        return {
+          ref,
+          text: text.slice(range.offset, end),
+          offset: range.offset,
+          total: text.length,
+          nextOffset: end < text.length ? end : null,
+        };
+      };
+      /** A workspace file through the minter's own screened source read. */
+      const workspaceChunk = (ref: string, path: string, range: { offset: number; limit: number }) =>
+        actions.readSource(path, { offset: range.offset, limit: Math.min(range.limit, 64_000) }).pipe(
+          Effect.map((read) => {
+            const chunk = decodeJsonObject(read);
+            if (chunk._tag === "Left") return undefined;
+            const source = chunk.right["source"];
+            const total = chunk.right["total"];
+            const next = chunk.right["nextOffset"];
+            return typeof source !== "string" || typeof total !== "number"
+              ? undefined
+              : {
+                  ref,
+                  text: source,
+                  offset: range.offset,
+                  total,
+                  nextOffset: typeof next === "number" ? next : null,
+                };
+          }),
+          // A file the workspace does not hold is a record the reviewer cannot read, not a failure.
+          Effect.catchAll(() => Effect.succeed(undefined)),
+        );
+      const executionRecord = (entry: ExecutionEvidence) => ({
+        ...entry,
+        purpose: purposes.get(entry.executionId),
+        ...(entrypoints.has(entry.executionId)
+          ? { entrypoint: entrypoints.get(entry.executionId) }
+          : {}),
+        note: "The screened result the minter received is in its history: search_history for this executionId.",
+      });
+      const baseEvidence: OutcomeEvidence = {
+        list: (kind) =>
+          Effect.gen(function* () {
+            if (kind === "execution")
+              return executions.map((entry) => ({
+                ref: `execution:${entry.executionId}`,
+                kind,
+                summary: JSON.stringify({
+                  purpose: purposes.get(entry.executionId),
+                  action: entry.review?.action,
+                  status: entry.status,
+                  effect: entry.effect,
+                  confirmation: entry.confirmation,
+                }),
+              }));
+            if (kind === "source")
+              return [...new Set(entrypoints.values())].map((path) => ({
+                ref: `source:${path}`,
+                kind,
+                summary: "An entrypoint an execution ran; read any other workspace path the same way.",
+              }));
+            if (kind === "capture") {
+              const index = yield* workspaceChunk("capture:captures/index.json", "captures/index.json", {
+                offset: 0,
+                limit: 1,
+              });
+              return index === undefined
+                ? []
+                : [
+                    {
+                      ref: "capture:captures/index.json",
+                      kind,
+                      summary: "The capture index; read it for the screened captures it lists.",
+                    },
+                  ];
+            }
+            return publications.map((_publication, index) => ({
+              ref: `publication:${index + 1}`,
+              kind,
+              summary: "A finish_build result as the minter received it.",
+            }));
+          }),
+        read: (ref, range) =>
+          Effect.suspend(() => {
+            const separator = ref.indexOf(":");
+            const kind = ref.slice(0, separator);
+            const id = ref.slice(separator + 1);
+            if (separator < 1 || id === "") return Effect.succeed(undefined);
+            if (kind === "execution") {
+              const entry = executions.find((candidate) => candidate.executionId === id);
+              return Effect.succeed(
+                entry === undefined
+                  ? undefined
+                  : recordChunk(ref, JSON.stringify(executionRecord(entry)), range),
+              );
+            }
+            if (kind === "publication") {
+              const publication = publications[Number(id) - 1];
+              return Effect.succeed(
+                publication === undefined ? undefined : recordChunk(ref, publication, range),
+              );
+            }
+            if (kind === "source" || (kind === "capture" && id.startsWith("captures/")))
+              return workspaceChunk(ref, id, range);
+            return Effect.succeed(undefined);
+          }),
+        task: () =>
+          Effect.succeed({
+            request: initialPrompt,
+            answers: [...acceptedAnswers],
+            state: {
+              buildEffect,
+              writeSession,
+              exampleClaimed,
+              executionClosed,
+              published: terminal?.build === "published",
+            },
+          }),
+      };
+      const reviewer = yield* makeOutcomeReviewer({
+        host: dependencies.outcomeReview,
+        evidence: dependencies.outcomeReview?.evidence?.(baseEvidence) ?? baseEvidence,
+        history: () => minterHistory(),
+      });
+      /** The outcome reviewer's readback requests, beside the host's own notices. */
+      const drainNotices = () => {
+        const notices = [
+          ...(dependencies.drainHostNotices?.() ?? []),
+          ...reviewer.observationRequests().map((observation) => ({
+            kind: "outcome_review_observation",
+            ...observation,
+            instruction:
+              "The outcome reviewer asks for this readback to settle whether that write changed the site. When it can be read without changing anything, run it as a read step; never repeat the write to answer it.",
+          })),
+        ];
+        return notices.length === 0 ? undefined : notices;
+      };
+      const reviewedActions: MintActions = {
+        ...actions,
+        // finish_build with a write unresolved gives the reviewer its last turn; publication
+        // itself never waits for it.
+        finish: (input) =>
+          reviewer.finishing.pipe(
+            Effect.zipRight(actions.finish(input)),
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                publications.push(result);
+              }),
+            ),
+          ),
+      };
       const hostIncidentsBeforeStart = yield* dependencies.drainStartIncidents?.() ??
         Effect.succeed(undefined);
       const retainRuntimeRecord = dependencies.diagnostics?.retainRuntimeRecord;
@@ -3307,10 +3565,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             : { hostToolDescriptions: dependencies.hostToolDescriptions }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
-              ? (({ retainCapture: _capture, ...available }) => available)(actions)
-              : actions,
-            dependencies.drainHostNotices,
+              ? (({ retainCapture: _capture, ...available }) => available)(reviewedActions)
+              : reviewedActions,
+            drainNotices,
           ),
+          history: (read) => {
+            minterHistory = read;
+          },
           screen: (value) => screenMintText(dependencies, value),
           isComplete: () =>
             stopUnavailableHost() ||
@@ -3453,6 +3714,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           Effect.mapError(diagnosticUnavailable),
           Effect.catchAll(recordDiagnosticGap("mint.model_finished")),
         ) ?? Effect.void;
+      // The reviewer's final turn, when finish_build left a write unresolved, ends here; whatever
+      // it decided stands, and an unresolved write is reported as possibly applied.
+      const writes = yield* reviewer.close;
       const currentInvocation = dependencies.currentInvocation?.();
       finished.build = terminal?.build ?? "incomplete";
       // An unpublished build whose last publication Guardian denied says so, with its reason.
@@ -3475,6 +3739,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(example ? { example } : {}),
         ...(currentInvocation === undefined ? {} : { currentInvocation }),
         executions,
+        ...(writes.length === 0 ? {} : { writes }),
         diagnostics,
       };
     }),

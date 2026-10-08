@@ -140,7 +140,14 @@ export const mintPublication =
               kind: "write",
               writeConfirmation: yield* validateStandaloneWrite(result, {
                 named: sample.journal,
-                steps: acts.map(([, run]) => run.journal),
+                steps: acts.map(([id, run]) => {
+                  const assessment = state.assessments.get(id);
+                  return {
+                    journal: run.journal,
+                    ...(run.action === undefined ? {} : { action: run.action }),
+                    ...(assessment === undefined ? {} : { assessment }),
+                  };
+                }),
               }),
               intentDerived: writeSession.input !== undefined,
             }),

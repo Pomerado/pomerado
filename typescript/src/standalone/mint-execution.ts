@@ -7,6 +7,7 @@ import {
   type LocalOperationOutput,
 } from "../execution/local-operation.js";
 import type { GuardianAction } from "../guardian/review-contracts.js";
+import type { MintReviewFeedback } from "../mint/input-feedback.js";
 import {
   type AllowedExecution,
   type MintDependencies,
@@ -19,7 +20,7 @@ import { localOutputLimit } from "../execution/local-path.js";
 import { makeDialogDecider } from "../inputs/dialog.js";
 import { questionForReview } from "../guardian/question.js";
 import { secretHandleRefusal } from "../mint/secret-handles.js";
-import { replayedWriteStep, stepInput, writeStepDigest } from "../mint/step-checks.js";
+import { stepInput } from "../mint/step-checks.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
@@ -205,10 +206,18 @@ interface ReceiptInput {
     readonly decision: {
       readonly outcome: "allow" | "deny" | "escalate";
       readonly rationale: string;
+      readonly action?: GuardianAction | undefined;
     };
   };
   readonly journal: Journal;
 }
+/** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
+const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
+  reviewId,
+  outcome: decision.outcome,
+  rationale: decision.rationale,
+  ...(decision.action === undefined ? {} : { action: decision.action }),
+});
 const failedReceipt = (
   receipt: ReceiptInput,
   failure: Error,
@@ -237,7 +246,7 @@ const failedReceipt = (
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: undefined,
       purpose: execution.purpose,
-      journal: failureJournal,
+      journal: failureJournal,      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     const evidence: ExecutionEvidence = {
       executionId: id,
@@ -252,7 +261,7 @@ const failedReceipt = (
           ? { code: failure.code, tag: failure.tag }
           : {}),
       },
-      review: { reviewId: reviewed.reviewId, ...reviewed.decision },
+      review: reviewFeedback(reviewed),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
       ...(unanswered || (failure instanceof LocalOperationFailure && failure.code === "NoResponse")
         ? { noResponse: { possibleCommit: execution.purpose === "act" } }
@@ -280,7 +289,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
         inputSchema: result.schemas.input,
         outputSchema: result.schemas.output,
       }),
-      review: { reviewId: reviewed.reviewId, ...reviewed.decision },
+      review: reviewFeedback(reviewed),
     };
     runs.set(id, {
       sources,
@@ -289,7 +298,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
       purpose: execution.purpose,
-      journal: result,
+      journal: result,      ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
     });
     yield* journal?.record(evidence) ?? Effect.void;
     return evidence;
@@ -318,9 +327,7 @@ const authoredExecution = (
     );
     const files = new Map(sources);
     const live = execution.target === "liveBrowser";
-    const refusal =
-      secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
-      replayedWriteStep(execution, files, writeSession.steps);
+    const refusal = secretHandleRefusal(handles, files, execution, context.siteOrigin);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
       callerInput: request.input ?? {},
@@ -403,17 +410,6 @@ const authoredExecution = (
           yield* context.observe;
           if (execution.purpose === "explore") state.markers.explored(context.observedUrl);
         }
-        if (execution.purpose === "act")
-          writeSession.steps.push({
-            entrypoint: execution.entrypoint,
-            sourceDigest: writeStepDigest(files, execution.entrypoint),
-            stateChanging:
-              (executed._tag === "Left"
-                ? executed.left instanceof LocalOperationFailure
-                  ? executed.left.journal.effect
-                  : "possible"
-                : executed.right.effect) !== "not_sent",
-          });
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
         const receipt = {

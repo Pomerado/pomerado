@@ -746,7 +746,10 @@ export const makeOpenAIMinter = (
             });
             let modelCalls = turn.recovery?.initial?.modelCalls ?? 0;
             let finalsWithoutTool = turn.recovery?.initial?.finalsWithoutTool ?? 0;
-            let activeState: { toString(): string } | undefined;
+            let activeState:
+              | { toString(): string; readonly history: readonly AgentInputItem[] }
+              | undefined;
+            turn.history?.(() => activeState?.history ?? []);
             const totalUsage = new Usage();
             /** Finite per-call counts, so the host can store the cache hit rate per call. */
             const reportUsage = (
@@ -891,9 +894,11 @@ export const makeOpenAIMinter = (
                   terminationReason = "inherited_deadline";
                   throw new MintFailure({ code: "Unavailable" });
                 }
-                if (recovery !== undefined && !(input instanceof RunState))
+                // Always a RunState: it holds the whole history, which recovery saves and the
+                // outcome reviewer reads, including the items a compaction replaced in the request.
+                if (!(input instanceof RunState))
                   input = new RunState(new RunContext(), input, agent, turnsPerSegment);
-                activeState = input instanceof RunState ? input : undefined;
+                activeState = input;
                 const segment: { readonly value: SegmentResult } | { readonly error: unknown } =
                   await runSegment(input).then(
                     (value) => ({ value }),

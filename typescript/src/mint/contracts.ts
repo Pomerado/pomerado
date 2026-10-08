@@ -280,7 +280,10 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "contract_output_mismatch"
     /** The composed script does not run a confirm popup's action under the session's action id. */
     | "confirm_action_unmatched"
-    /** No act step recorded a confirmation or sent a non-read request. */
+    /**
+     * No act step Guardian labelled a write ran on the site, or the outcome review found that
+     * every one did not happen.
+     */
     | "write_not_submitted"
     /** Authored source holds a literal session token from the token view; recoverable. */
     | "session_token_literal"

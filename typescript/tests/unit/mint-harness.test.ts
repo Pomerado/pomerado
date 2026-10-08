@@ -3912,7 +3912,8 @@ it.each(["read_back", "fallback"] as const)(
             yield* finish("act_1", "The site shows the confirmation once and keeps no record");
             return;
           }
-          yield* turn.actions.execute(act);
+          // The read-back is its own step: running the write's step again would repeat it.
+          yield* turn.actions.execute({ ...act, entrypoint: "src/read-back.ts" });
           responses.push(JSON.parse(yield* finish("act_1", "Not needed")));
           yield* finish("act_2");
         }),
