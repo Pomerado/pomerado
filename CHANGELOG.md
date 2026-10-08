@@ -122,6 +122,7 @@
   - `pomerado/core/mint/publication-review` exports `unlistedExampleInputKeys` and `exampleInputFeedback`.
   - `pomerado/core/mint/draft-questions` exports `draftQuestionDeclarations` and `draftQuestionDeclarationFailure`.
   - `pomerado/core/execution/declared-questions` exports `asksAsDeclared`.
+- `pomerado/testing/shop-fixture` adds a storefront for evaluating search and cart tools. `/catalog` is a search whose size, color and fit filters sit in a panel behind an "All filters" button, offers only the choices the query's results have, shows each applied filter as a removable chip, and says so when nothing matches. `/product` asks for a product's options before adding it. The guest cart and the account cart are separate, and the account's cart starts with one line. Checkout needs the account, holds back an order under `orderMinimumMinor`, and asks for a shipping address when the account has none saved. `storeProducts` lists the catalog, and the shop's state holds `guestCart`, `accountCart`, `savedAddress` and `placedOrders`.
 
 ## 0.3.0
 
