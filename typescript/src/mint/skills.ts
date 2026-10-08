@@ -4,6 +4,7 @@ import type { SkillDescriptor } from "@openai/agents/sandbox";
 import { readScopedFile } from "../filesystem/read.js";
 import { MintFailure } from "./contracts.js";
 import { failureDetail } from "../runtime/failure-detail.js";
+import { hostedFeaturesPreamble } from "../hosted-features.js";
 
 const catalog = [
   {
@@ -21,6 +22,11 @@ const catalog = [
     name: "auth",
     description: "Discover an evidenced login entry and sign in through the host",
     references: ["auth-entry.ts"],
+  },
+  {
+    name: "testing",
+    description: "Meaningful offline/live checks and honest missing evidence",
+    references: [],
   },
   {
     name: "pagination",
@@ -201,9 +207,18 @@ export const loadAuthoringSkills = (
       }),
   });
 
+/**
+ * The local host's authoring: standalone text, with the hosted features its minter is to ignore on
+ * top of `AGENTS.md`, both as instructions and as the workspace file.
+ */
 export const loadStandaloneAuthoring = (directory: string) =>
   Effect.gen(function* () {
     const guide = yield* loadWorkspaceGuide(directory);
     const skills = yield* loadAuthoringSkills(directory);
-    return { ...guide, skills };
+    if (hostedFeaturesPreamble === "") return { ...guide, skills };
+    const instructions = `${hostedFeaturesPreamble}\n\n${guide.instructions}`;
+    const files = new Map(
+      [...guide.files].map(([path, text]) => [path, path === "AGENTS.md" ? instructions : text]),
+    );
+    return { instructions, files, skills };
   });

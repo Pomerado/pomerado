@@ -21,7 +21,10 @@ or an agent's remembered Page is not a cursor authenticity check.
    reason and no pretend next cursor.
 
 Never recreate a hold, draft, upload, payment token or write as pagination. Unknown
-prior effects require recovery, not fresh navigation.<!-- pomerado:section pagination.no-recreated-writes -->
+prior effects require recovery, not fresh navigation. A mint question keeps the live
+browser for up to 10 minutes; that is not cursor expiry. Profile load/save failure
+or 24h inactivity expiry selects fresh reconstruction where supported; it does not
+invalidate an otherwise meaningful read cursor.
 
 ## Append pagination ("load more")
 

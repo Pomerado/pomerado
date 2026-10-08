@@ -452,6 +452,106 @@ test("a run makes no Guardian or model call and returns the operation's output",
   }
 });
 
+test("a run asks only the questions its artifact recorded, or that its entrypoint declares as a literal", async () => {
+  // Five runs, each in its own browser session.
+  test.setTimeout(90_000);
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<h1>Run fixture</h1>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("No fixture address");
+  const note = { type: "text" as const, prompt: "Which note should I keep?" };
+  const asking = (questions: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+const computed = {note:{type:"text",prompt:"Which note should I keep?"}};
+export default defineOperation({name:"ask_note",input:Schema.Struct({}),output:Schema.Struct({note:Schema.String}),questions:${questions}},
+async ({ ask }) => ({ note: await ask("note") }));`;
+  const literal = asking(JSON.stringify({ note }));
+  const calls: string[] = [];
+  const run = (
+    content: string,
+    questions?: Readonly<Record<string, unknown>>,
+    effect?: "read",
+  ) => {
+    const asked: InputRequest[] = [];
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            ask: makeInputAsker((request) =>
+              Effect.sync(() => {
+                asked.push(request);
+                return { note: "kept" };
+              }),
+            ),
+            minterProvider: unreachableModel(calls, "minter"),
+            guardianProvider: unreachableModel(calls, "guardian"),
+            timeoutMs: 10_000,
+          });
+          return yield* Effect.either(
+            service.run(
+              {
+                entrypoint: "src/tool.mjs",
+                files: [{ path: "src/tool.mjs", content }],
+                inputSchema: {},
+                outputSchema: {},
+                ...(questions === undefined ? {} : { questions }),
+              } as Parameters<typeof service.run>[0],
+              {
+                url: `http://127.0.0.1:${address.port}/`,
+                intent: "Read fixture",
+                input: {},
+                ...(effect === undefined ? {} : { effect }),
+              },
+            ),
+          );
+        }),
+      ),
+    ).then((result) => ({ result, asked }));
+  };
+  try {
+    // Publication recorded the question: the run asks it.
+    const recorded = await run(literal, { note });
+    expect(recorded.result._tag === "Right" && recorded.result.right).toEqual({ note: "kept" });
+    expect(recorded.asked).toHaveLength(1);
+    // The script asks something other than what publication recorded: its ask fails as
+    // Undeclared, so the run fails with nobody asked. A run that names no effect can't rule out
+    // a website action, so its outcome is unknown.
+    const differs = await run(literal, { note: { ...note, prompt: "Which note?" } });
+    expect(differs.result._tag === "Left" && differs.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
+    });
+    expect(differs.asked).toEqual([]);
+    // A served read tool names its effect, so the same refused ask fails as a read that changed
+    // nothing.
+    const served = await run(literal, { note: { ...note, prompt: "Which note?" } }, "read");
+    expect(served.result._tag === "Left" && served.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "execution_failed", possibleCommit: false, retry: "never" },
+    });
+    expect(served.asked).toEqual([]);
+    // An artifact saved without its questions asks what its entrypoint declares as a literal.
+    const saved = await run(literal);
+    expect(saved.result._tag).toBe("Right");
+    expect(saved.asked).toHaveLength(1);
+    const computed = await run(asking("computed"));
+    expect(computed.result._tag === "Left" && computed.result.left).toMatchObject({
+      _tag: "RunOutcomeFailure",
+      outcome: { code: "outcome_unknown", retry: "never" },
+    });
+    expect(computed.asked).toEqual([]);
+    expect(calls).toEqual([]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("terminal CLI help requires no provider credentials", async () => {
   const child = spawn(process.execPath, ["dist/typescript/src/standalone/cli.js", "--help"], {
     env: { PATH: process.env["PATH"] ?? "" },
@@ -2694,13 +2794,15 @@ test("finish_build runs a contract review, then one publication review, and save
       "src/tool.mjs",
     ]);
     // The builder's instructions send it to the publication skill before its first
-    // finish_build, and the skill it reads there describes the local host's publication.
+    // finish_build. The skill it reads there is every host's shared text, and the list on top of
+    // its instructions names the private fallback publication the local host lacks.
     expect(String(requests[0]?.systemInstructions)).toContain(
       "Read .agents/publication/SKILL.md before your first `finish_build`",
     );
+    expect(String(requests[0]?.systemInstructions)).toContain("- Private fallback publication");
     expect(String(skillRead?.["source"])).toContain("# Publishing a build");
     expect(String(skillRead?.["source"]).replace(/\s+/g, " ")).toContain(
-      "After the last round the build ends unpublished with Guardian's findings",
+      "After the last round the host publishes privately and flags it",
     );
   } finally {
     await site.close();
