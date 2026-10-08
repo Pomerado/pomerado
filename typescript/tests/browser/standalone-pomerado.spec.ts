@@ -1391,6 +1391,118 @@ if(!result.success||result.result!==true)throw new Error("Save not confirmed");v
   }
 });
 
+test("an MCP write repeated with its idempotency_key acts once, across a restart and two servers", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Actual stdio SDK, three server processes on one tool folder and four native write lifecycles",
+  });
+  test.setTimeout(90_000);
+  let writes = 0;
+  const server = createServer((request, response) => {
+    if (request.method === "POST") {
+      writes++;
+      response.end("saved");
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end(
+      `<button id="save" onclick="fetch('/save',{method:'POST'}).then(()=>document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing write address");
+  const browserServer = await chromium.launchServer();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-retry-"));
+  const source = `import {Schema} from "effect";
+import {defineOperation} from "../runtime/index.js";
+export default defineOperation({name:"save_fixture",input:Schema.Struct({note:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"message",commits:["save"]}},async({kernel,sessionId,enteringCommit,verified})=>{
+enteringCommit("save");const result=await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:2});
+if(!result.success||result.result!==true)throw new Error("Save not confirmed");verified({confirmation:"message"});return {saved:true};});`;
+  const saved = await saveMcpFixture(
+    directory,
+    "save_fixture",
+    `http://127.0.0.1:${address.port}/`,
+    "write",
+    source,
+    {
+      type: "object",
+      properties: { note: { type: "string" } },
+      required: ["note"],
+      additionalProperties: false,
+    },
+  );
+  const fixture = await mcpRuntime(directory, [], { endpoint: browserServer.wsEndpoint() });
+  const serve = () => stdioMcp([join(saved, "mcp.mjs"), pathToFileURL(fixture.file).href]);
+  const save = (connection: Awaited<ReturnType<typeof serve>>, args: Record<string, unknown>) =>
+    connection.client.callTool({ name: "save_fixture", arguments: args });
+  const first = { input: { note: "first" }, idempotency_key: "booking-1" };
+  const connections: Awaited<ReturnType<typeof serve>>[] = [];
+  try {
+    let connection = await serve();
+    connections.push(connection);
+    const listed = await connection.client.listTools();
+    expect(
+      listed.tools.find((tool) => tool.name === "save_fixture")?.inputSchema.properties,
+    ).toHaveProperty("idempotency_key");
+    expect((await save(connection, first)).structuredContent, connection.stderr()).toEqual({
+      saved: true,
+    });
+    expect(writes).toBe(1);
+    // The same key and input answer the first job's result again, and the site sees no request.
+    expect((await save(connection, first)).structuredContent).toEqual({ saved: true });
+    expect(writes).toBe(1);
+    const changed = await save(connection, { ...first, input: { note: "changed" } });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed.content)).toContain(
+      "This idempotency key was already used for a different request.",
+    );
+    expect(writes).toBe(1);
+
+    // After a restart the key still names its job: the call rejoins it and acts on nothing.
+    await connection.client.close();
+    connection = await serve();
+    connections.push(connection);
+    const rejoined = await save(connection, first);
+    expect(rejoined.structuredContent).toMatchObject({ status: "completed", rejoined: true });
+    expect(writes).toBe(1);
+    const job = viewOf(rejoined);
+    expect(
+      viewOf(
+        await connection.client.callTool({ name: "get_job", arguments: { job_id: job.job_id } }),
+      ).status,
+    ).toBe("completed");
+    expect(await readdir(join(saved, ".jobs"))).toHaveLength(1);
+
+    // Two servers on one tool folder, called at once with one key, write once between them.
+    const other = await serve();
+    connections.push(other);
+    const second = { input: { note: "second" }, idempotency_key: "booking-2" };
+    const both = await Promise.all([save(connection, second), save(other, second)]);
+    expect(both.map((result) => result.isError ?? false)).toEqual([false, false]);
+    expect(writes).toBe(2);
+    expect(both.map((result) => JSON.stringify(result.structuredContent)).join()).toContain(
+      '"rejoined":true',
+    );
+
+    // A call without a key is still a new website action.
+    expect((await save(connection, { input: { note: "first" } })).structuredContent).toEqual({
+      saved: true,
+    });
+    expect(writes).toBe(3);
+    await expect(readFile(fixture.ledger, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    for (const connection of connections) await connection.client.close();
+    await browserServer.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("MCP malformed saved schema fails before models and a served run calls no model", async () => {
   let hits = 0;
   const server = createServer((_request, response) => {

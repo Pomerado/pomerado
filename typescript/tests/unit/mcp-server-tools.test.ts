@@ -60,3 +60,17 @@ it("gives a read tool only its input", async () => {
   expect(Object.keys(tool.inputSchema.properties ?? {})).toEqual(["input"]);
   expect(tool.description).not.toContain("idempotency_key");
 });
+
+it("lets a write tool take an optional idempotency_key and says to send one with every write", async () => {
+  const tool = await listed("write");
+  expect(tool.inputSchema.required).toEqual(["input"]);
+  expect(tool.inputSchema.properties?.["idempotency_key"]).toEqual({
+    type: "string",
+    pattern: "^[A-Za-z0-9_-]{1,200}$",
+    description:
+      "Optional. Your key for this call; reuse it only to retry the same call, which then answers the same job instead of acting on the website again.",
+  });
+  expect(tool.description).toContain(
+    "Send an idempotency_key with every write and reuse it only to retry that same call. A call without one is a new website action.",
+  );
+});

@@ -3,8 +3,15 @@ import {
   type CallToolResult,
   type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
+import { join } from "node:path";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import { Effect, Schema, type Scope } from "effect";
+import {
+  localRequestFingerprint,
+  localRetryKey,
+  makeFileJobStore,
+  type LocalJobStore,
+} from "../jobs/local-job-store.js";
 import { standard } from "../mcp/schema.js";
 import { inlineLocalRefs } from "../registry/schema-references.js";
 import { InputAnswers } from "../runtime/input-request.js";
@@ -37,6 +44,11 @@ export interface PomeradoMcpOptions extends ServerOptions {
 export interface IntegrationMcpOptions extends ServerOptions {
   readonly artifact: MintArtifact;
   readonly deployment: Deployment;
+  /**
+   * The integration's folder. A job started with an idempotency_key keeps its record in `.jobs`
+   * there, so a restarted server still finds it. Without a folder, such records live in memory.
+   */
+  readonly directory?: string;
 }
 const JobId = Schema.Struct({ job_id: Schema.UUID });
 const GetJob = Schema.Struct({
@@ -83,12 +95,21 @@ const toolResponse = (
     ),
     { signal },
   );
-const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number, kind: McpJobKind) => {
+const helperTools = (
+  server: McpServer,
+  jobs: McpJobs,
+  waitMs: number,
+  kind: McpJobKind,
+  kept: boolean,
+) => {
   server.registerTool(
     "get_job",
     {
-      description:
-        "Observe an existing job without starting or replaying work. Returns promptly when input is needed or the job finishes. Jobs are local and disappear when this MCP process stops.",
+      description: `Observe an existing job without starting or replaying work. Returns promptly when input is needed or the job finishes. ${
+        kept
+          ? "A job started with an idempotency_key is kept in the tool's folder for a day, so it is found after a restart, with its status but not its output. Other jobs are local and disappear when this MCP process stops."
+          : "Jobs are local and disappear when this MCP process stops."
+      }`,
       inputSchema: standard(GetJob),
       annotations: { readOnlyHint: true },
     },
@@ -130,7 +151,12 @@ const helperTools = (server: McpServer, jobs: McpJobs, waitMs: number, kind: Mcp
       ),
   );
 };
-const makeServer = (name: string, options: ServerOptions, kind: McpJobKind) =>
+const makeServer = (
+  name: string,
+  options: ServerOptions,
+  kind: McpJobKind,
+  store?: LocalJobStore,
+) =>
   Effect.gen(function* () {
     const maxJobs = options.maxJobs ?? 1;
     const waitMs = options.waitMs ?? 20_000;
@@ -143,10 +169,10 @@ const makeServer = (name: string, options: ServerOptions, kind: McpJobKind) =>
       waitMs > 30_000
     )
       return yield* Effect.fail(new Error("Invalid MCP job limits."));
-    const jobs = yield* makeMcpJobs(maxJobs, kind);
+    const jobs = yield* makeMcpJobs(maxJobs, kind, store);
     const server = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } });
     yield* Effect.addFinalizer(() => Effect.promise(() => server.close()));
-    helperTools(server, jobs, waitMs, kind);
+    helperTools(server, jobs, waitMs, kind, store?.persistent === true);
     return { server, jobs, waitMs };
   });
 /** Discovery registers tools without creating Chromium or invoking a model. */
@@ -183,7 +209,20 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
     return server;
   });
 const SchemaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown });
-const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
+/** A write's optional retry key, in the format and words other hosts give it. */
+const idempotencyKey = {
+  type: "string",
+  pattern: "^[A-Za-z0-9_-]{1,200}$",
+  description:
+    "Optional. Your key for this call; reuse it only to retry the same call, which then answers the same job instead of acting on the website again.",
+};
+const writeRetry =
+  "Send an idempotency_key with every write and reuse it only to retry that same call. A call without one is a new website action.";
+interface BusinessCall {
+  readonly input: unknown;
+  readonly idempotency_key?: string;
+}
+const businessInput = (inputSchema: unknown, outputSchema: unknown, write: boolean) =>
   Effect.gen(function* () {
     const input = yield* Schema.decodeUnknown(SchemaObject)(inputSchema).pipe(
       Effect.mapError((cause) => new Error("Invalid operation input schema.", { cause })),
@@ -192,16 +231,19 @@ const businessInput = (inputSchema: unknown, outputSchema: unknown) =>
       Effect.mapError((cause) => new Error("Invalid operation output schema.", { cause })),
     );
     return yield* Effect.try({
-      try: (): StandardSchemaWithJSON<{ input: unknown }, { input: unknown }> => {
+      try: (): StandardSchemaWithJSON<BusinessCall, BusinessCall> => {
         const validator = new AjvJsonSchemaValidator();
         validator.getValidator(output);
         const json = {
           type: "object",
-          properties: { input: inlineLocalRefs(input) },
+          properties: {
+            input: inlineLocalRefs(input),
+            ...(write ? { idempotency_key: idempotencyKey } : {}),
+          },
           required: ["input"],
           additionalProperties: false,
         };
-        const validate = validator.getValidator<{ input: unknown }>(json);
+        const validate = validator.getValidator<BusinessCall>(json);
         return {
           "~standard": {
             version: 1,
@@ -234,8 +276,13 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
     const deployment = yield* Schema.decodeUnknown(Deployment)(options.deployment).pipe(
       Effect.mapError((cause) => new Error("Invalid integration deployment.", { cause })),
     );
-    const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema);
-    const { server, jobs, waitMs } = yield* makeServer(deployment.name, options, "run");
+    const write = deployment.request.effect === "write";
+    const inputSchema = yield* businessInput(artifact.inputSchema, artifact.outputSchema, write);
+    const store =
+      options.directory === undefined
+        ? undefined
+        : yield* makeFileJobStore(join(options.directory, ".jobs"));
+    const { server, jobs, waitMs } = yield* makeServer(deployment.name, options, "run", store);
     if (helperNames.includes(deployment.name))
       return yield* Effect.fail(
         new Error("The integration tool name conflicts with a job helper."),
@@ -243,7 +290,7 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
     server.registerTool(
       deployment.name,
       {
-        description: `${deployment.description}\nReturns the operation result, or a job ID when input or more time is needed. Continue that job with get_job/provide_input; never repeat a possible write to poll it.`,
+        description: `${deployment.description}\nReturns the operation result, or a job ID when input or more time is needed. Continue that job with get_job/provide_input; never repeat a possible write to poll it.${write ? `\n${writeRetry}` : ""}`,
         inputSchema,
         annotations: {
           readOnlyHint: deployment.request.effect === "read",
@@ -255,14 +302,25 @@ export const makeIntegrationMcp = (options: IntegrationMcpOptions) =>
       (input, context) =>
         toolResponse(
           Effect.gen(function* () {
-            const started = yield* jobs.start((ask) =>
-              Effect.gen(function* () {
-                const pomerado = yield* createPomerado({ ...options.pomerado, ask });
-                return yield* pomerado.run(artifact, { ...deployment.request, input: input.input });
-              }),
+            const key = input.idempotency_key;
+            const started = yield* jobs.start(
+              (ask) =>
+                Effect.gen(function* () {
+                  const pomerado = yield* createPomerado({ ...options.pomerado, ask });
+                  return yield* pomerado.run(artifact, { ...deployment.request, input: input.input });
+                }),
+              key === undefined
+                ? undefined
+                : {
+                    retryKey: localRetryKey(deployment.name, key),
+                    requestFingerprint: localRequestFingerprint(deployment.name, input.input),
+                  },
             );
             const view = yield* jobs.get(started.job_id, waitMs);
-            return view.status === "completed" ? completedResult(view.output) : jobResult(view);
+            // A rejoined job that finished before a restart has no output to answer with.
+            return view.status === "completed" && "output" in view
+              ? completedResult(view.output)
+              : jobResult(started.rejoined === true ? { ...view, rejoined: true } : view);
           }),
           context.mcpReq.signal,
           "run",
