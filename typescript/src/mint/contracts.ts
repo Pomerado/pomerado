@@ -1473,7 +1473,8 @@ export interface PublicationDecision {
   readonly decidedAt: number;
   /**
    * The finite checks that refused it: the reason, a registry issue, the publication gate's check,
-   * a route evidence gap and Guardian's finding categories. Empty for a publication.
+   * a route evidence gap, `InvalidOutcome` for a review whose outcome Guardian kept refusing and
+   * Guardian's finding categories. Empty for a publication.
    */
   readonly failedChecks: readonly string[];
   readonly recovery: PublicationRecovery;

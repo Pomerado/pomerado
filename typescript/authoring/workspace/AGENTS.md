@@ -349,6 +349,9 @@ conversation:
   again for a fresh review; nothing was published or asked.
 - The host bounds this permission: `retriesRemaining:0` on a retryable response means this next
   resubmission is the last allowed one, not that permission has expired.
+- A `review_invalid_outcome` answer means the review returned no decision it allows, not a deny
+  or an outage. Revise or withdraw the request and continue the build; never resubmit it
+  unchanged. A second one in an attempt ends it.
 - If `retryable` is absent or false, execution dispatch is uncertain, or the host is unavailable
   without an eligible retained receipt, end the attempt without publication.
 - Preserve prior effects and claimed examples; never replay a claimed example. A

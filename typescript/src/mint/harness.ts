@@ -351,11 +351,19 @@ const hostRefusalDecision = (
   failedChecks: [reason],
   recovery: refusalRecovery(reason, write),
 });
+/**
+ * A failure's code as diagnostics and publication evidence name it. A review whose outcome
+ * Guardian kept refusing fails as `ReviewUnavailable`, but it is a verdict that did not form, not
+ * an outage, so it is named `InvalidOutcome`.
+ */
+const failureCode = (error: MintFailure) =>
+  error.reviewFailure === "InvalidOutcome" ? "InvalidOutcome" : error.code;
 /** The finite checks behind a publication refusal: never a value, path or rationale. */
 const refusalChecks = (error: MintFailure) => [
   ...new Set(
     [
       error.reason,
+      error.reviewFailure === "InvalidOutcome" ? error.reviewFailure : undefined,
       error.review?.reason,
       error.registryIssue,
       error.publicationBlock?.check,
@@ -1810,34 +1818,50 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         question: "the request",
         update: "the update",
       };
+      /** An `InvalidOutcome` answer that ends the attempt; its terminal outcome is already set. */
+      const invalidOutcomeEnded = (instruction: string) =>
+        JSON.stringify({
+          status: "review_invalid_outcome",
+          reviewFailure: "InvalidOutcome",
+          retryable: false,
+          userInputRequired: false,
+          ...availabilityMetadata(),
+          instruction,
+        });
       /**
-       * The agent's answer for a review that ended `InvalidOutcome`. The first goes back to the
-       * agent to revise or withdraw; the second ends the attempt incomplete without a host failure,
-       * since no outage caused it and running the attempt again would repeat it.
+       * The agent's answer for a review that ended `InvalidOutcome`. A host that became
+       * unavailable during the review ends the attempt with its own cause. Otherwise the first goes
+       * back to the agent to revise or withdraw, never to resubmit unchanged, so it is not
+       * `retryable`; once live execution has closed, an execution goes on through its retained
+       * receipt instead. The second ends the attempt incomplete without a host failure, since no
+       * outage caused it and running the attempt again would repeat it.
        */
       const invalidOutcomeAnswer = (kind: keyof typeof invalidOutcomeSubject) =>
         Effect.sync(() => {
+          if (stopUnavailableHost())
+            return invalidOutcomeEnded(
+              "Guardian returned no decision its review allows, so nothing was approved, and the host became unavailable, so the attempt has ended. Preserve recorded effects and receipts.",
+            );
           if (invalidOutcomeRepeated()) {
             terminal ??= {
               build: "incomplete",
               summary:
                 "Guardian returned no decision its review allows, again, so the host ended the attempt without publishing. Nothing it was reviewing was approved; recorded effects and receipts are preserved.",
             };
-            return JSON.stringify({
-              status: "review_invalid_outcome",
-              reviewFailure: "InvalidOutcome",
-              retryable: false,
-              userInputRequired: false,
-              instruction:
-                "Guardian again returned no decision its review allows, so the attempt has ended and nothing was approved. Preserve recorded effects and receipts.",
-            });
+            return invalidOutcomeEnded(
+              "Guardian again returned no decision its review allows, so the attempt has ended and nothing was approved. Preserve recorded effects and receipts.",
+            );
           }
+          const next =
+            kind === "execution" && executionClosed
+              ? "Live execution has ended, so this execution cannot be resubmitted or revised; publish an eligible retained receipt with finish_build, or ask with request_input when publication needs something only the user knows."
+              : `Revise ${invalidOutcomeSubject[kind]} so what is under review is plain, or withdraw it and continue another way; do not submit it again unchanged.`;
           return JSON.stringify({
             status: "review_invalid_outcome",
             reviewFailure: "InvalidOutcome",
-            retryable: true,
             userInputRequired: false,
-            instruction: `Guardian returned no decision this review allows, even after the host named the outcomes it may return, so nothing was approved. This is not a deny and not an outage. Revise ${invalidOutcomeSubject[kind]} so what is under review is plain, or withdraw it and continue another way; do not submit it again unchanged. A second such result ends the attempt.`,
+            ...availabilityMetadata(),
+            instruction: `Guardian returned no decision this review allows, even after the host named the outcomes it may return, so nothing was approved. This is not a deny and not an outage. ${next} A second such result ends the attempt.`,
           });
         });
       /**
@@ -2460,7 +2484,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               diagnoseExecution(
                 submitted,
                 {
-                  code: error.code,
+                  code: failureCode(error),
                   // The root cause's own code, beneath the host's wrapper.
                   rootCode:
                     error.authentication === undefined
@@ -2641,7 +2665,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 Effect.gen(function* () {
                   yield* diagnose({
                     phase: "blocked_review",
-                    code: error.code,
+                    code: failureCode(error),
                     reviewFailure: error.reviewFailure,
                     reviewPhase: error.reviewPhase,
                   });
@@ -3398,13 +3422,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 recovery:
                   publication._tag === "Right"
                     ? "none"
-                    : publication.left.code === "ReviewUnavailable" ||
-                        publication.left.code === "CaptureUnavailable" ||
-                        publicationOutage(publication.left)
-                      ? "retry"
-                      : publication.left.code === "ReviewDenied"
-                        ? "guardian_feedback"
-                        : refusalRecovery(reason, buildEffect === "write"),
+                    : publication.left.reviewFailure === "InvalidOutcome"
+                      ? "correct_source"
+                      : publication.left.code === "ReviewUnavailable" ||
+                          publication.left.code === "CaptureUnavailable" ||
+                          publicationOutage(publication.left)
+                        ? "retry"
+                        : publication.left.code === "ReviewDenied"
+                          ? "guardian_feedback"
+                          : refusalRecovery(reason, buildEffect === "write"),
               };
               if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
@@ -3463,7 +3489,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // Screening serializes through JSON, which leaves out undefined fields.
                 const diagnostic = yield* screenMintText(dependencies, {
                   phase: "publication",
-                  code: error.code,
+                  code: failureCode(error),
                   reason: error.reason,
                   screening: error.screening,
                   publicationBlock: error.publicationBlock,
@@ -3985,7 +4011,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (error) =>
                   diagnose({
                     phase: "question_review",
-                    code: error.code,
+                    code: failureCode(error),
                     reviewFailure: error.reviewFailure,
                     reviewPhase: error.reviewPhase,
                   }).pipe(
@@ -4168,7 +4194,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       (error) =>
                         diagnose({
                           phase: "task_update_review",
-                          code: error.code,
+                          code: failureCode(error),
                           reviewFailure: error.reviewFailure,
                           reviewPhase: error.reviewPhase,
                         }).pipe(
