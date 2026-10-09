@@ -144,10 +144,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   it new. When they are all a create's read-back can match, read that list before the write
   too, in the session and the composed script, note the rows that already match (their count
   or ids), and count only a new one: a row whose id you had not seen, or the one match where
-  there was none. When two rows match after the write, values alone do not confirm it. When
-  the write sets a value the record already had, it is confirmed only when the record shows
-  that value and the write's own receipt or response names it; otherwise it is
-  `unverifiable`, as above: do not search other pages for proof.
+  there was none. When two rows match after the write and no noted id shows which one is new,
+  values alone do not confirm it.
 - Never repeat a step blindly. If an `act` step fails after the page sent a
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
