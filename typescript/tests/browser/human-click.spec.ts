@@ -50,7 +50,12 @@ const FilePath = Schema.Struct({ path: Schema.String });
  */
 const fakeInput = async (
   page: Page,
-  options: { readonly reach?: boolean; readonly failPress?: boolean } = {},
+  options: {
+    readonly reach?: boolean;
+    readonly failPress?: boolean;
+    /** The time each file's info says it was written; now unless given. */
+    readonly modTime?: string;
+  } = {},
 ): Promise<FakeInput> => {
   const batches: Action[][] = [];
   const files = new Map<string, string>();
@@ -103,7 +108,7 @@ const fakeInput = async (
           response.end('{"message":"file not found"}');
           return;
         }
-        response.end(JSON.stringify({ path, mod_time: new Date().toISOString() }));
+        response.end(JSON.stringify({ path, mod_time: options.modTime ?? new Date().toISOString() }));
         return;
       }
       if (url.pathname === "/fs/write_file") {
@@ -308,6 +313,22 @@ test("a button covered everywhere but its centre is clicked at its centre by Pla
 test("while the host holds the pointer, a click stays Playwright's", async ({ page }) => {
   await buttonPage(page);
   const input = await fakeInput(page);
+  input.files.set(humanClickPaths.hold, "hold");
+  try {
+    const { result } = await run(page, [plainClick], { endpoint: input.endpoint, seed: 7 });
+    expect(result._tag).toBe("Right");
+    expect(await clicks(page)).toEqual([expect.objectContaining({ x: 360, y: 220 })]);
+    expect(input.batches).toEqual([]);
+  } finally {
+    await input.close();
+  }
+});
+
+test("a hold whose time cannot be read is kept, so the click stays Playwright's", async ({
+  page,
+}) => {
+  await buttonPage(page);
+  const input = await fakeInput(page, { modTime: "not a time" });
   input.files.set(humanClickPaths.hold, "hold");
   try {
     const { result } = await run(page, [plainClick], { endpoint: input.endpoint, seed: 7 });

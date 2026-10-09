@@ -223,8 +223,9 @@ const batch = (base, actions) => {
 const recent = async (base, path, withinMs) => {
   const response = await call(base, "/fs/file_info?path=" + encodeURIComponent(path), { method: "GET" }, 2000);
   if (response.status === 404) return false;
-  const info = await response.json();
-  return Date.now() - Date.parse(info.mod_time) < withinMs;
+  // A time the code cannot read counts as recent, so a lock it cannot judge is kept.
+  const written = Date.parse((await response.json()).mod_time);
+  return !Number.isFinite(written) || Date.now() - written < withinMs;
 };
 const save = (base) =>
   call(base, "/fs/write_file?path=" + encodeURIComponent(paths.stats), { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: JSON.stringify(state.stats) }, 2000).catch(() => undefined);
