@@ -54,6 +54,8 @@
   - Migrate recorded Guardian publication responses by replacing each finding's byte range with its quote. A host's own publication policy should ask for a quote; core exports its wording as `publicationDecisionPolicy`.
 - Guardian's `read_source` tool takes a required `match`, null for a plain read. With a word or phrase, it returns `untrusted_source_matches`: the slices of the whole file around each case-insensitive occurrence, up to 20, each with its byte offset, and the match count. Guardian queries a capture or other large file this way instead of reading it whole. `publicationCaptureQueryPolicy` is the policy's wording for it.
   - Migrate recorded `read_source` calls by adding `"match": null`. A call without it still reads a chunk.
+- The authored runtime's `browser/index.js` now imports `browser/outcome-wait.js`. Until hosts compute the SDK's file list from its imports, a host that copies a hand-kept list of the SDK's files into a minting workspace or a run's sandbox must copy it too, or every authored operation fails to load.
+  - Migrate by adding `browser/outcome-wait` beside `browser/form-controls` in that list.
 
 ### Other changes
 
@@ -175,11 +177,20 @@
 - A Guardian review's 120-second deadline (600 for a development public read) no longer counts the time the provider spends compacting the conversation. Each model call whose response compacts it moves the deadline later by its duration. A compacting call still running at the deadline is cut off with the review.
 - Guardian's publication policy gives a loosened needed value its own rule. A needed value is an output fact the request names, the record's identifier or context those depend on. Its field must be required and non-null, whatever its description says; it may be null only where that record's page does not show it, with a required field beside it saying why. Source that turns a failed read into null is the same finding.
 - The policy adds a lost-information rule: a fact each record or result shows that the output drops, or a value it trims or splits and drops part of. An input may be left out only when the site has no control for it; a description naming it as left out no longer excuses it. A field the code reads from each record's own element is supported even where the example's record lacked the fact, and narrowing a claim is never the fix for an output the page shows.
+- `pomerado/runtime` adds `outcomeWaitCode`, page code for a Kernel call body like `formControlsCode`. Its `waitForOutcome(outcomes, { action, timeout, unchangedMs })` waits for whichever of the page's possible answers shows after a step such as a search, a filter, a date pick or a submit, named one locator each (`{ failed, unavailable, empty, results }`), and returns that key. It only observes, apart from running `action` once.
+  - The first listed outcome wins when several show, so a site's error, a refusal or a greyed-out choice listed first wins over results beside it. It answers once two looks in a row agree.
+  - `action` is the step itself. What an outcome showed before it, the same element with the same text, counts only after staying so for `unchangedMs` (2 s by default), so results a filter has not yet re-rendered are not read, and a filter that leaves the same results still resolves. A new or changed element counts at once.
+  - It throws an `Error` named `OutcomeWaitFailure` with `reason` and per-outcome `observations` (`OutcomeObservation`, a count of matches, of visible ones and, after an action, of changed ones), and a message naming both: `outcome_ambiguous` when the winning locator matches more than one element, which it never picks among, and `outcome_timeout` when nothing showed within `timeout`, 30 s by default.
+  - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, rather than only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
+  - Other hosts get it from `pomerado/core/browser/outcome-wait`.
+  - A run whose `waitForOutcome` saw no outcome in time fails as `BrowserActionTimeout`, as a native Playwright wait's timeout does, so a host keeps the browser and reports it as a browser action timeout. `outcome_ambiguous` stays the tool's own failure.
+- A script's context adds `askOne(id, question)`, a thin wrapper over `ask` that asks one declared question and returns that answer itself. `ask` with a list or an object returns one answer per id, such as `{ seat: "12A" }`, so the caller-input skill now says to read `answer.<id>` and names `askOne` for one question. `pomerado/runtime` exports its type as `ScriptAskOne`.
 
 ### Fixes
 
 - A local build no longer publishes a tool that rests on a sign-in it never verified. A write build could sign in again in the middle of its session, write, and publish with no sign-in, so every later run started signed out. `finish_build` now refuses as `autofill_recipe_not_verified` when a step the publication rests on ran after a sign-in sent the login and before any check verified it, and the build has no verified sign-in to publish. A write rests on every act step of its session, and a read on the example or explore it publishes. A read is refused even when its example ran signed out.
 - Guardian's source reads on the local host now find the SDK under `operation/`, where authored source imports it as `../../runtime/index.js` from `src/`. A read of `operation/runtime/index.js` or `operation/browser/form-controls.js` returns the trusted SDK file. It used to fail as unavailable. An authored file at the same path still comes first.
+- The local host's SDK files for the minter's workspace and Guardian's source reads now include `runtime/files.js`, which `runtime/index.js` and `runtime/kernel-operation.js` import. A read of it used to fail as unavailable.
 
 ## 0.3.0
 

@@ -82,6 +82,11 @@
       "import": "./dist/typescript/src/browser/index.js",
       "default": "./dist/typescript/src/browser/index.js"
     },
+    "./core/browser/outcome-wait": {
+      "types": "./dist/typescript/src/browser/outcome-wait.d.ts",
+      "import": "./dist/typescript/src/browser/outcome-wait.js",
+      "default": "./dist/typescript/src/browser/outcome-wait.js"
+    },
     "./core/capabilities/intake-contracts": {
       "types": "./dist/typescript/src/capabilities/intake-contracts.d.ts",
       "import": "./dist/typescript/src/capabilities/intake-contracts.js",
