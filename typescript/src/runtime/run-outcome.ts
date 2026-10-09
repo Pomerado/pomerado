@@ -127,6 +127,10 @@ export interface RunEvidence {
   readonly possible_commit?: boolean | undefined;
   /** The tool's or the site's own words, for a refused input. */
   readonly refusal_reason?: string | undefined;
+  /** The input a refusal named, when the tool named it. */
+  readonly refusal_field?: string | undefined;
+  /** Every choice the page offers for the refused input, when the tool read them. */
+  readonly refusal_available?: readonly string[] | undefined;
   /** The login field the website rejected. */
   readonly rejected_field?: string | undefined;
 }
@@ -214,6 +218,10 @@ export const runError = (view: RunEvidence): RunFailure => {
       return failure("input_rejected", {
         possible_commit: possibleCommit(view),
         ...(view.refusal_reason === undefined ? {} : { reason: view.refusal_reason }),
+        ...(view.refusal_field === undefined ? {} : { field: view.refusal_field }),
+        ...(view.refusal_available === undefined || view.refusal_available.length === 0
+          ? {}
+          : { available: view.refusal_available }),
       });
     case "login_identity_conflict":
       return failure("login_identity_conflict", {});
