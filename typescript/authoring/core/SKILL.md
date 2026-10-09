@@ -99,6 +99,9 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- Prefer keying only on what the caller asked for. A detail that changes from one listing to
+  the next, such as a seating label or a room name, shouldn't decide whether the tool books or
+  refuses unless the caller chose it.
 - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
   error for that option over returning results for another one. A repair adds it when a caller
   needs it.
@@ -112,10 +115,17 @@ that asks.
   suggestion's full display text or an internal id the caller cannot know (an id the site
   shows on its own pages, such as a product number, is not internal). A closed list
   of options stays an enum of the site's options, as above. When the options come from a
-  query, as in an autocomplete, typeahead or searchable combobox, the tool types the
-  caller's value and picks the matching suggestion itself: an exact code or name match
-  wins (an airport code picks that airport, not its city), and it throws `InvalidInput`
-  only when nothing matches or several match equally.
+  query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
+  up the way a person would. Type the caller's value into the site's own search and read
+  every suggestion or result it shows. Prefer matching names loosely, ignoring case,
+  punctuation, apostrophe style and a location the site adds to the name, such as a
+  neighborhood or an airport code in brackets, over waiting for an element named exactly as
+  the caller typed it. A whole-name or code match outranks a partial one, so an airport code
+  picks that airport, not its city. Then count the matches at the best rank. With none,
+  throw `InvalidInput` at once, saying the site has no match and naming the closest entries
+  it showed. With one, use it. With several, ask the caller which one with a declared choice
+  question whose options are those matches as the site labels them
+  (.agents/caller-input/SKILL.md).
 - On a write, every choice the session met is an input: each option on the path,
   add-ons and pre-selected defaults included. Make it required when the site requires
   a choice (a fare class) and optional when it does not (a seat). An unset optional input
