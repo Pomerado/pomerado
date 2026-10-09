@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clickTiming,
+  humanClickCode,
   humanPointerPath,
   pointerTarget,
   pointerTiming,
@@ -90,5 +91,13 @@ describe("pointerTarget and clickTiming", () => {
     const pauses = seeds.map(() => clickTiming(random).pauseMs);
     const middle = (pointerTiming.pauseMs[0] + pointerTiming.pauseMs[1]) / 2;
     expect(pauses.filter((pause) => pause < middle).length / pauses.length).toBeGreaterThan(0.6);
+  });
+});
+
+describe("humanClickCode", () => {
+  it("never fails the call it starts, even where it cannot install", async () => {
+    // A call whose `page` has no frames, as a host call might see between tabs.
+    const call = new Function("page", `return (async () => {\n${humanClickCode()}\nreturn "ran";\n})();`);
+    expect(await Reflect.apply(call, undefined, [{}])).toBe("ran");
   });
 });

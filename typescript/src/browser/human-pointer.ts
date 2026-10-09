@@ -178,7 +178,8 @@ export interface HumanClickOptions {
  * 4. checks again what the pointer's point hits, then pauses, presses and releases in one batched
  *    call with `clickTiming`.
  *
- * Its listeners live in Patchright's isolated world, which page scripts never see. Anything that
+ * Installing it never fails the call it starts. Its listeners live in Patchright's isolated
+ * world, which page scripts never see. Anything that
  * fails before the press, or a service, page or tab that cannot take real input (a headless
  * browser, which moves no page pointer, or a host without the service), leaves the click
  * Playwright's, and the reason is counted in `humanClickPaths.stats`; a service that showed no
@@ -187,6 +188,8 @@ export interface HumanClickOptions {
  * the pointer for the host, so the click stays Playwright's then.
  */
 export const humanClickCode = (options: HumanClickOptions = {}) => `await (async () => {
+// Installing never fails the call it starts: a click then stays Playwright's.
+try {
 const options = ${JSON.stringify(options)};
 const state = (globalThis.__pomeradoHumanClick ??= { origins: new WeakMap(), stats: { real: 0, fallback: {} } });
 const frameClass = Object.getPrototypeOf(page.mainFrame());
@@ -377,6 +380,7 @@ state.patched = async function (selector, clickOptions = {}) {
   return original.call(this, selector, clickOptions);
 };
 frameClass.click = state.patched;
+} catch {}
 })();
 `;
 
