@@ -180,7 +180,8 @@ tool: read .agents/search/SKILL.md before you settle its inputs.
 **Load large content progressively.** Know a file's size before reading it:<!-- pomerado:section agents.file-lengths --> every `read_source` result gives
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
 probe, return only the slice you need, such as the relevant container, the matching rows and
-their count, never a whole page's text or every control.<!-- pomerado:section agents.large-content --> Search rather
+their count, never a whole page's text or every control on it. A filter panel's or option
+group's controls, once you open it, are such a slice.<!-- pomerado:section agents.large-content --> Search rather
 than read whole files: `grep` your own files in an offline command<!-- pomerado:section agents.progressive-reads:start
 .
 pomerado:section agents.progressive-reads:end -->
@@ -201,8 +202,8 @@ continues, when:
 
 1. the request has two plausible readings that would build different tools;
 2. a decision needs something only the user knows, such as which account, plan or item, and a
-   wrong guess matters (a write or a sign-in), or a location a search's results depend on, which
-   the caller may skip (.agents/search/SKILL.md);
+   wrong guess matters (a write or a sign-in), or a location a tool's results, prices or
+   availability depend on, which the caller may skip (.agents/core/SKILL.md, the input schema);
 3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
    usually find X?") before giving up;
 4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
@@ -414,9 +415,10 @@ write's task is done once, in its act session, and uncertain private-field submi
 fenced, regardless of the read flag. An authentication submission with an unknown outcome is
 always fenced.
 
-Choose meaningful tests; there is no mandatory test count or promotion matrix. A read may also
-run up to two live tests with an input you choose (`testInput`) to show the tool works beyond the
-example; run them before the first `finish_build` (.agents/testing/SKILL.md). Report skipped,
+Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that,
+choose meaningful tests, with no fixed count or promotion tier. A read may run up to four live
+tests with an input you choose (`testInput`), spent on the riskiest controls; run them before
+the first `finish_build`. Report skipped,
 unsupported or missing bodies honestly.
 
 <!-- pomerado:section agents.implementations -->
