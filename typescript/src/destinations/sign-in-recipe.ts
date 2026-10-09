@@ -339,6 +339,17 @@ export const noteFormSubmit = (
   });
 
 /**
+ * The origins in `untrustedOrigins` a sign-in names to its caller: when any of them received the
+ * password or a code, only those, since an origin that heard the identifier alone, such as an
+ * analytics script's, signs nobody in; else every one. Each is an exact origin.
+ */
+export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] => {
+  const named = [...(record.untrustedOrigins ?? [])];
+  const proving = named.filter(([, slots]) => [...slots].some(provesLogin));
+  return (proving.length > 0 ? proving : named).map(([origin]) => origin);
+};
+
+/**
  * Arms the watch for a fill about to run, with the form endpoints the host judged for its step,
  * and holds the step's values as pending: the request its submit sends may be heard before the
  * fill returns.

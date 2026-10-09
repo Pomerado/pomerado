@@ -444,6 +444,64 @@ it("verifies a script's sign-in request to a configured sign-in origin off the s
   expect(verified).toMatchObject({ verified: true, result: { signedIn: true } });
 });
 
+/** An identifier-first sign-in's first screen, its identifier alone. */
+const identifierOnly: SignInStep = {
+  fields: [{ selector: "#user", accepts: ["username"] }],
+  submit: "#next",
+};
+
+it("names only the origins off the site that received the password, never one that heard the identifier alone, with or without a check", async () => {
+  const analytics = "https://analytics.other.test";
+  // An analytics script captures the email the first screen sends; the second screen's script
+  // sends the whole login to the identity service.
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] =>
+    step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${analytics}/capture`,
+            method: "POST",
+            body: JSON.stringify({ email: values[0] }),
+            channel: "http",
+            resourceType: "xhr",
+          },
+        ]
+      : [identityRequest([account.username, values[0] ?? ""])];
+  const { checked, named } = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const result = yield* recorder.step(signedIn, undefined, Effect.void);
+      return { checked: result, named: recorder.untrustedOrigins() };
+    }),
+  );
+  expect(checked.untrustedSignInOrigins).toEqual([identity]);
+  expect(checked.result).toMatchObject({ untrustedSignInOrigins: [identity] });
+  expect(named).toEqual([identity]);
+  // With no check at all, the open sign-in names the same origin.
+  const unchecked = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      // The host checks each request it heard on its own, after the fill returns.
+      yield* Effect.sleep("20 millis");
+      return recorder.untrustedOrigins();
+    }),
+  );
+  expect(unchecked).toEqual([identity]);
+  // No origin is named once a sign-in verified.
+  const configured = await harness({
+    authenticationOrigins: [identity],
+    send: (_step, values) => [identityRequest(values)],
+  }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.untrustedOrigins();
+    }),
+  );
+  expect(configured).toEqual([]);
+});
+
 it("takes a code an exploration typed as the proof after a sent identifier", async () => {
   const host = harness();
   const result = await host.run((recorder) =>

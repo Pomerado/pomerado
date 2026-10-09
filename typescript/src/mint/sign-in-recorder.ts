@@ -16,6 +16,7 @@ import {
   isIdentifier,
   isSecret,
   makeSentTracker,
+  namedUntrustedOrigins,
   openSignInRecord,
   provesLogin,
   recordStep,
@@ -291,6 +292,7 @@ export const makeSignInRecorder = <E>(input: {
       readonly challengeScreens: AutofillScreens;
     };
     readonly published: () => PublishedSignIn | undefined;
+    readonly untrustedOrigins: () => readonly string[];
   },
   never,
   Scope.Scope
@@ -693,8 +695,8 @@ export const makeSignInRecorder = <E>(input: {
           return record?.untrustedOrigins === undefined
             ? { result: credentialsNotSubmitted }
             : {
-                result: loginSentOffSite([...record.untrustedOrigins.keys()]),
-                untrustedSignInOrigins: [...record.untrustedOrigins.keys()],
+                result: loginSentOffSite(namedUntrustedOrigins(record)),
+                untrustedSignInOrigins: namedUntrustedOrigins(record),
               };
         const named = identityValues(
           login.held(),
@@ -750,6 +752,11 @@ export const makeSignInRecorder = <E>(input: {
       },
       /** The screens a signed-in check reads now: every screen, and the current sign-in's. */
       screens: () => ({ screens: [...screens], challengeScreens: screens.slice(signInStart) }),
+      /**
+       * The origins off the site and its sign-in origins that the open sign-in's requests carried
+       * the login to, as a check names them, whether or not one ran; none once it is over.
+       */
+      untrustedOrigins: () => (open === undefined ? [] : namedUntrustedOrigins(open)),
       /** The latest verified sign-in, while no later sign-in reached the site; else none. */
       published: () => {
         if (verified === undefined || verified.signIn !== signIns) return undefined;

@@ -162,10 +162,15 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
  * An unpublished build names the origins its open sign-in sent the login to, off the site and the
  * request's sign-in origins, so its caller can add one to `authenticationOrigins` and mint again.
  */
-const withUntrustedSignInOrigins = (outcome: MintOutcome, state: MintState): LocalMintOutcome =>
-  outcome.build === "published" || state.untrustedSignInOrigins.size === 0
+const withUntrustedSignInOrigins = (
+  outcome: MintOutcome,
+  state: MintState,
+): LocalMintOutcome => {
+  const origins = state.namedSignInOrigins();
+  return outcome.build === "published" || origins.length === 0
     ? outcome
-    : { ...outcome, untrustedSignInOrigins: [...state.untrustedSignInOrigins] };
+    : { ...outcome, untrustedSignInOrigins: origins };
+};
 export const mintRequest = (
   session: StandaloneSession,
   context: RequestContext,
