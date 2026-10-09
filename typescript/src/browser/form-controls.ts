@@ -82,7 +82,8 @@ export const CalendarDate = Schema.String.pipe(
  *   It returns `{ shape }`, never the value.
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
- *   spellings, such as `["CA", "California"]`). A label that equals one wins over a value that does,
+ *   spellings, such as `["CA", "California"]`), ignoring case, spacing and apostrophe style
+ *   (`’`, `‘` and `ʼ` read as `'`). A label that equals one wins over a value that does,
  *   which wins over a label that holds it as a whole word; two different options at the winning
  *   rank are ambiguous. A custom dropdown is opened, its own listbox found through `aria-controls`
  *   or `aria-owns` (else the one visible listbox), typed into when it filters as you type, and
@@ -90,8 +91,15 @@ export const CalendarDate = Schema.String.pipe(
  */
 export const formControlsCode = String.raw`
 const formControlFailure = (reason) => Object.assign(new Error(reason), { name: "FormControlFailure" });
+/** Folds case, spacing and apostrophe style, so "Joe’s" and "joe's" name the same option. */
 const formControlText = (text) =>
-  String(text ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase().replace(/\.$/, "");
+  String(text ?? "")
+    .normalize("NFKC")
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "");
 const formControlFrame = async (control) => {
   const handle = await control.elementHandle();
   const frame = handle === null ? null : await handle.ownerFrame();
