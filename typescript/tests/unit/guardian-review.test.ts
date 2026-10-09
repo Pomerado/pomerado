@@ -636,6 +636,27 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       for (const sentence of sentences) expect(policy).toContain(sentence);
   });
 
+  // Guardian escalated example runs because it could not read an SDK helper the source imports,
+  // such as a browser script built from formControlsCode, and guessed SDK paths that don't exist.
+  it("tells Guardian the SDK a source imports is trusted host code", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "Use the exact listed path. The SDK a source imports from runtime/index.js, such as defineOperation, CalendarDate and formControlsCode, is trusted host code: judge what the source does with it, and never escalate or deny only because an SDK file is unavailable to read_source.";
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      expect(policy).toContain(sentence);
+  });
+
   // Guardian reviews an execution's source, never each request it sends.
   it("an execution review carries no destination review", async () => {
     const requests = readThenDecide({
