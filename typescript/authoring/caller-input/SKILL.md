@@ -85,6 +85,8 @@ already asked for, or to solve a CAPTCHA.
    - `await ask({ seat: { options: seats }, code: {} })` passes a choice's options, and
      nothing for the other types.
 
+   `ask` returns one answer per question id, so read `answer.<id>`, as in `answer.seat`.
+   For one question, `askOne("seat", { options })` returns that answer directly.
    One ask takes up to eight questions, with up to 50 options per choice. A choice
    returns the chosen `value`, a multi-choice an array of values. Write answers into
    the next call's code with `JSON.stringify`.
