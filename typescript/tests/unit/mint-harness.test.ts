@@ -1437,7 +1437,9 @@ it("sends a refused-outcome review back to revise once, and ends the attempt at 
       Effect.gen(function* () {
         const question = textQuestion("Which account type?");
         const first: unknown = JSON.parse(yield* turn.actions.requestInput(question));
-        expect(first).toMatchObject({ status: "review_invalid_outcome", retryable: true });
+        expect(first).toMatchObject({ status: "review_invalid_outcome" });
+        // retryable:true tells the minter to submit the same call again, which this repeats.
+        expect(first).not.toHaveProperty("retryable");
         expect(JSON.stringify(first)).not.toContain("unavailable");
         expect(turn.isComplete()).toBe(false);
         yield* turn.actions.requestInput(question);
@@ -1539,6 +1541,165 @@ it("ends a taken-over attempt at its first refused outcome when its checkpoint a
     },
   );
   expect((await takeover.run()).build).toBe("incomplete");
+});
+
+/** The parsed diagnostics a phase recorded. */
+const phaseDiagnostics = (outcome: { readonly diagnostics: readonly string[] }, phase: string) =>
+  outcome.diagnostics
+    .map((entry): unknown => JSON.parse(entry))
+    .filter((entry) => Reflect.get(Object(entry), "phase") === phase);
+
+// A publication review whose outcome Guardian kept refusing was recorded as an outage to retry,
+// which later reviews read as trusted host evidence, while the minter was told to revise.
+it("records a refused-outcome publication review as a revision, then as ended at a second", async () => {
+  const recorded: PublicationDecision[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        const first: unknown = JSON.parse(yield* turn.actions.finish(publication));
+        expect(first).toMatchObject({ status: "review_invalid_outcome" });
+        expect(first).not.toHaveProperty("retryable");
+        expect(turn.isComplete()).toBe(false);
+        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+          status: "review_invalid_outcome",
+          retryable: false,
+        });
+      }),
+    {
+      publicationDecisions: {
+        record: (decision) =>
+          Effect.sync(() => {
+            recorded.push(decision);
+          }),
+        list: Effect.sync(() => recorded),
+      },
+      publish: invalidOutcome,
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.build).toBe("incomplete");
+  expect(outcome).not.toHaveProperty("hostFailure");
+  expect(recorded).toEqual([
+    expect.objectContaining({
+      outcome: "refused",
+      failedChecks: ["InvalidOutcome"],
+      recovery: "correct_source",
+    }),
+    expect.objectContaining({ outcome: "refused", recovery: "ended" }),
+  ]);
+  expect(phaseDiagnostics(outcome, "publication")).toEqual([
+    expect.objectContaining({ code: "InvalidOutcome" }),
+    expect.objectContaining({ code: "InvalidOutcome" }),
+  ]);
+});
+
+it("gives a later question review a refused-outcome publication as a revision, not an outage", async () => {
+  const recorded: PublicationDecision[] = [];
+  const reviewed: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        yield* turn.actions.finish(publication);
+        yield* turn.actions.requestInput(textQuestion("Which account type?"));
+      }),
+    {
+      publicationDecisions: {
+        record: (decision) =>
+          Effect.sync(() => {
+            recorded.push(decision);
+          }),
+        list: Effect.sync(() => recorded),
+      },
+      publish: invalidOutcome,
+      reviewQuestion: (_request, options) =>
+        Effect.sync(() => {
+          reviewed.push(...(options?.publicationDecisions ?? []));
+          return { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+  );
+  await f.run();
+  expect(reviewed).toEqual([
+    expect.objectContaining({ outcome: "refused", recovery: "correct_source" }),
+  ]);
+});
+
+// A host that failed during the review that repeated a refused outcome ended the attempt with no
+// host failure, so the outcome hid the host's own cause.
+it("ends with the host's own cause when it fails during a refused-outcome review", async () => {
+  let reviews = 0;
+  let hostDown = false;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const question = textQuestion("Which account type?");
+        yield* turn.actions.requestInput(question);
+        expect(JSON.parse(yield* turn.actions.requestInput(question))).toMatchObject({
+          status: "review_invalid_outcome",
+          retryable: false,
+        });
+      }),
+    {
+      executionAvailability: () => (hostDown ? "host_unavailable" : "open"),
+      reviewQuestion: () => {
+        if (reviews++ === 1) hostDown = true;
+        return invalidOutcome();
+      },
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", hostFailure: "host_unavailable" });
+  expect(phaseDiagnostics(outcome, "question_review")).toEqual([
+    expect.objectContaining({ code: "InvalidOutcome" }),
+    expect.objectContaining({ code: "InvalidOutcome" }),
+  ]);
+});
+
+// Once live execution closed during an execution review whose outcome Guardian kept refusing, the
+// answer still invited a revised resubmission that could no longer run.
+it("points a refused-outcome execution to its retained receipt once live execution closed", async () => {
+  let hostDown = false;
+  let executions = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        const answer: unknown = JSON.parse(
+          yield* turn.actions.execute({ ...execution, purpose: "explore" }),
+        );
+        expect(answer).toMatchObject({
+          status: "review_invalid_outcome",
+          executionAvailability: "host_unavailable",
+        });
+        expect(answer).not.toHaveProperty("retryable");
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      executionAvailability: () => (hostDown ? "host_unavailable" : "open"),
+      reviewAndExecute: () => {
+        if (executions++ === 0)
+          return Effect.succeed({
+            executionId: "execution_one",
+            status: "completed" as const,
+            effect: "verified" as const,
+            resultRef: "private-result-ref",
+            observations: { result: "public" },
+          });
+        hostDown = true;
+        return Effect.fail(
+          new MintFailure({
+            code: "ReviewUnavailable",
+            reviewFailure: "InvalidOutcome",
+            reviewDispatch: "not_sent",
+          }),
+        );
+      },
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
 });
 
 it("keeps two answered requests in one attempt and publishes with both answers", async () => {
