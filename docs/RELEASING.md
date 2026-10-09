@@ -48,6 +48,8 @@ gh workflow run release.yml --repo Pomerado/pomerado --ref main \
 
 Record user-facing changes in [CHANGELOG.md](../CHANGELOG.md) in the pull request that makes them. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.
 
+A pull request that removes a `./core/*` export hosts use, or changes one incompatibly, also raises `pomerado.hostProtocol` in `package.json` by one. `tools/check-host-protocol.ts` runs first in `pnpm test` and fails when a `./core/*` export that the `canary` or `latest` version on npm has is gone and the protocol didn't rise above theirs, or when the protocol is lower than theirs. It can't see an incompatible change inside a module, so raise the number by hand for that. A release run fails when it can't read npm; a pull request or a local run warns and goes on.
+
 Changes go under `Unreleased`. The pull request that bumps `version` renames `Unreleased` to the `X.Y.Z` of the canaries that shipped those changes, as in `X.Y.Z-canary.N`, and lists its own changes under a new `Unreleased`.
 
 ## Failures

@@ -17,3 +17,5 @@ export const getAuthoringDirectory = (): string => assetPath("../authoring/", tr
 
 /** The upstream Guardian policy shipped with this installed package. */
 export const getGuardianPolicyPath = (): string => assetPath("./guardian/upstream-policy.md", false);
+
+export { getRuntimeSources, runtimeSourceEntry } from "./execution/runtime-sources.js";
