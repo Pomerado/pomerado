@@ -97,8 +97,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   literal in the helper the composed script imports. Runs accept a popup without
   asking only at the step the session accepted it at, so the host refuses to publish
   a composed script that drops one.
-- Mark every step that can change saved state, including an autosave, a saved form
-  step and a payment submission whose next screen is unknown. Call
+- Mark only the step whose click saves or submits. Opening or filling an unsaved
+  form is not a commit step. Mark every such step, including a saved form step and a
+  payment submission whose next screen is unknown. Call
   `enteringCommit("place-order")` right before the execute call that can send that
   change, and declare the names in order as `write.commits`. Use the same marked
   helper in the session and the composed script. If the call returns an unexpected
@@ -245,7 +246,7 @@ See `references/write-session.ts` for two steps and the composed script, and
 
 Perform the authorized task once through live `act` steps, preserving the shared effect journal and caller choices. Wait for actual confirmation and read back committed state. Declare `verified`, `unverifiable`, and their confirmation behavior accurately using the existing SDK; a missing result alone never proves the write absent.
 
-Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark every step that can change saved state, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
+Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step. Mark every such step, including saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
 
 Compose `src/tool.mjs` from the original reviewed steps and confirming observation. You may check source/schema and pure helpers offline, but never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
 
