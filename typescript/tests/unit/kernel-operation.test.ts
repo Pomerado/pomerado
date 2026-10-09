@@ -317,6 +317,12 @@ return { title: await page.title() };`,
 it.each([
   [false, "TimeoutError: locator.waitFor: Timeout 5000ms exceeded", "BrowserActionTimeout"],
   [false, "unrelated script timeout", "OperationFailure"],
+  [
+    false,
+    "OutcomeWaitFailure: outcome_timeout after 300 ms: results 0 visible of 0",
+    "BrowserActionTimeout",
+  ],
+  [false, "outcome_ambiguous: results 2 visible of 2", "OperationFailure"],
   [true, "TimeoutError: locator.waitFor: Timeout 5000ms exceeded", "OperationFailure"],
 ] as const)(
   "attributes native action timeout only to failed Kernel responses (%s, %s)",
