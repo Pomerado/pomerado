@@ -46,7 +46,7 @@ value whose page differs from the others (a sort order, a mode, a layout), and o
 every optional input set, which also catches controls that interfere with each other. Set
 several controls in one test whenever that covers more. Check the remaining values offline
 against pages you captured where that applies, and list any input no live run set under
-untested in `coverage`, where publication review sees it as unverified. A control that fails
+untested in `coverage`, so a reader sees it as unverified. A control that fails
 its test is fixed, never dropped from the schema. A live run that returns partly filled results,
 or passes only when run again, shows a missing wait for content: fix the wait in source.<!-- pomerado:section testing.offline-fixtures -->
 

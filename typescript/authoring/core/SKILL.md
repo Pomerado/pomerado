@@ -71,13 +71,11 @@ pomerado:section core.execute-calls:end -->
   `new errors.InvalidInput(message, { field, available })` instead, as "Configure, then read"
   below says. `errors` exists only in the script, never in a call's `code`, so when the page
   shows the refusal, return a marker such as `{ refused: "why", field, available }` from the
-  call and throw once it returns. The run then fails as the caller's input. With `available`,
-  the host ends the run at once, with no repair, and the caller sees the choices; without it, a
-  host that repairs may check the value and ask the caller before it ends that way. A repair
-  never asks the caller for a replacement value and never runs the tool with a value the caller
-  did not send: when the page does not offer the caller's value, the repair makes the code throw
-  with `available`, shows it with the caller's own input, and the run ends with those choices.
-  A write that throws it before entering a commit mark reports that it changed nothing. A page,
+  call and throw once it returns. The run then fails as the caller's input; with `available`,
+  the host ends it at once with those choices and no repair. A repair never asks the caller for
+  a replacement value and never runs the tool with a value the caller did not send: when the
+  page does not offer the caller's value, the repair makes the code throw with `available`,
+  shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
 - After a write, call `verified()` with no argument just before returning, once a call has
   read the result back, either the site's confirmation for this submission or the saved state.
@@ -152,9 +150,10 @@ that asks.
   unset, it keeps the page's default.
 - Find the inputs that change the result yourself; the request will not list them all. A
   location is the common one: a ZIP or postal code, city, address or store often changes
-  results, prices and availability. Always look for where the site lets a visitor set one, on
-  a search, details or cart tool alike, and when it does, make it an optional input (such as
-  `zip_code`, and `store` when the site offers stores). Set it on every run through the site's
+  results, prices and availability, such as a store's stock or the appointments a city's
+  offices show. Always look for where the site lets a visitor set one, on a search, details or
+  cart tool alike, and when it does, make it an optional input, such as `zip_code`, or `store`
+  when the site offers stores. Set it on every run through the site's
   own location control, take the site's matching suggestion, read the applied location back
   from the page and return it. Left unset, return the location the page shows and say in the
   description that the site picks it, which can differ from run to run. While building, ask
@@ -230,7 +229,7 @@ so a value the code could not read fails the output check (`Schema.NonEmptyStrin
 `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever the
 request's wording or a description says. A run whose output fails its schema goes to repair.
 - The one exception is a record whose own page genuinely does not show the value, such as an
-  item that is sold out and shows no amount. Then the value may be null only together with a
+  item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a
   field that says why, such as its availability, and both descriptions say so.
 - Null never covers a value the page shows that the code failed to read: that throws
   `OperationFailure` naming it. Never turn a read that found nothing into null
@@ -244,7 +243,7 @@ that a caller could reasonably use to identify, choose, compare or act on it, no
 the request names. Leave out what is unrelated to the tool's purpose or of no use to a caller.
 - Keep each value's full displayed text. Read the element that holds the whole value, never a
   shorter or secondary one. When the page splits one value across elements, such as a maker
-  line above a linked name, return each part in its own field. Never drop either part.
+  line above a linked name or an author line above a title, return each part in its own field. Never drop either part.
 - Prefer a separate typed field for each fact over folding it into another field's text. Never
   derive a value the page does not show.
 - A field that is not a needed value is nullable when records on this site can lack it, and it
@@ -274,15 +273,16 @@ location or store. A search's filters and sort are such choices too. Before read
 that depends on them:
 
 1. Discover. Read every choice group the page offers and each group's options exactly as
-   shown, including which are unavailable. Open collapsed groups, menus and "more options"
-   links to see them. A group with one option, or a disabled control showing one value, is a
+   shown, including which are unavailable, opening collapsed groups and menus as above. A group
+   with one option, or a disabled control showing one value, is a
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
    presents the groups, since one choice can change the options of the next. When the value is
    not among the options the page offers, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
-   `field` the input's name and `available` every option the page offers for it, exactly as
-   shown. Never pick a near match, the page's default or the first option.
+   `field` the input's name and `available` every option the page currently offers as
+   selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
+   `available`, and say in the message that they were left out. Never pick a near match, the page's default or the first option.
 3. Confirm. Read each choice back from the page's selected state, then wait until the values
    that depend on it have changed or settled; a value read before the page updates belongs to
    the previous choice.
@@ -319,7 +319,8 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 `locator.evaluate` or `locator.evaluateAll` when code needs browser globals such as
 `document`.
 Read each output value from the element or structured-data entry that holds the whole value,
-never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or the record's own key, using its `innerText`.
+never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or
+the record's own key, using its `innerText`.
 Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
 text or a page-wide setting such as a currency or language picker: `textContent` also includes
 hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
@@ -524,9 +525,8 @@ Keep exploratory output focused on the current question: the relevant control or
 container, its state, and the nearby choices. Prefer the existing accessibility
 checkpoint to repeatedly returning whole-page text and all controls. If a probe
 reports a missing choice, compare its post-action checkpoint before concluding
-the site does not support it, and open the collapsed group, drawer or "more" link it
-may sit behind. Listing a filter panel's or option group's controls is a focused
-observation. Return explicit partial coverage when an observation is bounded; never
+the site does not support it. Listing a filter panel's or option group's controls is a
+focused observation. Return explicit partial coverage when an observation is bounded; never
 describe a truncated list as complete.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
@@ -562,9 +562,8 @@ For a read tool, look for a write your own action caused, such as adding an item
 a cart, submitting a form, saving a preference or starting a checkout. If you find
 one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
-again. Setting the location or store a read's results depend on, or a filter, sort or option,
-in the run's own browser through the site's control is part of the read, not a saved
-preference. For a write session, the list shows the commit your step caused and any
+again. Setting a read's location, filter, sort or option through the site's control is part of
+the read, not a saved preference (the input schema above). For a write session, the list shows the commit your step caused and any
 autosave: that is the evidence for the `http` version, and any other write is
 unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
 page evaluation, `page_script` is the site's script (which your click can also

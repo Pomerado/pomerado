@@ -15,7 +15,7 @@ fails or reports a bad input; it never means ending the build.
 Before you settle the input schema, open the results for a typical query and read every control
 that narrows, orders or configures them: the filter panel, chips, the sort menu, range sliders
 and boxes, toggles, and every group that is collapsed, scrolled out of view or behind an "All
-filters", "More" or "Show all" button. Open each collapsed group and list its options. Make every
+filters", "More" or "Show all" button (core skill, the input schema). Make every
 control that narrows or orders the results an optional input wired to its control, even one the
 request never names; leave out only controls that change neither which results come back nor
 their order, such as a layout or language switch.
@@ -48,19 +48,10 @@ stop changing, as the core skill's readiness rules say.
 
 ## Location
 
-When results, prices or availability depend on a location or store, and the site lets a visitor
-set one (a ZIP, city or address box, or a store picker), make it an optional input, such as
-`zip_code` and, when the site offers stores, `store`, as the core skill says. Set it on every run
-through the site's own location control, take the site's matching suggestion, then read the
-applied location back from the page, such as the header's ZIP, city or store name, and return it.
-When the caller leaves it unset, return the location the page shows and say in the description
-that the site picks it, which can differ from run to run. If the page does not apply the caller's
-value, the tool throws `OperationFailure`; if the site says it has no such location or store, it
-throws `InvalidInput` with `field` and `available`, the stores it offers. Setting a location in
-the run's own browser is part of the read: the browser is fresh and discarded, so nothing is
-saved, and a tool that never signs in has no account to change. In a signed-in tool, use the
-site's per-visit location control and never save an address, default store or preference to the
-account. While building, ask the owner for a location; they may skip it.
+When results, prices or availability depend on a location or store that the site lets a visitor
+set, make it an input and apply it as the core skill's input schema says. If the site says it has
+no such location or store, the tool throws `InvalidInput` with `field` and `available`, the ones
+it offers.
 
 ## Results
 
