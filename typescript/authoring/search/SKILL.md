@@ -42,10 +42,11 @@ to the account. While building, ask the owner for one; they may skip it.
 
 ## Results
 
-Read every field of every result from that result's own card on every run. When the site marks
-results as suggestions rather than matches, such as "no exact matches, showing similar items",
-return that. A search that applied every input and got the site's no-results message returns an
-empty list, never an error.
+Wait for the search's answer with `waitForOutcome` (core skill), naming its error, its
+no-results message and its results, never the results alone. Read every field of every result
+from that result's own card on every run. When the site marks results as suggestions rather than
+matches, such as "no exact matches, showing similar items", return that. A search that applied
+every input and got the site's no-results message returns an empty list, never an error.
 
 ## Describe and test it
 

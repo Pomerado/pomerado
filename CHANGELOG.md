@@ -50,6 +50,8 @@
   - Migrate by adding `explanation` to every `PublicationFinding` a host makes itself, and to a host's own publication decoder.
 - `example_value` is no longer an input finding. An input narrowed to the example's value blocks publication with reason `source_correction`; a decision that returns it as `input_feedback` fails as `InvalidDecision`.
   - Migrate a host's own publication policy by listing only `account_specific_enum` and `input_option` under `input_feedback`.
+- The authored runtime's `browser/index.js` now imports `browser/outcome-wait.js`. A host that copies the SDK's files into a minting workspace or a run's sandbox, as the local host's `local-runtime-assets` does, must copy it too, or every authored operation fails to load.
+  - Migrate by adding `browser/outcome-wait` beside `browser/form-controls` in that list.
 
 ### Other changes
 
@@ -161,11 +163,17 @@
   - A published sign-in saves the build's https sign-in origins in `pomerado.json` as `signIn.authenticationOrigins`, the ones passed in `authenticationOrigins` first and then the trusted ones. A build with no sign-in origins saves the same bytes as before. `deployment.json` adds them to the request's `authenticationOrigins`, and a run signs in through both. `MintArtifact.signIn` gains the optional `authenticationOrigins`.
   - An earlier version ignores the origins `pomerado.json` saved. Its served calls still sign in through `deployment.json`, and its `pomerado run` of such an integration fails to sign in.
 - `pomerado/testing/shop-fixture` adds `identityHost` and a sign-in at `/identity-login`. Its script sends the login to an identity service on that host, then trades the token for the shop's session. `/identity-steps` is an identifier-first sign-in on one page. Its first screen sends the identifier to that service, and its second sends the password there, or to the shop with `?password=site`. `/account/note` saves a note for the signed-in account. The shop's state counts `identityPosts` and keeps `accountNotes`.
+- `pomerado/runtime` adds `outcomeWaitCode`, page code for a Kernel call body like `formControlsCode`. Its `waitForOutcome(outcomes, { timeout })` waits for whichever of the page's possible answers shows after a step such as a search, a date pick or a submit, named one locator each (`{ failed, empty, results }`), and returns that key. It only observes.
+  - The first listed outcome wins when several show, so a site's error or refusal listed first wins over results beside it. It answers once two looks in a row agree.
+  - It throws an `Error` named `OutcomeWaitFailure` with `reason` and per-outcome `observations` (`OutcomeObservation`, a count of matches and of visible ones), and a message naming both: `outcome_ambiguous` when the winning locator matches more than one element, which it never picks among, and `outcome_timeout` when nothing showed within `timeout`, 30 s by default.
+  - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, never only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
+  - Other hosts get it from `pomerado/core/browser/outcome-wait`.
 
 ### Fixes
 
 - A local build no longer publishes a tool that rests on a sign-in it never verified. A write build could sign in again in the middle of its session, write, and publish with no sign-in, so every later run started signed out. `finish_build` now refuses as `autofill_recipe_not_verified` when a step the publication rests on ran after a sign-in sent the login and before any check verified it, and the build has no verified sign-in to publish. A write rests on every act step of its session, and a read on the example or explore it publishes. A read is refused even when its example ran signed out.
 - Guardian's source reads on the local host now find the SDK under `operation/`, where authored source imports it as `../../runtime/index.js` from `src/`. A read of `operation/runtime/index.js` or `operation/browser/form-controls.js` returns the trusted SDK file. It used to fail as unavailable. An authored file at the same path still comes first.
+- The local host's SDK files for the minter's workspace and Guardian's source reads now include `runtime/files.js`, which `runtime/index.js` and `runtime/kernel-operation.js` import. A read of it used to fail as unavailable.
 
 ## 0.3.0
 

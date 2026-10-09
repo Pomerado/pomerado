@@ -257,7 +257,8 @@ that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
 challenge. Wait for a unique operation control or page state before testing absence
-or choosing a fallback. Use `locator.waitFor` or a bounded polling loop;
+or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+(below) when the page can answer more than one way, or a bounded polling loop;
 `count()` and `isVisible()` only observe the current instant. A ready page should
 pass immediately; do not add a fixed sleep. Share one bounded navigation deadline across navigation
 and first-page readiness, as in `references/navigation.ts`. Readiness polling
@@ -272,6 +273,18 @@ original deadline. Never repeat the click or submission as part of that recovery
 Use observed conditions, without fixed sleeps or whole-page network-idle waits.
 For an unknown destination, inspect after the document transition; do not invent a
 selector or repeat the action in a follow-up read.
+After a step whose answer can vary, such as a search, a date pick or a submit, name every way
+the page can answer: results, an empty or sold-out message, a greyed-out choice, the site's
+error, a pick-one list. Never wait only for the happy result. Import `outcomeWaitCode` from the
+runtime, put it at the top of the call's code, and wait with `waitForOutcome({ refused, failed,
+empty, results })`, one scoped locator per answer. The first listed wins when several show, so
+list a refusal or error first, then the empty state, then results. It only observes and returns
+the key that showed. Read results; return an empty list for a listing's empty state; throw
+`InvalidInput` with the site's own words for a refusal; ask the caller about a pick-one list
+(.agents/caller-input/SKILL.md). It throws an `Error` named `OutcomeWaitFailure` whose message
+says what each outcome matched: `outcome_ambiguous` when the winning locator matches more than
+one element, and `outcome_timeout` after its `timeout`, 30 s by default.
+`references/navigation.ts` waits for a search's answer and a record's page this way.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because
@@ -307,9 +320,9 @@ Never call `.first()` (or `.nth(0)`) on a broad text or regex match, whether to
 click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
-then check that exactly one element matches. When several candidates remain,
-inspect them and choose by evidence such as section, accessible name and
-destination before clicking or waiting. A readiness wait targets one specific
+then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
+returns. When several candidates remain, inspect them and choose by evidence such as
+section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
 For a detail read, reach the record through the site's own search, list or link for the
