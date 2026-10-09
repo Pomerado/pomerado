@@ -177,6 +177,7 @@
   - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, rather than only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
   - Other hosts get it from `pomerado/core/browser/outcome-wait`.
   - A run whose `waitForOutcome` saw no outcome in time fails as `BrowserActionTimeout`, as a native Playwright wait's timeout does, so a host keeps the browser and reports it as a browser action timeout. `outcome_ambiguous` stays the tool's own failure.
+- A script's context adds `askOne(id, question)`, a thin wrapper over `ask` that asks one declared question and returns that answer itself. `ask` with a list or an object returns one answer per id, such as `{ seat: "12A" }`, so the caller-input skill now says to read `answer.<id>` and names `askOne` for one question. `pomerado/runtime` exports its type as `ScriptAskOne`.
 
 ### Fixes
 

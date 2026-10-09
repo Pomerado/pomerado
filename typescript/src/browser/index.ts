@@ -12,7 +12,11 @@ export type {
 export { Deadline, timeoutDefaults } from "../runtime/deadline.js";
 export { contractJsonSchema, defineOperation, executeOperation } from "../runtime/operation.js";
 export { OperationFailure, operationErrors } from "../runtime/kernel-operation.js";
-export type { KernelOperationContext, ScriptAsk } from "../runtime/kernel-operation.js";
+export type {
+  KernelOperationContext,
+  ScriptAsk,
+  ScriptAskOne,
+} from "../runtime/kernel-operation.js";
 export type { Operation, WriteDeclaration } from "../runtime/operation.js";
 export { runSupportedVariant, VariantSelectionFailed } from "../runtime/variants.js";
 export type { SupportedVariant, VariantApplicability } from "../runtime/variants.js";
