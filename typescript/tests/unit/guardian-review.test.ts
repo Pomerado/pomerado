@@ -386,11 +386,11 @@ describe("Guardian modeled reviewer contract", () => {
       );
       expect(result.decision.outcome).toBe(outcome);
     }
-    for (const raw of [
-      undefined,
-      { outcome: "approved", rationale: "Wrong enum" },
-      { outcome: "allow" },
-    ]) {
+    for (const [raw, code] of [
+      [undefined, "InvalidDecision"],
+      [{ outcome: "approved", rationale: "Wrong enum" }, "InvalidOutcome"],
+      [{ outcome: "allow" }, "InvalidDecision"],
+    ] as const) {
       const guardian = makeGuardian({ run: () => Effect.succeed(raw) });
       const rejected = await Effect.runPromise(
         Effect.either(guardian.review(pending, () => Effect.succeed(sourceEnvelope))),
@@ -398,7 +398,7 @@ describe("Guardian modeled reviewer contract", () => {
       expect(rejected).toMatchObject({
         _tag: "Left",
         left: {
-          code: "InvalidDecision",
+          code,
           failureDetail: { subCause: "guardian_dependency_failed", phase: "decision_validation" },
         },
       });

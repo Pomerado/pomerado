@@ -257,17 +257,23 @@ it("refuses an outcome the review kind may not return", async () => {
       }).review(pending, sourcesOf(files())),
     ),
   );
-  expect(execution).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
-  for (const raw of [
-    { outcome: "escalate", rationale: "Not one of this kind's outcomes.", label: "listable" },
-    { outcome: "allow", rationale: "Not one of this kind's labels.", label: "unlisted_code" },
-  ]) {
+  expect(execution).toMatchObject({ _tag: "Left", left: { code: "InvalidOutcome" } });
+  for (const [raw, code] of [
+    [
+      { outcome: "escalate", rationale: "Not one of this kind's outcomes.", label: "listable" },
+      "InvalidOutcome",
+    ],
+    [
+      { outcome: "allow", rationale: "Not one of this kind's labels.", label: "unlisted_code" },
+      "InvalidDecision",
+    ],
+  ] as const) {
     const hosted = await Effect.runPromise(
       Effect.either(
         makeGuardian({ run: () => Effect.succeed(raw) }).reviewHostKind(pending, listing({})),
       ),
     );
-    expect(hosted).toMatchObject({ _tag: "Left", left: { code: "InvalidDecision" } });
+    expect(hosted).toMatchObject({ _tag: "Left", left: { code } });
   }
 });
 

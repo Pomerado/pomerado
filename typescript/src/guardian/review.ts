@@ -954,6 +954,9 @@ export const makeGuardian = (
         }
         const kindName = pending.hostReview?.kind ?? kind;
         const outcomes = reviewOutcomesOf(pending);
+        /** A decision whose outcome this review's kind does not return. */
+        const outcomeRefused = (raw: unknown) =>
+          typeof raw === "object" && raw !== null && !outcomeAccepted(pending, raw);
         let outcomeCorrected = false;
         let readRounds = 0;
         const unread = (raw: unknown) =>
@@ -990,12 +993,7 @@ export const makeGuardian = (
               "guardian.usage",
             ),
           followUp: (output) => {
-            if (
-              !outcomeCorrected &&
-              typeof output === "object" &&
-              output !== null &&
-              !outcomeAccepted(pending, output)
-            ) {
+            if (!outcomeCorrected && outcomeRefused(output)) {
               outcomeCorrected = true;
               followUpRounds++;
               return `The host did not accept this decision: a ${kindName} review returns only the outcome ${outcomes.join(", ")}, as trusted_review.outcomes lists. Decide this review again under its policy and return one of them.`;
@@ -1009,13 +1007,13 @@ export const makeGuardian = (
         });
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
-        const projected = decisionForKind(pending, raw);
-        if (projected === undefined)
+        if (outcomeRefused(raw))
           return yield* decisionFailure(
             new Error(`The outcome is not one a ${kind} review returns`),
             "InvalidOutcome",
           );
-        const decision = yield* decode(projected);
+        // Output that is not a decision at all fails to decode as InvalidDecision.
+        const decision = yield* decode(decisionForKind(pending, raw));
         if (requireEntrypoint && decision.outcome === "allow" && entrypointReadAt !== epoch())
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         yield* emit(
