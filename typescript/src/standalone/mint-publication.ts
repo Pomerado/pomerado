@@ -77,9 +77,9 @@ const unverifiedSignInRefusal = (state: MintState, sample: Run) =>
   });
 
 /**
- * The origins off the site a published sign-in sends the login to, as the tool saves them: the
- * request's that are https origins, then each the caller trusted when asked, once each. None when
- * there are none, so a build without them saves what it always did.
+ * The build's https sign-in origins, as the tool saves them with a published sign-in: the
+ * request's that are https origins, same-site ones included, then each the caller trusted when
+ * asked, once each. None when there are none, so a build without them saves what it always did.
  */
 const savedSignInOrigins = (state: MintState) => {
   const origins = state.signInOrigins

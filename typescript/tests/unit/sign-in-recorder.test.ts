@@ -573,6 +573,38 @@ it("verifies an identifier-first sign-in that sends the identifier off the site 
   expect(configured).toMatchObject({ verified: true });
 });
 
+it("asks nothing about an origin that heard the identifier alone once the caller trusted the one that received the password", async () => {
+  const analytics = "https://analytics.other.test";
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] => [
+    ...identifierFirst(identity)(step, values),
+    ...(step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${analytics}/capture`,
+            method: "POST",
+            body: JSON.stringify({ email: values[0] }),
+            channel: "http" as const,
+            resourceType: "xhr" as const,
+          },
+        ]
+      : []),
+  ];
+  const checked = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const first = yield* recorder.step(signedIn, undefined, Effect.void);
+      // Only the identity service received the password, so only it is named and asked about.
+      expect(first.untrustedSignInOrigins).toEqual([identity]);
+      recorder.trustOrigins([identity]);
+      // The password counts as sent now, so the analytics origin is still never named.
+      expect(recorder.untrustedOrigins()).toEqual([]);
+      return yield* recorder.step(signedIn, undefined, Effect.void);
+    }),
+  );
+  expect(checked).toMatchObject({ verified: true });
+});
+
 it("names only the origins off the site that received the password, never one that heard the identifier alone, with or without a check", async () => {
   const analytics = "https://analytics.other.test";
   // An analytics script captures the email the first screen sends; the second screen's script

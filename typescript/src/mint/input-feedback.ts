@@ -111,7 +111,7 @@ export interface MintArtifact {
   readonly outputSchema: unknown;
   /**
    * The build's verified sign-in, value-free: its recipe, the address its runs start from and,
-   * when a host records them, the origins off the site its sign-in sends the login to.
+   * when a host records them, the build's sign-in origins.
    */
   readonly signIn?: {
     readonly recipe: SignInRecipe;

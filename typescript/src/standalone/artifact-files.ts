@@ -14,8 +14,8 @@ const Metadata = Schema.Struct({
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
   /**
-   * Where the build's sign-in recipe is (`auth-fill.json`), where its runs start and the origins
-   * off the site its sign-in sends the login to.
+   * Where the build's sign-in recipe is (`auth-fill.json`), where its runs start and the build's
+   * https sign-in origins.
    */
   signIn: Schema.optionalWith(
     Schema.Struct({

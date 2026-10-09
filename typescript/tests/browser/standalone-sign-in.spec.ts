@@ -1025,7 +1025,11 @@ test("a local read build publishes an explore that ran after a sign-in no check 
       expect.objectContaining({ state: "authenticated" }),
     );
     expect(built.build, JSON.stringify(built)).toBe("published");
-    expect(built.artifact?.signIn).toEqual(identityLoginSignIn(shop));
+    // The tool saves the origin given up front with its sign-in.
+    expect(built.artifact?.signIn).toEqual({
+      ...identityLoginSignIn(shop),
+      authenticationOrigins: [identityOrigin],
+    });
   });
 });
 

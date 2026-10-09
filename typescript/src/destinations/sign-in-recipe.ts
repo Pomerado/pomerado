@@ -341,13 +341,16 @@ export const noteFormSubmit = (
 
 /**
  * The origins in `untrustedOrigins` a sign-in names to its caller: when any of them received the
- * password or a code, only those, since an origin that heard the identifier alone, such as an
- * analytics script's, signs nobody in; else every one. Each is an exact origin.
+ * password or a code, or the sign-in's password or code counts as sent, as once the caller
+ * trusted the origin that received it, only those that received one, since an origin that heard
+ * the identifier alone, such as an analytics script's, signs nobody in; else every one. Each is
+ * an exact origin.
  */
 export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] => {
   const named = [...(record.untrustedOrigins ?? [])];
   const proving = named.filter(([, slots]) => [...slots].some(provesLogin));
-  return (proving.length > 0 ? proving : named).map(([origin]) => origin);
+  const proofSent = proving.length > 0 || [...record.submittedSlots].some(provesLogin);
+  return (proofSent ? proving : named).map(([origin]) => origin);
 };
 
 /**

@@ -36,8 +36,9 @@ export interface PomeradoRequest {
 
 /**
  * A local mint's outcome. An unpublished build whose sign-in sent the login only to origins off
- * the site and `authenticationOrigins` names each in `untrustedSignInOrigins`, an exact origin:
- * add one you trust to `authenticationOrigins` and mint again.
+ * the site and `authenticationOrigins` names them in `untrustedSignInOrigins`, each an exact
+ * origin, whether or not the caller trusted one when asked: answer yes when the build asks, or add
+ * one you trust to `authenticationOrigins`, and mint again.
  */
 export type LocalMintOutcome = MintOutcome & {
   readonly untrustedSignInOrigins?: readonly string[];
@@ -48,7 +49,9 @@ export interface Pomerado {
   /**
    * Runs a minted artifact on `url` with no Guardian review and no model request. Guardian
    * reviewed the artifact when it was minted. `intent`, `effect` and `authenticationOrigins` are
-   * not checked here, so run only artifacts you minted or trust. A read or a confirmed write
+   * not checked here, so run only artifacts you minted or trust. Its sign-in types the login on
+   * the site, the request's `authenticationOrigins` and the ones the artifact saved in
+   * `signIn.authenticationOrigins`, which a caller trusted when its build asked. A read or a confirmed write
    * returns its output. A failed sign-in fails with `SignInRunFailed`, and any other run with
    * `RunOutcomeFailure`, which says what it did to the website and how to retry.
    */
@@ -85,7 +88,7 @@ export const Artifact = Schema.Struct({
   outputSchema: Schema.Unknown,
   /**
    * The verified sign-in a build recorded: its value-free recipe, where its runs start and the
-   * origins off the site its sign-in sends the login to, when it has any.
+   * build's https sign-in origins, when it has any.
    */
   signIn: Schema.optionalWith(
     Schema.Struct({
