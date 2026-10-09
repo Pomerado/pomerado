@@ -66,14 +66,19 @@ pomerado:section core.execute-calls:end -->
   returns true once the page is usable. It throws `ChallengeFailure` if the page stays blocked.
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
-  or a party size over its limit, throw `new errors.InvalidInput(message)` saying why and
-  naming the choices the page offers, when it shows them. `errors`
-  exists only in the script, never in a call's `code`, so when the page shows the refusal,
-  return a marker such as `{ refused: "why" }` from the call and throw once it returns. The
-  run then fails as the caller's input. A host that repairs checks the value and asks the
-  caller before it ends that way. A write that throws it before entering a commit mark
-  reports that it changed nothing. A page, control or response that changed is still
-  `OperationFailure`.
+  or a party size over its limit, throw `new errors.InvalidInput(message)` saying why. When the
+  value is not among choices the page lists, throw
+  `new errors.InvalidInput(message, { field, available })` instead, as "Configure, then read"
+  below says. `errors` exists only in the script, never in a call's `code`, so when the page
+  shows the refusal, return a marker such as `{ refused: "why", field, available }` from the
+  call and throw once it returns. The run then fails as the caller's input. With `available`,
+  the host ends the run at once, with no repair, and the caller sees the choices; without it, a
+  host that repairs may check the value and ask the caller before it ends that way. A repair
+  never asks the caller for a replacement value and never runs the tool with a value the caller
+  did not send: when the page does not offer the caller's value, the repair makes the code throw
+  with `available`, shows it with the caller's own input, and the run ends with those choices.
+  A write that throws it before entering a commit mark reports that it changed nothing. A page,
+  control or response that changed is still `OperationFailure`.
 - After a write, call `verified()` with no argument just before returning, once a call has
   read the result back, either the site's confirmation for this submission or the saved state.
   Return the confirmation number or record in the output. Without it the write stays a
@@ -94,14 +99,17 @@ that asks.
 - The code works for every value the schema accepts. Never let the schema promise what
   the code rejects or ignores, such as a string the code throws on unless it is the example's
   value, or an input the code accepts and then never applies, skips or always reports
-  unsupported or unapplied: wire it to the site's control, or leave it out and say in the
-  description what the tool does not cover.
+  unsupported or unapplied: wire it to the site's control. Leave an input out only when the
+  site offers no control for it, and say so in the description.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
-- If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
-  error for that option over returning results for another one. A repair adds it when a caller
-  needs it.
+- Read results for every option the schema lists. When an option leads to a page that
+  differs from the others, handle that layout too and run it live (testing skill); never
+  return results for another option in its place.
+- A repair that finds a declared input broken, never applied or always reported unsupported
+  fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract
+  means every input and output it declares works, not leaving a broken one as it was.
 - Never derive a format from one sample: not an input format, an element key, a selector, a
   URL path or a label. A key the page showed for the example's value says nothing about the
   next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read
@@ -133,13 +141,28 @@ that asks.
   the request and reviewed evidence.
 - Never hard-code a value the caller could vary: it comes from the input, never a literal
   in source, a schema default or the definition. A good tool exposes the options its
-  purpose calls for, not only the ones the request names: record every optional field the
-  flow offers that bears on the tool's purpose as an optional input wired to its control,
-  such as cabin class (economy or first) on a flight search, even when the request never
-  mentions it. Leave out controls unrelated to the purpose, such as a language switch or a
-  newsletter opt-in on a search. Record such a field as an optional input whether or not
-  you ask about it, since callers of the tool can set it. Ask about one only as `AGENTS.md`
-  ("Try hard, then ask") allows; left unset, it keeps the page's default.
+  purpose calls for, not only the ones the request names: record every control the flow
+  offers that narrows, orders or configures what the tool returns as an optional input wired
+  to its control, such as cabin class (economy or first) on a flight search, even when the
+  request never mentions it. Open collapsed groups, drawers and "more" links before you
+  decide what the page offers: a collapsed group is not an absent one. Leave out controls
+  unrelated to the purpose, such as a language switch or a newsletter opt-in on a search.
+  Record such a field as an optional input whether or not you ask about it, since callers of
+  the tool can set it. Ask about one only as `AGENTS.md` ("Try hard, then ask") allows; left
+  unset, it keeps the page's default.
+- Find the inputs that change the result yourself; the request will not list them all. A
+  location is the common one: a ZIP or postal code, city, address or store often changes
+  results, prices and availability. Always look for where the site lets a visitor set one, on
+  a search, details or cart tool alike, and when it does, make it an optional input (such as
+  `zip_code`, and `store` when the site offers stores). Set it on every run through the site's
+  own location control, take the site's matching suggestion, read the applied location back
+  from the page and return it. Left unset, return the location the page shows and say in the
+  description that the site picks it, which can differ from run to run. While building, ask
+  the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location or
+  store in the run's own browser is part of the read, never a write: the run's browser is
+  fresh and discarded, so nothing is saved, and a tool that never signs in has no account to
+  change. In a signed-in tool, use the site's per-visit location control and never save an
+  address, default store or preference to the account.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The
@@ -193,28 +216,92 @@ that asks.
   without fixing them, the host publishes the last reviewed version privately to the
   caller's account and flags it.
 
-**Output fields.** Decide from the request and the pages which values the request needs: each
-value it names, the record's identifier as the site shows it, and the context those values
-depend on as the page shows it, such as dates, a party size or a location. Make each required
-and non-null, typed so a value the code could not read fails the output check
-(`Schema.NonEmptyString` for text, `Schema.Int` for a count), never an optional, nullable or
-plain `Schema.Number` field. Make a field optional or nullable only when the page can lack it
-and the result still serves the request, and say in its description when it is null. A run
-whose output fails its schema goes to repair.
+**Find contract gaps before your first example.** Compare the schema you plan with what the
+page offers: a control no input covers, an input you cannot wire, a value the request needs
+that the page does not show, or a needed field you would have to make nullable. Settle each
+then: wire it, ask the owner with `request_input` when the request reads two ways, or state in
+the description why the tool lacks it. Publication review blocks on the same gaps, and finding
+them at `finish_build` costs a full fix-and-resubmit round.
+
+**Output fields.** Return every distinct fact the page shows about each record or result that a
+caller could use to identify, choose, compare or act on it, not only the values the request
+names. That includes:
+- its identifier;
+- its full name or title as displayed, with the maker, brand or provider when the page shows one;
+- every amount the page shows, each with its unit, period or what it applies to;
+- ratings and their counts;
+- availability and status;
+- the badges and labels the site attaches to it;
+- its links.
+
+The record or result card is the boundary: leave out page-wide navigation and controls.
+- Keep each value's full displayed text. Read the element that holds the whole value, never a
+  shorter or secondary one. When the page splits one value across elements, such as a maker
+  line above a linked name, return each part in its own field. Never drop either part.
+- Prefer a separate typed field for each fact over dropping it or folding it into another
+  field's text. Never derive a value the page does not show.
+- A field other than the needed values below is nullable only when records on this site can
+  lack it, and it is null exactly when this record does not show it.
+- Never declare a field the code does not read. A field that is always null, empty or fixed is
+  not a disclosed limit: read it from the page, or leave the field out.
+
+**Values the request needs** are each value it names, the record's identifier as the site shows
+it, and the context those depend on as the page shows it, such as dates, a party size or a
+location.
+- Make each one required and non-null, typed so a value the code could not read fails the
+  output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never optional,
+  nullable or plain `Schema.Number`. This holds even when some records might not show it, and
+  even when the request says to report a missing value as "not available": that wording never
+  makes a named fact nullable. A run whose output fails its schema goes to repair.
+- When this record's page lacks a needed value, the code throws `OperationFailure` naming it.
+- Never turn a read that found nothing into null (`?.innerText ?? null`). A missing element is a
+  failure, not an absence.
+- Only the other fields may be nullable, and then only from a positive absence signal on the
+  page.
+- Before your first example, list the needed values. If the page may not show one, settle it
+  then: find where the site shows it, on every layout its records use, or ask the owner.
+
+Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row the page shows.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
-- Return `null` only when this record's page lacks the value, and an empty list only when the
-  page shows none; never throw for either. When the code cannot read a value the request needs,
-  throw `OperationFailure` naming it; never return a placeholder, a label or another record's
-  value in its place.
+- Return `null` for a field that is not a needed value only when this record's page lacks it,
+  and an empty list only when the page shows none; never throw for either. When the code cannot
+  read a value the request needs, throw `OperationFailure` naming it; never return a
+  placeholder, a label or another record's value in its place.
 - One field per fact, as the page states it, and variants as the dimensions and values the page
   lists.
 - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations;
   type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not
   parse cleanly may be the site's own text.
+
+**Configure, then read.** Many pages show values that depend on choices made on the page: a
+record's options or variants, a plan or tier, dates, a party size or quantity, units, a
+location or store. A search's filters and sort are such choices too. Before reading any value
+that depends on them:
+
+1. Discover. Read every choice group the page offers and each group's options exactly as
+   shown, including which are unavailable. Open collapsed groups, menus and "more options"
+   links to see them. A group with one option, or a disabled control showing one value, is a
+   fixed value: read it, never click it.
+2. Set. Apply each input's value through the page's own control, in the order the page
+   presents the groups, since one choice can change the options of the next. When the value is
+   not among the options the page offers, throw
+   `new errors.InvalidInput(message, { field, available })` before any commit mark, with
+   `field` the input's name and `available` every option the page offers for it, exactly as
+   shown. Never pick a near match, the page's default or the first option.
+3. Confirm. Read each choice back from the page's selected state, then wait until the values
+   that depend on it have changed or settled; a value read before the page updates belongs to
+   the previous choice.
+4. Read. Only then read the values the choices affect. Return the applied choices beside
+   them, and each group's offered options as a list, so a caller sees what the values apply to
+   and what else they could choose.
+
+An optional choice the caller leaves unset keeps the page's default: read it back and return
+it as applied. A control you could not find, open or read throws `OperationFailure`, never
+`InvalidInput`.
 
 <!-- pomerado:section core.host-ownership:start
 
@@ -240,8 +327,8 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 (`github.io`). `references/native-page.ts` shows the check. Use `page.evaluate`,
 `locator.evaluate` or `locator.evaluateAll` when code needs browser globals such as
 `document`.
-Read each output value from the element or structured-data entry that holds it, found by a
-stable id, a `data-` attribute, a role and name or the record's own key, using its `innerText`.
+Read each output value from the element or structured-data entry that holds the whole value,
+never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or the record's own key, using its `innerText`.
 Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
 text or a page-wide setting such as a currency or language picker: `textContent` also includes
 hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
@@ -263,6 +350,20 @@ pass immediately; do not add a fixed sleep. Share one bounded navigation deadlin
 and first-page readiness, as in `references/navigation.ts`. Readiness polling
 only observes: do not repeat `goto`, reload, login, submission or another action
 inside it. Preserve site/path and account guards while waiting.
+Wait for the values you will read, not for their containers. A list or record is ready when
+every element you will read has its text or value, loading placeholders (skeletons, spinners,
+`aria-busy`, empty cards) are gone, and the count has stopped changing. A page with an outcome
+is ready only when it shows that outcome: results, or the site's own empty message. Before
+acting on a control, wait until overlays and loading indicators covering it are gone and its
+section is expanded. After an action that navigates or re-renders, wait for the committed state
+(URL, selected value or header) before checking identity or reading. Use bounded retrying
+waits: re-check the condition until it holds or the budget ends, then throw `OperationFailure`
+naming what was last observed and what was expected. Never swallow a failed wait and continue
+(`try { await wait } catch {}`): either the condition is required, so throw, or it is not, so do
+not wait for it. After extracting, confirm the page did not re-render under you: the same count,
+first record ID and URL as before extraction. If any changed, read again within the deadline.
+These re-checks only observe: never repeat the click, submission or navigation that caused the
+change.
 After an action that can navigate, wait for the observed destination URL when known,
 then a specific destination control or page state before extracting. Keep the action,
 readiness wait and extraction in the same Kernel execute call when possible. If a read
@@ -432,8 +533,10 @@ Keep exploratory output focused on the current question: the relevant control or
 container, its state, and the nearby choices. Prefer the existing accessibility
 checkpoint to repeatedly returning whole-page text and all controls. If a probe
 reports a missing choice, compare its post-action checkpoint before concluding
-the site does not support it. Return explicit partial coverage when an observation
-is bounded; never describe a truncated list as complete.
+the site does not support it, and open the collapsed group, drawer or "more" link it
+may sit behind. Listing a filter panel's or option group's controls is a focused
+observation. Return explicit partial coverage when an observation is bounded; never
+describe a truncated list as complete.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code
@@ -468,7 +571,9 @@ For a read tool, look for a write your own action caused, such as adding an item
 a cart, submitting a form, saving a preference or starting a checkout. If you find
 one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
-again. For a write session, the list shows the commit your step caused and any
+again. Setting the location or store a read's results depend on, or a filter, sort or option,
+in the run's own browser through the site's control is part of the read, not a saved
+preference. For a write session, the list shows the commit your step caused and any
 autosave: that is the evidence for the `http` version, and any other write is
 unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
 page evaluation, `page_script` is the site's script (which your click can also

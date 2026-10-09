@@ -234,8 +234,9 @@ result, and maintenance reads the site back and finishes the write at most once.
 An `unverifiable` write reports <!-- pomerado:section writes.unverifiable-status:start
 `may_have_applied`
 pomerado:section writes.unverifiable-status:end --> too, and nothing repairs it.
-A script that throws `errors.InvalidInput` (core skill) fails as the caller's input. A host
-that repairs checks the value and asks the caller before it ends that way. Before any commit
+A script that throws `errors.InvalidInput` (core skill) fails as the caller's input. With
+`available`, the host ends the run at once with those choices; without it, a host that repairs
+may check the value and ask the caller before it ends that way. Before any commit
 mark is entered, the run reports that it changed nothing.
 
 See `references/write-session.ts` for two steps and the composed script, and

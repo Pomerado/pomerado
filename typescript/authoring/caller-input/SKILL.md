@@ -26,7 +26,8 @@ conflict, can still need a question, one that names the actual problem.
 Work the request already covers proceeds without a question, such as finding the right field
 or choosing among alternatives the request already allows. A supplied value the site does not
 offer, such as an unavailable option, date or quantity, is not such a question: the tool throws
-`InvalidInput`, as .agents/core/SKILL.md says, and never substitutes another value. Asking the
+`InvalidInput` with `field` and `available`, the choices the page offers, as .agents/core/SKILL.md
+says ("Configure, then read"), and never substitutes another value. Asking the
 owner to revise it or stop is the minter's own `request_input` question while it builds, as
 `AGENTS.md` says.
 

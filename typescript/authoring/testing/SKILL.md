@@ -22,12 +22,13 @@ recorded steps, not just in an exploration script or the business script (which 
 Report sign-in replay as unverified unless a separate registered run actually starts signed out
 at that URL and completes the recorded steps. Do not clear a live session or repeat a write merely to test this.
 
-A read may run up to two live tests per attempt with an input you choose instead of
+A read may run up to four live tests per attempt with an input you choose instead of
 the caller's: set `testInput` to the tool's input as JSON text, with purpose `test`
 and target `liveBrowser`. Use them to show the tool works for other values its schema
-accepts, such as another route, two travellers and another cabin. For a detail read, spend
-one on another record whose page differs, such as a product with options or a listing with
-another layout. Pick public values
+accepts, such as another route, two travellers and another cabin. For a detail read, open
+three to five records from a listing first and note how their pages differ, such as options,
+a single-option control, a grouped page or another layout, then spend one test on a record
+that differs. Pick public values
 the site offers (places, dates, counts, listed options), never a person's, account's
 or record's name, number or code. The operation checks the input against its input
 schema before it touches the site, and a failed check still counts. Guardian reviews
@@ -36,7 +37,18 @@ succeeds ends live execution. If a test shows the schema must widen, widen it in
 publication reads the schemas from current source, and only a changed flow needs a fresh
 example (publication skill). Check `testInput` against the
 schema yourself first: a failed test of `src/tool-http.mjs` marks the HTTP version's
-latest live test failed, and it is dropped. The example uses the caller's input, or your `exampleInput` when that input is empty, and offline tests always use the caller's input.<!-- pomerado:section testing.offline-fixtures -->
+latest live test failed, and it is dropped. The example uses the caller's input, or your `exampleInput` when that input is empty, and offline tests always use the caller's input.
+
+Test every control you expose before publishing. The example and your live tests together set
+each optional input at least once. Spend your four live tests on the riskiest controls: one
+inside a drawer, collapsed group or menu, one that reloads or navigates the results, an enum
+value whose page differs from the others (a sort order, a mode, a layout), and one test with
+every optional input set, which also catches controls that interfere with each other. Set
+several controls in one test whenever that covers more. Check the remaining values offline
+against pages you captured where that applies, and list any input no live run set under
+untested in `coverage`, where publication review sees it as unverified. A control that fails
+its test is fixed, never dropped from the schema. A live run that returns partly filled results,
+or passes only when run again, shows a missing wait for content: fix the wait in source.<!-- pomerado:section testing.offline-fixtures -->
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read
@@ -45,7 +57,8 @@ latest live test failed, and it is dropped. The example uses the caller's input,
 Choose cases that catch actual risk: applied filters, account scope, IDs, units,
 authoritative empty versus absent/loading data, private-input variation, partial
 coverage, schema failures, variants and changed terms. Avoid assertions that merely
-copy implementation expressions. No required matrix, count or promotion tier.
+copy implementation expressions. Beyond testing every control you expose, there is no fixed
+count or promotion tier.
 Report actual passed/failed/skipped/unsupported counts and missing evidence; an
 all-skipped suite proves nothing. Never fabricate absent response bodies or assets.
 

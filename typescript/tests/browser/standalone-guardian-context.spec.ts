@@ -432,7 +432,7 @@ async ({ ask }) => ({ note: await ask("note") }));`,
   }
 });
 
-test("a read build runs two live tests on inputs it chose and its example on the input it read", async () => {
+test("a read build runs four live tests on inputs it chose and its example on the input it read", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
@@ -454,6 +454,8 @@ test("a read build runs two live tests on inputs it chose and its example on the
         () => [call("execute", chosen(1), "test_1")],
         () => [call("execute", chosen(2), "test_2")],
         () => [call("execute", chosen(3), "test_3")],
+        () => [call("execute", chosen(4), "test_4")],
+        () => [call("execute", chosen(5), "test_5")],
         () => [call("execute", execution("test", "src/tool.mjs", { testInput: "{x" }), "not_json")],
         () => [
           call(
@@ -473,8 +475,10 @@ test("a read build runs two live tests on inputs it chose and its example on the
     });
     expect(toolResult(last, "test_1")).toMatchObject({ status: "completed" });
     expect(toolResult(last, "test_2")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "test_3")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "test_4")).toMatchObject({ status: "completed" });
     for (const [id, reason] of [
-      ["test_3", "already ran 2 live tests with an input you chose"],
+      ["test_5", "already ran 4 live tests with an input you chose"],
       ["not_json", "testInput must be the tool's input as JSON text"],
       ["example_test", "testInput is only for a read's live test"],
     ] as const) {
@@ -486,6 +490,8 @@ test("a read build runs two live tests on inputs it chose and its example on the
     expect(reviewed.map((review) => currentOf(review)?.["input"])).toEqual([
       "agent_chosen",
       "agent_chosen",
+      "agent_chosen",
+      "agent_chosen",
       "intent_derived",
     ]);
     const example = reviewed.at(-1);
@@ -493,6 +499,8 @@ test("a read build runs two live tests on inputs it chose and its example on the
       '{"venue":"Venue X"}',
     );
     expect(historyOf(example).map((entry) => entry["input"])).toEqual([
+      "agent_chosen",
+      "agent_chosen",
       "agent_chosen",
       "agent_chosen",
     ]);
