@@ -7,7 +7,8 @@ import {
 
 const siteOrigin = "https://www.shop.test";
 const identity = "https://accounts.identity.test";
-const none = { siteOrigin, trusted: [], asked: new Set<string>() };
+const analytics = "https://collect.analytics.test";
+const none = { siteOrigin, trusted: [], asked: new Set<string>(), receivedProof: true };
 
 it("asks about one to three https origins off the site that are neither trusted nor asked yet", () => {
   expect(signInOriginsToAsk([identity], none)).toEqual([identity]);
@@ -30,9 +31,23 @@ it("asks about one to three https origins off the site that are neither trusted 
         siteOrigin,
         trusted: ["https://configured.test"],
         asked: new Set(),
+        receivedProof: true,
       }),
     ).toBeUndefined();
   expect(signInOriginsToAsk([identity], { ...none, asked: new Set([identity]) })).toBeUndefined();
+});
+
+it("asks about two or three origins only once a password or a code went anywhere, and about one before that", () => {
+  const early = { ...none, receivedProof: false };
+  // An identifier screen whose email reached the identity service and an analytics script: the
+  // check after the password screen asks instead.
+  expect(signInOriginsToAsk([identity, analytics], early)).toBeUndefined();
+  expect(
+    signInOriginsToAsk([identity, analytics, "https://token.identity.test"], early),
+  ).toBeUndefined();
+  // One origin that heard the identifier alone, as an approval or email-link sign-in sends it.
+  expect(signInOriginsToAsk([identity], early)).toEqual([identity]);
+  expect(signInOriginsToAsk([identity, analytics], none)).toEqual([identity, analytics]);
 });
 
 it("asks one host question naming the site and each origin, and maps only a yes to trust", () => {
