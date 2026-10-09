@@ -16,6 +16,7 @@ import {
   isIdentifier,
   isSecret,
   makeSentTracker,
+  namedUntrustedOrigins,
   openSignInRecord,
   provesLogin,
   recordStep,
@@ -696,8 +697,8 @@ export const makeSignInRecorder = <E>(input: {
           return record?.untrustedOrigins === undefined
             ? { result: credentialsNotSubmitted }
             : {
-                result: loginSentOffSite([...record.untrustedOrigins.keys()]),
-                untrustedSignInOrigins: [...record.untrustedOrigins.keys()],
+                result: loginSentOffSite(namedUntrustedOrigins(record)),
+                untrustedSignInOrigins: namedUntrustedOrigins(record),
               };
         const named = identityValues(
           login.held(),
@@ -754,10 +755,10 @@ export const makeSignInRecorder = <E>(input: {
       /** The screens a signed-in check reads now: every screen, and the current sign-in's. */
       screens: () => ({ screens: [...screens], challengeScreens: screens.slice(signInStart) }),
       /**
-       * The origins the open sign-in's login went to that are neither the site nor one of its
-       * sign-in origins, each an exact origin; none once it is over.
+       * The origins off the site and its sign-in origins that the open sign-in's requests carried
+       * the login to, as a check names them, whether or not one ran; none once it is over.
        */
-      untrustedOrigins: () => [...(open?.untrustedOrigins?.keys() ?? [])],
+      untrustedOrigins: () => (open === undefined ? [] : namedUntrustedOrigins(open)),
       /**
        * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
        * sent, and its next check may verify it. Nothing is typed again, and a secret credited

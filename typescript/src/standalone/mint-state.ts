@@ -431,6 +431,14 @@ export const mintState = (
         return bound.signInOrigins;
       },
       /**
+       * What an unpublished build names to its caller: the origins its checks named since the last
+       * verified sign-in, then the ones the open sign-in's requests carried the login to, so a
+       * build that never checked its sign-in names them too.
+       */
+      namedSignInOrigins: (): readonly string[] => [
+        ...new Set([...bound.untrustedSignInOrigins, ...bound.recorder.untrustedOrigins()]),
+      ],
+      /**
        * Binds the build to another site, for a task update the host applies, with no sign-in
        * origins of its own; nothing switches unless it succeeds.
        */

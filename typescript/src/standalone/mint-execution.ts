@@ -527,10 +527,10 @@ const authoredExecution = (
     yield* allowedOf(reviewed).pipe(
       Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
     );
-    // The open sign-in sent the login and no check verified it, so the host cannot tell whether
-    // this step runs signed in: a publication that rests on it needs a recorded sign-in.
-    const afterUnverifiedSignIn =
-      (execution.purpose === "act" || execution.purpose === "example") && live && start.submitted;
+    // The open sign-in sent the login and no check verified it, so this live step may run signed
+    // in, as an explore on the page that sign-in left does: a publication that rests on it, an
+    // act step, an example or an explore, needs a recorded sign-in.
+    const afterUnverifiedSignIn = live && start.submitted;
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.

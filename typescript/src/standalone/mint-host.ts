@@ -161,7 +161,8 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
 };
 /**
  * An unpublished build names the origins its sign-in sent the login to since the last verified
- * sign-in, off the site and the request's sign-in origins, in its outcome and its summary, so its
+ * sign-in, off the site and the request's sign-in origins, whether or not a check ran
+ * (`namedSignInOrigins`), in its outcome and its summary, so its
  * caller can trust one when asked, or add it to `authenticationOrigins`, and mint again. One the
  * caller trusted during the build stays named, since no sign-in verified through it and nothing
  * saved it, and its summary says to pass it up front.
@@ -170,7 +171,7 @@ const withUntrustedSignInOrigins = (
   outcome: MintOutcome,
   state: MintState,
 ): LocalMintOutcome => {
-  const origins = [...state.untrustedSignInOrigins];
+  const origins = state.namedSignInOrigins();
   if (outcome.build === "published" || origins.length === 0) return outcome;
   const trusted = origins.filter((origin) => state.signInOrigins.trusted.includes(origin));
   const untrusted = origins.filter((origin) => !trusted.includes(origin));

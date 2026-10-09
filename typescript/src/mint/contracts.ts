@@ -179,6 +179,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    */
   readonly spentSignIn?: SpentSignIn;
   /**
+   * The origins off the site and its sign-in origins that a sign-in no check verified sent the
+   * login to, each an exact origin, which a publication refused as `autofill_recipe_not_verified`
+   * names to the minter.
+   */
+  readonly untrustedSignInOrigins?: readonly string[];
+  /**
    * Set by the host when the site lost its signed-in session, as on a page load, and the host
    * could not sign in again: the build ends `sign_in_unavailable` with this cause.
    */
@@ -280,7 +286,10 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "repair_unchanged"
     /** The saved login to sign in with stayed held by another job through the host's wait. */
     | "login_in_use"
-    /** A shared browser sign-in repair cannot publish without a verified replacement recipe. */
+    /**
+     * A shared browser sign-in repair cannot publish without a verified replacement recipe, nor a
+     * local build that rests on a step it ran after a sign-in no check verified.
+     */
     | "autofill_recipe_not_verified"
     | "source_storage"
     | "registry_publication"

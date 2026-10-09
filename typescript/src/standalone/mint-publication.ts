@@ -50,11 +50,12 @@ const retainedPublicationSample = (
   });
 
 /**
- * A build publishes nothing that rests on a step the host ran after it sent a login no check
- * verified, unless it holds a recorded sign-in: the host cannot tell whether that step ran signed
- * in, and its runs could not sign in. A write rests on every act step of its session, since its
- * composed script is judged against all of them; a read on the example it publishes. A sign-in
- * the build verifies later records one, and then the build publishes.
+ * A build publishes nothing that rests on a live step the host ran after it sent a login no check
+ * verified, unless it holds a recorded sign-in: such a step may have run signed in, its runs could
+ * not sign in, and the build took the task to need the account. A write rests on every act step
+ * of its session, since its composed script is judged against all of them; a read on the step it
+ * publishes, an example or an explore. A sign-in the build verifies later records one, and then
+ * the build publishes. The refusal names the origins the login went to off the site, if any.
  */
 const unverifiedSignInRefusal = (state: MintState, sample: Run) =>
   Effect.suspend(() => {
@@ -64,11 +65,15 @@ const unverifiedSignInRefusal = (state: MintState, sample: Run) =>
             (run) => run.purpose === "act" && run.afterUnverifiedSignIn === true,
           )
         : sample.afterUnverifiedSignIn === true;
-    return rests && state.recorder.published() === undefined
-      ? Effect.fail(
-          new MintFailure({ code: "PublicationUnavailable", reason: "autofill_recipe_not_verified" }),
-        )
-      : Effect.void;
+    if (!rests || state.recorder.published() !== undefined) return Effect.void;
+    const origins = state.namedSignInOrigins();
+    return Effect.fail(
+      new MintFailure({
+        code: "PublicationUnavailable",
+        reason: "autofill_recipe_not_verified",
+        ...(origins.length === 0 ? {} : { untrustedSignInOrigins: origins }),
+      }),
+    );
   });
 
 /**

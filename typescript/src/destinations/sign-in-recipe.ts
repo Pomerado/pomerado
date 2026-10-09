@@ -340,6 +340,17 @@ export const noteFormSubmit = (
   });
 
 /**
+ * The origins in `untrustedOrigins` a sign-in names to its caller: when any of them received the
+ * password or a code, only those, since an origin that heard the identifier alone, such as an
+ * analytics script's, signs nobody in; else every one. Each is an exact origin.
+ */
+export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] => {
+  const named = [...(record.untrustedOrigins ?? [])];
+  const proving = named.filter(([, slots]) => [...slots].some(provesLogin));
+  return (proving.length > 0 ? proving : named).map(([origin]) => origin);
+};
+
+/**
  * Trusts `origin` for the open sign-in, once the caller confirmed it: the slots its requests
  * carried (`untrustedOrigins`) count as sent, as if the request rule had credited them, and the
  * watch takes it as a sign-in origin for any request still to come. Nothing is typed or sent
