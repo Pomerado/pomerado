@@ -260,7 +260,7 @@ The package has these entry points.
 - Another host installs the same core as a pinned library package and calls it directly, through the hook interfaces above. Its own frontend, accounts, storage, providers and authoring text live in its own code.
 - This package holds the code the local host runs, those hook interfaces, and the signed-in marker checks in `destinations/signed-in-marker.ts`, which a host uses to implement `MintDependencies.checkSignedInMarker`. Code that only another host runs stays in that host.
 - A host adopts a tested release through an exact dependency pin with locked integrity, and rolls back by restoring its previous pin. Public commits don't update any host.
-- `package.json` declares `"pomerado": { "hostProtocol": N }`, the version of the interface hosts compose, the `./core/*` exports. A release that removes a `./core/*` export hosts use, or changes one incompatibly, raises N by one. A host reads it as data from the package it installs, without running the package. A package without the field is protocol 1.
+- `package.json` declares `"pomerado": { "hostProtocol": N }`, the version of the interface hosts compose, the `./core/*` exports. A release that removes a `./core/*` export hosts use, or changes one incompatibly, raises N by one. A host reads it as data from the package it installs, without running the package. A package without the field is protocol 1. `pnpm test` checks a removed `./core/*` export against the versions on npm, as [RELEASING.md](RELEASING.md) describes.
 - Contributors can test a host against a locally built package before a version is published.
 
 ## Source layout

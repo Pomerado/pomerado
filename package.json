@@ -760,7 +760,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "start": "node dist/typescript/src/standalone/cli.js",
     "mcp": "node dist/typescript/src/standalone/mcp-cli.js",
-    "test": "vitest run",
+    "test": "node tools/check-host-protocol.ts && vitest run",
     "test:browser": "playwright test",
     "prepack": "corepack pnpm build"
   },
