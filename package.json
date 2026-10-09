@@ -16,6 +16,9 @@
   "engines": {
     "node": ">=24.21.0 <25"
   },
+  "pomerado": {
+    "hostProtocol": 1
+  },
   "bin": {
     "pomerado": "dist/typescript/src/standalone/cli.js",
     "pomerado-mcp": "dist/typescript/src/standalone/mcp-cli.js"
@@ -42,6 +45,7 @@
       "default": "./dist/typescript/src/assets.js"
     },
     "./package.json": "./package.json",
+    "./runtime-sources.json": "./dist/runtime-sources.json",
     "./authoring/caller-choice": {
       "types": "./dist/typescript/authoring/examples/caller-choice.d.ts",
       "import": "./dist/typescript/authoring/examples/caller-choice.js",
