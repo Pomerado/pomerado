@@ -266,19 +266,20 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "core",
     "- After a write, call `verified()` with no argument just before returning, once a call has read the result back, either the site's confirmation for this submission or the saved state. Return the confirmation number or record in the output. Without it the write stays a possible effect.",
   ],
-  // A browser version reaches every page through the site, never through a URL it built.
+  // A browser version prefers the page's controls to URLs it builds, and opens a caller's URL on
+  // the site unchanged.
   [
     "core",
-    'For a detail read, reach the record through the site\'s own search, list or link for the schema-validated caller identifier (AGENTS.md, "Reach every page the way a person does"). Never build its page URL from the identifier, and never accept a caller URL as the target. A successful response or plausible content is insufficient',
+    "For a detail read whose input is the record's page URL, check that it is https on the tool's site and open it unchanged.",
   ],
   [
     "workspace/AGENTS.md",
-    "**Reach every page the way a person does.** In the Playwright version and your browser probes, open the site's entry page and get everywhere else through the site itself: type into its search boxes and forms, pick its suggestions and options, and click its links and buttons. Never open a URL, path or query string that holds the caller's input, such as a slug made from a name, a code or date placed in a path, or a parameter the site did not send. This holds for `src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run is fine to read, return, reload or follow, such as the results page your search landed on or a link's own `href`. So is a fixed page the site links to, opened by its exact `href` without caller input. Never trim, rebuild or guess a link: a link with its query removed is a URL you wrote. When a site control does not offer the caller's value, wait for it, retry it or use another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist. Never fall back to a URL you wrote. This rule does not cover the HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input. **Read back every input before returning.**",
+    "A URL the caller supplied, on the tool's site, may be opened unchanged: the build's start page, or a URL input such as a product or listing page, which a details tool takes as input and opens directly.",
   ],
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
     "workspace/AGENTS.md",
-    "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
   // Only what the caller asked for decides whether a tool books or refuses. An option the code
   // reads no results for yet throws rather than returning another option's results, and a format
@@ -649,7 +650,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["ba7a172db77465eb9bfa69ecc334b9e0e90370cfdceb72f36500ee760bf1ac26", "core"],
+    ["15bd4dfd239ceb6ef78eef89a59adf6ba84af5d7c56dfb82cdce5aaa3dccfe2e", "core"],
     ["a3cb66103ace3daa108b6985820e68bc26faf92aef992f60a9107a4fdbeff1b9", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
@@ -659,7 +660,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a6a79d3d19f685f4d05697ce105102465b0fd5244a0cf1e297ac9e9cdd9f4d9e", "cart"],
     ["8024535ea06bb25be859f91e6f67a7a4116cc5dc1af2ab1d51a0171ffb912d5e", "caller-input"],
     ["c882afded68960b6387260744bd119c0d397b9ed08c004c9421e486d24432c79", "publication"],
-    ["5ff05613733463e730f1fcc791fa1645f8be7ad613352852d9644f83ab6d416e", "workspace/AGENTS.md"],
+    ["e7608e16e65e788e24c46a2d5a20cd9f3c04bda5ff8323b028dc697bd20a6bb3", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

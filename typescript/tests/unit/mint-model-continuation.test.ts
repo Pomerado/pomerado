@@ -439,6 +439,91 @@ it("refuses report_blocked while an unavailable review may still be resubmitted"
   expect(JSON.stringify(f.requests[2]?.input)).toContain("review_unavailable_pending");
 });
 
+// A policy block needs a refusal on record: a Guardian deny or escalation, or the owner's no. The
+// minter's own reading of its instructions is none, so the host refuses the ending and the same
+// attempt goes on to publish.
+it("refuses a policy block nothing in the attempt refused and keeps building", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", {
+          reason: "policy",
+          explanation: "The rules do not let this tool open the page the caller named.",
+        }),
+        call("execute", execution),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published_revision" });
+  expect(outcome.blocked).toBeUndefined();
+  expect(JSON.stringify(f.requests[1]?.input)).toContain("policy_not_refused");
+  expect(f.counts()).toMatchObject({ executed: 1, published: 1 });
+});
+
+// A host may name a policy ending of its own, such as a repair's verdict that the caller's input
+// caused the failure: the ending it allows needs no refusal on record, and any other still does.
+it("ends a policy block the host allows without a refusal on record, and only that one", async () => {
+  const allowed = "Caller verdict: the date is before the departure.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "policy", explanation: "Another reason." }, "other"),
+        call("report_blocked", { reason: "policy", explanation: allowed }, "allowed"),
+      ][index] ?? prose("Stopping."),
+    { policyBlockAllowed: (explanation) => explanation.startsWith("Caller verdict:") },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "policy", explanation: allowed },
+  });
+  expect(JSON.stringify(f.requests[1]?.input)).toContain("policy_not_refused");
+});
+
+it("ends a policy block once Guardian denied an execution in the attempt", async () => {
+  const explanation = "Guardian refused the only way to reach the requested page.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call("report_blocked", { reason: "policy", explanation }),
+      ][index] ?? prose("Stopping."),
+    {
+      preflight: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "ReviewDenied",
+            review: { outcome: "deny", reviewId: "review_denied", rationale: "Not allowed." },
+          }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "policy", explanation },
+  });
+});
+
+it("ends a policy block once the owner answered no", async () => {
+  const explanation = "The owner declined the only way to finish this task.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", {
+          questions: [{ id: "proceed", type: "confirm", prompt: "May the tool do this?" }],
+        }),
+        call("report_blocked", { reason: "policy", explanation }),
+      ][index] ?? prose("Stopping."),
+    {
+      askInput: () => Effect.succeed({ proceed: { type: "confirm", value: { confirmed: false } } }),
+    },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "policy", explanation },
+  });
+});
+
 // A report Guardian could not review within the review outage budget reaches the caller only as
 // its reason.
 it("records a blocked ending without its explanation when the review stays unavailable", async () => {

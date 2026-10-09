@@ -929,6 +929,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error.code === "ReviewDenied" ||
         error.review !== undefined ||
         error.execution !== undefined;
+      /** Guardian denied or escalated an execution, or denied a publication, in this attempt. */
+      let guardianRefused = recovered?.guardianRefused === true;
       let destinationEvidenceRefusals = recovered?.destinationEvidenceRefusals ?? 0;
       let inputFeedbackRounds = recovered?.inputFeedbackRounds ?? 0;
       /** The last input-feedback review found a tool already public, which never falls back. */
@@ -1726,6 +1728,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       const reviewFeedback = (error: MintFailure) =>
         Effect.gen(function* () {
+          guardianRefused = true;
           const rationale = error.review
             ? yield* screenMintText(dependencies, error.review.rationale)
             : "Guardian rejected this submission; rationale unavailable.";
@@ -2545,7 +2548,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * still get past is not impossible as asked, and the screened explanation keeps its bound,
        * which screening's longer markers can break, so a takeover's checkpoint still reads it.
        */
-      const blockedRefusal = (screenedExplanation: string, now: number) => {
+      const blockedRefusal = (
+        reason: (typeof BuildBlocked.Type)["reason"],
+        screenedExplanation: string,
+        now: number,
+      ) => {
         const refused = (reason: string, instruction: string) =>
           JSON.stringify({
             status: "blocked_refused",
@@ -2572,6 +2579,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return refused(
             "explanation_too_long",
             "Private values in the explanation made it longer than 500 characters once screened. Shorten it, leave private values out, and call report_blocked again.",
+          );
+        // A policy block stands on a refusal on record: Guardian's deny or escalation, or the
+        // owner's no to a confirm question, unless the host's own guidance names the ending. The
+        // minter's reading of its own instructions is none.
+        const ownerRefused = [...answeredQuestions.values()].some(
+          ({ answer }) => typeof answer === "object" && "confirmed" in answer && !answer.confirmed,
+        );
+        if (
+          reason === "policy" &&
+          !guardianRefused &&
+          !ownerRefused &&
+          dependencies.policyBlockAllowed?.(screenedExplanation) !== true
+        )
+          return refused(
+            "policy_not_refused",
+            "Nothing in this attempt refused this: Guardian denied or escalated nothing, and the owner answered no to nothing. Your instructions are not a refusal, so the build has not ended. Continue through the page's own controls. Ask the owner with request_input when only they can decide; their no to a confirm question is a refusal. Use site_lacks_capability only when the site does not offer what the task needs.",
           );
         return undefined;
       };
@@ -3365,6 +3388,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               const denial = publication._tag === "Left" ? publication.left.review : undefined;
               const deniedCategory = denial?.findings?.[0]?.category;
+              if (publication._tag === "Left" && publication.left.code === "ReviewDenied")
+                guardianRefused = true;
               publicationDenial =
                 publication._tag === "Left" && publication.left.code === "ReviewDenied"
                   ? {
@@ -3976,7 +4001,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, submitted.explanation),
                     );
-                    const refusal = blockedRefusal(explanation, yield* Clock.currentTimeMillis);
+                    const refusal = blockedRefusal(
+                      submitted.reason,
+                      explanation,
+                      yield* Clock.currentTimeMillis,
+                    );
                     if (refusal !== undefined) return refusal;
                     const review = yield* reviewBlockedExplanation(explanation);
                     yield* active("publication");
@@ -4446,6 +4475,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(reviewOutageStartedAt === undefined ? {} : { reviewOutageStartedAt }),
         ...(invalidOutcomes === 0 ? {} : { invalidOutcomes }),
         ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
+        ...(guardianRefused ? { guardianRefused: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,

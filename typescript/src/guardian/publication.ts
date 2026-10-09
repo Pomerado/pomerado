@@ -208,7 +208,7 @@ export const publicationOutputPolicy = [
   "Unapplied input: an input the code never applies, skips or always reports unsupported, though the captures show its control, or a filter the site offers for the tool's purpose that the tool does not take. An input may be left out only when the site has no control for it; naming it in the description as left out never excuses it.",
   "Applied without readback: an input treated as applied without reading the site's committed state, such as its chip or selected control; echoed input or a built URL is not that state.",
   "Wrong failure: a throw on the site's no-results message or a missing optional value, or a placeholder, label or another record's value instead of a needed value.",
-  "Built URL: Playwright source opening a page URL that holds a caller input value, other than one the page produced or a fixed entry URL.",
+  "Built URL: Playwright source that builds or iterates on search, filter or sort parameters from caller values in place of the page's controls, or opens a URL the caller supplied or one built from caller values without reading the page's identity back; a URL the caller supplied, on the tool's site, opened unchanged, and a stable identifier route the site itself uses, each with the page's identity read back, a URL the page produced and a fixed entry URL are fine.",
   "Unreconciled write, a confirmation finding instead: a write to existing state, such as a cart, that does not read it before and after the commit to check only the requested change happened.",
 ].join(" ");
 

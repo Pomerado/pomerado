@@ -237,8 +237,8 @@ on a blank Page is not evidence about the website or its availability.
 
 Take the site origin from the context's `siteOrigin`. If it is undefined, fail before
 live navigation; offline fixtures intentionally have no live origin. Build URLs with
-`new URL("/", siteOrigin).href` or a fixed path the site links to, never one that holds the
-caller's input (`AGENTS.md`), and write them into the code. Never embed the site's hostname
+`new URL("/", siteOrigin).href` or a fixed path the site links to (`AGENTS.md` says when a
+caller's value may go in a URL), and write them into the code. Never embed the site's hostname
 or account-specific origin as a literal in authored source, schema examples, or logs, and never replace it with `page.url()`
 after a redirect. The host supplies the primary origin even when the model cannot see
 it. This value does not authorize other destinations or credential submission.
@@ -344,9 +344,10 @@ returns. When several candidates remain, inspect them and choose by evidence suc
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
-For a detail read, reach the record through the site's own search, list or link for the
-schema-validated caller identifier (AGENTS.md, "Reach every page the way a person does").
-Never build its page URL from the identifier, and never accept a caller URL as the target.
+For a detail read whose input is the record's page URL, check that it is https on the tool's
+site and open it unchanged. Otherwise reach the record through the site's own search, list or
+link for the schema-validated caller identifier, or through a stable identifier route the site
+itself uses when that is clearly better (AGENTS.md, "Work through the page's own controls").
 A successful response or plausible content is insufficient: the final page's
 site (any https host on the site's registrable domain), final path and stable page
 identity must all agree with the requested identifier. A path agrees when it carries the
@@ -357,7 +358,8 @@ to that interstitial. This exception does not include a CAPTCHA, login or unknow
 challenge. Wait for the detail or proven interstitial, guard the continuation, then
 wait again and recheck the final site, path and page identity before extraction. Use
 typed failures for every other state; never return interstitial fields as a detail
-result. `references/navigation.ts` shows this sequence in one call.
+result. `references/navigation.ts` shows this sequence in one call, reached through the site's
+search (`detailNavigation`) and from a caller's page URL opened unchanged (`detailFromUrl`).
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible
