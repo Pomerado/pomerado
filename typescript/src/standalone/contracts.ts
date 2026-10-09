@@ -24,6 +24,15 @@ export interface PomeradoOptions {
    * the process exits. `limits` caps the bytes (`defaultFileLimits`).
    */
   readonly files?: { readonly downloads?: string; readonly limits?: FileLimits };
+  /**
+   * Checks each control of a read before it publishes: the host builds inputs from the tool's
+   * input schema (each field one at a time, bounds, dates, paging, an empty search and a value
+   * the page cannot offer) and runs them one at a time in this session's browser. A failing
+   * control, an inert one or a schema without examples refuses publication, and the minter fixes
+   * it. Absent, no checks run. `budget` caps the cases (24 by default) and `now` is the clock
+   * generated dates start from.
+   */
+  readonly controlChecks?: { readonly budget?: number; readonly now?: () => Date };
 }
 
 export interface PomeradoRequest {

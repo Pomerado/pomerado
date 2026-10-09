@@ -1,6 +1,6 @@
 import type { ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
-import { createPomerado } from "../../src/standalone/pomerado.js";
+import { createPomerado, type PomeradoOptions } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { PlaywrightOptions } from "../../src/execution/playwright-execute.js";
@@ -35,6 +35,10 @@ export const mint = async (options: {
   readonly input?: Readonly<Record<string, unknown>>;
   readonly intent?: string;
   readonly browser?: PlaywrightOptions;
+  /** The local host's control checks; off when absent. */
+  readonly controlChecks?: PomeradoOptions["controlChecks"];
+  /** The build's time limit; 60 seconds by default. */
+  readonly timeoutMs?: number;
 }) => {
   const requests: ModelRequest[] = [];
   const asked: InputRequest[] = [];
@@ -47,6 +51,7 @@ export const mint = async (options: {
       Effect.gen(function* () {
         const service = yield* createPomerado({
           ...(options.browser === undefined ? {} : { browser: options.browser }),
+          ...(options.controlChecks === undefined ? {} : { controlChecks: options.controlChecks }),
           minterProvider: minter,
           guardianProvider: options.guardian.provider,
           outcomeReviewerProvider: options.reviewer ?? quietReviewer,
@@ -56,7 +61,7 @@ export const mint = async (options: {
               return options.answer?.(request) ?? {};
             }),
           ),
-          timeoutMs: 60_000,
+          timeoutMs: options.timeoutMs ?? 60_000,
         });
         return yield* service.mint({
           url: options.url,

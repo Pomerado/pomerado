@@ -78,6 +78,8 @@ export class LocalOperationFailure extends Error {
   readonly reported: boolean;
   /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
   readonly sessionLoss?: "session_not_kept";
+  /** The authored source frame that threw, such as `src/tool.mjs:12`, when the child named one. */
+  readonly frame?: string;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -85,11 +87,16 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
-    options: { readonly reported?: boolean; readonly sessionLoss?: "session_not_kept" } = {},
+    options: {
+      readonly reported?: boolean;
+      readonly sessionLoss?: "session_not_kept";
+      readonly frame?: string;
+    } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
+    if (options.frame !== undefined) this.frame = options.frame;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -250,7 +257,10 @@ const handleTerminalMessage = (
           message.code,
           message.tag,
           message.inputIssues,
-          message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss },
+          {
+            ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
+            ...(message.frame === undefined ? {} : { frame: message.frame }),
+          },
         ),
       ),
     );

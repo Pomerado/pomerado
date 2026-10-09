@@ -23,6 +23,7 @@ import type { RequestContext } from "./request-context.js";
 import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
+import { localControlChecks } from "./mint-control-checks.js";
 import { mintError } from "./errors.js";
 import { memoryPublicationDecisions } from "./publication-decisions.js";
 import { listed, signInOriginsToAsk } from "./sign-in-origin-question.js";
@@ -156,6 +157,9 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
         }),
     },
     publicationDecisions,
+    ...(options.controlChecks === undefined
+      ? {}
+      : { controlChecks: localControlChecks(state, options.controlChecks) }),
   };
   return dependencies;
 };
