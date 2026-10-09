@@ -235,6 +235,24 @@ it("allows a blocked report that names the caller input at fault and why", async
   );
 });
 
+// A repair asked whether the caller's refused value was invalid or real, and the question review
+// reworded it to offer a replacement value. The host keeps a repair's input fixed, so that answer
+// could never apply.
+it("keeps a repair's caller-input question to invalid or real", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as { trusted_review: { policy: string } };
+  expect(input.trusted_review.policy).toContain(
+    "\nA repair's caller-input question asks only whether the caller's value is invalid or real. Don't reword it to offer a replacement value, since a repair can't change the run's input.\n",
+  );
+});
+
 // Guardian judged a blocked report about a refused publication from the agent's words alone.
 it("gives the question review the host's publication refusals as trusted evidence", async () => {
   const refusal = {
