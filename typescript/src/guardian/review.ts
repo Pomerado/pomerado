@@ -25,7 +25,9 @@ import {
 import type { PublicationScope, PublicationFileBlock } from "./review-contracts.js";
 import {
   decisionForKind,
+  outcomeAccepted,
   reviewKindOf,
+  reviewOutcomesOf,
   sourceChunkOf,
   sourceLedger,
   sourcePath,
@@ -112,6 +114,12 @@ export class ReviewFailure extends Data.TaggedError("ReviewFailure")<{
   readonly code:
     | "Unavailable"
     | "InvalidDecision"
+    /**
+     * The review returned an outcome its kind does not return, still after the in-review
+     * correction that named the outcomes it does. Reviewing the same input again repeats it, so it
+     * is never retried as an outage.
+     */
+    | "InvalidOutcome"
     | "SourceUnavailable"
     | "PublicationBlocked"
     | "TurnLimitExceeded"
@@ -400,10 +408,12 @@ export interface ReviewTurn {
   readonly sources?: ReviewSources;
   readonly readSource: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>;
   /**
-   * The follow-up the reviewer sends, in the same review, when its output still needs a read it
-   * did not do; undefined when the output stands. The host allows at most two such rounds.
+   * The follow-up the reviewer sends, in the same review, when the host cannot take its output
+   * yet: once for an outcome the review's kind does not return (never for a private host kind),
+   * and up to twice for a required read it did not do. Undefined when the output stands; a
+   * reviewer sends at most `reviewFollowUpRounds`.
    */
-  readonly missingRead?: (raw: unknown) => string | undefined;
+  readonly followUp?: (raw: unknown) => string | undefined;
   readonly reportUsage?: (usage: GuardianUsage) => Effect.Effect<void>;
   readonly reportDiagnostic?: (
     value: unknown,
@@ -517,15 +527,21 @@ const completeSession = (session?: GuardianSession) =>
     : Effect.void;
 
 /** The most follow-up rounds one review gets for a required read it skipped. */
-export const requiredReadRounds = 2;
+const requiredReadRounds = 2;
 
-const decisionFailure = (error: unknown) =>
+/** The most follow-up rounds one review gets: one outcome correction and the required reads. */
+export const reviewFollowUpRounds = requiredReadRounds + 1;
+
+const decisionFailure = (
+  error: unknown,
+  code: "InvalidDecision" | "InvalidOutcome" = "InvalidDecision",
+) =>
   new ReviewFailure({
     failureDetail: failureDetail("guardian_dependency_failed", {
       error,
       phase: "decision_validation",
     }),
-    code: "InvalidDecision",
+    code,
   });
 
 const decodeDecision = (raw: unknown) =>
@@ -738,7 +754,7 @@ export const makeGuardian = (
         );
       run.started({ reviewId, reviewKind });
       const observeModelTrace = diagnostics?.observeModelTrace;
-      // Follow-up rounds for a skipped entrypoint read, sent within this attempt.
+      // Follow-up rounds for a refused outcome or a skipped entrypoint read, within this attempt.
       let followUpRounds = 0;
       const startOffsetMs = performance.now();
       const timing = {
@@ -937,6 +953,17 @@ export const makeGuardian = (
             ...(unchanged.length === 0 ? {} : { unchangedSources: unchanged }),
           };
         }
+        const kindName = pending.hostReview?.kind ?? kind;
+        const outcomes = reviewOutcomesOf(pending);
+        /** A decision whose outcome this review's kind does not return. */
+        const outcomeRefused = (raw: unknown) =>
+          typeof raw === "object" &&
+          raw !== null &&
+          !Array.isArray(raw) &&
+          typeof Reflect.get(raw, "outcome") === "string" &&
+          !outcomeAccepted(pending, raw);
+        let outcomeCorrected = false;
+        let readRounds = 0;
         const unread = (raw: unknown) =>
           requireEntrypoint &&
           typeof raw === "object" &&
@@ -970,8 +997,16 @@ export const makeGuardian = (
               ) ?? Effect.void,
               "guardian.usage",
             ),
-          missingRead: (output) => {
-            if (!unread(output)) return undefined;
+          followUp: (output) => {
+            // A private kind's exchange ends only at the next review request, so a correction
+            // would carry its later output into readable records; it fails at once instead.
+            if (!outcomeCorrected && !privateKind && outcomeRefused(output)) {
+              outcomeCorrected = true;
+              followUpRounds++;
+              return `The host did not accept this decision: a ${kindName} review returns only the outcome ${outcomes.join(", ")}, as trusted_review.outcomes lists. Decide this review again under its policy and return one of them.`;
+            }
+            if (!unread(output) || readRounds >= requiredReadRounds) return undefined;
+            readRounds++;
             followUpRounds++;
             return `The host did not accept this allow: an allow needs the submitted entrypoint ${entrypoint} in view in this review, and it is not, because the host could not include it or the conversation was compacted since. Read ${entrypoint} from offset 0 with read_source, then decide again.`;
           },
@@ -979,12 +1014,13 @@ export const makeGuardian = (
         });
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
-        const projected = decisionForKind(pending, raw);
-        if (projected === undefined)
+        if (outcomeRefused(raw))
           return yield* decisionFailure(
             new Error(`The outcome is not one a ${kind} review returns`),
+            "InvalidOutcome",
           );
-        const decision = yield* decode(projected);
+        // Output that is not a decision at all fails to decode as InvalidDecision.
+        const decision = yield* decode(decisionForKind(pending, raw));
         if (requireEntrypoint && decision.outcome === "allow" && entrypointReadAt !== epoch())
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         yield* emit(

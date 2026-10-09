@@ -1424,6 +1424,123 @@ it("ends once question review stays unavailable past its budget, without creatin
   expect(asked).toBe(0);
 });
 
+const invalidOutcome = () =>
+  Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "InvalidOutcome" }));
+
+// A review whose outcome Guardian kept refusing was answered as an outage to resubmit unchanged,
+// and every review that completed in between restarted the outage budget, so the attempt never
+// ended; past it, the attempt ended as an outage a repair is requeued for.
+it("sends a refused-outcome review back to revise once, and ends the attempt at a second", async () => {
+  let reviews = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const question = textQuestion("Which account type?");
+        const first: unknown = JSON.parse(yield* turn.actions.requestInput(question));
+        expect(first).toMatchObject({ status: "review_invalid_outcome", retryable: true });
+        expect(JSON.stringify(first)).not.toContain("unavailable");
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.requestInput(question);
+        expect(turn.isComplete()).toBe(false);
+        expect(JSON.parse(yield* turn.actions.requestInput(question))).toMatchObject({
+          status: "review_invalid_outcome",
+          retryable: false,
+        });
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      // Refused, then completed, then refused again.
+      reviewQuestion: () =>
+        reviews++ === 1
+          ? Effect.succeed({ outcome: "reword" as const, rationale: "Synthetic reword." })
+          : invalidOutcome(),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.build).toBe("incomplete");
+  expect(outcome).not.toHaveProperty("hostFailure");
+  expect(reviews).toBe(3);
+});
+
+// A refused outcome started the review outage clock, so report_blocked was refused until the
+// agent resubmitted the same request.
+it("lets report_blocked through after a refused-outcome review, which starts no outage", async () => {
+  let reviews = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.requestInput(textQuestion("Which account type?"));
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "blocked",
+          explanationShown: true,
+        });
+      }),
+    {
+      reviewQuestion: () =>
+        reviews++ === 0
+          ? invalidOutcome()
+          : Effect.succeed({ outcome: "allow_business" as const, rationale: "Plain." }),
+    },
+  );
+  expect((await f.run()).blocked).toEqual(blockedReport);
+});
+
+it("sends a blocked explanation whose outcome Guardian refused back once, then ends blocked", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "blocked_explanation_rejected",
+        });
+        expect(JSON.parse(yield* reportBlocked(blockedReport))).toMatchObject({
+          status: "blocked",
+          explanationShown: false,
+        });
+      }),
+    { reviewQuestion: invalidOutcome },
+  );
+  expect((await f.run()).blocked).toEqual({ reason: "site_lacks_capability" });
+});
+
+it("ends a taken-over attempt at its first refused outcome when its checkpoint already has one", async () => {
+  const harness: MintHarnessSnapshot = {
+    executions: [],
+    purposes: [],
+    diagnostics: [],
+    exampleClaimed: false,
+    writeSession: "none",
+    unavailableOutputRefusals: 0,
+    unavailableCauseRecorded: false,
+    reviewUnavailableRetries: { execution: 0, publication: 0, question: 0 },
+    invalidOutcomes: 1,
+    destinationEvidenceRefusals: 0,
+    inputFeedbackRounds: 0,
+    inputFeedbackPublicTool: false,
+    inputFeedbackCoverage: "",
+    providerUnavailableRetries: 0,
+    executionClosed: false,
+    captchaChecks: 0,
+  };
+  const takeover = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which account type?"))),
+        ).toMatchObject({ status: "review_invalid_outcome", retryable: false });
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      reviewQuestion: invalidOutcome,
+      agentRecovery: { initial: { agent: freshAgent, harness }, save: () => Effect.void },
+    },
+  );
+  expect((await takeover.run()).build).toBe("incomplete");
+});
+
 it("keeps two answered requests in one attempt and publishes with both answers", async () => {
   const asked: unknown[] = [];
   const responses: unknown[] = [];

@@ -7,7 +7,7 @@ import { ownerNamedOrigins } from "./owner-named-origins.js";
 import { guardianModel } from "./model.js";
 import { guardianCompaction } from "./session.js";
 import { withReasoningContinuity } from "../models/reasoning-settings.js";
-import { reviewKindOf } from "./review-layout.js";
+import { reviewKindOf, reviewOutcomesOf } from "./review-layout.js";
 
 /** JSON.stringify leaves an undefined key out, so an empty list never reaches the model. */
 const absentWhenEmpty = <T>(list: readonly T[]) => (list.length === 0 ? undefined : list);
@@ -25,6 +25,8 @@ export const guardianReviewInput = (
     trusted_review: {
       kind: turn.pending.hostReview?.kind ?? reviewKindOf(turn.pending),
       policy,
+      // The outcomes the host accepts from this review, the same list it checks the decision with.
+      outcomes: reviewOutcomesOf(turn.pending),
       // Marks the exchange so later readable records withhold it, even after a takeover.
       ...(turn.pending.hostReview?.private === true ? { private: true } : {}),
       ...(turn.pending.hostWrapper === undefined ? {} : { hostWrapper: turn.pending.hostWrapper }),
