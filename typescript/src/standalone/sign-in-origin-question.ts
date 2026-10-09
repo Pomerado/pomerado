@@ -13,7 +13,11 @@ const questionId = "trust_sign_in_origin";
  * `origins`: each an https origin, exactly as `URL.origin` writes it, off the site's registrable
  * domain, not one of the build's sign-in origins and not asked about before. One question asks
  * about one to three of them, all or nothing, so any that is not eligible, or more than three,
- * asks nothing.
+ * asks nothing. Until the sign-in sent a password or a code anywhere, the site included
+ * (`receivedProof`), it asks about one alone: two or more that heard only the identifier, as when
+ * an analytics script also captured the email a check before the password screen found, ask
+ * nothing, and the check after the password screen asks as before. One alone is still asked
+ * about, as a sign-in by approval or email link sends the identifier alone.
  */
 export const signInOriginsToAsk = (
   origins: readonly string[],
@@ -21,9 +25,11 @@ export const signInOriginsToAsk = (
     readonly siteOrigin: string;
     readonly trusted: readonly string[];
     readonly asked: ReadonlySet<string>;
+    readonly receivedProof: boolean;
   },
 ): readonly string[] | undefined => {
   if (origins.length === 0 || origins.length > maximumAskedSignInOrigins) return undefined;
+  if (!context.receivedProof && origins.length > 1) return undefined;
   const eligible = origins.every((origin) => {
     const url = URL.parse(origin);
     return (

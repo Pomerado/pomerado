@@ -226,6 +226,12 @@ export interface SignInRecord {
    * value.
    */
   untrustedOrigins?: Map<string, Set<AutofillSlot>>;
+  /**
+   * Set once a request the host read for a screen carried a pending password or code, to any
+   * origin, the site included, whether or not it counted as sent. Until then no password or code
+   * has gone anywhere, as on a check before the password screen.
+   */
+  proofCarried?: true;
 }
 
 export const openSignInRecord = (): SignInRecord => ({
@@ -319,7 +325,8 @@ export const noteFormSubmit = (
     const texts = [request.url, request.body ?? ""];
     const carried: AutofillSlot[] = [];
     const script = scriptRequest(watch, sentAt, request);
-    if (sentAsJudged(watch, sentAt, request)) {
+    const judged = sentAsJudged(watch, sentAt, request);
+    if (judged) {
       for (const [slot, value] of record.pending)
         if (yield* carries([value], texts)) carried.push(slot);
     } else if (script !== undefined && trustedScriptDestination(watch, script)) {
@@ -335,6 +342,13 @@ export const noteFormSubmit = (
         origins.set(script.origin, new Set([...(known ?? []), ...record.pending.keys()]));
       }
     }
+    // Whether the password or a code went anywhere, counted or not; what counts is unchanged.
+    if (record.proofCarried !== true && (judged || script !== undefined))
+      for (const [slot, value] of record.pending)
+        if (provesLogin(slot) && (yield* carries([value], texts))) {
+          record.proofCarried = true;
+          break;
+        }
     markSent(record, carried);
     return carried.filter(isSecret);
   });
