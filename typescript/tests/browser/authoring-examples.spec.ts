@@ -15,6 +15,7 @@ import attachDocument, {
 } from "../../authoring/examples/dates-and-files.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import deleteInvoice from "../../authoring/examples/native-dialog.js";
+import searchRecords from "../../authoring/examples/kernel-page-fetch.js";
 import readHeading from "../../authoring/examples/native-page.js";
 import readCatalog, { detailNavigation } from "../../authoring/examples/navigation.js";
 import selectStatus from "../../authoring/examples/selection.js";
@@ -100,6 +101,36 @@ test("current-page example checks the site and reads without navigating, in one 
   }
   expect(requests).toBe(1);
   expect(page.url()).toBe(`${siteOrigin}/account`);
+});
+
+// The page-fetch reference reads the site's JSON through the page's own fetch, and refuses an
+// answer that is not a JSON 200, such as a sign-in page served in its place.
+test("page-fetch example reads a JSON search through the page and refuses HTML", async ({
+  page,
+}) => {
+  const siteOrigin = "https://records.example.test";
+  const searched: string[] = [];
+  let signedOut = false;
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/search")
+      return route.fulfill({ contentType: "text/html", body: "<h1>Records</h1>" });
+    searched.push(url.searchParams.get("q") ?? "");
+    return signedOut
+      ? route.fulfill({ contentType: "text/html", body: "<h1>Sign in</h1>" })
+      : route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ items: [{ id: "r-1", name: "Lamp record" }], complete: true }),
+        });
+  });
+  const read = await runExample(page, searchRecords, { query: "lamp" }, { siteOrigin });
+  expect(read.result).toEqual(
+    Either.right({ items: [{ id: "r-1", name: "Lamp record" }], complete: true }),
+  );
+  signedOut = true;
+  const refused = await runExample(page, searchRecords, { query: "lamp" }, { siteOrigin });
+  expect(failure(refused.result)).toMatchObject({ _tag: "OperationFailure" });
+  expect(searched).toEqual(["lamp", "lamp"]);
 });
 
 // The site is the host's registrable domain, never the last labels of the origin: a multi-label

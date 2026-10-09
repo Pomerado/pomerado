@@ -4,6 +4,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { serialize } from "node:v8";
 import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
+import type { Deadline as RunDeadline } from "../runtime/deadline.js";
+import type { Operation } from "../runtime/operation.js";
+import type { ScriptInput as ScriptInputTag } from "../runtime/script-input.js";
+import type { SiteHttp as SiteHttpTag } from "../runtime/site-http.js";
 
 // Source-mode entry follows the existing lease/screening workers; compiled packages need no hook.
 if (import.meta.url.endsWith(".ts"))
@@ -27,12 +31,15 @@ if (import.meta.url.endsWith(".ts"))
           }
         : nextLoad(url, context),
   });
-const { LocalOperationStart, LocalOperationReply } = await import("./local-operation-protocol.js");
+const { LocalHttpAnswer, LocalOperationStart, LocalOperationReply } =
+  await import("./local-operation-protocol.js");
 const { localError, localOutputLimit } = await import("./local-path.js");
 const { isKernelOperation } = await import("../runtime/kernel-operation.js");
 const { executeKernelOperation } = await import("../runtime/kernel-operation-run.js");
 const { decodeKernelOperationInput } = await import("../runtime/kernel-operation-validation.js");
-const { contractJsonSchema } = await import("../runtime/operation.js");
+const { contractJsonSchema, executeOperation } = await import("../runtime/operation.js");
+const { HttpFailure, HttpFailureCode, SiteHttp } = await import("../runtime/site-http.js");
+const { makeSiteHttp } = await import("../runtime/site-http-host.js");
 const { ExecutionContext, makeEffectJournal } = await import("../runtime/context.js");
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
@@ -128,6 +135,29 @@ const journal: typeof baseJournal = {
   declareCommits: (names) =>
     baseJournal.declareCommits(names).pipe(Effect.tap(() => publishJournal)),
 };
+/** The script's `ask`: each question goes to the host, which asks only declared ones. */
+const childScriptInput = (
+  questions: Parameters<typeof makeScriptInput>[0],
+  deadline: RunDeadline,
+) =>
+  makeScriptInput(
+    questions,
+    (request) =>
+      call({ kind: "ask", request }).pipe(
+        Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
+        Effect.mapError(
+          (error) =>
+            new ScriptInputFailure({
+              // Undeclared: the host refused a request beyond the declarations it read.
+              code:
+                "code" in error && (error.code === "NoResponse" || error.code === "Undeclared")
+                  ? error.code
+                  : "Unavailable",
+            }),
+        ),
+      ),
+    deadline,
+  );
 /**
  * One run of the script through the runtime's runner: each execute call goes to the host, which
  * owns the browser, once it is marked as a possible dispatch. The runner marks a live run from its
@@ -152,24 +182,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
         Effect.mapError(localError),
       ),
     );
-    const scriptInput = makeScriptInput(
-      operation.questions,
-      (request) =>
-        call({ kind: "ask", request }).pipe(
-          Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
-          Effect.mapError(
-            (error) =>
-              new ScriptInputFailure({
-                // Undeclared: the host refused a request beyond the declarations it read.
-                code:
-                  "code" in error && (error.code === "NoResponse" || error.code === "Undeclared")
-                    ? error.code
-                    : "Unavailable",
-              }),
-          ),
-        ),
-      deadline,
-    );
+    const scriptInput = childScriptInput(operation.questions, deadline);
     // The host refuses a file with a `FileRefused:<reason>` code; anything else is unavailable.
     const fileRefusal = (error: Error) => {
       const code = "code" in error && typeof error.code === "string" ? error.code : "";
@@ -250,8 +263,97 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       Effect.scoped,
     );
   });
+/**
+ * The host's transport for an HTTP version's `SiteHttp`: each request goes to the host, and a
+ * failure there comes back with its code and dispatch.
+ */
+const httpTransport = (
+  http: NonNullable<typeof start.http>,
+): Parameters<typeof makeSiteHttp>[0]["transport"] => ({
+  name: http.name,
+  capabilities: http.capabilities,
+  send: (request, options) =>
+    Effect.runPromiseExit(
+      call({
+        kind: "http",
+        request,
+        timeoutMs: options.timeoutMs,
+        ...(options.maxResponseBytes === undefined
+          ? {}
+          : { maxResponseBytes: options.maxResponseBytes }),
+      }).pipe(
+        Effect.flatMap((value) => Schema.decodeUnknown(LocalHttpAnswer)(value)),
+        Effect.mapError((error) => {
+          const code = "code" in error && typeof error.code === "string" ? error.code : "";
+          const [tag, named, dispatch] = code.split(":");
+          const failure = Schema.decodeUnknownOption(HttpFailureCode)(named);
+          return tag === "HttpFailure" &&
+            failure._tag === "Some" &&
+            (dispatch === "not_sent" || dispatch === "sent" || dispatch === "unknown")
+            ? new HttpFailure({ code: failure.value, dispatch })
+            : new HttpFailure({ code: "transport_failed", dispatch: "unknown" });
+        }),
+      ),
+      { signal: options.signal },
+    ).then((exit) => {
+      if (Exit.isSuccess(exit)) return exit.value;
+      throw Cause.squash(exit.cause);
+    }),
+});
+/**
+ * One run of an HTTP version, `defineOperation`'s object form, with `SiteHttp` over the host's
+ * transport. Each request marks the run as possibly dispatched just before it is sent.
+ */
+const executeHttpVersion = (operation: HttpVersion) =>
+  Effect.gen(function* () {
+    if (start.http === undefined)
+      return yield* Effect.fail(
+        new Error("The host gives this run no HTTP transport, which an HTTP version needs"),
+      );
+    const deadline = Deadline.after(start.timeoutMs);
+    const context = {
+      deadline,
+      journal,
+      events: { emit: () => Effect.void },
+      capture: { start: Effect.void, finish: Effect.void },
+    };
+    const http = makeSiteHttp({
+      transport: httpTransport(start.http),
+      context,
+      capture: () => Effect.void,
+      ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
+    });
+    return yield* executeOperation(operation, start.input).pipe(
+      Effect.mapError((error) => (error instanceof Error ? error : localError(error))),
+      Effect.provideService(ExecutionContext, context),
+      Effect.provideService(SiteHttp, http),
+      Effect.provideService(ScriptInput, childScriptInput(operation.questions, deadline)),
+      Effect.scoped,
+      // A defect, such as `Effect.die`, fails the run with its journal like any other failure.
+      Effect.catchAllDefect((defect) => Effect.fail(localError(defect))),
+    );
+  });
+type HttpVersion = Operation<
+  unknown,
+  unknown,
+  unknown,
+  unknown,
+  unknown,
+  SiteHttpTag | ScriptInputTag
+>;
+/** `defineOperation`'s object form: schemas and an Effect `run`, never a Kernel script. */
+const isHttpVersion = (value: unknown): value is HttpVersion =>
+  typeof value === "object" &&
+  value !== null &&
+  !isKernelOperation(value) &&
+  Schema.isSchema(Reflect.get(value, "input")) &&
+  Schema.isSchema(Reflect.get(value, "output")) &&
+  typeof Reflect.get(value, "run") === "function";
 const extractCurrentContract = (
-  operation: Parameters<typeof executeKernelOperation>[0],
+  operation: Pick<
+    Parameters<typeof executeKernelOperation>[0],
+    "name" | "input" | "output" | "write" | "questions"
+  >,
   schemas: { inputSchema: unknown; outputSchema: unknown },
 ) =>
   Effect.gen(function* () {
@@ -292,16 +394,20 @@ await Effect.runPromise(
       typeof imported === "object" && imported !== null
         ? Reflect.get(imported, "default")
         : undefined;
-    if (!isKernelOperation(operation))
+    if (!isKernelOperation(operation) && !isHttpVersion(operation))
       return yield* Effect.fail(
-        new Error("Local execution requires an original defineOperation Kernel script"),
+        new Error(
+          "Local execution requires an operation from defineOperation as the module's default export",
+        ),
       );
     const schemas = {
       inputSchema: contractJsonSchema(operation.input),
       outputSchema: contractJsonSchema(operation.output),
     };
     if (start.mode === "contract") return yield* extractCurrentContract(operation, schemas);
-    const output = yield* executeLocally(operation);
+    const output = isKernelOperation(operation)
+      ? yield* executeLocally(operation)
+      : yield* executeHttpVersion(operation);
     const confirmation = yield* journal.confirmation;
     yield* send({
       kind: "result",

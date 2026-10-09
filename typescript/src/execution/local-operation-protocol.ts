@@ -5,6 +5,18 @@ import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js"
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { FileField, fileReferenceMaxLength } from "../runtime/files.js";
 import { maximumRefusalChoiceLength, maximumRefusalChoices } from "../runtime/operation-failure.js";
+import { HttpCapability, HttpResponseGap, SiteHttpRequest } from "../runtime/site-http.js";
+
+const HttpTransportName = Schema.Literal("kernel-curl", "page-fetch", "saved-http");
+/** The host transport's answer to a child's `http` request, as `SiteHttpResponse`. */
+export const LocalHttpAnswer = Schema.Struct({
+  status: Schema.Int,
+  headers: Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) }),
+  body: Schema.Uint8ArrayFromSelf,
+  transport: HttpTransportName,
+  finalUrl: Schema.optionalWith(Schema.String, { exact: true }),
+  gaps: Schema.Array(HttpResponseGap),
+});
 
 const InputIssue = Schema.Struct({
   path: Schema.String.pipe(Schema.maxLength(maximumInputIssuePath)),
@@ -44,6 +56,11 @@ export const LocalOperationStart = Schema.Struct({
   signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host places and collects files for the script's `files`. */
   files: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** The host carries an HTTP version's `SiteHttp` requests over this transport. */
+  http: Schema.optionalWith(
+    Schema.Struct({ name: HttpTransportName, capabilities: Schema.Array(HttpCapability) }),
+    { exact: true },
+  ),
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),
@@ -94,6 +111,14 @@ export const LocalOperationMessage = Schema.Union(
     id: Id,
     slot: Id,
     timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+  }),
+  /** One `SiteHttp` request the child validated, for the host's transport to send. */
+  Schema.Struct({
+    kind: Schema.Literal("http"),
+    id: Id,
+    request: SiteHttpRequest,
+    timeoutMs: Schema.Number.pipe(Schema.positive(), Schema.finite()),
+    maxResponseBytes: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), { exact: true }),
   }),
   Schema.Struct({ kind: Schema.Literal("cancel"), id: Id }),
   Schema.Struct({ kind: Schema.Literal("journal"), ...JournalFields }),

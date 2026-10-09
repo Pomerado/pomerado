@@ -59,3 +59,33 @@ export type { OutcomeObservation } from "./outcome-wait.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";
 export type { DialogActionPort } from "./dialogs/action.js";
+export { SiteHttp, SiteHttpRequest, HttpFailure } from "../runtime/site-http.js";
+export type {
+  HttpCapability,
+  HttpExchange,
+  HttpResponseGap,
+  HttpTransport,
+  SiteHttpResponse,
+  SiteHttpResult,
+  SiteHttpService,
+} from "../runtime/site-http.js";
+export {
+  defineHttpOperation,
+  isBotChallenge,
+  readJson,
+  readText,
+  requestPastChallenge,
+} from "../runtime/http-operation.js";
+export {
+  OfflineFixtureUnavailable,
+  SavedCaptureEvidence,
+  SavedHttpFixtures,
+  parseSavedHttp,
+} from "../runtime/saved-http.js";
+export type {
+  HttpBodyFixture,
+  SavedCapture,
+  SavedHttpBody,
+  SavedHttpExchange,
+  SavedHttpFixture,
+} from "../runtime/saved-http.js";

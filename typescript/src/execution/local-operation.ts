@@ -25,6 +25,7 @@ import { LocalOperationMessage, type LocalOperationResult } from "./local-operat
 import type { LocalWorkspace } from "./local-workspace.js";
 import { FileRefused } from "../runtime/files.js";
 import { outputFiles, type RunFiles } from "../runtime/file-transfer.js";
+import { HttpFailure, type HttpTransport } from "../runtime/site-http.js";
 
 export interface LocalOperationOptions {
   readonly workspace: LocalWorkspace;
@@ -63,6 +64,11 @@ export interface LocalOperationOptions {
    * a `$file` this run did not collect fails the run.
    */
   readonly files?: RunFiles;
+  /**
+   * The transport an HTTP version's `SiteHttp` sends over, as `makeSiteHttp` uses it. Absent, an
+   * HTTP version fails before it sends anything; a Kernel script never uses it.
+   */
+  readonly http?: HttpTransport;
 }
 export interface LocalOperationJournal {
   readonly effect: "not_sent" | "possible" | "verified";
@@ -203,6 +209,27 @@ const handleRequest = (
           }),
         ),
       );
+    }
+    if (message.kind === "http") {
+      const transport = options.http;
+      if (transport === undefined || options.mode === "contract")
+        return Effect.fail(new Error("Local operation HTTP is unavailable"));
+      const { request, timeoutMs, maxResponseBytes } = message;
+      return Effect.tryPromise({
+        try: (signal) =>
+          transport.send(request, {
+            signal,
+            timeoutMs,
+            ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }),
+          }),
+        // The transport's failure crosses to the child as its code and dispatch.
+        catch: (error) =>
+          error instanceof HttpFailure
+            ? Object.assign(new Error(error.message), {
+                code: `HttpFailure:${error.code}:${error.dispatch}`,
+              })
+            : localError(error),
+      });
     }
     if (message.kind === "sign_in")
       return options.signIn === undefined
@@ -468,6 +495,9 @@ export const runLocalOperation = (
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),
+        ...(options.http === undefined || options.mode === "contract"
+          ? {}
+          : { http: { name: options.http.name, capabilities: options.http.capabilities } }),
         ...(options.signIn !== undefined &&
         options.browser !== undefined &&
         options.mode !== "contract" &&
