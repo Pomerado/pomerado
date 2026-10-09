@@ -18,11 +18,10 @@ const Detail = Schema.Union(
   }),
 );
 
-// Reaches the record the way a person does: the site's own search, then the result's own link,
-// never a page URL built from the identifier. This site's search loads a results page that is
-// busy until it lists each record as a link named by its ID, or says none match, and shows an
-// alert when the search fails. Adapt every role, name and attribute from your own session's
-// evidence.
+// Reaches the record through the site's own controls: its search, then the result's own link.
+// This site's search loads a results page that is busy until it lists each record as a link named
+// by its ID, or says none match, and shows an alert when the search fails. Adapt every role, name
+// and attribute from your own session's evidence.
 export const detailNavigation = defineOperation(
   {
     name: "read_record_detail",

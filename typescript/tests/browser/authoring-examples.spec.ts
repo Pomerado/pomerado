@@ -153,7 +153,7 @@ for (const clears of [true, false]) {
   });
 }
 
-// A records site reached the way a person does: its entry page has a search box, the search lists
+// A records site reached through its own controls: its entry page has a search box, the search lists
 // matching records as links, or says none match, and each record opens behind its own
 // interstitial. record_7's page belongs to another record, and record_5's link lands on another
 // path. record_8's results load late behind a busy region, and a search for record_down fails.
@@ -208,7 +208,7 @@ test("detail example searches the site for the record, follows its link and chec
   const site = await recordsSite(page, origin);
   const read = async (record_id: string) => {
     const run = await runExample(page, detailNavigation, { record_id }, { siteOrigin: origin });
-    // No call opens a URL holding the caller's input: the record's page comes from its link.
+    // No call builds a URL from the caller's input: the record's page comes from its link.
     for (const code of run.calls) expect(code).not.toContain(`/records/${record_id}`);
     return run.result;
   };

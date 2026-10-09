@@ -742,9 +742,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
 
 /**
  * How the minter ends a build its task makes impossible as asked:
- * `site_lacks_capability`, the site does not offer what the task needs; `policy`, a Guardian or
- * owner constraint refuses it and nothing within authority gets past it. A target on another
- * registrable domain is never a reason by itself: Guardian reviews such work.
+ * `site_lacks_capability`, the site does not offer what the task needs; `policy`, Guardian
+ * denied or escalated something in this attempt, or the owner answered no, and nothing within
+ * authority gets past it. The host refuses `policy` without such a refusal on record. A target on
+ * another registrable domain is never a reason by itself: Guardian reviews such work.
  */
 export const blockedExplanationLimit = 500;
 export const BuildBlocked = Schema.Struct({
@@ -1234,6 +1235,11 @@ export interface MintHarnessSnapshot {
    * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
    */
   readonly blockedReviewUnavailable?: true;
+  /**
+   * Guardian denied or escalated an execution, or denied a publication, in this attempt: the
+   * refusal a `policy` block needs unless the owner answered no.
+   */
+  readonly guardianRefused?: true;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1368,6 +1374,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  guardianRefused: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,

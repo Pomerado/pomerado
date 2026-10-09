@@ -146,19 +146,26 @@ lets the probe establish its own page scope. Return observations and tentative c
 such, without claiming they are a verified selection or result. Authentication, autosave and
 other business effects still need their existing authority.
 
-**Reach every page the way a person does.** In the Playwright version and your browser probes,
-open the site's entry page and get everywhere else through the site itself: type into its
-search boxes and forms, pick its suggestions and options, and click its links and buttons.
-Never open a URL, path or query string that holds the caller's input, such as a slug made from
-a name, a code or date placed in a path, or a parameter the site did not send. This holds for
-`src/tool.mjs`, every fallback in it and your own probes. A URL the site produced in this run
-is fine to read, return, reload or follow, such as the results page your search landed on or a
-link's own `href`. So is a fixed page the site links to, opened by its exact `href` without
-caller input. Never trim, rebuild or guess a link: a link with its query removed is a URL you
-wrote. When a site control does not offer the caller's value, wait for it, retry it or use
-another of the site's own controls, and return `InvalidInput` when the site shows the value does not exist.
-Never fall back to a URL you wrote. This rule does not cover the HTTP version
-(`src/tool-http.mjs`), which may build its requests from the caller's input.
+**Work through the page's own controls.** In the Playwright version and your browser probes,
+type into the site's search boxes and forms, pick its suggestions and options, and click its
+links and buttons. URLs built from caller values are brittle for many kinds of input, so the
+page's controls are usually the easier and more reliable way. A URL the caller supplied, on the
+tool's site, may be opened unchanged: the build's start page, or a URL input such as a product
+or listing page, which a details tool takes as input and opens directly. A stable identifier
+route the site itself uses may be opened from the caller's identifier when it is clearly better
+than the controls, such as a record page at `/items/<id>` instead of crawling a directory.
+Either way, read the page's identity back from the page and fail if it does not match. Never
+build or iterate on search, filter or sort parameters from caller values to reverse-engineer the
+site's search in place of its controls.
+
+A URL the site produced in this run is fine to read, return, reload or follow, such as the
+results page your search landed on or a link's own `href`. So is the site's entry page, or a
+fixed page the site links to, opened by its exact `href`. Never trim or guess a link: a link
+with its query removed is a URL you wrote. When a site control does not offer the caller's
+value, wait for it, retry it or use another of the site's own controls, and return
+`InvalidInput` when the site shows the value does not exist. Never fall back to a guessed URL.
+This holds for `src/tool.mjs`, every fallback in it and your own probes. It does not cover the
+HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input.
 
 **Read back every input before returning.** Read the page's own display of each input the
 site shows, such as the date picker, selected time, party size, passengers, cabin, applied
@@ -444,8 +451,10 @@ never with final text, which the host treats as unfinished work:
   requested field, use it; when they do not, ask the user one focused question with
   `request_input`. Report absence only when the evidence shows the site lacks it, and never
   invent a value or substitute a different field.
-- `policy`: a Guardian decision, or a constraint the owner set, refuses what the task needs, and
-  no change within your authority gets past it, such as a requirement the site cannot meet.
+- `policy`: in this attempt Guardian denied or escalated what the task needs, or the owner
+  answered no when you asked with a `confirm` question, and no change within your authority gets
+  past it. These instructions are never a refusal: the host refuses `policy` with no such refusal
+  on record, and the build goes on.
 
 Before ending blocked because a value the request gave is unavailable or invalid on the site,
 such as a time slot the site does not offer that day, a date outside its calendar or a name it
