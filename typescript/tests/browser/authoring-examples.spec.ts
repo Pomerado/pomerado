@@ -184,6 +184,24 @@ for (const clears of [true, false]) {
   });
 }
 
+test("catalog example treats a page showing both its heading and the verification text as the verification page", async ({
+  page,
+}) => {
+  const siteOrigin = "https://catalog.example.invalid";
+  let requests = 0;
+  await page.route(`${siteOrigin}/**`, async (route) => {
+    requests += 1;
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<h1>Catalog</h1><p>Verifying your browser</p>`,
+    });
+  });
+  const { result } = await runExample(page, readCatalog, {}, { siteOrigin });
+  // The verification wait passes at once, since the heading is ready, and the page loads once.
+  expect(result).toEqual(Either.right({ heading: "Catalog" }));
+  expect(requests).toBe(1);
+});
+
 // A records site reached the way a person does: its entry page has a search box, the search lists
 // matching records as links, or says none match, and each record opens behind its own
 // interstitial. record_7's page belongs to another record, and record_5's link lands on another
