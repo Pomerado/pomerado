@@ -257,6 +257,11 @@
       "import": "./dist/typescript/src/mint/control-runner.js",
       "default": "./dist/typescript/src/mint/control-runner.js"
     },
+    "./core/mint/control-stage": {
+      "types": "./dist/typescript/src/mint/control-stage.d.ts",
+      "import": "./dist/typescript/src/mint/control-stage.js",
+      "default": "./dist/typescript/src/mint/control-stage.js"
+    },
     "./core/mint/control-verdicts": {
       "types": "./dist/typescript/src/mint/control-verdicts.d.ts",
       "import": "./dist/typescript/src/mint/control-verdicts.js",

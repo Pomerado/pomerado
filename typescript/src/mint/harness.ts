@@ -2939,6 +2939,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     code: "ScopeDenied",
                   }),
               });
+              // The minter's own live steps run one worker; a host's control checks are not
+              // executions of the minter and choose their own concurrency.
               if (submitted.target === "liveBrowser" && submitted.maxWorkers !== 1)
                 return yield* new MintFailure({ code: "InvalidRequest" });
               if (submitted.purpose === "example" && exampleClaimed && !repeatableRead)

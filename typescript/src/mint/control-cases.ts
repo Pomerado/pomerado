@@ -9,9 +9,6 @@ import { createHash } from "node:crypto";
  * revisions and kept without the inputs that produced them.
  */
 
-/** A JSON Schema object as a tool's contract declares it. */
-export type JsonSchema = Readonly<Record<string, unknown>>;
-
 /** Why a case is in the plan. */
 export type ControlCaseKind =
   /** Required fields at their first example, optional fields unset. */
