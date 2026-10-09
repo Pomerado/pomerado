@@ -175,7 +175,8 @@ that asks.
   store or delivery or pickup mode in the run's own browser is part of the read, never a write,
   even through a Save button: the run's browser is fresh and discarded, so nothing is saved,
   and a tool that never signs in has no account to change. Saving a guest address signed out
-  is part of the read too. In a signed-in tool, use the site's per-visit location control and
+  is part of the read too when it only sets the location; a step that also enters a name,
+  email or phone number is a write that needs the caller's confirmation. In a signed-in tool, use the site's per-visit location control and
   never save an address, default store or preference to the account.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
