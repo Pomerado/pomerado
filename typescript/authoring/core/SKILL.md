@@ -55,6 +55,10 @@ answers `{ success, result, error, stderr }`. Throw
   `timeout_sec` is at most 300.
 - The code cannot see your variables. Write outside values into it with `JSON.stringify`,
   and return plain JSON, never a Locator or Response.
+- Click with a plain `locator.click()`, with at most a `timeout`. A hosted browser may make
+  it a real pointer click, after the same checks Playwright makes. `force`, `position`,
+  `modifiers`, `button`, `clickCount` and `delay` keep a synthetic click, so pass them only
+  when the step needs them.
 - Start a response wait in the same call as the click that causes it, with
   `Promise.all([page.waitForResponse(...), button.click()])`. Listeners do not outlive a call.
 - Do site HTTP inside the page with `page.evaluate(() => fetch(...))`. Never use
