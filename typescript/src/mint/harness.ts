@@ -913,6 +913,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       /** When the current run of review outages began; cleared by any completed review. */
       let reviewOutageStartedAt = recovered?.reviewOutageStartedAt;
+      /**
+       * Reviews that ended `InvalidOutcome` in this attempt. Guardian already corrected each once
+       * in the review, so a second ends the attempt even while other reviews complete.
+       */
+      let invalidOutcomes = recovered?.invalidOutcomes ?? 0;
       /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
       let blockedReviewUnavailable = recovered?.blockedReviewUnavailable === true;
       const reviewCompleted = Effect.sync(() => {
@@ -1766,6 +1771,53 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return now - reviewOutageStartedAt >= reviewOutageBudgetMs;
         });
       /**
+       * Counts a review that ended `InvalidOutcome`: Guardian, already corrected once in the
+       * review, returned no outcome its kind allows. A verdict that did not form, not an outage:
+       * it neither starts the outage budget nor counts as an outage retry. True for the second in
+       * the attempt, which ends it.
+       */
+      const invalidOutcomeRepeated = () => {
+        invalidOutcomes += 1;
+        return invalidOutcomes > 1;
+      };
+      /** What the agent may change instead of resubmitting a review Guardian could not decide. */
+      const invalidOutcomeSubject = {
+        execution: "the execution's source",
+        publication: "the build before calling finish_build again",
+        question: "the request",
+        update: "the update",
+      };
+      /**
+       * The agent's answer for a review that ended `InvalidOutcome`. The first goes back to the
+       * agent to revise or withdraw; the second ends the attempt incomplete without a host failure,
+       * since no outage caused it and running the attempt again would repeat it.
+       */
+      const invalidOutcomeAnswer = (kind: keyof typeof invalidOutcomeSubject) =>
+        Effect.sync(() => {
+          if (invalidOutcomeRepeated()) {
+            terminal ??= {
+              build: "incomplete",
+              summary:
+                "Guardian returned no decision its review allows, again, so the host ended the attempt without publishing. Nothing it was reviewing was approved; recorded effects and receipts are preserved.",
+            };
+            return JSON.stringify({
+              status: "review_invalid_outcome",
+              reviewFailure: "InvalidOutcome",
+              retryable: false,
+              userInputRequired: false,
+              instruction:
+                "Guardian again returned no decision its review allows, so the attempt has ended and nothing was approved. Preserve recorded effects and receipts.",
+            });
+          }
+          return JSON.stringify({
+            status: "review_invalid_outcome",
+            reviewFailure: "InvalidOutcome",
+            retryable: true,
+            userInputRequired: false,
+            instruction: `Guardian returned no decision this review allows, even after the host named the outcomes it may return, so nothing was approved. This is not a deny and not an outage. Revise ${invalidOutcomeSubject[kind]} so what is under review is plain, or withdraw it and continue another way; do not submit it again unchanged. A second such result ends the attempt.`,
+          });
+        });
+      /**
        * A spent model quota is a host failure no retry gets past, whether the minter's call or
        * Guardian's hit it, since both use the same provider account.
        * Operators see it like any other host failure, with the provider's error beneath the
@@ -1864,6 +1916,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ) =>
         (error: MintFailure) =>
           Effect.gen(function* () {
+            if (error.reviewFailure === "InvalidOutcome") return yield* invalidOutcomeAnswer(kind);
             // This outage is another review's, which is resubmitted before report_blocked.
             blockedReviewUnavailable = false;
             if (error.modelOutage === "quota_exhausted") return yield* spentQuotaReview(error);
@@ -2549,6 +2602,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     reviewFailure: error.reviewFailure,
                     reviewPhase: error.reviewPhase,
                   });
+                  // No outcome a question review allows: the agent revises or withdraws the
+                  // explanation once, and a second ends blocked with the reason alone.
+                  if (error.reviewFailure === "InvalidOutcome")
+                    return invalidOutcomeRepeated()
+                      ? { outcome: "unavailable" as const }
+                      : {
+                          outcome: "invalid_outcome" as const,
+                          rationale:
+                            "Guardian returned no decision a question review allows, so it neither allowed nor reworded the explanation. Make it plain and consistent with the evidence.",
+                        };
                   // A spent quota or an outage past its budget still ends blocked: the caller
                   // reads the reason alone.
                   if (
@@ -4381,6 +4444,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         unavailableCauseRecorded,
         reviewUnavailableRetries: { ...reviewUnavailableRetries },
         ...(reviewOutageStartedAt === undefined ? {} : { reviewOutageStartedAt }),
+        ...(invalidOutcomes === 0 ? {} : { invalidOutcomes }),
         ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,

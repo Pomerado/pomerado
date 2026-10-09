@@ -831,6 +831,9 @@ export type TaskUpdateRequest = typeof TaskUpdateRequest.Type;
  * - `review_unavailable`: the review did not complete; resubmit within the review outage budget.
  * - `update_refused`: the harness or host cannot apply this change to this build, such as a site
  *   change once the build cannot run another live example. Nothing changed.
+ * - `review_invalid_outcome`: the review returned an outcome its kind does not accept, even after one
+ *   correction. Nothing changed; revise or withdraw the update. A second one in an attempt ends it
+ *   incomplete.
  * - `update_invalid`: the request does not decode. Nothing changed.
  */
 export const taskUpdateStatuses = [
@@ -839,6 +842,7 @@ export const taskUpdateStatuses = [
   "reword",
   "new_mint_recommended",
   "review_unavailable",
+  "review_invalid_outcome",
   "update_refused",
   "update_invalid",
 ] as const;
@@ -1244,6 +1248,11 @@ export interface MintHarnessSnapshot {
   /** When the current run of review outages began, in epoch milliseconds. */
   readonly reviewOutageStartedAt?: number;
   /**
+   * Reviews in this attempt that ended `InvalidOutcome`; a second ends the attempt. Optional, so
+   * a rollout's old and new workers each restore the other's checkpoint.
+   */
+  readonly invalidOutcomes?: number;
+  /**
    * The current review outage is a blocked explanation's, which `report_blocked` resubmits.
    * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
    */
@@ -1381,6 +1390,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     update: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  invalidOutcomes: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
