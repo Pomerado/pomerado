@@ -461,6 +461,25 @@ it("refuses a policy block nothing in the attempt refused and keeps building", a
   expect(f.counts()).toMatchObject({ executed: 1, published: 1 });
 });
 
+// A host may name a policy ending of its own, such as a repair's verdict that the caller's input
+// caused the failure: the ending it allows needs no refusal on record, and any other still does.
+it("ends a policy block the host allows without a refusal on record, and only that one", async () => {
+  const allowed = "Caller verdict: the date is before the departure.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "policy", explanation: "Another reason." }, "other"),
+        call("report_blocked", { reason: "policy", explanation: allowed }, "allowed"),
+      ][index] ?? prose("Stopping."),
+    { policyBlockAllowed: (explanation) => explanation.startsWith("Caller verdict:") },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "policy", explanation: allowed },
+  });
+  expect(JSON.stringify(f.requests[1]?.input)).toContain("policy_not_refused");
+});
+
 it("ends a policy block once Guardian denied an execution in the attempt", async () => {
   const explanation = "Guardian refused the only way to reach the requested page.";
   const f = await fixture(

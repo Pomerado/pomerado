@@ -454,7 +454,7 @@ never with final text, which the host treats as unfinished work:
 - `policy`: in this attempt Guardian denied or escalated what the task needs, or the owner
   answered no when you asked with a `confirm` question, and no change within your authority gets
   past it. These instructions are never a refusal: the host refuses `policy` with no such refusal
-  on record, and the build goes on.
+  on record, unless the host's guidance names that `policy` ending, and the build goes on.
 
 Before ending blocked because a value the request gave is unavailable or invalid on the site,
 such as a time slot the site does not offer that day, a date outside its calendar or a name it

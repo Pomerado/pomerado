@@ -134,6 +134,90 @@ export const detailNavigation = defineOperation(
   },
 );
 
+// A details tool whose input is the record's page URL, such as a link the caller copied from the
+// site, opens it unchanged: never rebuilt, trimmed or reached through the site's search. Only an
+// https URL on the tool's site is opened, and the page's own record id is read back.
+export const detailFromUrl = defineOperation(
+  {
+    name: "read_record_detail_from_url",
+    input: Schema.Struct({
+      record_url: Schema.String.annotations({
+        description: "The record's page URL on the site, as the caller copied it",
+        examples: ["https://records.example.com/records/record_42"],
+      }),
+    }),
+    output: Schema.Struct({
+      record_id: RecordId.annotations({ description: "ID of the record the page shows" }),
+      title: Schema.NonEmptyString.annotations({ description: "The record's title" }),
+    }),
+  },
+  async ({ kernel, sessionId, siteOrigin, siteDomain, input, errors }) => {
+    if (siteOrigin === undefined)
+      throw new errors.OperationFailure("No site origin for a live run", { dispatch: "not_sent" });
+    const requested = URL.parse(input.record_url);
+    const onSite = (url: URL) =>
+      siteDomain === undefined
+        ? url.origin === siteOrigin
+        : url.protocol === "https:" &&
+          (url.hostname === siteDomain || url.hostname.endsWith(`.${siteDomain}`));
+    if (requested === null || requested.protocol !== "https:" || !onSite(requested))
+      throw new errors.InvalidInput("record_url must be an https page on this site");
+    // The record the link names, as the site's own links name it; the page must show the same one.
+    const expected = requested.pathname.split("/").at(-1) ?? "";
+    const answer = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 120,
+      code: `
+        const siteDomain = ${JSON.stringify(siteDomain ?? null)};
+        const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
+          : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
+        const expected = ${JSON.stringify(expected)};
+        // The caller's URL exactly as given.
+        await page.goto(${JSON.stringify(input.record_url)}, { waitUntil: "domcontentloaded", timeout: 30000 });
+        const detail = page.getByRole("region", { name: "Record details", exact: true });
+        const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
+        const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
+        // The site may serve the record under another of its routes; its own record id decides.
+        const classify = async () => {
+          if (!onSite(new URL(page.url()))) return { state: "target_mismatch" };
+          if ((await detail.count()) === 1)
+            return { state: "detail", id: await detail.getAttribute("data-record-id") };
+          if ((await interstitial.count()) === 1)
+            return { state: "interstitial", id: await interstitial.getAttribute("data-record-id") };
+          return { state: "loading" };
+        };
+        const settle = async () => {
+          const until = Date.now() + 30000;
+          let seen = await classify();
+          while (seen.state === "loading" && Date.now() < until) {
+            await page.waitForTimeout(100);
+            seen = await classify();
+          }
+          return seen;
+        };
+        let seen = await settle();
+        if (seen.state === "interstitial" && seen.id === expected && (await proceed.count()) === 1) {
+          await proceed.click({ timeout: 30000 });
+          seen = await settle();
+        }
+        if (seen.state === "target_mismatch") return { failure: "target_mismatch" };
+        if (seen.state !== "detail" && seen.state !== "interstitial") return { failure: "detail_unavailable" };
+        if (seen.id !== expected) return { failure: "identity_mismatch" };
+        if (seen.state !== "detail") return { failure: "interstitial_unowned" };
+        const heading = detail.getByRole("heading", { level: 1 });
+        if ((await heading.count()) !== 1) return { failure: "detail_unavailable" };
+        const title = (await heading.innerText()).trim();
+        return title ? { title } : { failure: "detail_unavailable" };
+      `,
+    });
+    if (!answer.success)
+      throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+    const result = Schema.decodeUnknownSync(Detail)(answer.result);
+    if ("refused" in result) throw new errors.InvalidInput(result.refused);
+    if ("failure" in result) throw new errors.OperationFailure(result.failure);
+    return { record_id: expected, title: result.title };
+  },
+);
+
 // A bounded first-page read. A fast exploration load does not remove the readiness wait.
 export default defineOperation(
   {

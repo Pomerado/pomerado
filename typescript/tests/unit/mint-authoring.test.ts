@@ -277,7 +277,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
     "workspace/AGENTS.md",
-    "on record, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
   // An option the code reads no results for yet throws rather than returning another option's
   // results, and a format read from one sample breaks on the next value, so the minter reads it
@@ -617,7 +617,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["fb704bafb7adf4e378af1078d7544e79ff68ed6b3103be63766a74c23a5cbca5", "core"],
+    ["b97546916cc037a64ce25b21237a52e2c7830373633ea6b0a16632dd78216970", "core"],
     ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
@@ -627,7 +627,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a6a79d3d19f685f4d05697ce105102465b0fd5244a0cf1e297ac9e9cdd9f4d9e", "cart"],
     ["b3147e9625a33c2a7c3db014199964d574af5e892d72b65680cda843e66da3e0", "caller-input"],
     ["c882afded68960b6387260744bd119c0d397b9ed08c004c9421e486d24432c79", "publication"],
-    ["65161c40cfad4aa6bb3f44d4070e1f47d2c1dd8d96eaa2f4949e21cca1f375a0", "workspace/AGENTS.md"],
+    ["e7608e16e65e788e24c46a2d5a20cd9f3c04bda5ff8323b028dc697bd20a6bb3", "workspace/AGENTS.md"],
     ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],
   ]);
 });

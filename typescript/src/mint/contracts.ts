@@ -1640,6 +1640,13 @@ export interface MintDependencies {
   readonly exampleClaimed?: boolean;
   /** Host-bound accepted/registered read authority; source still requires Guardian approval. */
   readonly repeatableRead?: boolean;
+  /**
+   * Whether the host's own guidance names this `policy` ending, so it needs no refusal on record,
+   * such as a repair's verdict that the caller's input caused its run's failure. It gets the
+   * screened explanation. Without it, `policy` needs a Guardian deny or escalation, or the owner's
+   * no to a confirm question, in the attempt.
+   */
+  readonly policyBlockAllowed?: (explanation: string) => boolean;
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */
   readonly initialExample?: ExecutionEvidence;
   readonly priorReadExecutions?: readonly ExecutionEvidence[];

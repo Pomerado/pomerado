@@ -2514,11 +2514,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "Private values in the explanation made it longer than 500 characters once screened. Shorten it, leave private values out, and call report_blocked again.",
           );
         // A policy block stands on a refusal on record: Guardian's deny or escalation, or the
-        // owner's no to a confirm question. The minter's reading of its own instructions is none.
+        // owner's no to a confirm question, unless the host's own guidance names the ending. The
+        // minter's reading of its own instructions is none.
         const ownerRefused = [...answeredQuestions.values()].some(
           ({ answer }) => typeof answer === "object" && "confirmed" in answer && !answer.confirmed,
         );
-        if (reason === "policy" && !guardianRefused && !ownerRefused)
+        if (
+          reason === "policy" &&
+          !guardianRefused &&
+          !ownerRefused &&
+          dependencies.policyBlockAllowed?.(screenedExplanation) !== true
+        )
           return refused(
             "policy_not_refused",
             "Nothing in this attempt refused this: Guardian denied or escalated nothing, and the owner answered no to nothing. Your instructions are not a refusal, so the build has not ended. Continue through the page's own controls. Ask the owner with request_input when only they can decide; their no to a confirm question is a refusal. Use site_lacks_capability only when the site does not offer what the task needs.",

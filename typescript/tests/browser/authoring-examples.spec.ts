@@ -16,7 +16,10 @@ import attachDocument, {
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import deleteInvoice from "../../authoring/examples/native-dialog.js";
 import readHeading from "../../authoring/examples/native-page.js";
-import readCatalog, { detailNavigation } from "../../authoring/examples/navigation.js";
+import readCatalog, {
+  detailFromUrl,
+  detailNavigation,
+} from "../../authoring/examples/navigation.js";
 import selectStatus from "../../authoring/examples/selection.js";
 import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
@@ -247,6 +250,39 @@ test("detail example searches the site for the record, follows its link and chec
     "record_8",
     "record_down",
   ]);
+});
+
+// A details tool whose input is the record's page URL opens that URL as the caller gave it, never
+// rebuilt and without the site's search, and still reads the record's identity from the page.
+test("detail example opens the caller's record URL unchanged and checks the page's identity", async ({
+  page,
+}) => {
+  const origin = "https://records.example.invalid";
+  const site = await recordsSite(page, origin);
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  const read = async (record_url: string) =>
+    (await runExample(page, detailFromUrl, { record_url }, { siteOrigin: origin })).result;
+  const link = `${origin}/records/record_42?from=list#top`;
+  expect(await read(link)).toEqual(
+    Either.right({ record_id: "record_42", title: "Quarterly report" }),
+  );
+  expect(site.opened).toEqual(["/records/record_42"]);
+  expect(requested).toContain(`${origin}/records/record_42?from=list`);
+  expect(site.searches).toEqual([]);
+  // The page the link opens shows another record.
+  expect(failure(await read(`${origin}/records/record_7`))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "identity_mismatch",
+  });
+  // A link off the tool's site, or not https, is the caller's error, and nothing opens.
+  const before = site.opened.length;
+  for (const offSite of [
+    "https://records.other.invalid/records/record_42",
+    "http://records.example.invalid/records/record_42",
+  ])
+    expect(failure(await read(offSite))).toMatchObject({ _tag: "InvalidInput" });
+  expect(site.opened).toHaveLength(before);
 });
 
 const siteOrigin = "https://members.example.test";

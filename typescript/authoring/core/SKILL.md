@@ -326,7 +326,8 @@ to that interstitial. This exception does not include a CAPTCHA, login or unknow
 challenge. Wait for the detail or proven interstitial, guard the continuation, then
 wait again and recheck the final site, path and page identity before extraction. Use
 typed failures for every other state; never return interstitial fields as a detail
-result. `references/navigation.ts` shows this sequence in one call.
+result. `references/navigation.ts` shows this sequence in one call, reached through the site's
+search (`detailNavigation`) and from a caller's page URL opened unchanged (`detailFromUrl`).
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible
