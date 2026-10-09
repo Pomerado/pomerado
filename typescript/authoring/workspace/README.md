@@ -14,7 +14,9 @@ import { defineOperation } from "../../runtime/index.js";
 
 The skill references import the SDK through the repository's paths, such as
 `../../src/runtime/index.js`; in the workspace the same modules are `../../runtime/index.js`,
-`../../testing/…` and so on.
+`../../testing/…` and so on. `../../runtime/index.js` is the SDK's public API for tools. Never
+import the `pomerado` package's internal modules, such as `pomerado/core/...`: they are host
+internals, not part of that API, and can change in any release.
 The operation's browser work is its own `kernel.browsers.playwright.execute` calls, as
 .agents/core/SKILL.md describes.
 
