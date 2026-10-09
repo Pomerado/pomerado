@@ -99,6 +99,9 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- Prefer keying only on what the caller asked for. A detail that changes from one listing to
+  the next, such as a seating label or a room name, shouldn't decide whether the tool books or
+  refuses unless the caller chose it.
 - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
   error for that option over returning results for another one. A repair adds it when a caller
   needs it.

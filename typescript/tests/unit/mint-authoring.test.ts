@@ -280,12 +280,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // An option the code reads no results for yet throws rather than returning another option's
-  // results, and a format read from one sample breaks on the next value, so the minter reads it
-  // off the page.
+  // Only what the caller asked for decides whether a tool books or refuses. An option the code
+  // reads no results for yet throws rather than returning another option's results, and a format
+  // read from one sample breaks on the next value, so the minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads typed output, kept rows and required facts before it writes the schema and
   // the parser, so a fact the code could not read fails the output check.
@@ -649,7 +649,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["45ad1aaff705e1c16bc110020c9870a8b9fbfc5c599e8d5ed78db3b9008f2e27", "core"],
+    ["7d9af8f12a3a37ca88a0e7c29459d61d4d55705b8f303165568facff43ac4d28", "core"],
     ["a3cb66103ace3daa108b6985820e68bc26faf92aef992f60a9107a4fdbeff1b9", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
