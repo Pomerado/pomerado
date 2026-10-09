@@ -60,3 +60,18 @@ export const getRuntimeSources = (): readonly (readonly [string, string])[] => {
   computed = [...modules];
   return computed;
 };
+
+/** Where the built package keeps `runtimeSourcesManifest`, from the package root. */
+export const runtimeSourcesManifestPath = "dist/runtime-sources.json";
+
+/**
+ * `getRuntimeSources` as data: the folder the paths are relative to, from the package root, the
+ * entry, and each module's path and JavaScript text. The build writes it from the built package
+ * to `runtimeSourcesManifestPath`, so a host can read the set from a package it never runs.
+ */
+export const runtimeSourcesManifest = () => ({
+  version: 1,
+  root: "dist/typescript/src",
+  entry: runtimeSourceEntry,
+  modules: getRuntimeSources().map(([path, text]) => ({ path, text })),
+});
