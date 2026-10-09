@@ -89,10 +89,15 @@ export const detailNavigation = defineOperation(
         const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
         // Wait for the record's page, then check that the site, path and the page's own record
         // id all match the request.
-        const reached = async (outcomes) => {
-          const { shown } = await settle(outcomes);
+        const offTarget = () => {
           const current = new URL(page.url());
-          if (!onSite(current) || current.pathname !== targetPath) return "target_mismatch";
+          return !onSite(current) || current.pathname !== targetPath;
+        };
+        const reached = async (outcomes) => {
+          // A page already off the target fails at once; one that moves there while loading fails after.
+          if (offTarget()) return "target_mismatch";
+          const { shown } = await settle(outcomes);
+          if (offTarget()) return "target_mismatch";
           if (shown === undefined) return "detail_unavailable";
           const shownId = await (shown === "detail" ? detail : interstitial).getAttribute("data-record-id");
           if (shownId !== recordId) return "identity_mismatch";

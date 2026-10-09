@@ -25,13 +25,14 @@ export interface OutcomeObservation {
  * the first listed outcome that shows wins. It answers once two looks in a row agree, the second
  * taken at once, so a page that changes between two locators is looked at again; a ready page
  * still answers at once. `timeout` defaults to 30 s, the readiness budget; pass less when less of
- * the operation's deadline remains.
+ * the operation's deadline remains. A host reports its timeout as a browser action timeout.
  *
  * `action` is the step itself, such as `() => apply.click()`, which it runs exactly once, after
- * noting what each outcome showed. A match that was on the page before the action, with the same
+ * noting what each outcome showed. A match that was visible before the action, with the same
  * text, is the answer from before it, so it counts only once it has stayed so for `unchangedMs`
- * after the action (default 2000), for a step that leaves the same answer. A new element, or one
- * whose text changed, counts at once. An action that throws ends the wait with its error.
+ * (default 2000), for a step that leaves the same answer. A new element, one that was hidden
+ * before, or one whose text changed, counts at once. `timeout` and `unchangedMs` both start once
+ * the action returns. An action that throws ends the wait with its error.
  *
  * It throws an `Error` named `OutcomeWaitFailure`, with `reason` and `observations`
  * (`OutcomeObservation` by key), and a message that names the reason and what each outcome
@@ -57,10 +58,10 @@ const outcomeWaitFailure = (reason, timeout, observations, outcome) => {
     ...(outcome === undefined ? {} : { outcome }),
   });
 };
-// What each element showed before the action, kept in the page by a key of this wait's own; a
-// page the action replaced has none, so everything on it is new.
+// What each visible element showed before the action, kept in the page by a key of this wait's
+// own; a page the action replaced has none, so everything on it is new.
 const outcomeWaitNote = (locator, key) =>
-  locator.evaluateAll((elements, key) => {
+  locator.filter({ visible: true }).evaluateAll((elements, key) => {
     const noted = (globalThis[Symbol.for(key)] ??= new WeakMap());
     for (const element of elements) noted.set(element, element.innerText);
   }, key);
@@ -91,15 +92,19 @@ const waitForOutcome = async (outcomes, options = {}) => {
   }
   const until = Date.now() + timeout;
   const unchangedFrom = Date.now() + (options.unchangedMs ?? 2000);
+  // A page or frame the action is replacing can drop a look midway; the next look sees the new one.
+  const look = () =>
+    outcomeWaitObserve(outcomes, key).catch((error) => {
+      if (/Execution context was destroyed|Frame was detached/.test(String(error?.message))) return undefined;
+      throw error;
+    });
   // The outcomes are looked at one after another, so the page can change between two of them:
   // a decision holds only once the next look, taken at once, agrees.
   let previous;
+  let last;
   while (true) {
-    // A page the action is replacing can drop a look midway; the next look sees the new page.
-    const observations = await outcomeWaitObserve(outcomes, key).catch((error) => {
-      if (/Execution context was destroyed/.test(String(error?.message))) return undefined;
-      throw error;
-    });
+    const observations = await look();
+    last = observations ?? last;
     const stale = Date.now() < unchangedFrom;
     const shown = names.find(
       (name) => observations?.[name].visible > 0 && !(stale && observations[name].changed === 0),
@@ -112,8 +117,10 @@ const waitForOutcome = async (outcomes, options = {}) => {
     }
     // A first sighting at the deadline still gets its confirming look.
     if (Date.now() >= until && (decision === undefined || previous !== undefined))
-      throw outcomeWaitFailure("outcome_timeout", timeout, observations ?? (await outcomeWaitObserve(outcomes, key)));
-    if (decision === undefined) await new Promise((resolve) => setTimeout(resolve, 100));
+      throw outcomeWaitFailure("outcome_timeout", timeout, last ?? (await look().catch(() => undefined)) ?? {});
+    // Only a first sighting is looked at again at once; anything else waits for the next poll.
+    if (decision === undefined || previous !== undefined)
+      await new Promise((resolve) => setTimeout(resolve, 100));
     previous = decision;
   }
 };

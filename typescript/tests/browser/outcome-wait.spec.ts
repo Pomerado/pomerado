@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
+import { Schema } from "effect";
 import { outcomeWaitCode } from "../../src/browser/outcome-wait.js";
+import { defineOperation } from "../../src/runtime/operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
+import { failure, runExample } from "./authoring-fixture.js";
 
 // The authoring library's outcome wait, run as a Kernel call body runs it (`page` in scope) on
 // local search pages. Chromium must render them: an outcome counts only when it is visible.
@@ -223,4 +226,83 @@ test("an action that loads a new page waits for that page's answer", async ({ pa
       }, { action: () => page.getByRole("button", { name: "Search" }).click(), timeout: 3000, unchangedMs: 5000 });`,
     ),
   ).toEqual({ result: "empty" });
+});
+
+/**
+ * A page that pre-renders its error and empty state hidden: the click shows `shows` 200 ms later,
+ * and for the error also re-renders the results beside it.
+ */
+const prerendered = (page: Page, shows: "error" | "empty") =>
+  page.setContent(`
+    <button type="button">Pets allowed</button>
+    <section id="answer">
+      <p id="error" hidden>Search is unavailable</p>
+      <p id="empty" hidden>No rooms match your dates</p>
+      ${shows === "error" ? rooms : ""}
+    </section>
+    <script>
+      document.querySelector("button").onclick = () => setTimeout(() => {
+        document.querySelector(${JSON.stringify(`#${shows}`)}).hidden = false;
+        if (${JSON.stringify(shows)} === "error")
+          document.querySelector("ul").outerHTML = ${JSON.stringify(rooms)};
+      }, 200);
+    </script>`);
+
+const prerenderedBody = (options: string) => `
+  const answer = page.locator("#answer");
+  return await waitForOutcome({
+    failed: answer.getByText("Search is unavailable", { exact: true }),
+    empty: answer.getByText("No rooms match your dates", { exact: true }),
+    results: answer.getByRole("list", { name: "Rooms", exact: true }),
+  }, { action: () => page.getByRole("button", { name: "Pets allowed" }).click(), ${options} });
+`;
+
+test("an error hidden before the action and shown beside re-rendered results wins", async ({
+  page,
+}) => {
+  await prerendered(page, "error");
+  expect(await call(page, prerenderedBody("timeout: 3000, unchangedMs: 5000"))).toEqual({
+    result: "failed",
+  });
+});
+
+test("an empty state hidden before the action and shown by it answers at once", async ({
+  page,
+}) => {
+  // A timeout shorter than the unchanged window: only counting it as new ends the wait in time.
+  await prerendered(page, "empty");
+  expect(await call(page, prerenderedBody("timeout: 1500, unchangedMs: 5000"))).toEqual({
+    result: "empty",
+  });
+});
+
+// A tool whose call fails on its wait, run through the runtime: it rethrows the call's error, as
+// the authoring references do.
+const waitingTool = defineOperation(
+  { input: Schema.Struct({}), output: Schema.String },
+  async ({ kernel, sessionId, errors }) => {
+    const answer = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 10,
+      code: `${outcomeWaitCode}
+        return await waitForOutcome({
+          empty: page.getByText("No rooms match your dates", { exact: true }),
+          results: page.getByRole("list", { name: "Rooms", exact: true }),
+        }, { timeout: 300 });`,
+    });
+    if (!answer.success)
+      throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+    return String(answer.result);
+  },
+);
+
+test("a tool whose outcome wait times out fails as a browser action timeout", async ({ page }) => {
+  await page.setContent(`<p>Searching</p>`);
+  expect(failure((await runExample(page, waitingTool, {})).result)).toMatchObject({
+    _tag: "BrowserActionTimeout",
+  });
+  // An ambiguous answer stays the tool's own failure.
+  await page.setContent(`${rooms}${rooms}`);
+  expect(failure((await runExample(page, waitingTool, {})).result)).toMatchObject({
+    _tag: "OperationFailure",
+  });
 });

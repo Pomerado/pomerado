@@ -50,7 +50,7 @@
   - Migrate by adding `explanation` to every `PublicationFinding` a host makes itself, and to a host's own publication decoder.
 - `example_value` is no longer an input finding. An input narrowed to the example's value blocks publication with reason `source_correction`; a decision that returns it as `input_feedback` fails as `InvalidDecision`.
   - Migrate a host's own publication policy by listing only `account_specific_enum` and `input_option` under `input_feedback`.
-- The authored runtime's `browser/index.js` now imports `browser/outcome-wait.js`. A host that copies the SDK's files into a minting workspace or a run's sandbox, as the local host's `local-runtime-assets` does, must copy it too, or every authored operation fails to load.
+- The authored runtime's `browser/index.js` now imports `browser/outcome-wait.js`. Until hosts compute the SDK's file list from its imports, a host that copies a hand-kept list of the SDK's files into a minting workspace or a run's sandbox must copy it too, or every authored operation fails to load.
   - Migrate by adding `browser/outcome-wait` beside `browser/form-controls` in that list.
 
 ### Other changes
@@ -175,6 +175,7 @@
   - It throws an `Error` named `OutcomeWaitFailure` with `reason` and per-outcome `observations` (`OutcomeObservation`, a count of matches, of visible ones and, after an action, of changed ones), and a message naming both: `outcome_ambiguous` when the winning locator matches more than one element, which it never picks among, and `outcome_timeout` when nothing showed within `timeout`, 30 s by default.
   - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, rather than only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
   - Other hosts get it from `pomerado/core/browser/outcome-wait`.
+  - A run whose `waitForOutcome` saw no outcome in time fails as `BrowserActionTimeout`, as a native Playwright wait's timeout does, so a host keeps the browser and reports it as a browser action timeout. `outcome_ambiguous` stays the tool's own failure.
 
 ### Fixes
 
