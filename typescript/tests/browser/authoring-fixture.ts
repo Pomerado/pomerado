@@ -65,6 +65,8 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
     readonly deadlineMs?: number;
     readonly dialogs?: DialogDecider;
     readonly files?: FileChannel;
+    /** A host's own client around the stand-in, such as one that adds page code to each call. */
+    readonly wrap?: (kernel: KernelExecuteClient) => KernelExecuteClient;
   } = {},
 ) => {
   const calls: string[] = [];
@@ -85,7 +87,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
     Effect.either(
       Effect.scoped(
         executeKernelOperation(operation, input, {
-          kernel,
+          kernel: options.wrap === undefined ? kernel : options.wrap(kernel),
           sessionId: "session-1",
           ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
           ...(domain === undefined ? {} : { siteDomain: domain }),
