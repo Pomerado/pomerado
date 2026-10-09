@@ -6,16 +6,23 @@ import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
-import { Artifact, PageUrl, type MintArtifact } from "./contracts.js";
+import { Artifact, PageUrl, SignInOrigin, type MintArtifact } from "./contracts.js";
 
 const Metadata = Schema.Struct({
   entrypoint: Schema.String,
   files: Schema.Array(Schema.String),
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
-  /** Where the build's sign-in recipe is (`auth-fill.json`) and where its runs start. */
+  /**
+   * Where the build's sign-in recipe is (`auth-fill.json`), where its runs start and the origins
+   * off the site its sign-in sends the login to.
+   */
   signIn: Schema.optionalWith(
-    Schema.Struct({ recipe: Schema.Literal(autofillRecipePath), entryUrl: PageUrl }),
+    Schema.Struct({
+      recipe: Schema.Literal(autofillRecipePath),
+      entryUrl: PageUrl,
+      authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
+    }),
     { exact: true },
   ),
   /** The questions publication reviewed, the only ones a run asks. */
@@ -89,11 +96,7 @@ export const readArtifact = (directory: string) =>
     const recipe = decodeSignInRecipe(text);
     if (recipe === "invalid" || recipe === "unknown_version")
       return yield* new SignInRunFailed({ code: "MissingRecipe", reason: recipe });
-    return yield* validateArtifact({
-      ...source,
-      files,
-      signIn: { recipe, entryUrl: signIn.entryUrl },
-    });
+    return yield* validateArtifact({ ...source, files, signIn: { ...signIn, recipe } });
   });
 
 export const writeArtifact = (directory: string, artifact: MintArtifact) =>
@@ -113,7 +116,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           outputSchema: checked.outputSchema,
           ...(checked.signIn === undefined
             ? {}
-            : { signIn: { recipe: autofillRecipePath, entryUrl: checked.signIn.entryUrl } }),
+            : { signIn: { ...checked.signIn, recipe: autofillRecipePath } }),
           ...(checked.questions === undefined ? {} : { questions: checked.questions }),
           ...(checked.acceptedConfirms === undefined
             ? {}

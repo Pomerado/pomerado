@@ -180,6 +180,87 @@ it.each([
     expect(failure.message).toContain("doesn't run signed out");
   }));
 
+it("keeps the sign-in origins a sign-in sends the login to in pomerado.json and reads them back, with the recipe's bytes unchanged", () =>
+  scratch(async (directory) => {
+    const authenticationOrigins = ["https://configured.test", "https://accounts.identity.test"];
+    const artifact = { ...source, signIn: { ...signIn, authenticationOrigins } };
+    expect(
+      await run(writeArtifact(directory, artifact).pipe(Effect.andThen(readArtifact(directory)))),
+    ).toEqual(artifact);
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toMatchObject({
+      signIn: { recipe: "auth-fill.json", entryUrl: signIn.entryUrl, authenticationOrigins },
+    });
+    const recipe = await readFile(join(directory, "auth-fill.json"), "utf8");
+    await scratch(async (without) => {
+      await run(writeArtifact(without, { ...source, signIn }));
+      expect(await readFile(join(without, "auth-fill.json"), "utf8")).toBe(recipe);
+      expect(
+        JSON.parse(await readFile(join(without, "pomerado.json"), "utf8")).signIn,
+      ).not.toHaveProperty("authenticationOrigins");
+    });
+  }));
+
+it("refuses a sign-in origin that is not an https origin", () =>
+  scratch(async (directory) => {
+    for (const origin of [
+      "http://accounts.identity.test",
+      "https://accounts.identity.test/",
+      "https://accounts.identity.test/v1/sign-in",
+      "https://user:secret@accounts.identity.test",
+      "accounts.identity.test",
+    ])
+      await expect(
+        run(
+          writeArtifact(directory, {
+            ...source,
+            signIn: { ...signIn, authenticationOrigins: [origin] },
+          }),
+        ),
+      ).rejects.toThrow();
+    expect(await readdir(directory)).toEqual([]);
+  }));
+
+it("merges a sign-in's origins into deployment.json after the request's own", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
+  try {
+    const deployed = (name: string, request: object, origins?: readonly string[]) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const publish = yield* prepareIntegration({
+              root,
+              name,
+              request: { url: "https://example.test", intent: "Read page", effect: "read", ...request },
+            });
+            yield* publish({
+              ...source,
+              signIn: { ...signIn, ...(origins === undefined ? {} : { authenticationOrigins: origins }) },
+            });
+          }),
+        ),
+      ).then(async () =>
+        JSON.parse(await readFile(join(await realpath(root), name, "deployment.json"), "utf8")),
+      );
+    expect(
+      (
+        await deployed("merged_reader", { authenticationOrigins: ["https://configured.test"] }, [
+          "https://configured.test",
+          "https://accounts.identity.test",
+        ])
+      ).request.authenticationOrigins,
+    ).toEqual(["https://configured.test", "https://accounts.identity.test"]);
+    expect(
+      (await deployed("trusted_reader", {}, ["https://accounts.identity.test"])).request
+        .authenticationOrigins,
+    ).toEqual(["https://accounts.identity.test"]);
+    expect((await deployed("plain_reader", {})).request).not.toHaveProperty(
+      "authenticationOrigins",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("refuses a recipe it cannot read before writing it", () =>
   scratch(async (directory) => {
     const written = run(

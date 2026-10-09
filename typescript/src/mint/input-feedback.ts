@@ -109,8 +109,15 @@ export interface MintArtifact {
   readonly entrypoint: string;
   readonly inputSchema: unknown;
   readonly outputSchema: unknown;
-  /** The build's verified sign-in, value-free: its recipe and the address its runs start from. */
-  readonly signIn?: { readonly recipe: SignInRecipe; readonly entryUrl: string };
+  /**
+   * The build's verified sign-in, value-free: its recipe, the address its runs start from and,
+   * when a host records them, the origins off the site its sign-in sends the login to.
+   */
+  readonly signIn?: {
+    readonly recipe: SignInRecipe;
+    readonly entryUrl: string;
+    readonly authenticationOrigins?: readonly string[];
+  };
   /**
    * The questions publication reviewed, the only ones a run asks its caller, and `{}` when there
    * are none. An artifact saved before builds recorded them asks only what its entrypoint

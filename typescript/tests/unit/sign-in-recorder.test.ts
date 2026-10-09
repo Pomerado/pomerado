@@ -444,6 +444,37 @@ it("verifies a script's sign-in request to a configured sign-in origin off the s
   expect(verified).toMatchObject({ verified: true, result: { signedIn: true } });
 });
 
+it("verifies once the caller trusts the origin the script sent the whole login to, with no second fill, and records the configured sign-in's recipe", async () => {
+  const send = (_step: AutofillStep, values: readonly string[]) => [identityRequest(values)];
+  const untrusted = harness({ send });
+  const trustedLater = await untrusted.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      expect((yield* recorder.step(signedIn, undefined, Effect.void)).verified).toBeUndefined();
+      expect(recorder.untrustedOrigins()).toEqual([identity]);
+      // An origin no request carried the login to credits nothing.
+      recorder.trustOrigins(["https://other.provider.test"]);
+      expect((yield* recorder.step(signedIn, undefined, Effect.void)).verified).toBeUndefined();
+      recorder.trustOrigins([identity]);
+      expect(recorder.untrustedOrigins()).toEqual([]);
+      const checked = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(checked).toMatchObject({ verified: true, result: { signedIn: true } });
+      return recorder.published();
+    }),
+  );
+  expect(untrusted.filled).toHaveLength(1);
+  const configured = harness({ authenticationOrigins: [identity], send });
+  const trustedUpFront = await configured.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.published();
+    }),
+  );
+  expect(trustedLater).toBeDefined();
+  expect(trustedLater).toEqual(trustedUpFront);
+});
+
 it("takes a code an exploration typed as the proof after a sent identifier", async () => {
   const host = harness();
   const result = await host.run((recorder) =>

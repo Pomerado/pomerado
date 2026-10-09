@@ -160,12 +160,23 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
 };
 /**
  * An unpublished build names the origins its open sign-in sent the login to, off the site and the
- * request's sign-in origins, so its caller can add one to `authenticationOrigins` and mint again.
+ * request's sign-in origins, in its outcome and its summary, so its caller can trust one when
+ * asked, or add it to `authenticationOrigins`, and mint again.
  */
-const withUntrustedSignInOrigins = (outcome: MintOutcome, state: MintState): LocalMintOutcome =>
-  outcome.build === "published" || state.untrustedSignInOrigins.size === 0
-    ? outcome
-    : { ...outcome, untrustedSignInOrigins: [...state.untrustedSignInOrigins] };
+const withUntrustedSignInOrigins = (
+  outcome: MintOutcome,
+  state: MintState,
+): LocalMintOutcome => {
+  const origins = [...state.untrustedSignInOrigins];
+  if (outcome.build === "published" || origins.length === 0) return outcome;
+  const one = origins.length === 1;
+  const listed = one ? origins.join("") : `${origins.slice(0, -1).join(", ")} and ${origins.at(-1)}`;
+  return {
+    ...outcome,
+    untrustedSignInOrigins: origins,
+    summary: `${outcome.summary} The sign-in sent the login to ${listed}, which ${one ? "is" : "are"} not trusted for sign-in. Answer yes when asked, or pass ${one ? "it" : "them"} in authenticationOrigins, and build again.`,
+  };
+};
 export const mintRequest = (
   session: StandaloneSession,
   context: RequestContext,

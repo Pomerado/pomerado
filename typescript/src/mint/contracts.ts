@@ -104,14 +104,17 @@ export interface RunnerChannels {
 /**
  * What spent an attempt's sign-ins: its one extra sign-in after a verified one, the sign-ins it
  * allows on a recovery's new profile, its one retry of a sign-in that submitted the login but
- * never verified and was not rejected, or the host's identical refusals in a row while typing into
- * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
+ * never verified and was not rejected, the host's identical refusals in a row while typing into
+ * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past, or the
+ * caller's refusal to trust the origin off the site that the site's sign-in sent the login to,
+ * so no sign-in of the site can verify.
  */
 export type SpentSignIn =
   | "relogin_spent"
   | "fresh_profile_sign_ins_spent"
   | "sign_in_retry_spent"
-  | "host_refusals_repeated";
+  | "host_refusals_repeated"
+  | "sign_in_origin_untrusted";
 
 export type { SessionLoss };
 

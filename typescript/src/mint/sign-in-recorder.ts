@@ -21,6 +21,7 @@ import {
   recordStep,
   SignInRecipe,
   signInRecipe,
+  trustOrigin,
   Unanswered,
   type SecretMatcher,
   type SignInBrowser,
@@ -291,6 +292,8 @@ export const makeSignInRecorder = <E>(input: {
       readonly challengeScreens: AutofillScreens;
     };
     readonly published: () => PublishedSignIn | undefined;
+    readonly untrustedOrigins: () => readonly string[];
+    readonly trustOrigins: (origins: readonly string[]) => void;
   },
   never,
   Scope.Scope
@@ -750,6 +753,20 @@ export const makeSignInRecorder = <E>(input: {
       },
       /** The screens a signed-in check reads now: every screen, and the current sign-in's. */
       screens: () => ({ screens: [...screens], challengeScreens: screens.slice(signInStart) }),
+      /**
+       * The origins the open sign-in's login went to that are neither the site nor one of its
+       * sign-in origins, each an exact origin; none once it is over.
+       */
+      untrustedOrigins: () => [...(open?.untrustedOrigins?.keys() ?? [])],
+      /**
+       * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
+       * sent, and its next check may verify it. Nothing is typed again, and a secret credited
+       * this way counts as filled, as one the request rule credited does.
+       */
+      trustOrigins: (origins: readonly string[]) => {
+        if (open === undefined) return;
+        for (const origin of origins) for (const slot of trustOrigin(open, origin)) filled.add(slot);
+      },
       /** The latest verified sign-in, while no later sign-in reached the site; else none. */
       published: () => {
         if (verified === undefined || verified.signIn !== signIns) return undefined;

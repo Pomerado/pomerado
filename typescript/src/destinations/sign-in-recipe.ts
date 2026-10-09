@@ -339,6 +339,23 @@ export const noteFormSubmit = (
   });
 
 /**
+ * Trusts `origin` for the open sign-in, once the caller confirmed it: the slots its requests
+ * carried (`untrustedOrigins`) count as sent, as if the request rule had credited them, and the
+ * watch takes it as a sign-in origin for any request still to come. Nothing is typed or sent
+ * again. Returns the secret slots it credited.
+ */
+export const trustOrigin = (record: SignInRecord, origin: string): readonly SecretSlot[] => {
+  const slots = [...(record.untrustedOrigins?.get(origin) ?? [])];
+  record.untrustedOrigins?.delete(origin);
+  if (record.untrustedOrigins?.size === 0) delete record.untrustedOrigins;
+  const watch = record.watch;
+  if (watch !== undefined && !watch.scriptOrigins.includes(origin))
+    record.watch = { ...watch, scriptOrigins: [...watch.scriptOrigins, origin] };
+  markSent(record, slots);
+  return slots.filter(isSecret);
+};
+
+/**
  * Arms the watch for a fill about to run, with the form endpoints the host judged for its step,
  * and holds the step's values as pending: the request its submit sends may be heard before the
  * fill returns.

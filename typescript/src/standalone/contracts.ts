@@ -71,15 +71,30 @@ export const PageUrl = Schema.String.pipe(
     );
   }),
 );
+/** A sign-in origin a tool saves: an https origin exactly as `URL.origin` writes it. */
+export const SignInOrigin = Schema.String.pipe(
+  Schema.filter((value) => {
+    const url = URL.parse(value);
+    return url !== null && url.protocol === "https:" && url.origin === value;
+  }),
+);
 export const Artifact = Schema.Struct({
   files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
   entrypoint: Schema.String,
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
-  /** The verified sign-in a build recorded: its value-free recipe and where its runs start. */
-  signIn: Schema.optionalWith(Schema.Struct({ recipe: SignInRecipe, entryUrl: PageUrl }), {
-    exact: true,
-  }),
+  /**
+   * The verified sign-in a build recorded: its value-free recipe, where its runs start and the
+   * origins off the site its sign-in sends the login to, when it has any.
+   */
+  signIn: Schema.optionalWith(
+    Schema.Struct({
+      recipe: SignInRecipe,
+      entryUrl: PageUrl,
+      authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
+    }),
+    { exact: true },
+  ),
   /** The questions publication reviewed, the only ones a run asks. */
   questions: Schema.optionalWith(ScriptQuestionDeclarations, { exact: true }),
   /** The confirm popups a write's build accepted, as digests its runs accept without asking. */

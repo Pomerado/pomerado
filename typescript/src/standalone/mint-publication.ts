@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect";
+import { Effect, Either, Schema } from "effect";
 import { expectedConfirmLimit } from "../browser/dialogs/expected.js";
 import { runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type MintDependencies } from "../mint/contracts.js";
@@ -23,6 +23,7 @@ import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
 import { checkWriteSession } from "../mint/write-session.js";
 import type { MintState } from "./mint-state.js";
+import { SignInOrigin } from "./contracts.js";
 import { publicationError } from "./errors.js";
 
 type Run = MintState["runs"] extends Map<string, infer Value> ? Value : never;
@@ -69,6 +70,18 @@ const unverifiedSignInRefusal = (state: MintState, sample: Run) =>
         )
       : Effect.void;
   });
+
+/**
+ * The origins off the site a published sign-in sends the login to, as the tool saves them: the
+ * request's that are https origins, then each the caller trusted when asked, once each. None when
+ * there are none, so a build without them saves what it always did.
+ */
+const savedSignInOrigins = (state: MintState) => {
+  const origins = state.signInOrigins
+    .all()
+    .filter((origin) => Schema.is(SignInOrigin)(origin));
+  return origins.length === 0 ? {} : { authenticationOrigins: origins };
+};
 
 /**
  * The step's retained output as publication review reads it: redacted of the build's secrets,
@@ -308,7 +321,7 @@ export const mintPublication =
           entrypoint: publication.entrypoint,
           inputSchema: result.schemas.input,
           outputSchema: result.schemas.output,
-          ...(signIn === undefined ? {} : { signIn }),
+          ...(signIn === undefined ? {} : { signIn: { ...signIn, ...savedSignInOrigins(state) } }),
           // Always recorded, so a run falls back to reading the source only for an artifact saved
           // before builds recorded them.
           questions: result.schemas.questions ?? {},

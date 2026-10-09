@@ -10,6 +10,7 @@ import type { GuardianAction } from "../guardian/review-contracts.js";
 import type { MintReviewFeedback } from "../mint/input-feedback.js";
 import {
   hostAuthentication,
+  MintFailure,
   type AllowedExecution,
   type MintDependencies,
   type ExecutionEvidence,
@@ -40,6 +41,13 @@ import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
+import { failureDetail } from "../runtime/failure-detail.js";
+import type { SignInStepResult } from "../mint/sign-in-recorder.js";
+import {
+  signInOriginsToAsk,
+  trustSignInOriginsQuestion,
+  trustsSignInOrigins,
+} from "./sign-in-origin-question.js";
 import type { MintState } from "./mint-state.js";
 import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
@@ -110,6 +118,66 @@ const executeCommand = (
       }),
     );
   });
+/** The caller's answer to the trust question did not arrive, so nothing was trusted. */
+const trustQuestionFailure = (cause: unknown) =>
+  new MintFailure({
+    code: "Unavailable",
+    ...(cause instanceof InputRequestFailure && cause.code === "NoResponse"
+      ? { noResponse: { possibleCommit: false } }
+      : {}),
+    failureDetail: failureDetail("mint_host_dependency_failed", {
+      operation: "standalone.sign_in_origin",
+      phase: "sign_in_input",
+      error: cause,
+    }),
+  });
+
+/**
+ * A signed-in check that found the login sent only to origins that are neither the site nor one
+ * of its sign-in origins asks the caller once whether to trust them, when `signInOriginsToAsk` allows. A yes
+ * trusts them for sign-in only, credits what the sign-in sent there and checks again, typing
+ * nothing. A no ends sign-in in the build. Anything else keeps the check's result.
+ */
+const askToTrustSignInOrigins = (
+  state: MintState,
+  signIn: NonNullable<ExecutionRequest["signInStep"]>,
+  loginUrl: string | undefined,
+  checked: SignInStepResult,
+) =>
+  Effect.gen(function* () {
+    const { signInOrigins, recorder, context } = state;
+    const origins =
+      checked.untrustedSignInOrigins === undefined
+        ? undefined
+        : signInOriginsToAsk(checked.untrustedSignInOrigins, {
+            siteOrigin: context.siteOrigin,
+            trusted: signInOrigins.all(),
+            asked: signInOrigins.asked,
+          });
+    if (origins === undefined) return checked;
+    for (const origin of origins) signInOrigins.asked.add(origin);
+    // The site as the owner's questions name it: its host, without `www.`.
+    const site = new URL(context.siteOrigin).hostname.replace(/^www\./u, "");
+    const answers = yield* state
+      .mintAsk(trustSignInOriginsQuestion(site, origins))
+      .pipe(Effect.mapError(trustQuestionFailure));
+    if (!trustsSignInOrigins(answers))
+      return yield* new MintFailure({
+        code: "Unavailable",
+        authentication: {
+          phase: "credential_submit",
+          code: "CredentialTargetRefused",
+          afterSubmission: true,
+        },
+        spentSignIn: "sign_in_origin_untrusted",
+      });
+    signInOrigins.trusted.push(...origins);
+    // A trusted origin is no longer one an unpublished build names as untrusted.
+    for (const origin of origins) state.untrustedSignInOrigins.delete(origin);
+    recorder.trustOrigins(origins);
+    return yield* recorder.step(signIn, loginUrl, Effect.void);
+  });
+
 /**
  * A sign-in step: a screen the recorder fills, an approval, a rejected value or a signed-in check.
  * Each belongs to the sign-in under way, and after a verified sign-in the first one starts a new
@@ -129,18 +197,22 @@ const executeAuthentication = (
     yield* start.enter;
     start.signIn();
     if (!("signedIn" in signIn)) markers.signInStep();
-    const step = yield* recorder.step(
+    const recorded = yield* recorder.step(
       signIn,
       loginUrl,
       // The host fills the sign-in itself, after its own review of each screen.
       Effect.zipRight(markers.beforeTyping, beforeDispatch?.(hostAuthentication) ?? Effect.void),
     );
+    const offSite = state.untrustedSignInOrigins;
+    for (const origin of recorded.untrustedSignInOrigins ?? []) offSite.add(origin);
+    const step =
+      "signedIn" in signIn
+        ? yield* askToTrustSignInOrigins(state, signIn, loginUrl, recorded)
+        : recorded;
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
     const authenticated = step.verified === true && start.verified();
-    const offSite = state.untrustedSignInOrigins;
     if (authenticated) offSite.clear();
-    for (const origin of step.untrustedSignInOrigins ?? []) offSite.add(origin);
     const result =
       step.report === undefined
         ? step.result
@@ -445,7 +517,7 @@ const authoredExecution = (
       execution.purpose === "explore" && live
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
-    const signInOrigins = context.authenticationOrigins;
+    const signInOrigins = state.signInOrigins.all();
     const watch =
       codes.length === 0
         ? undefined
