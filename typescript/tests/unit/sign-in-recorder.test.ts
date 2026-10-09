@@ -599,10 +599,52 @@ it("asks nothing about an origin that heard the identifier alone once the caller
       recorder.trustOrigins([identity]);
       // The password counts as sent now, so the analytics origin is still never named.
       expect(recorder.untrustedOrigins()).toEqual([]);
+      // What the build names keeps the trusted origin until a sign-in verifies, never the other.
+      expect(recorder.namedOrigins([identity, analytics])).toEqual([identity]);
       return yield* recorder.step(signedIn, undefined, Effect.void);
     }),
   );
   expect(checked).toMatchObject({ verified: true });
+});
+
+it("names only the origin that received the password in what a build names, though an early check named one that heard the identifier alone", async () => {
+  const analytics = "https://analytics.other.test";
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] => [
+    ...identifierFirst(identity)(step, values),
+    ...(step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${analytics}/capture`,
+            method: "POST",
+            body: JSON.stringify({ email: values[0] }),
+            channel: "http" as const,
+            resourceType: "xhr" as const,
+          },
+        ]
+      : []),
+  ];
+  const { early, later, named } = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      // A check before the password screen: neither origin received a proof yet.
+      const first = yield* recorder.step(signedIn, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const second = yield* recorder.step(signedIn, undefined, Effect.void);
+      // The build keeps every origin a check named, as the local host does.
+      const checked = [
+        ...(first.untrustedSignInOrigins ?? []),
+        ...(second.untrustedSignInOrigins ?? []),
+      ];
+      return {
+        early: first.untrustedSignInOrigins,
+        later: second.untrustedSignInOrigins,
+        named: recorder.namedOrigins(checked),
+      };
+    }),
+  );
+  expect(early).toEqual([identity, analytics]);
+  expect(later).toEqual([identity]);
+  expect(named).toEqual([identity]);
 });
 
 it("names only the origins off the site that received the password, never one that heard the identifier alone, with or without a check", async () => {

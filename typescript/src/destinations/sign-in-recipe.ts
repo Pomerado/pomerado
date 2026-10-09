@@ -340,18 +340,27 @@ export const noteFormSubmit = (
   });
 
 /**
- * The origins in `untrustedOrigins` a sign-in names to its caller: when any of them received the
- * password or a code, or the sign-in's password or code counts as sent, as once the caller
- * trusted the origin that received it, only those that received one, since an origin that heard
- * the identifier alone, such as an analytics script's, signs nobody in; else every one. Each is
- * an exact origin.
+ * Of `origins`, the ones a sign-in names to its caller: when the password or a code counts as
+ * sent, as once the caller trusted the origin that received it, or an origin received one, only
+ * those that received one, since an origin that heard the identifier alone, such as an analytics
+ * script's, signs nobody in; else every one. An origin received one when the record's
+ * `untrustedOrigins` holds a password or code for it, or it is in `proving`.
  */
-export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] => {
-  const named = [...(record.untrustedOrigins ?? [])];
-  const proving = named.filter(([, slots]) => [...slots].some(provesLogin));
-  const proofSent = proving.length > 0 || [...record.submittedSlots].some(provesLogin);
-  return (proofSent ? proving : named).map(([origin]) => origin);
+export const keepProvingOrigins = (
+  origins: readonly string[],
+  record: SignInRecord | undefined,
+  proving: Iterable<string> = [],
+): readonly string[] => {
+  const received = new Set(proving);
+  for (const [origin, slots] of record?.untrustedOrigins ?? [])
+    if ([...slots].some(provesLogin)) received.add(origin);
+  const proofSent = received.size > 0 || [...(record?.submittedSlots ?? [])].some(provesLogin);
+  return proofSent ? origins.filter((origin) => received.has(origin)) : [...origins];
 };
+
+/** The origins in `untrustedOrigins` a sign-in names to its caller (`keepProvingOrigins`). */
+export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] =>
+  keepProvingOrigins([...(record.untrustedOrigins?.keys() ?? [])], record);
 
 /**
  * Trusts `origin` for the open sign-in, once the caller confirmed it: the slots its requests

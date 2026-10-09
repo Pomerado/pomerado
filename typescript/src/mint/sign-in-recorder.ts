@@ -15,6 +15,7 @@ import {
   isExtraSecret,
   isIdentifier,
   isSecret,
+  keepProvingOrigins,
   makeSentTracker,
   namedUntrustedOrigins,
   openSignInRecord,
@@ -295,6 +296,7 @@ export const makeSignInRecorder = <E>(input: {
     readonly published: () => PublishedSignIn | undefined;
     readonly untrustedOrigins: () => readonly string[];
     readonly trustOrigins: (origins: readonly string[]) => void;
+    readonly namedOrigins: (named: readonly string[]) => readonly string[];
   },
   never,
   Scope.Scope
@@ -346,10 +348,13 @@ export const makeSignInRecorder = <E>(input: {
         for (const slot of slots) filled.add(slot);
       },
     );
+    /** The origins the caller trusted for the open sign-in that received its password or code. */
+    const trustedProving = new Set<string>();
     const close = () => {
       stopHearing?.();
       stopHearing = undefined;
       open = undefined;
+      trustedProving.clear();
     };
     yield* Effect.addFinalizer(() => Effect.sync(close));
 
@@ -760,13 +765,29 @@ export const makeSignInRecorder = <E>(input: {
        */
       untrustedOrigins: () => (open === undefined ? [] : namedUntrustedOrigins(open)),
       /**
+       * What a build names to its caller: the origins its checks named since the last verified
+       * sign-in (`named`), then the open sign-in's own, each once, filtered as a check filters
+       * them now (`keepProvingOrigins`). An early check may have named an origin that heard the
+       * identifier alone, before another received the password.
+       */
+      namedOrigins: (named: readonly string[]) =>
+        keepProvingOrigins(
+          [...new Set([...named, ...(open === undefined ? [] : namedUntrustedOrigins(open))])],
+          open,
+          trustedProving,
+        ),
+      /**
        * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
        * sent, and its next check may verify it. Nothing is typed again, and a secret credited
        * this way counts as filled, as one the request rule credited does.
        */
       trustOrigins: (origins: readonly string[]) => {
         if (open === undefined) return;
-        for (const origin of origins) for (const slot of trustOrigin(open, origin)) filled.add(slot);
+        for (const origin of origins) {
+          const credited = trustOrigin(open, origin);
+          if (credited.some(provesLogin)) trustedProving.add(origin);
+          for (const slot of credited) filled.add(slot);
+        }
       },
       /** The latest verified sign-in, while no later sign-in reached the site; else none. */
       published: () => {
