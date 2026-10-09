@@ -121,6 +121,7 @@
 - The core skill's input schema rules prefer throwing a plain error for a listed option the code does not read results for yet, over returning results for another option. The run then fails as `OperationFailure`, which a host that repairs sends to repair.
 - The core and writes skills no longer tell the minter that nothing repairs a tool whose run fails as `InvalidInput`. A host that repairs checks the value and asks the caller before the run ends that way.
 - The writes skill says that on a host that repairs, a failed write run whose marks show no commit step entered reports that it changed nothing, and that its repair fixes the code and runs the write once, without reading the site back.
+- The writes skill tells the minter to mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step, and the `commit_marks_undeclared` refusal says so too.
 - A failed `act` step Guardian labelled a write that may have committed it carries `writeSession` with `verifyFirst: true` and a notice to read the site back before any further write. The local host counts a step as possibly sent when it made a browser call, entered a commit mark or lost its result.
 - `finish_build` on a write first checks that the session may have sent its write, and a session that did not gets `write_not_submitted` before Guardian reviews the composed contract. It used to get a contract refusal first.
 - A step that lost its result counts the commit marks it entered only once a later step confirms the write.
