@@ -35,17 +35,6 @@ describe("Guardian's source reads on the local host", () => {
     }
   });
 
-  it("ships every SDK module the SDK's own files import", async () => {
-    const { trustedSources } = await reader(new Map());
-    const missing: string[] = [];
-    for (const [path, source] of trustedSources)
-      for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/gu)) {
-        const imported = new URL(specifier ?? "", `file:///sdk/${path}`).pathname.slice(5);
-        if (!trustedSources.has(imported)) missing.push(`${path} -> ${imported}`);
-      }
-    expect(missing).toEqual([]);
-  });
-
   it("reads an authored file before the SDK file at the same path", async () => {
     const { read } = await reader(
       new Map([["operation/runtime/index.js", "export const authored = true;\n"]]),
@@ -59,5 +48,16 @@ describe("Guardian's source reads on the local host", () => {
     const { read } = await reader(new Map());
     for (const path of ["operation/src/missing.js", "executed/runtime/index.js"])
       expect(await read(path)).toEqual({ failure: "SourceUnavailable" });
+  });
+
+  it("ships every SDK module the SDK's own files import", async () => {
+    const { trustedSources } = await reader(new Map());
+    const missing: string[] = [];
+    for (const [path, source] of trustedSources)
+      for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/gu)) {
+        const imported = new URL(specifier ?? "", `file:///sdk/${path}`).pathname.slice(5);
+        if (!trustedSources.has(imported)) missing.push(`${path} -> ${imported}`);
+      }
+    expect(missing).toEqual([]);
   });
 });
