@@ -341,6 +341,38 @@ describe("the seen-sent rule", () => {
     },
   );
 
+  it("names each origin off the site that a script's request carried every filled value to, with the slots it carried, and counts nothing sent", async () => {
+    const identity = "https://identity.provider.test";
+    const login = '{"user":"synthetic-user","pass":"synthetic-password"}';
+    const signIn = openSignInRecord();
+    armStep(signIn, step, inspection, values, 1, signInOrigins);
+    for (const [sentAt, request] of [
+      // Sent before the watch was armed, carrying part of the login, or as a GET.
+      [1, scriptRequest("https://early.test/sign-in", login)],
+      [2, scriptRequest("https://partial.test/sign-in", '{"pass":"synthetic-password"}')],
+      [2, { ...scriptRequest(`https://query.test/sign-in?${login}`, ""), method: "GET" }],
+      // Two requests to the same identity service name its origin once, without the path.
+      [2, scriptRequest(`${identity}/v1/sign-in?key=public`, login)],
+      [3, scriptRequest(`${identity}/v1/token`, login)],
+    ] as const)
+      expect(await Effect.runPromise(noteFormSubmit(signIn, sentAt, request, carries))).toEqual(
+        [],
+      );
+    expect([...signIn.submittedSlots]).toEqual([]);
+    expect(
+      [...(signIn.untrustedOrigins ?? [])].map(([origin, slots]) => [origin, [...slots].sort()]),
+    ).toEqual([[identity, ["password", "username"]]]);
+    // With that origin configured, the same request carries the login and names nothing.
+    const trusted = openSignInRecord();
+    armStep(trusted, step, inspection, values, 1, [identity]);
+    expect(
+      await Effect.runPromise(
+        noteFormSubmit(trusted, 2, scriptRequest(`${identity}/v1/sign-in`, login), carries),
+      ),
+    ).toEqual(["password"]);
+    expect(trusted.untrustedOrigins).toBeUndefined();
+  });
+
   describe("an email-then-code sign-in whose page posts both screens to the site's API host", () => {
     const emailStep = { fields: [{ selector: "#email", slot: "email" as const }], submit: "#go" };
     // The code screen submits itself once the last digit is typed.

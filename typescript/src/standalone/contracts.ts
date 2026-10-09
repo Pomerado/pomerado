@@ -34,8 +34,17 @@ export interface PomeradoRequest {
   readonly authenticationOrigins?: readonly string[];
 }
 
+/**
+ * A local mint's outcome. An unpublished build whose sign-in sent the login only to origins off
+ * the site and `authenticationOrigins` names each in `untrustedSignInOrigins`, an exact origin:
+ * add one you trust to `authenticationOrigins` and mint again.
+ */
+export type LocalMintOutcome = MintOutcome & {
+  readonly untrustedSignInOrigins?: readonly string[];
+};
+
 export interface Pomerado {
-  readonly mint: (request: PomeradoRequest) => Effect.Effect<MintOutcome, Error>;
+  readonly mint: (request: PomeradoRequest) => Effect.Effect<LocalMintOutcome, Error>;
   /**
    * Runs a minted artifact on `url` with no Guardian review and no model request. Guardian
    * reviewed the artifact when it was minted. `intent`, `effect` and `authenticationOrigins` are

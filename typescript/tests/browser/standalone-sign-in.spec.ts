@@ -12,7 +12,7 @@ import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { MintArtifact } from "../../src/standalone/contracts.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
 import { actionFor, quietReviewer, recordingGuardian } from "./guardian-context-fixture.js";
-import { startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
+import { identityHost, startShop, shopAccount, shopCode, type Shop } from "./shop-fixture.js";
 
 // How a local build signs in, on the shop's one-screen and two-screen sign-ins: what the host
 // asks, what the build publishes of its sign-in, what a later run does, what a second screen's
@@ -187,7 +187,7 @@ const withShop = async (use: (shop: Shop, endpoint: string) => Promise<void>) =>
   const shop = await startShop(directory);
   const browser = await chromium.launchServer({
     args: [
-      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1, MAP ${signInHost} 127.0.0.1`,
+      `--host-resolver-rules=MAP ${shop.hostname} 127.0.0.1, MAP ${signInHost} 127.0.0.1, MAP ${identityHost} 127.0.0.1`,
       "--no-proxy-server",
       "--ignore-certificate-errors",
     ],
@@ -341,6 +341,442 @@ test("a local build asks for its login once and publishes its sign-in without a 
     } finally {
       await rm(folder, { recursive: true, force: true });
     }
+  });
+});
+
+/** Opens the account's note page and reports whether it shows the note form, signed in. */
+const openNote = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"open_note",input:Schema.Struct({note:Schema.String}),output:Schema.Struct({signedIn:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/account/note', page.url()).href); return (await page.locator('#note').count()) > 0;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {signedIn:response.result === true};
+});`;
+/** Saves the input's note on the account's note page once, and confirms it. */
+const saveAccountNote = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"save_note",input:Schema.Struct({note:Schema.String}),output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"message",commits:["save"]}},
+async ({kernel,sessionId,input,enteringCommit,verified}) => {
+  const opened = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/account/note', page.url()).href); return (await page.locator('#note').count()) > 0;",timeout_sec:15});
+  if(!opened.success || opened.result !== true) throw new Error("The note page is signed out");
+  enteringCommit("save");
+  const saved = await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#note').fill(" + JSON.stringify(input.note) + "); await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:15});
+  if(!saved.success || saved.result !== true) throw new Error("Save not confirmed");
+  verified({confirmation:"message"});
+  return {saved:true};
+});`;
+/** The identity sign-in's one screen. */
+const identitySignIn = {
+  fields: [
+    { selector: "input[name=username]", accepts: ["username"] },
+    { selector: "input[name=password]", slot: "password" },
+  ],
+  submit: "button",
+};
+/** The result of the minter's call `callId` in `request`'s history, or undefined. */
+const resultOf = (request: ModelRequest, callId: string) =>
+  objects(request.input).find(
+    (item) => item["type"] === "function_call_result" && item["callId"] === callId,
+  );
+/**
+ * A write build's minter for the account note: it signs in, checks, and opens the note page in
+ * its first act step. When that page was signed out, it signs in again on the sign-in form the
+ * page sent it to. Then it saves the note and finishes on that step.
+ */
+const noteMinter = (requests: ModelRequest[]) => {
+  const act = (entrypoint: string, callId: string) =>
+    execute("act", { entrypoint, intent: "Save the note to the account" }, callId);
+  const save = act("src/tool.mjs", "save");
+  const turns: ((request: ModelRequest) => Output)[] = [
+    () => [
+      {
+        type: "apply_patch_call",
+        callId: "patch_note",
+        status: "completed",
+        operation: {
+          type: "create_file",
+          path: "src/check.mjs",
+          diff: `${openNote
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n")}\n`,
+        },
+      },
+      {
+        type: "apply_patch_call",
+        callId: "patch_tool",
+        status: "completed",
+        operation: {
+          type: "create_file",
+          path: "src/tool.mjs",
+          diff: `${saveAccountNote
+            .split("\n")
+            .map((line) => `+${line}`)
+            .join("\n")}\n`,
+        },
+      },
+    ],
+    () => [signInStep(identitySignIn, "sign_in")],
+    () => [signInStep({ signedIn: { selector: "#account" } }, "signed_in")],
+    () => [act("src/check.mjs", "open_note")],
+    (request) =>
+      objects(resultOf(request, "open_note")).some((item) => item["signedIn"] === true)
+        ? [save]
+        : [signInStep(identitySignIn, "sign_in_again")],
+    (request) => {
+      if (resultOf(request, "save") === undefined) return [save];
+      const receipt = objects(resultOf(request, "save")).find(
+        (item) => typeof item["executionId"] === "string",
+      );
+      if (receipt === undefined) throw new Error("No save receipt to finish with");
+      return [
+        call("finish_build", {
+          intent: "Save the note to the account",
+          entrypoint: "src/tool.mjs",
+          executionId: receipt["executionId"],
+          metadata: { name: "save_note", description: "Save a note to the account" },
+          coverage: "One confirmed act session, signed in",
+        }),
+      ];
+    },
+  ];
+  return provider((request, index) => {
+    const turn = turns[index];
+    if (turn !== undefined) return turn(request);
+    // The save's receipt came one turn late when the first act step had to sign in again.
+    if (resultOf(request, "finish_build") === undefined) return turns[5]?.(request) ?? [];
+    return [message("Done.")];
+  }, requests);
+};
+
+test("a local write build whose sign-in script sends the login to another site publishes nothing without a recorded sign-in, and names that site; with that site as a sign-in origin it publishes its sign-in, and a run in a new session signs in", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, two scripted write builds with host sign-ins, then a run",
+  });
+  test.setTimeout(180_000);
+  await withShop(async (shop, endpoint) => {
+    const identityOrigin = `https://${identityHost}:${shop.port}`;
+    const request = {
+      url: `${shop.origin}/identity-login`,
+      intent: "Save the note to the account",
+      input: { note: "kept" },
+      effect: "write" as const,
+    };
+    const build = (authenticationOrigins?: readonly string[]) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const requests: ModelRequest[] = [];
+            const asked: InputRequest[] = [];
+            const service = yield* createPomerado({
+              browser: { endpoint },
+              minterProvider: noteMinter(requests),
+              guardianProvider: guardian(),
+              outcomeReviewerProvider: quietReviewer,
+              ask: answers(asked),
+              timeoutMs: 60_000,
+            });
+            const built = yield* service.mint({
+              ...request,
+              ...(authenticationOrigins === undefined ? {} : { authenticationOrigins }),
+            });
+            return { built, requests, asked };
+          }),
+        ),
+      );
+
+    // The site's own origin never receives the login, so neither check verifies the sign-in.
+    // The first act step starts signed out; the minter signs in again on the page it was sent to,
+    // and its next act step saves the note. The build does not publish that write.
+    const unverified = await build();
+    const last = unverified.requests.at(-1);
+    if (last === undefined) throw new Error("No minter request");
+    expect(objects(resultOf(last, "open_note"))).toContainEqual({ signedIn: false });
+    expect(resultOf(last, "sign_in_again")).toBeDefined();
+    expect(shop.state.identityPosts).toBe(2);
+    expect(shop.state.accountNotes).toEqual(["kept"]);
+    expect(unverified.built.build, JSON.stringify(unverified.built)).not.toBe("published");
+    expect(unverified.built.artifact).toBeUndefined();
+    expect(objects(resultOf(last, "finish_build"))).toContainEqual(
+      expect.objectContaining({
+        status: "not_published",
+        reason: "autofill_recipe_not_verified",
+        untrustedSignInOrigins: [identityOrigin],
+      }),
+    );
+    expect(objects(resultOf(last, "signed_in"))).toContainEqual(
+      expect.objectContaining({
+        signedIn: false,
+        failed: "credentials_not_submitted",
+        untrustedSignInOrigins: [identityOrigin],
+      }),
+    );
+    // The caller reads which origin the login went to, to trust it for sign-in.
+    expect(unverified.built.untrustedSignInOrigins).toEqual([identityOrigin]);
+    expect(JSON.stringify(unverified.built)).not.toContain(shopAccount.password);
+
+    // With the identity service as a sign-in origin, its request carries the login: the check
+    // verifies, the first act step starts from the saved session and the build publishes its
+    // sign-in, value-free.
+    const verified = await build([identityOrigin]);
+    expect(verified.built.build, JSON.stringify(verified.built)).toBe("published");
+    expect(verified.built.untrustedSignInOrigins).toBeUndefined();
+    expect(shop.state.identityPosts).toBe(3);
+    expect(shop.state.accountNotes).toEqual(["kept", "kept"]);
+    const artifact = verified.built.artifact;
+    if (artifact === undefined) throw new Error("No artifact");
+    expect(artifact.signIn).toEqual({
+      recipe: {
+        version: 1,
+        steps: [
+          {
+            page: `${shop.origin}/identity-login`,
+            fields: identitySignIn.fields,
+            submit: "button",
+            submittedBy: "host",
+          },
+        ],
+        signedIn: { selector: "#account" },
+      },
+      entryUrl: `${shop.origin}/identity-login`,
+    });
+    expect(JSON.stringify(artifact)).not.toContain(shopAccount.password);
+
+    // A new session starts signed out: its run asks for the login once, signs in through the
+    // identity service with the recipe and saves the note.
+    const runAsked: InputRequest[] = [];
+    const output = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            browser: { endpoint },
+            ask: answers(runAsked),
+            timeoutMs: 30_000,
+          });
+          return yield* service.run(artifact, {
+            ...request,
+            authenticationOrigins: [identityOrigin],
+          });
+        }),
+      ),
+    );
+    expect(output).toEqual({ saved: true });
+    expect(runAsked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);
+    expect(shop.state.identityPosts).toBe(4);
+    expect(shop.state.accountNotes).toEqual(["kept", "kept", "kept"]);
+  });
+});
+
+/** Opens the shop's identity sign-in page and reports whether its form shows. */
+const openIdentityLogin = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"open_login",input:Schema.Struct({}),output:Schema.Struct({opened:Schema.Boolean})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"await page.goto(new URL('/identity-login', page.url()).href); return (await page.locator('#login').count()) > 0;",timeout_sec:15});
+  if(!response.success) throw new Error(String(response.error));
+  return {opened:response.result === true};
+});`;
+/** The account reader's source, with the identity sign-in's opener beside it. */
+const readerPatch: Output = [
+  ...patch,
+  {
+    type: "apply_patch_call",
+    callId: "patch_login",
+    status: "completed",
+    operation: {
+      type: "create_file",
+      path: "src/open-login.mjs",
+      diff: `${openIdentityLogin
+        .split("\n")
+        .map((line) => `+${line}`)
+        .join("\n")}\n`,
+    },
+  },
+];
+/** The identity sign-in's check. */
+const identityCheck = (callId: string) => signInStep({ signedIn: { selector: "#account" } }, callId);
+/**
+ * Mints the account reader as a read from the identity sign-in: the minter plays `turns`, then
+ * finishes on the receipt of its call `example`. What the build returned comes back, with the
+ * minter's last request.
+ */
+const readBuild = (
+  shop: Shop,
+  endpoint: string,
+  turns: readonly Output[],
+  authenticationOrigins?: readonly string[],
+) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests: ModelRequest[] = [];
+        const minter = provider((request, index) => {
+          if (index < turns.length) return turns[index] ?? [];
+          if (resultOf(request, "finish_build") !== undefined) return [message("Done.")];
+          const receipt = objects(resultOf(request, "example")).find(
+            (item) => typeof item["executionId"] === "string",
+          );
+          if (receipt === undefined) throw new Error("No example receipt to finish with");
+          return [
+            call("finish_build", {
+              intent: "Return the account reader",
+              entrypoint: "src/tool.mjs",
+              executionId: receipt["executionId"],
+              metadata: { name: "read_account", description: "Read whether the account shows" },
+              coverage: "One live example",
+            }),
+          ];
+        }, requests);
+        const service = yield* createPomerado({
+          browser: { endpoint },
+          minterProvider: minter,
+          guardianProvider: guardian(),
+          outcomeReviewerProvider: quietReviewer,
+          ask: answers([]),
+          timeoutMs: 30_000,
+        });
+        const built = yield* service.mint({
+          url: `${shop.origin}/identity-login`,
+          intent: "Read the account",
+          input: {},
+          effect: "read",
+          ...(authenticationOrigins === undefined ? {} : { authenticationOrigins }),
+        });
+        const last = requests.at(-1);
+        if (last === undefined) throw new Error("No minter request");
+        return { built, last };
+      }),
+    ),
+  );
+/** The identity sign-in's one-screen recipe, as a read from `/identity-login` publishes it. */
+const identityLoginSignIn = (shop: Shop) => ({
+  recipe: {
+    version: 1,
+    steps: [
+      {
+        page: `${shop.origin}/identity-login`,
+        fields: identitySignIn.fields,
+        submit: "button",
+        submittedBy: "host",
+      },
+    ],
+    signedIn: { selector: "#account" },
+  },
+  entryUrl: `${shop.origin}/identity-login`,
+});
+
+test("a local read build whose example or explore ran after a sign-in no check verified publishes nothing without a recorded sign-in, and names the origin the login went to, checked or not", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, two scripted read builds with host sign-ins",
+  });
+  test.setTimeout(120_000);
+  await withShop(async (shop, endpoint) => {
+    const identityOrigin = `https://${identityHost}:${shop.port}`;
+    const refusal = expect.objectContaining({
+      status: "not_published",
+      reason: "autofill_recipe_not_verified",
+      untrustedSignInOrigins: [identityOrigin],
+    });
+    // The example started over from a cleared browser, after a sign-in that sent the login and
+    // that no check verified. It read the account signed out, and the read still fails closed.
+    const example = await readBuild(shop, endpoint, [
+      patch,
+      [signInStep(identitySignIn, "sign_in")],
+      [identityCheck("signed_in")],
+      [execute("example", {}, "example")],
+    ]);
+    expect(objects(resultOf(example.last, "example"))).toContainEqual({ signedIn: false });
+    expect(example.built.build, JSON.stringify(example.built)).not.toBe("published");
+    expect(example.built.artifact).toBeUndefined();
+    expect(objects(resultOf(example.last, "finish_build"))).toContainEqual(refusal);
+    expect(example.built.untrustedSignInOrigins).toEqual([identityOrigin]);
+    // An explore keeps the page that sign-in left, which the site's own token exchange signed
+    // in, so it read the account signed in. With no check at all, the refusal and the outcome
+    // still name the origin the login went to.
+    const explore = await readBuild(shop, endpoint, [
+      patch,
+      [signInStep(identitySignIn, "sign_in")],
+      [execute("explore", {}, "example")],
+    ]);
+    expect(objects(resultOf(explore.last, "example"))).toContainEqual({ signedIn: true });
+    expect(resultOf(explore.last, "signed_in")).toBeUndefined();
+    expect(explore.built.build, JSON.stringify(explore.built)).not.toBe("published");
+    expect(explore.built.artifact).toBeUndefined();
+    expect(objects(resultOf(explore.last, "finish_build"))).toContainEqual(refusal);
+    expect(explore.built.untrustedSignInOrigins).toEqual([identityOrigin]);
+  });
+});
+
+test("a local read build publishes an explore that ran after a sign-in no check had verified yet, once a later check verifies that sign-in, with its recipe", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a scripted read build with a host sign-in",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const identityOrigin = `https://${identityHost}:${shop.port}`;
+    const { built, last } = await readBuild(
+      shop,
+      endpoint,
+      [
+        patch,
+        [signInStep(identitySignIn, "sign_in")],
+        [execute("explore", {}, "example")],
+        [identityCheck("signed_in")],
+      ],
+      [identityOrigin],
+    );
+    expect(objects(resultOf(last, "example"))).toContainEqual({ signedIn: true });
+    expect(objects(resultOf(last, "signed_in"))).toContainEqual(
+      expect.objectContaining({ state: "authenticated" }),
+    );
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(built.artifact?.signIn).toEqual(identityLoginSignIn(shop));
+  });
+});
+
+test("a local read build whose explore ran after a second sign-in that no check verified publishes nothing, though its first sign-in verified", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a scripted read build with two host sign-ins",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const identityOrigin = `https://${identityHost}:${shop.port}`;
+    const { built, last } = await readBuild(
+      shop,
+      endpoint,
+      [
+        readerPatch,
+        [signInStep(identitySignIn, "sign_in")],
+        [identityCheck("signed_in")],
+        [execute("explore", { entrypoint: "src/open-login.mjs" }, "open_login")],
+        [signInStep(identitySignIn, "sign_in_again")],
+        [execute("explore", {}, "example")],
+      ],
+      [identityOrigin],
+    );
+    expect(objects(resultOf(last, "signed_in"))).toContainEqual(
+      expect.objectContaining({ state: "authenticated" }),
+    );
+    expect(objects(resultOf(last, "open_login"))).toContainEqual({ opened: true });
+    expect(objects(resultOf(last, "sign_in_again"))).toContainEqual(
+      expect.objectContaining({ outcome: "filled", submit: "clicked" }),
+    );
+    expect(objects(resultOf(last, "example"))).toContainEqual({ signedIn: true });
+    // The later sign-in reached the site, so the first one's recipe is no longer the build's.
+    expect(built.build, JSON.stringify(built)).not.toBe("published");
+    expect(built.artifact).toBeUndefined();
+    expect(objects(resultOf(last, "finish_build"))).toContainEqual(
+      expect.objectContaining({
+        status: "not_published",
+        reason: "autofill_recipe_not_verified",
+      }),
+    );
+    expect(built.untrustedSignInOrigins).toBeUndefined();
   });
 });
 

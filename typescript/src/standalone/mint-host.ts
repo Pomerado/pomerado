@@ -6,6 +6,7 @@ import {
   MintServices,
   type ExecutionRequest,
   type MintDependencies,
+  type MintOutcome,
   type PublicationDecisionLog,
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
@@ -16,7 +17,7 @@ import {
   preflightTestInput,
   writeSessionBoundary,
 } from "../mint/step-checks.js";
-import type { PomeradoRequest } from "./contracts.js";
+import type { LocalMintOutcome, PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
 import type { RequestContext } from "./request-context.js";
 import { mintState, type MintState } from "./mint-state.js";
@@ -157,6 +158,19 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
   };
   return dependencies;
 };
+/**
+ * An unpublished build names the origins its open sign-in sent the login to, off the site and the
+ * request's sign-in origins, so its caller can add one to `authenticationOrigins` and mint again.
+ */
+const withUntrustedSignInOrigins = (
+  outcome: MintOutcome,
+  state: MintState,
+): LocalMintOutcome => {
+  const origins = state.namedSignInOrigins();
+  return outcome.build === "published" || origins.length === 0
+    ? outcome
+    : { ...outcome, untrustedSignInOrigins: origins };
+};
 export const mintRequest = (
   session: StandaloneSession,
   context: RequestContext,
@@ -182,9 +196,10 @@ export const mintRequest = (
       const asked = yield* runMint(mintRequest).pipe(
         Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
       );
-      if (context.buildEffect === undefined) return asked;
+      if (context.buildEffect === undefined) return withUntrustedSignInOrigins(asked, state);
     }
-    return yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
+    const outcome = yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
       Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
     );
+    return withUntrustedSignInOrigins(outcome, state);
   });
