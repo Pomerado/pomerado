@@ -271,6 +271,43 @@ it("ends the build as sign_in_unavailable once a failed sign-in leaves none, nev
   expect(outcome.diagnostics.join("\n")).not.toContain("repeated_final_without_tool");
 });
 
+// The caller would not trust the origin the site's sign-in sent the login to. No later sign-in
+// can count, so the build ends at once as sign-in unavailable, saying why.
+it("ends the build at once as sign_in_unavailable when the caller does not trust the sign-in's origin", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      index === 0
+        ? call("execute", { ...execution, purpose: "authenticate", target: "liveBrowser" })
+        : prose("The site cannot be signed in."),
+    {
+      reviewAndExecute: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "Unavailable",
+            authentication: {
+              phase: "credential_submit",
+              code: "CredentialTargetRefused",
+              afterSubmission: true,
+            },
+            spentSignIn: "sign_in_origin_untrusted",
+          }),
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+  expect(outcome.summary).toBe(
+    signInUnavailableSummary(
+      { phase: "credential_submit", code: "CredentialTargetRefused", afterSubmission: true },
+      "sign_in_origin_untrusted",
+    ),
+  );
+  expect(outcome.summary).toContain(
+    "the caller did not trust the origin the site's sign-in sent the login to",
+  );
+  expect(f.requests).toHaveLength(1);
+});
+
 // Every sign-in verified, but the site lost its signed-in session on a page load, and the host
 // could not sign in again. The build ends as sign-in unavailable on that cause, not a failed
 // sign-in's, and the agent hears to report it rather than authenticate again.

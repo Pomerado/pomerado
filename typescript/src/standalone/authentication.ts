@@ -90,20 +90,32 @@ return false;`,
  * replay: core's inspection, fill and signed-in check, with the page's requests from the
  * executor, the entry page's load and the recorded rejection markers. Once the host typed into
  * the page, each later screen is judged as typed into (`rememberTyping`); `typing` carries that
- * across every build and run on the same browser.
+ * across every build and run on the same browser. `trusted` adds the origins the caller trusted for
+ * sign-in during a build to `authenticationOrigins`, read at each call, so one counts from the
+ * next call on.
  */
 export const makeSignInBrowser = (options: {
   readonly page: AutofillPage;
   readonly keyboard: CredentialKeyboard;
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
+  readonly trusted?: () => readonly string[];
   readonly onRequest: (listener: (request: SignInRequest) => void) => () => void;
   readonly typing: SessionTyping;
 }): SignInBrowser<never> & Pick<SignInReplayBrowser<Error>, "open" | "markerVisible"> => {
-  const { page, siteOrigin, authenticationOrigins, typing } = options;
+  const { page, siteOrigin, typing } = options;
+  const signInOrigins = () =>
+    options.trusted === undefined
+      ? options.authenticationOrigins
+      : [...new Set([...options.authenticationOrigins, ...options.trusted()])];
   const calls = rememberTyping({
     inspect: (request) =>
-      inspectAutofillStep({ ...request, page, siteOrigin, authenticationOrigins }),
+      inspectAutofillStep({
+        ...request,
+        page,
+        siteOrigin,
+        authenticationOrigins: signInOrigins(),
+      }),
     fill: (input: {
       readonly step: AutofillStep;
       readonly inspection: AutofillInspection;
@@ -127,15 +139,24 @@ export const makeSignInBrowser = (options: {
         indicator,
         page,
         siteOrigin,
-        authenticationOrigins,
+        authenticationOrigins: signInOrigins(),
         screens,
         challengeScreens,
       }),
     onRequest: options.onRequest,
-    authenticationOrigins,
+    get authenticationOrigins() {
+      return signInOrigins();
+    },
     open: (url) => openAutofillLogin({ page, url }),
     markerVisible: (selector, screenPage, popup) =>
-      markerVisible({ selector, screenPage, popup, page, siteOrigin, authenticationOrigins }),
+      markerVisible({
+        selector,
+        screenPage,
+        popup,
+        page,
+        siteOrigin,
+        authenticationOrigins: signInOrigins(),
+      }),
   };
 };
 
