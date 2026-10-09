@@ -251,6 +251,9 @@ it("keeps a repair's caller-input question to invalid or real", async () => {
   expect(input.trusted_review.policy).toContain(
     "\nA repair's caller-input question asks only whether the caller's value is invalid or real. Don't reword it to offer a replacement value, since a repair can't change the run's input.\n",
   );
+  expect(input.trusted_review.policy).toContain(
+    "\n- without question_review.scriptAsk, the agent's own question while it builds, other than a repair's caller-input question: evidence ",
+  );
 });
 
 // Guardian judged a blocked report about a refused publication from the agent's words alone.
