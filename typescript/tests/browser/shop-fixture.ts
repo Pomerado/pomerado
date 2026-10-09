@@ -20,8 +20,9 @@ export const shopCode = "482913";
 /** How many help links the two-screen sign-in's password screen shows besides its 4 controls. */
 export const shopHelpLinks = 40;
 /**
- * A host on another site, whose identity service the shop's script sign-in, `/identity-login`,
- * sends the login to. A browser maps it to the shop's server, which answers it on the same port.
+ * A host on another site, whose identity service the shop's script sign-ins, `/identity-login` and
+ * the identifier-first `/identity-steps`, send the login to. A browser maps it to the shop's
+ * server, which answers it on the same port.
  */
 export const identityHost = "accounts.identity.test";
 /** An account the shop has locked: it answers 423 whatever the password. */
@@ -349,30 +350,78 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
 <script>const identity='https://${identityHost}:'+location.port;document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const signedIn=await fetch(identity+'/v1/sign-in?key=public',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:form.get('username'),password:form.get('password')})});if(!signedIn.ok)return;const {idToken}=await signedIn.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
       { "set-cookie": cookiesFor(request) },
     );
-  // The identity service answers its own preflight, and a token for the shop's account.
-  const identitySignIn: Route = async (request, response) => {
-    const cors = {
-      "access-control-allow-origin": request.headers.origin ?? "*",
-      "access-control-allow-headers": "content-type",
-      "access-control-allow-methods": "POST",
+  /** A JSON post's field `key`, or undefined. */
+  const field = (body: unknown, key: string) =>
+    typeof body === "object" && body !== null && key in body
+      ? (body as Readonly<Record<string, unknown>>)[key]
+      : undefined;
+  // The handle the identity service gives an identifier-first sign-in between its two screens.
+  const identityState = `state-${identityToken.slice(4)}`;
+  /**
+   * An identity service endpoint: it answers its own preflight, and a JSON post with what
+   * `answer` gives for its body, or a 400 when that is nothing.
+   */
+  const identityEndpoint =
+    (answer: (body: unknown) => object | undefined): Route =>
+    async (request, response) => {
+      const cors = {
+        "access-control-allow-origin": request.headers.origin ?? "*",
+        "access-control-allow-headers": "content-type",
+        "access-control-allow-methods": "POST",
+      };
+      if (request.method === "OPTIONS") {
+        response.writeHead(204, cors);
+        return void response.end();
+      }
+      if (request.method !== "POST") return json(response, 404, {});
+      state.identityPosts += 1;
+      const answered = answer(JSON.parse((await readBody(request)) || "null"));
+      response.writeHead(answered === undefined ? 400 : 200, {
+        "content-type": "application/json",
+        ...cors,
+      });
+      response.end(JSON.stringify(answered ?? { error: "invalid login" }));
     };
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, cors);
-      return void response.end();
-    }
-    if (request.method !== "POST") return json(response, 404, {});
-    state.identityPosts += 1;
-    const body: unknown = JSON.parse((await readBody(request)) || "null");
-    const matches =
-      typeof body === "object" &&
-      body !== null &&
-      "email" in body &&
-      "password" in body &&
-      body.email === shopAccount.username &&
-      body.password === shopAccount.password;
-    response.writeHead(matches ? 200 : 400, { "content-type": "application/json", ...cors });
-    response.end(JSON.stringify(matches ? { idToken: identityToken } : { error: "invalid login" }));
+  // A token for the shop's account, for the whole login at once.
+  const identitySignIn = identityEndpoint((body) =>
+    field(body, "email") === shopAccount.username &&
+    field(body, "password") === shopAccount.password
+      ? { idToken: identityToken }
+      : undefined,
+  );
+  // An identifier-first sign-in's first screen: the identifier alone, for a state handle.
+  const identityIdentify = identityEndpoint((body) =>
+    field(body, "identifier") === shopAccount.username ? { stateHandle: identityState } : undefined,
+  );
+  /** Whether a second screen's post carries the state handle and the account's password. */
+  const answersChallenge = (body: unknown) =>
+    field(body, "stateHandle") === identityState &&
+    field(body, "password") === shopAccount.password;
+  // Its second screen: the password alone with the state handle, for a token.
+  const identityChallenge = identityEndpoint((body) =>
+    answersChallenge(body) ? { idToken: identityToken } : undefined,
+  );
+  // The shop's own end of a second screen that posts the password to the site instead, with the
+  // state handle and without the identifier: the shop's session.
+  const identityPassword: Route = async (request, response) => {
+    if (!answersChallenge(JSON.parse((await readBody(request)) || "null")))
+      return json(response, 401, { error: "invalid login" });
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
+    });
+    response.end(JSON.stringify({ ok: true }));
   };
+  // An identifier-first sign-in on one page, as an embedded identity widget runs it: its first
+  // screen sends the identifier to the identity service and shows the second, whose password goes
+  // there too, or with `?password=site` to the shop, each with the state handle.
+  const identitySteps: Route = (request, response) =>
+    html(
+      response,
+      `<title>Sign in</title><form id="identify"><label>Email<input name="username" type="email" autocomplete="username"></label><button id="next">Next</button></form><form id="challenge" hidden><label>Password<input name="password" type="password" autocomplete="current-password"></label><button id="verify">Sign in</button></form>
+<script>const identity='https://${identityHost}:'+location.port;const toSite=new URLSearchParams(location.search).get('password')==='site';let stateHandle='';const post=(url,body)=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const identified=await post(identity+'/v1/identify',{identifier:new FormData(event.target).get('username')});if(!identified.ok)return;({stateHandle}=await identified.json());event.target.hidden=true;document.querySelector('#challenge').hidden=false});document.querySelector('#challenge').addEventListener('submit',async event=>{event.preventDefault();const answer={stateHandle,password:new FormData(event.target).get('password')};if(toSite){if((await post('/api/identity-password',answer)).ok)location.href='/account';return}const answered=await post(identity+'/v1/challenge',answer);if(!answered.ok)return;const {idToken}=await answered.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
+      { "set-cookie": cookiesFor(request) },
+    );
   // Trades the identity service's token for the shop's session. It never sees the password.
   const identitySession: Route = (request, response) => {
     if (request.headers.authorization !== `Bearer ${identityToken}`)
@@ -420,6 +469,10 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     ["/hang", hang],
     ["/identity-login", identityLogin],
     ["/v1/sign-in", identitySignIn],
+    ["/identity-steps", identitySteps],
+    ["/v1/identify", identityIdentify],
+    ["/v1/challenge", identityChallenge],
+    ["/api/identity-password", postOnly(identityPassword)],
     ["/api/identity-session", postOnly(identitySession)],
     ["/account/note", accountNote],
   ]);

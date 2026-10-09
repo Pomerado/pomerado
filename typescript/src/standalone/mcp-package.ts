@@ -87,6 +87,17 @@ export const prepareIntegration = (options: {
           catch: localError,
         });
         yield* writeArtifact(directory, artifact);
+        // A sign-in's origins join the request's, after them, so every call signs in the same way.
+        const origins = [
+          ...new Set([
+            ...(deployment.request.authenticationOrigins ?? []),
+            ...(artifact.signIn?.authenticationOrigins ?? []),
+          ]),
+        ];
+        const deployed =
+          origins.length === 0
+            ? deployment
+            : { ...deployment, request: { ...deployment.request, authenticationOrigins: origins } };
         const workspace = yield* createLocalWorkspace({ root: directory });
         const launcherPath = join(directory, "mcp.mjs");
         const configPath = join(directory, "mcp.json");
@@ -96,7 +107,7 @@ export const prepareIntegration = (options: {
           mcpServers: { [deployment.name]: { command: process.execPath, args } },
         };
         const command = [process.execPath, ...args].map(shellQuote).join(" ");
-        yield* workspace.write("deployment.json", `${JSON.stringify(deployment, null, 2)}\n`);
+        yield* workspace.write("deployment.json", `${JSON.stringify(deployed, null, 2)}\n`);
         yield* workspace.write("mcp.mjs", launcher);
         yield* workspace.write("mcp.json", `${JSON.stringify(configuration, null, 2)}\n`);
         yield* workspace.write(
