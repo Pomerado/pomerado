@@ -278,23 +278,23 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "no change within your authority gets past it, such as a requirement the site cannot meet. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // An option the code reads no results for yet throws rather than returning another option's
-  // results, and a format read from one sample breaks on the next value, so the minter reads it
-  // off the page.
+  // Every listed option gets read, a repair fixes a broken input, and a format read from one
+  // sample breaks on the next value, so the minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Read results for every option the schema lists. When an option leads to a page that differs from the others, handle that layout too and run it live (testing skill); never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
-  // The minter reads typed output, kept rows and required facts before it writes the schema and
-  // the parser, so a fact the code could not read fails the output check.
+  // The minter reads the never-loosened needed values, the facts a caller could use, typed output
+  // and kept rows before it writes the schema and the parser, so a fact the code could not read
+  // fails the output check.
   [
     "core",
-    "**Output fields.** Decide from the request and the pages which values the request needs: each value it names, the record's identifier as the site shows it, and the context those values depend on as the page shows it, such as dates, a party size or a location. Make each required and non-null, typed so a value the code could not read fails the output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never an optional, nullable or plain `Schema.Number` field. Make a field optional or nullable only when the page can lack it and the result still serves the request, and say in its description when it is null. A run whose output fails its schema goes to repair. - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row the page shows. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` only when this record's page lacks the value, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
+    "**Never loosen a value the request needs.** The values the request needs are each value it names, the record's identifier as the site shows it, and the context those depend on as the page shows it, such as dates, a party size or a location. Make each one required and non-null, typed so a value the code could not read fails the output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever the request's wording or a description says. A run whose output fails its schema goes to repair. - The one exception is a record whose own page genuinely does not show the value, such as an item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a field that says why, such as its availability, and both descriptions say so. - Null never covers a value the page shows that the code failed to read: that throws `OperationFailure` naming it. Never turn a read that found nothing into null (`?.innerText ?? null`); a missing element is a failure, not an absence. - Before your first example, list the needed values. If the page may not show one, settle it then: find where the site shows it, on every layout its records use, or ask the owner. **Output fields.** Design the output for what a caller could use, and lean toward more fields and more information rather than the minimum: include the facts about each record or result that a caller could reasonably use to identify, choose, compare or act on it, not only the values the request names. Leave out what is unrelated to the tool's purpose or of no use to a caller. - Keep each value's full displayed text. Read the element that holds the whole value, never a shorter or secondary one. When the page splits one value across elements, such as a maker line above a linked name or an author line above a title, return each part in its own field. Never drop either part. - Prefer a separate typed field for each fact over folding it into another field's text. Never derive a value the page does not show. - A field that is not a needed value is nullable when records on this site can lack it, and it is null exactly when this record does not show it. - Never declare a field the code does not read. A field that is always null, empty or fixed is not a disclosed limit: read it from the page, or leave the field out. Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row the page shows. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
     "publication",
-    'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null, and no output is a constant where the page shows a value (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
+    'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
   ],
 ];
 
@@ -311,10 +311,10 @@ const formerSections: readonly (readonly [string, string])[] = [
   ["pagination", "A mint question keeps the live browser for up to 10 minutes; that is not cursor expiry."],
   ["writes", "- The first `act` step claims the build's write."],
   ["publication", "- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens it."],
-  ["workspace/AGENTS.md", "Choose meaningful tests; there is no mandatory test count or promotion matrix."],
+  ["workspace/AGENTS.md", "Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that, choose meaningful tests"],
   ["workspace/AGENTS.md", "- `src/`: your operation. It exists from the start and is empty until you write to it"],
   ["testing", "Choose cases that catch actual risk: applied filters, account scope, IDs, units"],
-  ["testing", "A read may run up to two live tests per attempt with an input you choose instead of the caller's"],
+  ["testing", "A read may run up to four live tests per attempt with an input you choose instead of the caller's"],
 ];
 
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
@@ -616,17 +616,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["3b2675ba76183eace4ddab175651ba59685aecf7a4f43fb0fa66466f11414bf9", "core"],
-    ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
+    ["fcf5254d237bc9becca697d1a4ff7ad517f9c674a83ee0d87501270174bbc87d", "core"],
+    ["75e1c1b2e0c1f0982e74dedc54012f0a0f39cf632a9c2273e6dd58b694649c29", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
-    ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
+    ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["50b398c0abef87fa73454d8a7d0eb3e60341827dbac6fd90f6c4725219136e05", "forms"],
-    ["6e5772f0edf4e72d944f2ba70eb675629bf93181ac758567d79cba8784c83ef9", "writes"],
-    ["a6a79d3d19f685f4d05697ce105102465b0fd5244a0cf1e297ac9e9cdd9f4d9e", "cart"],
-    ["b3147e9625a33c2a7c3db014199964d574af5e892d72b65680cda843e66da3e0", "caller-input"],
-    ["c882afded68960b6387260744bd119c0d397b9ed08c004c9421e486d24432c79", "publication"],
-    ["5ff05613733463e730f1fcc791fa1645f8be7ad613352852d9644f83ab6d416e", "workspace/AGENTS.md"],
+    ["f0ef6a0401c56b96703c8b9cbd56dcf909fa8531cc4f105eb2c0b65e882a1fc8", "writes"],
+    ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
+    ["f5fb5e10ab4a92672150697f2c6eb5fa1008d3ff222d717cade234128f0e65b1", "caller-input"],
+    ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
+    ["07b6a17fea6454ed6567aa8b719ad24f6693fdf58dd907eb3f3b696d2caf22b1", "workspace/AGENTS.md"],
     ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],
   ]);
 });

@@ -60,7 +60,10 @@ first:
   Schema form (core skill, the input schema). A read's schemas come from current source, so
   fix one there and call again with the same `executionId`; a required output field its example
   did not return is refused (`contract_output_mismatch`). Values the request needs are required
-  and non-null, and no output is a constant where the page shows a value (core skill, output
+  and non-null: never loosen one. Only a record whose own page shows no such value may return
+  null, together with a field saying why; a description never excuses a nullable needed value,
+  and Guardian refuses a schema that makes one optional or nullable. No output is a constant
+  where the page shows a value, and titles and names are returned in full (core skill, output
   fields).
 - **Typed output.** Prefer parsing what the page shows into typed fields over returning a
   result row, card or itinerary as one text blob or summary. Give each fact a caller would
@@ -69,19 +72,24 @@ first:
   "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00",
   "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
   or stand in for one value that truly does not parse, with that field's description saying so.
-- **Inputs.** Nothing the caller could vary is a literal, and every optional field the flow
-  offers that bears on the tool's purpose is an optional input, even one the request never
-  mentioned and one you never asked about (core skill, the input schema). Guardian counts such an input as part of the
+- **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
+  that narrows, orders or configures what the tool returns, a location included, is an optional
+  input, even one the request never mentioned and one you never asked about (core skill, the
+  input schema). Guardian counts such an input as part of the
   tool, never as scope drift or an unsupported claim. Each input you accept is applied and read
   back (core skill, the input schema, and `AGENTS.md`; the search skill for a search).
 - **Personal data.** No personal data from the session in source, schemas, examples or metadata:
   names, emails, account numbers, addresses or the owner's answers (the list below).
-- **Claims.** The name, description and output claim only what the example or session reached:
-  a session that stopped at a form's third step never claims the steps after it.
+- **Claims.** The name and description claim only what the example or session reached: a
+  session that stopped at a form's third step never claims the steps after it. An output field
+  the code reads from each record's own element on every run is no overclaim when the example's
+  record lacked that fact. A field the code never reads is a defect, not a limit to disclose,
+  and a fact the page shows is never listed as unsupported instead of being returned.
 - **Coverage.** `coverage` says what exercised each behavior, in three parts: live (the example
   and live tests, with the input each ran, such as page 1 of one query), offline (fixture<!-- pomerado:section publication.saved-http --> and parser tests, synthetic cases such as page boundaries included) and untested (such as
-  a later page, a query with no results or another layout, live). An offline or synthetic check
-  never stands in for a live one.
+  a later page, a query with no results or another layout, live). Name each exposed input under
+  the run that set it, or under untested (testing skill). An offline or synthetic check never
+  stands in for a live one.
 - **Errors.** A thrown message states the cause the code observed, such as a status or a missing
   element, never a guessed one.
 - **Write options.** Each option on the path is an input even when the caller left the choice to
@@ -176,9 +184,10 @@ Any other reason: read `diagnostic` and the instruction; the existing example st
 
 Finding categories: `private_literal`, `credential` and `customer_data` are private values in a
 published file; `exfiltration` is a send off the site your code causes, never the site's own page traffic; `unsafe_logging` logs private data;
-`schema_mismatch` and `unsupported_claim` are claims the example does not support (narrow the
-output or description claim, never the inputs, or fix the source so it delivers the requested
-outcome); `confirmation` is a composed write that does not perform or return what it declares;
+`schema_mismatch` and `unsupported_claim` are claims the example does not support (fix the
+source so it reads the value from the page, or correct a description that promises what the
+code does not do; remove an output field only when the page never shows that fact, and never
+narrow the inputs); `confirmation` is a composed write that does not perform or return what it declares;
 `example_value` is an input narrowed to the example's value, or code that works only for it, and
 blocks like any other finding.
 

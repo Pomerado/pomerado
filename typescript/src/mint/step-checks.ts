@@ -18,7 +18,7 @@ interface Refusal {
 const refused = (reason: string): Refusal => ({ supported: false, reason });
 
 /** Live read tests an attempt may run on an input the agent chose. */
-const maximumAgentTestInputs = 2;
+const maximumAgentTestInputs = 4;
 /** Why an agent-chosen test input that is not JSON text never runs. */
 export const testInputNotJson =
   "testInput must be the tool's input as JSON text. Nothing was executed.";
@@ -26,7 +26,7 @@ const JsonText = Schema.parseJson();
 
 /**
  * Preflight's refusal of a step's `testInput`, if any. Only a read's live test may run an input
- * the agent chose, at most two per attempt, counted from the history's `agent_chosen` marks; a
+ * the agent chose, at most four per attempt, counted from the history's `agent_chosen` marks; a
  * test Guardian denied never ran and left none.
  */
 export const preflightTestInput = (
