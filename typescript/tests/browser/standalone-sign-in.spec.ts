@@ -949,7 +949,14 @@ test("a local build whose check before the password screen finds the email sent 
   });
 });
 
-test("a local build whose sign-in sent only the email to an identity service and an analytics service asks nothing about them, names both and says to pass the one it signs in through up front", async () => {
+/** The host's one question whether to trust both `origins`, in the order the check named them. */
+const trustBothQuestion = (origins: readonly string[]) => ({
+  id: "trust_sign_in_origin",
+  type: "confirm",
+  prompt: `Does shop.test sign in through ${origins.join(" and ")}? Its sign-in page sent the login you gave to those addresses, which are outside the website. Yes trusts them for signing in only and saves them with the tool, so its runs sign in the same way. No stops the build without publishing.`,
+});
+
+test("a local build whose sign-in sent the password to the site and the email to an identity service and an analytics service still asks one question naming both once the password went", async () => {
   test.info().annotations.push({
     type: "slow",
     description: "Original SDKs, Chromium, a scripted build with a two-screen host sign-in",
@@ -958,13 +965,45 @@ test("a local build whose sign-in sent only the email to an identity service and
   await withShop(async (shop, endpoint) => {
     const identityOrigin = `https://${identityHost}:${shop.port}`;
     const analyticsOrigin = `https://${analyticsHost}:${shop.port}`;
-    // The password goes to the shop without the identifier, so it never counts, and no origin
-    // off the site received a password or a code.
-    const { built, last, asked } = await buildNote(shop, endpoint, {
+    // The password goes to the shop without the identifier, so it never counts and no origin off
+    // the site received it. It went somewhere, so the host asks as it always did.
+    const { built, asked } = await buildNote(shop, endpoint, {
       check: true,
       trust: false,
       path: "/identity-steps?password=site&analytics=on",
       signIn: identitySteps,
+      stopAfterCheck: true,
+    });
+    const named = built.untrustedSignInOrigins ?? [];
+    expect([...named].sort()).toEqual([identityOrigin, analyticsOrigin].sort());
+    expect(asked.map(({ questions }) => questions)).toEqual([
+      [loginQuestion(shop.origin)],
+      [trustBothQuestion(named)],
+    ]);
+    expect(built).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+    expect(built.artifact).toBeUndefined();
+    expect(built.summary).toContain(
+      `The sign-in sent the login to ${named.join(" and ")}, which are not trusted for sign-in. Answer yes when asked, or pass them in authenticationOrigins, and build again.`,
+    );
+  });
+});
+
+test("a local build that stops after a check before the password screen, which found the email sent to an identity service and an analytics service, asks nothing about them, names both and says to pass them up front", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Original SDKs, Chromium, a scripted build with a two-screen host sign-in",
+  });
+  test.setTimeout(90_000);
+  await withShop(async (shop, endpoint) => {
+    const identityOrigin = `https://${identityHost}:${shop.port}`;
+    const analyticsOrigin = `https://${analyticsHost}:${shop.port}`;
+    // No password or code went anywhere, and a later build stopping at the same place would not
+    // ask either, so the summary does not say it will.
+    const { built, last, asked } = await buildNote(shop, endpoint, {
+      check: true,
+      trust: false,
+      path: "/identity-steps?analytics=on",
+      signIn: [identitySteps[0]],
       stopAfterCheck: true,
     });
     expect(asked.map(({ questions }) => questions)).toEqual([[loginQuestion(shop.origin)]]);

@@ -176,14 +176,14 @@ const withUntrustedSignInOrigins = (
   const trusted = origins.filter((origin) => state.signInOrigins.trusted.includes(origin));
   const untrusted = origins.filter((origin) => !trusted.includes(origin));
   const them = (some: readonly string[]) => (some.length === 1 ? "it" : "them");
-  // A later build asks only about the origins `signInOriginsToAsk` allows: never two or more that
-  // heard the identifier alone.
+  // A later build asks only about the origins `signInOriginsToAsk` allows: never two or more
+  // before a password or a code went anywhere.
   const asks =
     signInOriginsToAsk(untrusted, {
       siteOrigin: state.context.siteOrigin,
       trusted: [],
       asked: new Set(),
-      receivedProof: state.recorder.receivedProof(untrusted),
+      receivedProof: state.recorder.receivedProof(),
     }) !== undefined;
   const sentences = [
     ...(untrusted.length === 0

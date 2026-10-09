@@ -20,7 +20,6 @@ import {
   namedUntrustedOrigins,
   openSignInRecord,
   provesLogin,
-  receivedProof,
   recordStep,
   SignInRecipe,
   signInRecipe,
@@ -298,7 +297,7 @@ export const makeSignInRecorder = <E>(input: {
     readonly untrustedOrigins: () => readonly string[];
     readonly trustOrigins: (origins: readonly string[]) => void;
     readonly namedOrigins: (named: readonly string[]) => readonly string[];
-    readonly receivedProof: (origins: readonly string[]) => boolean;
+    readonly receivedProof: () => boolean;
   },
   never,
   Scope.Scope
@@ -783,11 +782,13 @@ export const makeSignInRecorder = <E>(input: {
           trusted,
         ),
       /**
-       * Whether the open sign-in sent the password or a code to any of `origins`, before or after
-       * the caller trusted it (`receivedProof`); false once no sign-in is open. Origins that heard
-       * the identifier alone, as a check before the password screen may name, received neither.
+       * Whether the open sign-in sent the password or a code anywhere: a request the host read
+       * carried one to the site or any other origin, counted or not (`proofCarried`), or an
+       * exploration typed a code; false once no sign-in is open. Until then the origins a check
+       * names, as before the password screen, heard no password or code.
        */
-      receivedProof: (origins: readonly string[]) => receivedProof(origins, open, trusted),
+      receivedProof: () =>
+        open !== undefined && (open.proofCarried === true || open.codeTyped === true),
       /**
        * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
        * sent, and its next check may verify it. Nothing is typed again, and a secret credited

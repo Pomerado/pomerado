@@ -138,7 +138,8 @@ const trustQuestionFailure = (cause: unknown) =>
  * allows. A yes trusts them for sign-in only, credits what the sign-in sent there and checks
  * again, typing nothing. They stay among the origins an unpublished build names until a sign-in
  * verifies. A no ends sign-in in the build. Anything else keeps the check's result, as does a
- * check whose two or more origins heard the identifier alone, which marks none of them asked.
+ * check that names two or more origins before a password or a code went anywhere, which marks
+ * none of them asked.
  */
 const askToTrustSignInOrigins = (
   state: MintState,
@@ -148,16 +149,14 @@ const askToTrustSignInOrigins = (
 ) =>
   Effect.gen(function* () {
     const { signInOrigins, recorder, context } = state;
-    const named = checked.untrustedSignInOrigins;
     const origins =
-      named === undefined
+      checked.untrustedSignInOrigins === undefined
         ? undefined
-        : signInOriginsToAsk(named, {
+        : signInOriginsToAsk(checked.untrustedSignInOrigins, {
             siteOrigin: context.siteOrigin,
             trusted: signInOrigins.all(),
             asked: signInOrigins.asked,
-            // The check left the open sign-in as it was, so this reads what it named them from.
-            receivedProof: recorder.receivedProof(named),
+            receivedProof: recorder.receivedProof(),
           });
     if (origins === undefined) return checked;
     for (const origin of origins) signInOrigins.asked.add(origin);

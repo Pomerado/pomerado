@@ -226,6 +226,12 @@ export interface SignInRecord {
    * value.
    */
   untrustedOrigins?: Map<string, Set<AutofillSlot>>;
+  /**
+   * Set once a request the host read for a screen carried a pending password or code, to any
+   * origin, the site included, whether or not it counted as sent. Until then no password or code
+   * has gone anywhere, as on a check before the password screen.
+   */
+  proofCarried?: true;
 }
 
 export const openSignInRecord = (): SignInRecord => ({
@@ -319,7 +325,8 @@ export const noteFormSubmit = (
     const texts = [request.url, request.body ?? ""];
     const carried: AutofillSlot[] = [];
     const script = scriptRequest(watch, sentAt, request);
-    if (sentAsJudged(watch, sentAt, request)) {
+    const judged = sentAsJudged(watch, sentAt, request);
+    if (judged) {
       for (const [slot, value] of record.pending)
         if (yield* carries([value], texts)) carried.push(slot);
     } else if (script !== undefined && trustedScriptDestination(watch, script)) {
@@ -335,28 +342,16 @@ export const noteFormSubmit = (
         origins.set(script.origin, new Set([...(known ?? []), ...record.pending.keys()]));
       }
     }
+    // Whether the password or a code went anywhere, counted or not; what counts is unchanged.
+    if (record.proofCarried !== true && (judged || script !== undefined))
+      for (const [slot, value] of record.pending)
+        if (provesLogin(slot) && (yield* carries([value], texts))) {
+          record.proofCarried = true;
+          break;
+        }
     markSent(record, carried);
     return carried.filter(isSecret);
   });
-
-/** The slots the requests to `origin` carried, as the record's `untrustedOrigins` holds them. */
-const heardBy = (record: SignInRecord | undefined, origin: string) => [
-  ...(record?.untrustedOrigins?.get(origin) ?? []),
-];
-
-/**
- * Whether any of `origins` received the password or a code: its requests carried one, as the
- * record's `untrustedOrigins` holds them, or the caller trusted it after they did (`trusted`). One
- * that heard the identifier alone, such as an analytics script's, received neither.
- */
-export const receivedProof = (
-  origins: readonly string[],
-  record: SignInRecord | undefined,
-  trusted: ReadonlyMap<string, boolean> = new Map(),
-) =>
-  origins.some(
-    (origin) => trusted.get(origin) === true || heardBy(record, origin).some(provesLogin),
-  );
 
 /**
  * Of `origins`, the ones a sign-in names to its caller. An origin is named while a value it heard,
@@ -371,12 +366,15 @@ export const keepNamedOrigins = (
   record: SignInRecord | undefined,
   trusted: ReadonlyMap<string, boolean> = new Map(),
 ): readonly string[] => {
+  const heard = (origin: string) => [...(record?.untrustedOrigins?.get(origin) ?? [])];
   const named = origins.filter(
     (origin) =>
       trusted.has(origin) ||
-      heardBy(record, origin).some((slot) => record?.submittedSlots.has(slot) !== true),
+      heard(origin).some((slot) => record?.submittedSlots.has(slot) !== true),
   );
-  const proving = named.filter((origin) => receivedProof([origin], record, trusted));
+  const proving = named.filter(
+    (origin) => trusted.get(origin) === true || heard(origin).some(provesLogin),
+  );
   return proving.length > 0 ? proving : named;
 };
 

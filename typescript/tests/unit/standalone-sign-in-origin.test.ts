@@ -37,10 +37,10 @@ it("asks about one to three https origins off the site that are neither trusted 
   expect(signInOriginsToAsk([identity], { ...none, asked: new Set([identity]) })).toBeUndefined();
 });
 
-it("asks about two or three origins only once one received the password or a code, and about one that heard the identifier alone", () => {
+it("asks about two or three origins only once a password or a code went anywhere, and about one before that", () => {
   const early = { ...none, receivedProof: false };
   // An identifier screen whose email reached the identity service and an analytics script: the
-  // check after the password screen asks about the one that received it instead.
+  // check after the password screen asks instead.
   expect(signInOriginsToAsk([identity, analytics], early)).toBeUndefined();
   expect(
     signInOriginsToAsk([identity, analytics, "https://token.identity.test"], early),
