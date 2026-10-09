@@ -13,6 +13,7 @@ export type {
   PomeradoRequest,
   MintArtifact,
   MintOutcome,
+  LocalMintOutcome,
 } from "./contracts.js";
 /** A scoped session owns its browser, so a minted operation can run in the same signed-in session. */
 export const createPomerado = (

@@ -218,6 +218,13 @@ export interface SignInRecord {
   readonly submittedSlots: Set<AutofillSlot>;
   /** Set once a screen's host click ran or its fill's answer was lost: it may have sent a value. */
   mayHaveSent?: true;
+  /**
+   * Each origin a script's own sign-in request carried every pending value to, when it is off the
+   * site and not a judged form action's or a configured sign-in origin, with the slots it carried:
+   * never counted as sent, only named, so the caller learns which sign-in origin to trust. Each
+   * key is an exact origin; nothing here holds a value.
+   */
+  untrustedOrigins?: Map<string, Set<AutofillSlot>>;
 }
 
 export const openSignInRecord = (): SignInRecord => ({
@@ -257,24 +264,27 @@ const sentAsJudged = (watch: SignInWatch, sentAt: number, request: SignInRequest
 };
 
 /**
- * A script's own sign-in request (a fetch or XHR, as most single-page logins send): a non-GET heard
- * after the watch was armed, to an HTTPS host on the site's registrable domain, a judged form
- * action's origin or a configured sign-in origin, with a body the host read. Only one that carries
- * every pending value counts (`noteFormSubmit`), which rules out a forged or empty request.
+ * A script's own request (a fetch or XHR, as most single-page logins send): a non-GET heard after
+ * the watch was armed, with a body the host read. Returns its address, else undefined.
  */
-const sentByScript = (watch: SignInWatch, sentAt: number, request: SignInRequest) => {
-  const url = URL.parse(request.url);
-  return (
+const scriptRequest = (watch: SignInWatch, sentAt: number, request: SignInRequest) => {
+  const sent =
     sentAt > watch.armedAt &&
     request.channel === "http" &&
     (watch.popupTargetId === undefined || request.ownerTargetId === watch.popupTargetId) &&
     (request.resourceType === "fetch" || request.resourceType === "xhr") &&
     request.method.toUpperCase() !== "GET" &&
-    request.bodyUnseen !== true &&
-    url !== null &&
-    (watch.scriptOrigins.includes(url.origin) || sameSite(watch.siteOrigin, url))
-  );
+    request.bodyUnseen !== true;
+  return sent ? (URL.parse(request.url) ?? undefined) : undefined;
 };
+
+/**
+ * Where a script's sign-in request may carry the login: a host on the site's registrable domain, a
+ * judged form action's origin or a configured sign-in origin. Only a request that carries every
+ * pending value counts (`noteFormSubmit`), which rules out a forged or empty request.
+ */
+const trustedScriptDestination = (watch: SignInWatch, url: URL) =>
+  watch.scriptOrigins.includes(url.origin) || sameSite(watch.siteOrigin, url);
 
 /** Values a form request carried are sent; after a missed host click, the minter sent them. */
 const markSent = (record: SignInRecord, carried: readonly AutofillSlot[]) => {
@@ -291,7 +301,9 @@ const markSent = (record: SignInRecord, carried: readonly AutofillSlot[]) => {
  * One rule for every submit, the host's click or the minter's own after a missed one: a filled
  * value counts as sent only when the host hears the page's request carry it. Each value it carries
  * moves to `submittedSlots`; one it does not stays unsent, so a reload, a remount or a form that
- * emptied never counts. Returns the secret slots it carried.
+ * emptied never counts. A script's request that carries every pending value to an origin off the
+ * site and its trusted sign-in origins counts nothing, and its origin goes to `untrustedOrigins`.
+ * Returns the secret slots it carried.
  */
 export const noteFormSubmit = (
   record: SignInRecord | undefined,
@@ -304,17 +316,38 @@ export const noteFormSubmit = (
     if (record === undefined || watch === undefined) return [];
     const texts = [request.url, request.body ?? ""];
     const carried: AutofillSlot[] = [];
+    const script = scriptRequest(watch, sentAt, request);
     if (sentAsJudged(watch, sentAt, request)) {
       for (const [slot, value] of record.pending)
         if (yield* carries([value], texts)) carried.push(slot);
+    } else if (script !== undefined && trustedScriptDestination(watch, script)) {
+      if (yield* carries([...record.pending.values()], texts))
+        carried.push(...record.pending.keys());
     } else if (
-      sentByScript(watch, sentAt, request) &&
+      script !== undefined &&
+      script.origin !== "null" &&
+      record.pending.size > 0 &&
       (yield* carries([...record.pending.values()], texts))
-    )
-      carried.push(...record.pending.keys());
+    ) {
+      const origins = (record.untrustedOrigins ??= new Map());
+      const slots = origins.get(script.origin) ?? new Set<AutofillSlot>();
+      for (const slot of record.pending.keys()) slots.add(slot);
+      origins.set(script.origin, slots);
+    }
     markSent(record, carried);
     return carried.filter(isSecret);
   });
+
+/**
+ * The origins in `untrustedOrigins` a sign-in names to its caller: when any of them received the
+ * password or a code, only those, since an origin that heard the identifier alone, such as an
+ * analytics script's, signs nobody in; else every one. Each is an exact origin.
+ */
+export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] => {
+  const named = [...(record.untrustedOrigins ?? [])];
+  const proving = named.filter(([, slots]) => [...slots].some(provesLogin));
+  return (proving.length > 0 ? proving : named).map(([origin]) => origin);
+};
 
 /**
  * Arms the watch for a fill about to run, with the form endpoints the host judged for its step,

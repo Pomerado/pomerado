@@ -82,6 +82,8 @@ interface Options {
   readonly answers?: Record<string, string[]>;
   readonly approve?: boolean;
   readonly refuseIndicator?: boolean;
+  /** The configured sign-in origins off the site. */
+  readonly authenticationOrigins?: readonly string[];
 }
 
 /** A recorder over a synthetic site, with what it asked, filled, reviewed and checked. */
@@ -147,7 +149,7 @@ const harness = (options: Options = {}) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    authenticationOrigins: [],
+    authenticationOrigins: options.authenticationOrigins ?? [],
   };
   const ask: InputAsker = (request) =>
     Effect.sync(() => {
@@ -368,6 +370,136 @@ it("counts a script's sign-in request only when it carries every filled value", 
       }),
     ),
   ).toMatchObject({ verified: true });
+});
+
+/** An identity service off the site that a sign-in script posts the login to. */
+const identity = "https://identity.provider.test";
+/** The script's request to it, carrying the login's identifier and password. */
+const identityRequest = (values: readonly string[]): SignInRequest => ({
+  url: `${identity}/v1/sign-in?key=public-key`,
+  method: "POST",
+  body: JSON.stringify({ email: values[0], password: values[1] }),
+  channel: "http",
+  resourceType: "fetch",
+});
+
+it("names the origin off the site a script sent the whole login to, and counts nothing sent", async () => {
+  // A request to another off-site origin that carries only part of the login is not named.
+  const partial = (values: readonly string[]): SignInRequest => ({
+    url: "https://telemetry.other.test/collect",
+    method: "POST",
+    body: JSON.stringify({ field: values[0] }),
+    channel: "http",
+    resourceType: "xhr",
+  });
+  const untrusted = harness({
+    send: (_step, values) => [partial(values), identityRequest(values)],
+  });
+  const checked = await untrusted.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      const result = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(recorder.published()).toBeUndefined();
+      return result;
+    }),
+  );
+  expect(checked.verified).toBeUndefined();
+  expect(checked.untrustedSignInOrigins).toEqual([identity]);
+  // Exactly the origin, with no path, query or value.
+  expect(checked.result).toMatchObject({
+    signedIn: false,
+    failed: "credentials_not_submitted",
+    untrustedSignInOrigins: [identity],
+  });
+  expect(checked.result["nextStep"]).toContain("untrustedSignInOrigins");
+  expect(JSON.stringify(checked.result)).not.toContain(account.password);
+  expect(JSON.stringify(checked.result)).not.toContain(account.username);
+  expect(JSON.stringify(checked.result)).not.toContain("/v1/sign-in");
+  expect(untrusted.confirmed).toEqual([]);
+  // A login the page's own request never carried names no origin.
+  const unsent = harness({ send: () => [formRequest(["unrelated"])] });
+  const plain = await unsent.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      return (yield* recorder.step(signedIn, undefined, Effect.void)).result;
+    }),
+  );
+  expect(plain).toMatchObject({ failed: "credentials_not_submitted" });
+  expect(plain).not.toHaveProperty("untrustedSignInOrigins");
+});
+
+it("verifies a script's sign-in request to a configured sign-in origin off the site", async () => {
+  const trusted = harness({
+    authenticationOrigins: [identity],
+    send: (_step, values) => [identityRequest(values)],
+  });
+  const verified = await trusted.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      const result = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(recorder.published()).toBeDefined();
+      return result;
+    }),
+  );
+  expect(verified).toMatchObject({ verified: true, result: { signedIn: true } });
+});
+
+/** An identifier-first sign-in's first screen, its identifier alone. */
+const identifierOnly: SignInStep = {
+  fields: [{ selector: "#user", accepts: ["username"] }],
+  submit: "#next",
+};
+
+it("names only the origins off the site that received the password, never one that heard the identifier alone, with or without a check", async () => {
+  const analytics = "https://analytics.other.test";
+  // An analytics script captures the email the first screen sends; the second screen's script
+  // sends the whole login to the identity service.
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] =>
+    step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${analytics}/capture`,
+            method: "POST",
+            body: JSON.stringify({ email: values[0] }),
+            channel: "http",
+            resourceType: "xhr",
+          },
+        ]
+      : [identityRequest([account.username, values[0] ?? ""])];
+  const { checked, named } = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const result = yield* recorder.step(signedIn, undefined, Effect.void);
+      return { checked: result, named: recorder.untrustedOrigins() };
+    }),
+  );
+  expect(checked.untrustedSignInOrigins).toEqual([identity]);
+  expect(checked.result).toMatchObject({ untrustedSignInOrigins: [identity] });
+  expect(named).toEqual([identity]);
+  // With no check at all, the open sign-in names the same origin.
+  const unchecked = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      // The host checks each request it heard on its own, after the fill returns.
+      yield* Effect.sleep("20 millis");
+      return recorder.untrustedOrigins();
+    }),
+  );
+  expect(unchecked).toEqual([identity]);
+  // No origin is named once a sign-in verified.
+  const configured = await harness({
+    authenticationOrigins: [identity],
+    send: (_step, values) => [identityRequest(values)],
+  }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.untrustedOrigins();
+    }),
+  );
+  expect(configured).toEqual([]);
 });
 
 it("takes a code an exploration typed as the proof after a sent identifier", async () => {

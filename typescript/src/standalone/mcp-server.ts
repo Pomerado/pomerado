@@ -197,7 +197,13 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
                 const pomerado = yield* createPomerado({ ...options.pomerado, ask });
                 const result = yield* pomerado.mint(request);
                 if (result.artifact === undefined)
-                  return { build: result.build, summary: result.summary };
+                  return {
+                    build: result.build,
+                    summary: result.summary,
+                    ...(result.untrustedSignInOrigins === undefined
+                      ? {}
+                      : { untrustedSignInOrigins: result.untrustedSignInOrigins }),
+                  };
                 const integration = yield* publish(result.artifact);
                 return { build: result.build, integration };
               }),

@@ -138,6 +138,9 @@ const executeAuthentication = (
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
     const authenticated = step.verified === true && start.verified();
+    const offSite = state.untrustedSignInOrigins;
+    if (authenticated) offSite.clear();
+    for (const origin of step.untrustedSignInOrigins ?? []) offSite.add(origin);
     const result =
       step.report === undefined
         ? step.result
@@ -274,6 +277,8 @@ interface ReceiptInput {
   readonly journal: Journal;
   /** A failed act step that may have committed its write: read back before writing again. */
   readonly writeSession?: { readonly verifyFirst: true; readonly notice: string };
+  /** The step ran after the host sent a login no check verified; see `afterUnverifiedSignIn`. */
+  readonly afterUnverifiedSignIn?: true;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -295,7 +300,7 @@ const failedReceipt = (
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
-    const { writeSession } = receipt;
+    const { writeSession, afterUnverifiedSignIn } = receipt;
 
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
@@ -313,6 +318,7 @@ const failedReceipt = (
       purpose: execution.purpose,
       journal: failureJournal,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      ...(afterUnverifiedSignIn === undefined ? {} : { afterUnverifiedSignIn }),
     });
     const evidence: ExecutionEvidence = {
       executionId: id,
@@ -344,6 +350,7 @@ const failedReceipt = (
 const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =>
   Effect.gen(function* () {
     const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
+    const { afterUnverifiedSignIn } = receipt;
     const { runs } = state;
     const { projection } = state.session;
 
@@ -371,6 +378,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       purpose: execution.purpose,
       journal: result,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      ...(afterUnverifiedSignIn === undefined ? {} : { afterUnverifiedSignIn }),
     });
     yield* journal?.record(evidence) ?? Effect.void;
     return evidence;
@@ -445,6 +453,10 @@ const authoredExecution = (
     yield* allowedOf(reviewed).pipe(
       Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
     );
+    // The open sign-in sent the login and no check verified it, so this live step may run signed
+    // in, as an explore on the page that sign-in left does: a publication that rests on it, an
+    // act step, an example or an explore, needs a recorded sign-in.
+    const afterUnverifiedSignIn = live && start.submitted;
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.
@@ -542,6 +554,7 @@ const authoredExecution = (
           reviewed,
           journal,
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
+          ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

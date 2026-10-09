@@ -3698,6 +3698,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.reason,
                   {
                     expectedEntrypoint: error.expectedEntrypoint,
+                    untrustedSignInOrigins: error.untrustedSignInOrigins,
                     ...(review === undefined ? {} : { review }),
                     diagnostic:
                       diagnostic._tag === "Right"
