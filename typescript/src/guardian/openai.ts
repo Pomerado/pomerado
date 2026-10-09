@@ -17,7 +17,7 @@ import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { Agent, AgentsError, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
-import { Duration, Effect, Exit, Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 import { requiredReadRounds, ReviewFailure } from "./review.js";
 import { withTenantPolicy } from "./upstream-policy.js";
 import type { GuardianUsage, Reviewer, ReviewTurn } from "./review.js";
@@ -271,12 +271,12 @@ const timedCompactions = (
  */
 const reviewDeadline = (limitMs: number, compactingMs: () => number) =>
   Effect.gen(function* () {
-    yield* Effect.sleep(Duration.millis(limitMs));
+    yield* Effect.sleep(limitMs);
     let granted = 0;
     while (compactingMs() > granted) {
       const extra = compactingMs() - granted;
       granted += extra;
-      yield* Effect.sleep(Duration.millis(extra));
+      yield* Effect.sleep(extra);
     }
   });
 
