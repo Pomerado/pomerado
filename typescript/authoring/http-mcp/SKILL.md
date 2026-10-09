@@ -5,8 +5,8 @@ description: Build the http implementation beside the playwright script from the
 
 # Two implementations: playwright and http
 
-Every mint publishes the Playwright script, `src/tool.mjs`, and an HTTP implementation,
-`src/tool-http.mjs`, of the same operation. Build them in that order:
+Every mint publishes the Playwright script, `src/tool.mjs`, and, when its route ports, an
+HTTP implementation, `src/tool-http.mjs`, of the same operation. Build them in that order:
 
 1. Run the Playwright flow first: a read explores and runs its example, and a write
    performs its act session (the writes skill). Clicking through the real site is how
@@ -33,7 +33,34 @@ Every mint publishes the Playwright script, `src/tool.mjs`, and an HTTP implemen
    Temporal proximity to a click is a lead, not proof of causality. When the data isn't
    in the page's HTML, search the captures for one of the example's IDs (a product ID, an
    order number): the response that holds it is the request to call.
-4. Write `src/tool-http.mjs` in the object form, never as a Kernel script. Start from
+4. Before you write a new HTTP version, check that the data request can work without the
+   page's script. Stay with the Playwright version, writing, probing and testing no HTTP
+   version, when the captures show any of these:
+   - **A per-request GraphQL hash or page-made ID.** A persisted query's hash or `doc_id`
+     (`extensions.persistedQuery.sha256Hash`) changes between captured calls of the same
+     operation, or the server refused it without its query text (`PersistedQueryNotFound`).
+     A hash the page sends unchanged is a constant the HTTP version can send too. Or an ID
+     the call needs is made by page script at request time: it differs between calls and
+     no saved response holds it in any form. A random value such as a request UUID, the
+     caller's input, a value from the page URL and a script constant don't count, and a
+     body capture didn't save is unknown, not proof.
+   - **A bot-walled API.** In the browser that ran the example or act session, the page's
+     own calls to that route were still answered with a vendor challenge (Bot challenges,
+     below), with no later success. A challenge before a browser swap doesn't count, and a
+     site's own 403 or 429 is its answer, not a wall.
+   - **A session token the tool can't get.** `captures/session-tokens.json` shows a header
+     the page sent on that call, such as an `authorization` bearer, whose value no cookie,
+     page or response the HTTP version can request holds, for example one the page keeps
+     in local storage after sign-in. Capture masks tokens the site's JSON responses issue,
+     such as `access_token`, so a masked credential field in a response the HTTP version
+     can request is a source; not finding the value proves nothing alone.
+
+   Say in coverage which signal ruled the route out, and publish the Playwright version
+   alone (What publishes and runs). A read's first `finish_build` still asks once
+   (`http_implementation_untested`); call it again. A route this tool's HTTP version
+   already ran successfully ports: in maintenance, repair it (below).
+
+5. Write `src/tool-http.mjs` in the object form, never as a Kernel script. Start from
    `references/http-version.ts`: `defineHttpOperation({ ...contract, run: (input, http) =>
    Effect.gen(...) })`, or `defineOperation({ ...contract, run: (input) =>
    Effect.gen(function* () { const http = yield* SiteHttp; ... }) })`, both from
@@ -45,7 +72,7 @@ Every mint publishes the Playwright script, `src/tool.mjs`, and an HTTP implemen
    `readJson(http, request, schema)` answers the decoded value, and `readText(http, request)`
    answers `{ text, response }`, so destructure it for an HTML or text body:
    `const { text } = yield* readText(http, request)`.
-5. Test it, as below. A read gets one live test; a write iterates offline until it works.
+6. Test it, as below. A read gets one live test; a write iterates offline until it works.
 
 Preserve semantics: method, query and body roles, redirects, account, ordering and
 response meaning. Compare IDs, filters, units, freshness, coverage and empty or error
@@ -113,8 +140,8 @@ There is no route allowlist, so any route may be requested.
 ## Tokens
 
 After each live execution the host writes `captures/session-tokens.json`. It holds this
-attempt's live cookies and the credential headers relayed requests sent and received,
-such as authorization, CSRF and Set-Cookie, with their values. The view is transient:
+attempt's live cookies and the credential headers the page's own requests and relayed
+requests sent and received, such as authorization, CSRF and Set-Cookie, with their values. The view is transient:
 it is never stored, uploaded or published, and passwords and one-time codes are
 withheld. Use it to learn which tokens the site issues and where they come from, then
 write code that obtains each one at run time. Read a CSRF value from the page, a cookie
