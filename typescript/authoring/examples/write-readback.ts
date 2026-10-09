@@ -26,7 +26,8 @@ export default defineOperation(
       }),
     }),
     output: SavedTask,
-    // The saved task's own detail view is the read-back that confirms the write.
+    // One read-back confirms the write: the saved task's own detail view, the one this
+    // submission's receipt names. It shows every output field, so nothing reads another page.
     write: { confirmation: "readback", commits: ["create-task"] },
   },
   async ({
@@ -99,6 +100,8 @@ export default defineOperation(
         const response = receipt.value;
         const location = response.headers()["location"] ?? "";
         if (response.status() !== 201 || !location.startsWith("/tasks/")) return { failure: "not_saved" };
+        // Read one view, reached by the identity this write produced: the Location in its own
+        // receipt. Read only the fields the output promises, from that record alone.
         await page.waitForURL(current.origin + location, { timeout: 10000 });
         const detail = page.getByRole("region", { name: "Saved task", exact: true });
         if (!(await detail.isVisible())) return { failure: "readback_missing" };
@@ -121,6 +124,9 @@ export default defineOperation(
             : "sent",
       });
     const { saved, location } = result;
+    // A page left from before the write can show another task ID, and one that has not loaded
+    // this record shows none. Neither confirms the write nor shows it failed: the write stays
+    // possibly sent.
     if (
       location !== `/tasks/${saved.id}` ||
       saved.title !== input.title ||
@@ -129,7 +135,8 @@ export default defineOperation(
       throw new errors.OperationFailure("The saved task does not match the request", {
         dispatch: "sent",
       });
-    // The saved record read back from this submission's own receipt shows the write landed.
+    // The first read-back that matches confirms the write: this record's own ID and the
+    // entered values. Stop here, with no further call.
     verified();
     return saved;
   },

@@ -204,6 +204,8 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["pagination", "1. Validate cursor/query/account scope before browser effects."],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
   ["writes", "A write build changes something real on the caller's account"],
+  ["writes", "- The first read-back that matches confirms the write; stop there."],
+  ["writes", "- State from before the write never matches."],
   [
     "writes",
     "Write `src/tool.mjs`, the `playwright` version: a Kernel script running the whole flow",
@@ -279,12 +281,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // An option the code reads no results for yet throws rather than returning another option's
-  // results, and a format read from one sample breaks on the next value, so the minter reads it
-  // off the page.
+  // Only what the caller asked for decides whether a tool books or refuses. An option the code
+  // reads no results for yet throws rather than returning another option's results, and a format
+  // read from one sample breaks on the next value, so the minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain error for that option over returning results for another one. A repair adds it when a caller needs it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads typed output, kept rows and required facts before it writes the schema and
   // the parser, so a fact the code could not read fails the output check.
@@ -587,6 +589,37 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+/*
+ * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
+ * other pages for minutes, some of them refused for not proving the record or for reading without
+ * bound. The first bounded read-back that matches confirms the write, and nothing from before the
+ * write, such as a list that has not reloaded, can match.
+ */
+it("has a write confirm from its first matching read-back, never from state before the write", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "- The first read-back that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the exact values entered), and every field the caller asked for that the view shows agrees (the read before the commit already checked what you entered). When the write changed state that already existed, the same read also checks that only the requested change happened. Write each read-back step to check that match in its own code and call `verified()` when it holds, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
+  );
+  // Entered values find a record but never prove it new.
+  expect(writes).toContain(
+    "- State from before the write never matches. Require something only the finished write can show: the number or reference it produced, or a value it changed from what you read before it, such as a status that now reads Sent or a row that was not there. A list still showing the row from before the write, or a table that has not reloaded yet, neither confirms the write nor shows that it did not happen. Values you entered find the record but never prove it new. When they are all a create's read-back can match, read that list before the write too, in the session and the composed script, note the rows that already match (their count or ids), and count only a new one: a row whose id you had not seen, or the one match where there was none. When two rows match after the write and no noted id shows which one is new, values alone do not confirm it.",
+  );
+  // The rules on commit marks and uncertain outcomes stay as they were.
+  expect(writes).toContain(
+    "- Mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step.",
+  );
+  expect(writes).toContain(
+    "- Never repeat a step blindly. If an `act` step fails after the page sent a state-changing request or opened a socket, after it entered a commit mark, or without returning a result at all (its page was lost), the write may already be committed;",
+  );
+  // The reference the skill points to confirms from its one matching view the same way.
+  expect(
+    (await readFile("typescript/authoring/examples/write-readback.ts", "utf8")).replace(/\s+/g, " "),
+  ).toContain("// The first read-back that matches confirms the write");
+});
+
 // A write that passed the page's headings to `verified` lost its receipt. With no argument there
 // is nothing to get wrong, so no skill or reference teaches the argument form any more.
 it("teaches every write to call verified() with no argument and declare a read-back", async () => {
@@ -617,15 +650,15 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["b97546916cc037a64ce25b21237a52e2c7830373633ea6b0a16632dd78216970", "core"],
+    ["fe34ff726453f70b2d6088da7fafc8b8b05128cf9a27ac9f1361870e1fd3b7cb", "core"],
     ["90be0a8d6480497b79bc18724b6f6ff2abcd1971fc59189bf18f12cf37b3ef7c", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["647c39673b73eb0b5c8dbd451f61531ae2cc2c53ca842382030a4f37c2788983", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["50b398c0abef87fa73454d8a7d0eb3e60341827dbac6fd90f6c4725219136e05", "forms"],
-    ["6e5772f0edf4e72d944f2ba70eb675629bf93181ac758567d79cba8784c83ef9", "writes"],
+    ["7e6a9b789fd495cd3c55e55d3622cbafa03e19180bb941c0be985612c75e7eca", "writes"],
     ["a6a79d3d19f685f4d05697ce105102465b0fd5244a0cf1e297ac9e9cdd9f4d9e", "cart"],
-    ["b3147e9625a33c2a7c3db014199964d574af5e892d72b65680cda843e66da3e0", "caller-input"],
+    ["82a6cfc8b4ea998f9c723d6fa8ce3ad5b25509b575bce02136f85cc1a88613b0", "caller-input"],
     ["c882afded68960b6387260744bd119c0d397b9ed08c004c9421e486d24432c79", "publication"],
     ["e7608e16e65e788e24c46a2d5a20cd9f3c04bda5ff8323b028dc697bd20a6bb3", "workspace/AGENTS.md"],
     ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],

@@ -25,6 +25,11 @@ export const shopHelpLinks = 40;
  * server, which answers it on the same port.
  */
 export const identityHost = "accounts.identity.test";
+/**
+ * A host on a third site, whose analytics service `/identity-steps?analytics=on` tells the
+ * identifier screen's email to, as a marketing tag does. A browser maps it to the shop's server.
+ */
+export const analyticsHost = "collect.analytics.test";
 /** An account the shop has locked: it answers 423 whatever the password. */
 export const lockedShopAccount = {
   username: "grace@example.test",
@@ -48,6 +53,8 @@ interface ShopState extends StoreState {
   sessionPosts: number;
   /** Posts of a login to the identity service on `identityHost`, its preflights left out. */
   identityPosts: number;
+  /** Posts to the analytics service on `analyticsHost`, its preflights left out. */
+  analyticsPosts: number;
   /** The notes the signed-in account saved on `/account/note`, in order. */
   accountNotes: string[];
   /** The HTTP version's contract: `error` and `changed` break it for curl traffic only. */
@@ -412,14 +419,33 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     });
     response.end(JSON.stringify({ ok: true }));
   };
+  // An analytics service that takes any JSON post, as a marketing tag's collector does. It answers
+  // its own preflight and signs nobody in.
+  const analyticsCollect: Route = async (request, response) => {
+    const cors = {
+      "access-control-allow-origin": request.headers.origin ?? "*",
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-methods": "POST",
+    };
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, cors);
+      return void response.end();
+    }
+    if (request.method !== "POST") return json(response, 404, {});
+    state.analyticsPosts += 1;
+    await readBody(request);
+    response.writeHead(204, cors);
+    response.end();
+  };
   // An identifier-first sign-in on one page, as an embedded identity widget runs it: its first
   // screen sends the identifier to the identity service and shows the second, whose password goes
-  // there too, or with `?password=site` to the shop, each with the state handle.
+  // there too, or with `?password=site` to the shop, each with the state handle. With
+  // `?analytics=on` the first screen also sends the email to the analytics service.
   const identitySteps: Route = (request, response) =>
     html(
       response,
       `<title>Sign in</title><form id="identify"><label>Email<input name="username" type="email" autocomplete="username"></label><button id="next">Next</button></form><form id="challenge" hidden><label>Password<input name="password" type="password" autocomplete="current-password"></label><button id="verify">Sign in</button></form>
-<script>const identity='https://${identityHost}:'+location.port;const toSite=new URLSearchParams(location.search).get('password')==='site';let stateHandle='';const post=(url,body)=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const identified=await post(identity+'/v1/identify',{identifier:new FormData(event.target).get('username')});if(!identified.ok)return;({stateHandle}=await identified.json());event.target.hidden=true;document.querySelector('#challenge').hidden=false});document.querySelector('#challenge').addEventListener('submit',async event=>{event.preventDefault();const answer={stateHandle,password:new FormData(event.target).get('password')};if(toSite){if((await post('/api/identity-password',answer)).ok)location.href='/account';return}const answered=await post(identity+'/v1/challenge',answer);if(!answered.ok)return;const {idToken}=await answered.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
+<script>const identity='https://${identityHost}:'+location.port;const query=new URLSearchParams(location.search);const toSite=query.get('password')==='site';const analytics=query.get('analytics')==='on'?'https://${analyticsHost}:'+location.port:'';let stateHandle='';const post=(url,body)=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const email=new FormData(event.target).get('username');const [identified]=await Promise.all([post(identity+'/v1/identify',{identifier:email}),...(analytics?[post(analytics+'/v1/collect',{event:'identify',email})]:[])]);if(!identified.ok)return;({stateHandle}=await identified.json());event.target.hidden=true;document.querySelector('#challenge').hidden=false});document.querySelector('#challenge').addEventListener('submit',async event=>{event.preventDefault();const answer={stateHandle,password:new FormData(event.target).get('password')};if(toSite){if((await post('/api/identity-password',answer)).ok)location.href='/account';return}const answered=await post(identity+'/v1/challenge',answer);if(!answered.ok)return;const {idToken}=await answered.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
       { "set-cookie": cookiesFor(request) },
     );
   // Trades the identity service's token for the shop's session. It never sees the password.
@@ -474,6 +500,7 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     ["/v1/challenge", identityChallenge],
     ["/api/identity-password", postOnly(identityPassword)],
     ["/api/identity-session", postOnly(identitySession)],
+    ["/v1/collect", analyticsCollect],
     ["/account/note", accountNote],
   ]);
 };
@@ -511,6 +538,7 @@ export const startShop = async (directory: string): Promise<Shop> => {
     loginPageLoads: 0,
     sessionPosts: 0,
     identityPosts: 0,
+    analyticsPosts: 0,
     accountNotes: [],
     api: "ok",
     curl: "ok",
