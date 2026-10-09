@@ -647,6 +647,60 @@ it("names only the origin that received the password in what a build names, thou
   expect(named).toEqual([identity]);
 });
 
+it("says whether the origins a check named received the password or a code, so a host can tell an early check's identifier-only origins apart", async () => {
+  const analytics = "https://analytics.other.test";
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] => [
+    ...identifierFirst(identity)(step, values),
+    ...(step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${analytics}/capture`,
+            method: "POST",
+            body: JSON.stringify({ email: values[0] }),
+            channel: "http" as const,
+            resourceType: "xhr" as const,
+          },
+        ]
+      : []),
+  ];
+  const host = harness({ send });
+  const proofs = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      // A check before the password screen names both, and neither received a proof.
+      const early = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(early.untrustedSignInOrigins).toEqual([identity, analytics]);
+      const beforePassword = recorder.receivedProof([identity, analytics]);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const later = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(later.untrustedSignInOrigins).toEqual([identity]);
+      const afterPassword = {
+        identity: recorder.receivedProof([identity]),
+        analytics: recorder.receivedProof([analytics]),
+        both: recorder.receivedProof([identity, analytics]),
+      };
+      // A yes keeps the trusted origin's proof until a sign-in verifies through it.
+      recorder.trustOrigins([identity]);
+      const trusted = recorder.receivedProof([identity]);
+      const verified = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(verified).toMatchObject({ verified: true });
+      return {
+        beforePassword,
+        afterPassword,
+        trusted,
+        afterVerified: recorder.receivedProof([identity]),
+      };
+    }),
+  );
+  expect(proofs).toEqual({
+    beforePassword: false,
+    afterPassword: { identity: true, analytics: false, both: true },
+    trusted: true,
+    afterVerified: false,
+  });
+  expect(host.filled).toHaveLength(2);
+});
+
 it("names the origin an identifier-first sign-in sent the identifier to when the password went in the site's own form post, and a yes verifies", async () => {
   // The identifier goes to the identity service by script; the password screen posts natively to
   // the site's form, which counts the password alone.

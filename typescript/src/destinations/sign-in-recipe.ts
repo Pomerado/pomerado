@@ -339,6 +339,25 @@ export const noteFormSubmit = (
     return carried.filter(isSecret);
   });
 
+/** The slots the requests to `origin` carried, as the record's `untrustedOrigins` holds them. */
+const heardBy = (record: SignInRecord | undefined, origin: string) => [
+  ...(record?.untrustedOrigins?.get(origin) ?? []),
+];
+
+/**
+ * Whether any of `origins` received the password or a code: its requests carried one, as the
+ * record's `untrustedOrigins` holds them, or the caller trusted it after they did (`trusted`). One
+ * that heard the identifier alone, such as an analytics script's, received neither.
+ */
+export const receivedProof = (
+  origins: readonly string[],
+  record: SignInRecord | undefined,
+  trusted: ReadonlyMap<string, boolean> = new Map(),
+) =>
+  origins.some(
+    (origin) => trusted.get(origin) === true || heardBy(record, origin).some(provesLogin),
+  );
+
 /**
  * Of `origins`, the ones a sign-in names to its caller. An origin is named while a value it heard,
  * as the record's `untrustedOrigins` holds it, does not count as sent yet, or while the caller
@@ -352,15 +371,12 @@ export const keepNamedOrigins = (
   record: SignInRecord | undefined,
   trusted: ReadonlyMap<string, boolean> = new Map(),
 ): readonly string[] => {
-  const heard = (origin: string) => [...(record?.untrustedOrigins?.get(origin) ?? [])];
   const named = origins.filter(
     (origin) =>
       trusted.has(origin) ||
-      heard(origin).some((slot) => record?.submittedSlots.has(slot) !== true),
+      heardBy(record, origin).some((slot) => record?.submittedSlots.has(slot) !== true),
   );
-  const proving = named.filter(
-    (origin) => trusted.get(origin) === true || heard(origin).some(provesLogin),
-  );
+  const proving = named.filter((origin) => receivedProof([origin], record, trusted));
   return proving.length > 0 ? proving : named;
 };
 
