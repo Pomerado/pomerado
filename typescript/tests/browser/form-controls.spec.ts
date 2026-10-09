@@ -275,6 +275,20 @@ test("chooseOption types into a dropdown that filters as you type", async ({ pag
   expect(await submitted(page)).toEqual({ Country: "CH" });
 });
 
+test("chooseOption matches a name whatever its apostrophe style", async ({ page }) => {
+  await page.setContent(`<form><label>Shop<select name="shop">
+<option value="">Choose</option><option value="1">Joe’s Bakery</option><option value="2">Anaʼs Market</option>
+</select></label></form>`);
+  const shop = 'page.getByLabel("Shop")';
+  expect(await call(page, `return await chooseOption(${shop}, "Joe's Bakery");`)).toEqual({
+    result: { shape: "select", label: "Joe’s Bakery", value: "1" },
+  });
+  expect(await call(page, `return await chooseOption(${shop}, "ana‘s market");`)).toMatchObject({
+    result: { value: "2" },
+  });
+  expect(await submitted(page)).toEqual({ shop: "2" });
+});
+
 test("a failure names its reason, never the value", async ({ page }) => {
   await page.setContent(`<form><label>Date of birth<input name="dob"></label>
 <label>Month<select name="month"><option>7</option></select></label></form>`);
