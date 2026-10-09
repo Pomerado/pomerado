@@ -77,6 +77,11 @@
       "import": "./dist/typescript/src/browser/form-controls.js",
       "default": "./dist/typescript/src/browser/form-controls.js"
     },
+    "./core/browser/human-pointer": {
+      "types": "./dist/typescript/src/browser/human-pointer.d.ts",
+      "import": "./dist/typescript/src/browser/human-pointer.js",
+      "default": "./dist/typescript/src/browser/human-pointer.js"
+    },
     "./core/browser/index": {
       "types": "./dist/typescript/src/browser/index.d.ts",
       "import": "./dist/typescript/src/browser/index.js",
