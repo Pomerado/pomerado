@@ -817,6 +817,9 @@ export type TaskUpdateRequest = typeof TaskUpdateRequest.Type;
  * - `review_unavailable`: the review did not complete; resubmit within the review outage budget.
  * - `update_refused`: the harness or host cannot apply this change to this build, such as a site
  *   change once the build cannot run another live example. Nothing changed.
+ * - `review_invalid_outcome`: the review returned an outcome its kind does not accept, even after one
+ *   correction. Nothing changed; revise or withdraw the update. A second one in an attempt ends it
+ *   incomplete.
  * - `update_invalid`: the request does not decode. Nothing changed.
  */
 export const taskUpdateStatuses = [
@@ -825,6 +828,7 @@ export const taskUpdateStatuses = [
   "reword",
   "new_mint_recommended",
   "review_unavailable",
+  "review_invalid_outcome",
   "update_refused",
   "update_invalid",
 ] as const;
