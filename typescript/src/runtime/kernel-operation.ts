@@ -79,6 +79,17 @@ export interface ScriptAsk<Questions extends ScriptQuestionDeclarations> {
   }): Promise<{ readonly [Asked in Id]: ScriptAnswerOf<Questions[Asked]> }>;
 }
 
+/**
+ * The context's `askOne`: asks one question through `ask` and returns that answer itself, so
+ * `askOne("seat", { options })` gives what `(await ask({ seat: { options } })).seat` does.
+ */
+export type ScriptAskOne<Questions extends ScriptQuestionDeclarations> = <
+  Id extends keyof Questions & string,
+>(
+  id: Id,
+  question?: AskSpecOf<Questions[Id]>,
+) => Promise<ScriptAnswerOf<Questions[Id]>>;
+
 export interface KernelOperationContext<
   Input,
   Questions extends ScriptQuestionDeclarations = ScriptQuestionDeclarations,
@@ -121,6 +132,8 @@ export interface KernelOperationContext<
    * its code. It throws `ScriptInputFailure` when no usable answer comes, such as `NoResponse`.
    */
   readonly ask: ScriptAsk<Questions>;
+  /** Asks one declared question and returns its answer itself, not one answer per id. */
+  readonly askOne: ScriptAskOne<Questions>;
   /**
    * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
    * polling `ready`, a code body that returns true once the page is usable. It throws
@@ -222,6 +235,18 @@ const scriptAsk = (
     );
   }
   return ask;
+};
+
+/** The context's `askOne`, a thin wrapper over `ask` that unwraps the one answer. */
+const scriptAskOne = (
+  scriptInput: Context.Tag.Service<ScriptInput> | undefined,
+): ScriptAskOne<ScriptQuestionDeclarations> => {
+  const ask = scriptAsk(scriptInput);
+  return async (id: string, question: AskSpecOf<Declared> = {}) => {
+    const answer = (await ask({ [id]: question }))[id];
+    if (answer === undefined) throw new ScriptInputFailure({ code: "Unavailable" });
+    return answer;
+  };
 };
 
 /** The job's browser a Kernel script runs on, as the runner binds it. */
@@ -403,6 +428,7 @@ const makeKernelOperationContext = <Input>(
   },
   // The runtime checks every id and option against the declarations; the types only guide.
   ask: scriptAsk(options.scriptInput),
+  askOne: scriptAskOne(options.scriptInput),
   files: scriptFiles(options),
   waitPastChallenge: async ({ ready }) => {
     // The SDK accepts only a whole-millisecond request timeout.
