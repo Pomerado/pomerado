@@ -532,6 +532,26 @@
       "import": "./dist/typescript/src/runtime/job-store.js",
       "default": "./dist/typescript/src/runtime/job-store.js"
     },
+    "./core/runtime/http-operation": {
+      "types": "./dist/typescript/src/runtime/http-operation.d.ts",
+      "import": "./dist/typescript/src/runtime/http-operation.js",
+      "default": "./dist/typescript/src/runtime/http-operation.js"
+    },
+    "./core/runtime/saved-http": {
+      "types": "./dist/typescript/src/runtime/saved-http.d.ts",
+      "import": "./dist/typescript/src/runtime/saved-http.js",
+      "default": "./dist/typescript/src/runtime/saved-http.js"
+    },
+    "./core/runtime/site-http": {
+      "types": "./dist/typescript/src/runtime/site-http.d.ts",
+      "import": "./dist/typescript/src/runtime/site-http.js",
+      "default": "./dist/typescript/src/runtime/site-http.js"
+    },
+    "./core/runtime/site-http-host": {
+      "types": "./dist/typescript/src/runtime/site-http-host.d.ts",
+      "import": "./dist/typescript/src/runtime/site-http-host.js",
+      "default": "./dist/typescript/src/runtime/site-http-host.js"
+    },
     "./core/runtime/kernel-operation": {
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
       "import": "./dist/typescript/src/runtime/kernel-operation.js",

@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { localRuntimeAssets } from "../../src/execution/local-runtime-assets.js";
@@ -33,6 +34,32 @@ describe("Guardian's source reads on the local host", () => {
       expect(await read(`operation/${path}`)).toEqual({ source: sdk });
       expect(await read(path)).toEqual({ source: sdk });
     }
+  });
+
+  it("reads the SDK's package path, and every module it loads, as the SDK's source", async () => {
+    const { trustedSources, read } = await reader(
+      new Map([["operation/src/tool-http.mjs", 'import "pomerado/runtime";\n']]),
+    );
+    const entry = trustedSources.get("browser/index.js");
+    expect(entry).toBeDefined();
+    for (const path of ["pomerado/runtime", "operation/pomerado/runtime"])
+      expect(await read(path)).toEqual({ source: entry });
+    // Every relative import the SDK makes, followed from its entry, is readable too.
+    const pending = ["browser/index.js"];
+    const seen = new Set<string>();
+    while (pending.length > 0) {
+      const path = pending.pop() ?? "";
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const result = await read(path);
+      expect(result, path).toHaveProperty("source");
+      const text = "source" in result ? result.source : "";
+      for (const [, specifier = ""] of text.matchAll(
+        /(?:\bfrom|\bimport)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/gu,
+      ))
+        pending.push(posix.normalize(posix.join(posix.dirname(path), specifier)));
+    }
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it("reads an authored file before the SDK file at the same path", async () => {

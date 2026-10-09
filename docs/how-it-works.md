@@ -154,6 +154,9 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
   - Another host implements `FileHostHook` from `pomerado/core/runtime/file-transfer`, such as with a hosted browser's filesystem API, and `makeRunFiles` adds the checks.
 - This package has no general privacy screening service. Error messages mask values that look like credentials.
 - Operations run in child processes. Page code runs in native Playwright workers.
+- Authored tools import the SDK as `pomerado/runtime`, like a standard library, or through the workspace's `../../runtime/index.js`, which re-exports it. Both give the same modules the host runs.
+  - The local host stages the authored source beside its own `node_modules/pomerado`, which exports only `./runtime` and re-exports the running package's runtime. So `pomerado/runtime` resolves the same way from a source checkout and from any install layout, and an import of the package's internal modules, such as `pomerado/core/runtime/operation`, fails to resolve.
+  - Guardian's `read_source` reads `pomerado/runtime` as the module it names, and every module that one loads at its own path, such as `runtime/operation.js`. The minter's workspace holds the same files at the same paths.
 - Authored code, offline commands and page-code workers run with your user account's file and network access. Guardian review and file checks are not an operating system sandbox. Clearing a worker's `process.env` hides environment variables from that API but doesn't isolate host credentials.
 
 Generated code keeps the Kernel SDK's browser call shape, so the same source also runs on a host that uses Kernel.
@@ -167,7 +170,10 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
 
 - Here `kernel` is a compatibility object that forwards calls to native Playwright over local process IPC. It doesn't load the Kernel SDK or call Kernel.
 - Narrow credential-keyboard and browser-ownership checks still use Chromium's low-level CDP primitives where required.
-- The local host doesn't mint HTTP variants, record network traffic or produce `captures/routes.json`. It has no `SiteHttp` transport or capture replay helpers. Requests made inside the browser still work.
+- The local host doesn't mint HTTP versions, record network traffic or produce `captures/routes.json`, and it has no capture replay. Requests made inside the browser still work.
+- An HTTP version is `defineOperation`'s object form whose only network capability is `SiteHttp`, usually written with `defineHttpOperation`, `readText` and `readJson`. All of these are in `pomerado/runtime`, with `HttpFailure` and the offline-test services `SavedHttpFixtures`, `SavedCaptureEvidence` and `parseSavedHttp`.
+  - The local child runs one when its caller passes `runLocalOperation` an `HttpTransport` as `http`. Each request goes to that transport through the host and marks the run as possibly dispatched just before it is sent. Without a transport, an HTTP version fails before it sends anything. The local MCP and terminal pass none.
+  - `readText`, `readJson` and `requestPastChallenge` act on a bot-protection challenge page only when the host recognizes one (`isBotChallenge`). The local host recognizes none, so every answer is the site's.
 
 ## Jobs
 
@@ -236,10 +242,13 @@ await Effect.runPromise(
 The package has these entry points.
 
 - `pomerado`, `pomerado/runtime` and `pomerado/mcp` serve local sessions, the authored browser runtime and local MCP composition.
+- `pomerado/runtime` only adds exports. A release never removes or renames one, because published tools import it, and a tool may run on a later release than the one that minted it.
 - Explicit `pomerado/core/*` subpaths, such as `pomerado/core/mint/harness`, `pomerado/core/guardian/review` and `pomerado/core/runtime/host-execute`, let other hosts compose the library. The export map lists the supported modules.
 - `pomerado/testing/*` holds reusable test helpers and fixtures. Vitest is an optional peer for helpers that need it.
 - `submitJob` from `pomerado/core/runtime/job-store` is the retry-key rule every host shares. A host passes its own `JobStore`, and runs `describeJobStoreContract` from `pomerado/testing/job-store-contract` to check that store.
 - `getAuthoringDirectory` and `getGuardianPolicyPath` from `pomerado/assets` return the installed prompt and policy paths.
+- `getRuntimeSources` from `pomerado/assets` returns every module `pomerado/runtime` loads, as `[path, JavaScript text]` with paths from the package's source root, the entry `runtimeSourceEntry` (`browser/index.js`) first. The set follows the SDK's imports. A host places the files under one folder for Guardian's source reads and the minter's workspace, and maps a bare `pomerado/runtime` to the entry.
+- `makeSiteHttp` from `pomerado/core/runtime/site-http-host` builds an HTTP version's `SiteHttp` over a host's `HttpTransport`, with the execution context's deadline, journal and events, and a capture hook. Its optional `isChallenge` is the host's test for a bot-protection challenge page; a result it finds carries `challenge: true`. This package ships no such test.
 - `loadAuthoringSkills` and `loadWorkspaceGuide` from `pomerado/core/mint/skills` render each named authoring section's standalone text by default. A host that supplies its own text for those sections composes the directory first, then passes its own `render` function to load it. Neither adds the list of hosted features. Only `loadStandaloneAuthoring`, the local host's loader, puts it on top of `AGENTS.md`.
 - `makeOpenAIReviewer` from `pomerado/core/guardian/openai` takes the host's `GuardianExecutionEnvironment`, the texts that tell Guardian how that host runs code. The local host passes `nativeExecutionEnvironment`.
   - `dataVendor` says when a read may carry the caller's input to the site's own data vendor on another domain, and what evidence shows the site's page making that call.
