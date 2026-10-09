@@ -908,6 +908,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       /** When the current run of review outages began; cleared by any completed review. */
       let reviewOutageStartedAt = recovered?.reviewOutageStartedAt;
+      /**
+       * Reviews that ended `InvalidOutcome` in this attempt. Guardian already corrected each once
+       * in the review, so a second ends the attempt even while other reviews complete.
+       */
+      let invalidOutcomes = recovered?.invalidOutcomes ?? 0;
       /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
       let blockedReviewUnavailable = recovered?.blockedReviewUnavailable === true;
       const reviewCompleted = Effect.sync(() => {
@@ -1752,6 +1757,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return now - reviewOutageStartedAt >= reviewOutageBudgetMs;
         });
       /**
+       * Whether this failure ends the attempt as the second review in it whose outcome Guardian
+       * kept refusing. The first may be resubmitted like any review that did not complete.
+       */
+      const invalidOutcomeRepeated = (error: MintFailure) => {
+        if (error.reviewFailure !== "InvalidOutcome") return false;
+        invalidOutcomes += 1;
+        return invalidOutcomes > 1;
+      };
+      /**
        * A spent model quota is a host failure no retry gets past, whether the minter's call or
        * Guardian's hit it, since both use the same provider account.
        * Operators see it like any other host failure, with the provider's error beneath the
@@ -1854,7 +1868,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             blockedReviewUnavailable = false;
             if (error.modelOutage === "quota_exhausted") return yield* spentQuotaReview(error);
             const retentionFailure = error.reviewPhase === "diagnostic_retention";
-            if (stopUnavailableHost() || (yield* reviewRetryExhausted()))
+            if (
+              invalidOutcomeRepeated(error) ||
+              stopUnavailableHost() ||
+              (yield* reviewRetryExhausted())
+            )
               return yield* exhausted(error);
             // Live execution ended during this review: the execution cannot be resubmitted, but the
             // retained receipt can still be published and a question still asked.
@@ -2540,6 +2558,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   if (
                     error.code !== "ReviewUnavailable" ||
                     error.modelOutage === "quota_exhausted" ||
+                    invalidOutcomeRepeated(error) ||
                     (yield* reviewRetryExhausted())
                   )
                     return { outcome: "unavailable" as const };
@@ -4366,6 +4385,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         unavailableCauseRecorded,
         reviewUnavailableRetries: { ...reviewUnavailableRetries },
         ...(reviewOutageStartedAt === undefined ? {} : { reviewOutageStartedAt }),
+        ...(invalidOutcomes === 0 ? {} : { invalidOutcomes }),
         ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,

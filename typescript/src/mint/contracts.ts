@@ -1230,6 +1230,11 @@ export interface MintHarnessSnapshot {
   /** When the current run of review outages began, in epoch milliseconds. */
   readonly reviewOutageStartedAt?: number;
   /**
+   * Reviews in this attempt that ended `InvalidOutcome`; a second ends the attempt. Optional, so
+   * a rollout's old and new workers each restore the other's checkpoint.
+   */
+  readonly invalidOutcomes?: number;
+  /**
    * The current review outage is a blocked explanation's, which `report_blocked` resubmits.
    * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
    */
@@ -1367,6 +1372,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
     update: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   }),
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  invalidOutcomes: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,

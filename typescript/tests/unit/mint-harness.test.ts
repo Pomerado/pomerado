@@ -1424,6 +1424,40 @@ it("ends once question review stays unavailable past its budget, without creatin
   expect(asked).toBe(0);
 });
 
+// A question review whose outcome Guardian kept refusing was offered back for resubmission each
+// time, and every review that completed in between restarted the outage budget, so the attempt
+// never ended.
+it("ends the attempt at a second review whose outcome Guardian kept refusing, while others complete", async () => {
+  let reviews = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const question = textQuestion("Which account type?");
+        expect(JSON.parse(yield* turn.actions.requestInput(question))).toMatchObject({
+          retryable: true,
+        });
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.requestInput(question);
+        expect(turn.isComplete()).toBe(false);
+        expect(JSON.parse(yield* turn.actions.requestInput(question))).toMatchObject({
+          status: "question_review_unavailable",
+        });
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      // Refused, then completed, then refused again.
+      reviewQuestion: () =>
+        reviews++ === 1
+          ? Effect.succeed({ outcome: "reword" as const, rationale: "Synthetic reword." })
+          : Effect.fail(
+              new MintFailure({ code: "ReviewUnavailable", reviewFailure: "InvalidOutcome" }),
+            ),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "incomplete", hostFailure: "review_unavailable" });
+  expect(reviews).toBe(3);
+});
+
 it("keeps two answered requests in one attempt and publishes with both answers", async () => {
   const asked: unknown[] = [];
   const responses: unknown[] = [];
