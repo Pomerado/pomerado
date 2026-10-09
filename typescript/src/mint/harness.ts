@@ -31,6 +31,7 @@ import {
   blockedExplanationLimit,
   BuildBlocked,
   CaptureRequest,
+  ExecutionRefusal,
   ExecutionRequest,
   isReadOrWriteChoice,
   MintFailure,
@@ -507,6 +508,10 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
       : { withheldConfirmation: evidence.withheldConfirmation }),
     ...(evidence.checks === undefined ? {} : { checks: evidence.checks }),
     ...(siteAccess === undefined ? {} : { siteAccess }),
+    ...Option.match(Schema.decodeUnknownOption(ExecutionRefusal)(evidence.refusal), {
+      onNone: () => ({}),
+      onSome: (refusal) => ({ refusal }),
+    }),
   };
 };
 
@@ -1041,9 +1046,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // Once live execution ends, a retained publishable receipt keeps the attempt open for
       // source correction and finish_build instead of ending it.
       let executionClosed = recovered?.executionClosed ?? false;
+      // A read repair's example that refused the caller's own value, listing the choices the
+      // page offers, shows the tool now behaves correctly; maintenance cannot change the input.
+      const refusedWithChoices = (entry: ExecutionEvidence) =>
+        request.mode === "maintenance" &&
+        buildEffect !== "write" &&
+        purposes.get(entry.executionId) === "example" &&
+        entry.status === "failed" &&
+        (entry.refusal?.available.length ?? 0) > 0;
       const publishableReceipt = () =>
         executions.some(
           (entry) =>
+            refusedWithChoices(entry) ||
             ((purposes.get(entry.executionId) === "example" ||
               purposes.get(entry.executionId) === "act") &&
               entry.status === "completed" &&
@@ -3203,6 +3217,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 !evidence ||
                 (!repair &&
                   !confirmedWrite &&
+                  !refusedWithChoices(evidence) &&
                   (evidence.status !== "completed" || !evidence.resultRef)) ||
                 purposes.get(evidence.executionId) === "authenticate" ||
                 purposes.get(evidence.executionId) === "test" ||

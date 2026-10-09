@@ -575,6 +575,13 @@ export type ScriptQuestionOutcome =
       readonly outcome: "invalid" | "unavailable";
     };
 
+/** An execution's refusal of the caller's value: the input and the page's choices for it. */
+export const ExecutionRefusal: Schema.Schema<NonNullable<ExecutionEvidence["refusal"]>> =
+  Schema.Struct({
+    field: Schema.optionalWith(Schema.String, { exact: true }),
+    available: Schema.Array(Schema.String),
+  });
+
 export interface ExecutionEvidence {
   readonly review?: MintReviewFeedback;
   readonly authentication?: {
@@ -609,6 +616,12 @@ export interface ExecutionEvidence {
   readonly scriptQuestion?: ScriptQuestionOutcome;
   /** Emitted only by the harness when capability preflight rejects before a claim. */
   readonly preflight?: "rejected_before_claim";
+  /**
+   * Trusted host marker: the script refused the caller's value with `InvalidInput`, naming the
+   * input and listing every choice the page offers for it. A read repair's example that ends
+   * this way is its publication receipt, since maintenance cannot change the caller's input.
+   */
+  readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
   readonly resultRef?: string;
   /** Private output is screened before returning to the agent. */
   readonly observations: unknown;
@@ -679,6 +692,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
     { exact: true },
   ),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
+  refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
   resultRef: Schema.optionalWith(Schema.String, { exact: true }),
   observations: Schema.Unknown,
   checks: Schema.optionalWith(
