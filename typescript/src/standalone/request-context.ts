@@ -41,12 +41,19 @@ import type { PomeradoRequest } from "./contracts.js";
 import type { StandaloneSession } from "./session.js";
 import { error } from "./errors.js";
 import { failureDetail } from "../runtime/failure-detail.js";
+import { runtimeSourceEntry } from "../execution/runtime-sources.js";
 /** The folder a review's authored files sit in, where staged runs also link the SDK. */
 const operationPrefix = "operation/";
+/** The SDK's package path, as an import names it and as the staged package holds it. */
+const runtimePackagePaths = new Set(["pomerado/runtime", "node_modules/pomerado/runtime.js"]);
+/** A trusted SDK path: the package path reads the module it names. */
+const trustedPath = (path: string) =>
+  runtimePackagePaths.has(path) ? runtimeSourceEntry : path;
 /**
  * Guardian's source reads: the review's own file at the path, else the trusted SDK's. Authored
  * source imports the SDK from inside `operation/`, as `../../runtime/index.js` from `src/`, so a
- * path there that no authored file holds reads the SDK file at the rest of the path.
+ * path there that no authored file holds reads the SDK file at the rest of the path. A bare
+ * `pomerado/runtime` reads the module that package path names.
  */
 export const sourceInspector = (
   session: Pick<StandaloneSession, "trustedSources" | "secrets">,
@@ -57,9 +64,9 @@ export const sourceInspector = (
     (path) => {
       const text =
         sources.get(path) ??
-        trustedSources.get(path) ??
+        trustedSources.get(trustedPath(path)) ??
         (path.startsWith(operationPrefix)
-          ? trustedSources.get(path.slice(operationPrefix.length))
+          ? trustedSources.get(trustedPath(path.slice(operationPrefix.length)))
           : undefined);
       return text === undefined
         ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))

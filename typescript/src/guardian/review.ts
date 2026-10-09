@@ -1,9 +1,10 @@
 import { makeGuardianSession } from "./session.js";
 import type { GuardianSession, GuardianSessionOptions } from "./session.js";
 import { QuestionDecision } from "./question.js";
-import { decodePublicationDecision } from "./publication.js";
+import { anchorQuotedFindings, decodePublicationDecision } from "./publication.js";
 import type { AnsweredQuestion, PendingQuestion } from "./question.js";
 import { TaskUpdateDecision } from "./task-update.js";
+import { wholeSource } from "./source.js";
 import type { PendingTaskUpdate, ReviewedTaskUpdate } from "./task-update.js";
 import {
   failureDetail,
@@ -1062,9 +1063,13 @@ export const makeGuardian = (
           review(run, pending, readSource, (raw) =>
             scope === undefined
               ? decodeExecution(pending)(raw)
-              : (options.decodePublication ?? decodePublicationDecision)(
-                  scope,
-                  boundedRationale(raw),
+              : anchorQuotedFindings(scope, raw, (path) => wholeSource(readSource, path)).pipe(
+                  Effect.flatMap((anchored) =>
+                    (options.decodePublication ?? decodePublicationDecision)(
+                      scope,
+                      boundedRationale(anchored),
+                    ),
+                  ),
                 ),
           ),
         );

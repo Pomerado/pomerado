@@ -15,8 +15,12 @@ import attachDocument, {
 } from "../../authoring/examples/dates-and-files.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import deleteInvoice from "../../authoring/examples/native-dialog.js";
+import searchRecords from "../../authoring/examples/kernel-page-fetch.js";
 import readHeading from "../../authoring/examples/native-page.js";
-import readCatalog, { detailNavigation } from "../../authoring/examples/navigation.js";
+import readCatalog, {
+  detailFromUrl,
+  detailNavigation,
+} from "../../authoring/examples/navigation.js";
 import selectStatus from "../../authoring/examples/selection.js";
 import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
@@ -102,6 +106,36 @@ test("current-page example checks the site and reads without navigating, in one 
   expect(page.url()).toBe(`${siteOrigin}/account`);
 });
 
+// The page-fetch reference reads the site's JSON through the page's own fetch, and refuses an
+// answer that is not a JSON 200, such as a sign-in page served in its place.
+test("page-fetch example reads a JSON search through the page and refuses HTML", async ({
+  page,
+}) => {
+  const siteOrigin = "https://records.example.test";
+  const searched: string[] = [];
+  let signedOut = false;
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/search")
+      return route.fulfill({ contentType: "text/html", body: "<h1>Records</h1>" });
+    searched.push(url.searchParams.get("q") ?? "");
+    return signedOut
+      ? route.fulfill({ contentType: "text/html", body: "<h1>Sign in</h1>" })
+      : route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ items: [{ id: "r-1", name: "Lamp record" }], complete: true }),
+        });
+  });
+  const read = await runExample(page, searchRecords, { query: "lamp" }, { siteOrigin });
+  expect(read.result).toEqual(
+    Either.right({ items: [{ id: "r-1", name: "Lamp record" }], complete: true }),
+  );
+  signedOut = true;
+  const refused = await runExample(page, searchRecords, { query: "lamp" }, { siteOrigin });
+  expect(failure(refused.result)).toMatchObject({ _tag: "OperationFailure" });
+  expect(searched).toEqual(["lamp", "lamp"]);
+});
+
 // The site is the host's registrable domain, never the last labels of the origin: a multi-label
 // public suffix or another tenant's page on a private suffix is another site, and a site with no
 // registrable domain is its exact origin alone.
@@ -171,7 +205,7 @@ test("catalog example treats a page showing both its heading and the verificatio
   expect(requests).toBe(1);
 });
 
-// A records site reached the way a person does: its entry page has a search box, the search lists
+// A records site reached through its own controls: its entry page has a search box, the search lists
 // matching records as links, or says none match, and each record opens behind its own
 // interstitial. record_7's page belongs to another record, and record_5's link lands on another
 // path. record_8's results load late behind a busy region, and a search for record_down fails.
@@ -226,7 +260,7 @@ test("detail example searches the site for the record, follows its link and chec
   const site = await recordsSite(page, origin);
   const read = async (record_id: string) => {
     const run = await runExample(page, detailNavigation, { record_id }, { siteOrigin: origin });
-    // No call opens a URL holding the caller's input: the record's page comes from its link.
+    // No call builds a URL from the caller's input: the record's page comes from its link.
     for (const code of run.calls) expect(code).not.toContain(`/records/${record_id}`);
     return run.result;
   };
@@ -265,6 +299,39 @@ test("detail example searches the site for the record, follows its link and chec
     "record_8",
     "record_down",
   ]);
+});
+
+// A details tool whose input is the record's page URL opens that URL as the caller gave it, never
+// rebuilt and without the site's search, and still reads the record's identity from the page.
+test("detail example opens the caller's record URL unchanged and checks the page's identity", async ({
+  page,
+}) => {
+  const origin = "https://records.example.invalid";
+  const site = await recordsSite(page, origin);
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  const read = async (record_url: string) =>
+    (await runExample(page, detailFromUrl, { record_url }, { siteOrigin: origin })).result;
+  const link = `${origin}/records/record_42?from=list#top`;
+  expect(await read(link)).toEqual(
+    Either.right({ record_id: "record_42", title: "Quarterly report" }),
+  );
+  expect(site.opened).toEqual(["/records/record_42"]);
+  expect(requested).toContain(`${origin}/records/record_42?from=list`);
+  expect(site.searches).toEqual([]);
+  // The page the link opens shows another record.
+  expect(failure(await read(`${origin}/records/record_7`))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "identity_mismatch",
+  });
+  // A link off the tool's site, or not https, is the caller's error, and nothing opens.
+  const before = site.opened.length;
+  for (const offSite of [
+    "https://records.other.invalid/records/record_42",
+    "http://records.example.invalid/records/record_42",
+  ])
+    expect(failure(await read(offSite))).toMatchObject({ _tag: "InvalidInput" });
+  expect(site.opened).toHaveLength(before);
 });
 
 const siteOrigin = "https://members.example.test";

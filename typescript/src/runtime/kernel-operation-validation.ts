@@ -4,7 +4,7 @@ import type { KernelOperation } from "./kernel-operation.js";
 
 /** Contract validation for a Kernel script run: its input decoded, its output validated. */
 export const decodeKernelOperationInput = <Input, EncodedInput, Output, EncodedOutput>(
-  operation: KernelOperation<Input, EncodedInput, Output, EncodedOutput>,
+  operation: Pick<KernelOperation<Input, EncodedInput, Output, EncodedOutput>, "name" | "input">,
   rawInput: unknown,
 ) =>
   // Every rejected path, not only the first, so one correction can fix them all.

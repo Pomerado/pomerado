@@ -575,6 +575,13 @@ export type ScriptQuestionOutcome =
       readonly outcome: "invalid" | "unavailable";
     };
 
+/** An execution's refusal of the caller's value: the input and the page's choices for it. */
+export const ExecutionRefusal: Schema.Schema<NonNullable<ExecutionEvidence["refusal"]>> =
+  Schema.Struct({
+    field: Schema.optionalWith(Schema.String, { exact: true }),
+    available: Schema.Array(Schema.String),
+  });
+
 export interface ExecutionEvidence {
   readonly review?: MintReviewFeedback;
   readonly authentication?: {
@@ -609,6 +616,12 @@ export interface ExecutionEvidence {
   readonly scriptQuestion?: ScriptQuestionOutcome;
   /** Emitted only by the harness when capability preflight rejects before a claim. */
   readonly preflight?: "rejected_before_claim";
+  /**
+   * Trusted host marker: the script refused the caller's value with `InvalidInput`, naming the
+   * input and listing every choice the page offers for it. A read repair's example that ends
+   * this way is its publication receipt, since maintenance cannot change the caller's input.
+   */
+  readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
   readonly resultRef?: string;
   /** Private output is screened before returning to the agent. */
   readonly observations: unknown;
@@ -679,6 +692,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
     { exact: true },
   ),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
+  refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
   resultRef: Schema.optionalWith(Schema.String, { exact: true }),
   observations: Schema.Unknown,
   checks: Schema.optionalWith(
@@ -742,9 +756,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
 
 /**
  * How the minter ends a build its task makes impossible as asked:
- * `site_lacks_capability`, the site does not offer what the task needs; `policy`, a Guardian or
- * owner constraint refuses it and nothing within authority gets past it. A target on another
- * registrable domain is never a reason by itself: Guardian reviews such work.
+ * `site_lacks_capability`, the site does not offer what the task needs; `policy`, Guardian
+ * denied or escalated something in this attempt, or the owner answered no, and nothing within
+ * authority gets past it. The host refuses `policy` without such a refusal on record. A target on
+ * another registrable domain is never a reason by itself: Guardian reviews such work.
  */
 export const blockedExplanationLimit = 500;
 export const BuildBlocked = Schema.Struct({
@@ -1243,6 +1258,11 @@ export interface MintHarnessSnapshot {
    * Optional, so an older worker ignores it and a newer one restores an older checkpoint.
    */
   readonly blockedReviewUnavailable?: true;
+  /**
+   * Guardian denied or escalated an execution, or denied a publication, in this attempt: the
+   * refusal a `policy` block needs unless the owner answered no.
+   */
+  readonly guardianRefused?: true;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1378,6 +1398,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
   reviewOutageStartedAt: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   invalidOutcomes: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  guardianRefused: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,
@@ -1452,7 +1473,8 @@ export interface PublicationDecision {
   readonly decidedAt: number;
   /**
    * The finite checks that refused it: the reason, a registry issue, the publication gate's check,
-   * a route evidence gap and Guardian's finding categories. Empty for a publication.
+   * a route evidence gap, `InvalidOutcome` for a review whose outcome Guardian kept refusing and
+   * Guardian's finding categories. Empty for a publication.
    */
   readonly failedChecks: readonly string[];
   readonly recovery: PublicationRecovery;
@@ -1643,6 +1665,13 @@ export interface MintDependencies {
   readonly exampleClaimed?: boolean;
   /** Host-bound accepted/registered read authority; source still requires Guardian approval. */
   readonly repeatableRead?: boolean;
+  /**
+   * Whether the host's own guidance names this `policy` ending, so it needs no refusal on record,
+   * such as a repair's verdict that the caller's input caused its run's failure. It gets the
+   * screened explanation. Without it, `policy` needs a Guardian deny or escalation, or the owner's
+   * no to a confirm question, in the attempt.
+   */
+  readonly policyBlockAllowed?: (explanation: string) => boolean;
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */
   readonly initialExample?: ExecutionEvidence;
   readonly priorReadExecutions?: readonly ExecutionEvidence[];

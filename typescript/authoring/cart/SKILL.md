@@ -20,8 +20,10 @@ the account's, and never judge the account's cart from one.
 Take the product as the identifier and option values the site's own pages use, such as a
 product number and a size, so a caller can pass a search or details tool's output straight in.
 When `reference/site-tools.json` lists such a tool, use its identifier, field names and option
-values (the core skill). Quantity and each option the product offers are inputs. A value the
-product does not offer throws `InvalidInput`, as the core skill says.
+values (the core skill). Quantity, each option the product offers and, when the site lets a
+visitor set one, the location or store are inputs. Set the options as "Configure, then read" in
+the core skill says before adding the product: a value the product does not offer throws
+`InvalidInput` with `field` and `available`.
 
 ## Quantity
 

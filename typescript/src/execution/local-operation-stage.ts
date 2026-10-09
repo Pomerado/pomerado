@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,44 @@ const installedDependencies = Effect.try({
   },
   catch: localError,
 });
+
+/** The running package's public runtime, the module `pomerado/runtime` names. */
+const runtimeEntry = new URL(
+  import.meta.url.endsWith(".ts") ? "../browser/index.ts" : "../browser/index.js",
+  import.meta.url,
+);
+
+/**
+ * The staged `node_modules`: the installed dependencies, and in place of any installed `pomerado`
+ * a package that exports only `./runtime`, which re-exports the running package's runtime. A tool
+ * imports `pomerado/runtime` as the same modules the host runs, wherever the package is installed,
+ * and an import of the package's internal modules fails to resolve.
+ */
+const stageDependencies = (directory: string) =>
+  Effect.gen(function* () {
+    const dependencies = yield* installedDependencies;
+    const modules = join(directory, "node_modules");
+    yield* localPromise(() => mkdir(modules));
+    for (const name of yield* localPromise(() => readdir(dependencies)))
+      if (name !== "pomerado")
+        yield* localPromise(() => symlink(join(dependencies, name), join(modules, name), "dir"));
+    const pomerado = join(modules, "pomerado");
+    yield* localPromise(() => mkdir(pomerado));
+    const manifest = { name: "pomerado", type: "module", exports: { "./runtime": "./runtime.js" } };
+    yield* localPromise(() =>
+      writeFile(join(pomerado, "package.json"), JSON.stringify(manifest), {
+        flag: "wx",
+        mode: 0o400,
+      }),
+    );
+    yield* localPromise(() =>
+      writeFile(
+        join(pomerado, "runtime.js"),
+        `export * from ${JSON.stringify(runtimeEntry.href)};\n`,
+        { flag: "wx", mode: 0o400 },
+      ),
+    );
+  });
 
 /** Top-level names the host stages beside authored source, as a file or a folder. */
 const reserved = new Set([
@@ -95,8 +133,7 @@ export const stageSources = (options: LocalOperationOptions) =>
       }),
     );
     // Dependencies stay in the installed package; authored source bytes are copied unchanged.
-    const dependencies = yield* installedDependencies;
-    yield* localPromise(() => symlink(dependencies, join(directory, "node_modules"), "dir"));
+    yield* stageDependencies(directory);
     // Source saved when authored files sat beside the SDK reaches it and node_modules one level up
     // from src/, and finds package.json in its working folder. The same entries appear in
     // operation/, so those paths load the same modules and read the same file.

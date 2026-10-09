@@ -9,6 +9,7 @@ import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
+import type { InputRefusalDetail } from "../runtime/operation-failure.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { asksAsDeclared } from "./declared-questions.js";
 import {
@@ -24,6 +25,7 @@ import { LocalOperationMessage, type LocalOperationResult } from "./local-operat
 import type { LocalWorkspace } from "./local-workspace.js";
 import { FileRefused } from "../runtime/files.js";
 import { outputFiles, type RunFiles } from "../runtime/file-transfer.js";
+import { HttpFailure, type HttpTransport } from "../runtime/site-http.js";
 
 export interface LocalOperationOptions {
   readonly workspace: LocalWorkspace;
@@ -62,6 +64,11 @@ export interface LocalOperationOptions {
    * a `$file` this run did not collect fails the run.
    */
   readonly files?: RunFiles;
+  /**
+   * The transport an HTTP version's `SiteHttp` sends over, as `makeSiteHttp` uses it. Absent, an
+   * HTTP version fails before it sends anything; a Kernel script never uses it.
+   */
+  readonly http?: HttpTransport;
 }
 export interface LocalOperationJournal {
   readonly effect: "not_sent" | "possible" | "verified";
@@ -78,6 +85,8 @@ export class LocalOperationFailure extends Error {
   readonly reported: boolean;
   /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
   readonly sessionLoss?: "session_not_kept";
+  /** The input a script's `InvalidInput` named and the choices the page offers for it. */
+  readonly refusal?: InputRefusalDetail;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -85,11 +94,16 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
-    options: { readonly reported?: boolean; readonly sessionLoss?: "session_not_kept" } = {},
+    options: {
+      readonly reported?: boolean;
+      readonly sessionLoss?: "session_not_kept";
+      readonly refusal?: InputRefusalDetail;
+    } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
+    if (options.refusal !== undefined) this.refusal = options.refusal;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -196,6 +210,27 @@ const handleRequest = (
         ),
       );
     }
+    if (message.kind === "http") {
+      const transport = options.http;
+      if (transport === undefined || options.mode === "contract")
+        return Effect.fail(new Error("Local operation HTTP is unavailable"));
+      const { request, timeoutMs, maxResponseBytes } = message;
+      return Effect.tryPromise({
+        try: (signal) =>
+          transport.send(request, {
+            signal,
+            timeoutMs,
+            ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }),
+          }),
+        // The transport's failure crosses to the child as its code and dispatch.
+        catch: (error) =>
+          error instanceof HttpFailure
+            ? Object.assign(new Error(error.message), {
+                code: `HttpFailure:${error.code}:${error.dispatch}`,
+              })
+            : localError(error),
+      });
+    }
     if (message.kind === "sign_in")
       return options.signIn === undefined
         ? Effect.fail(new Error("Local operation sign-in is unavailable"))
@@ -250,7 +285,10 @@ const handleTerminalMessage = (
           message.code,
           message.tag,
           message.inputIssues,
-          message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss },
+          {
+            ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
+            ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+          },
         ),
       ),
     );
@@ -457,6 +495,9 @@ export const runLocalOperation = (
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),
+        ...(options.http === undefined || options.mode === "contract"
+          ? {}
+          : { http: { name: options.http.name, capabilities: options.http.capabilities } }),
         ...(options.signIn !== undefined &&
         options.browser !== undefined &&
         options.mode !== "contract" &&

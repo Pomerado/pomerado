@@ -652,7 +652,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
     const sentence =
-      "Use the exact listed path. The SDK a source imports from runtime/index.js, such as defineOperation, CalendarDate and formControlsCode, is trusted host code: judge what the source does with it, and never escalate or deny only because an SDK file is unavailable to read_source.";
+      "Use the exact listed path. The SDK a source imports from runtime/index.js or pomerado/runtime, such as defineOperation, CalendarDate and formControlsCode, is trusted host code: judge what the source does with it, and never escalate or deny only because an SDK file is unavailable to read_source.";
     for (const policy of [
       requests[0]?.systemInstructions ?? "",
       guardianExecutionPolicy(otherHost),

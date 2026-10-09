@@ -31,6 +31,7 @@ import {
   blockedExplanationLimit,
   BuildBlocked,
   CaptureRequest,
+  ExecutionRefusal,
   ExecutionRequest,
   isReadOrWriteChoice,
   MintFailure,
@@ -100,6 +101,16 @@ import {
   relativeSourcePath,
   screenMintText,
 } from "./workspace.js";
+
+/**
+ * Whether a maintenance update only adds or tightens output fields: callers keep everything the
+ * registered contract gives them, so nobody needs to confirm it.
+ */
+const keepsContract = (update: TaskUpdateRequest) =>
+  update.changes.every(
+    (change) =>
+      change.setting === "output" && (change.change === "add" || change.change === "tighten"),
+  );
 
 /** Each loosened field and how, for the minter; a host refusal that names none reads as a sentence. */
 const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
@@ -340,11 +351,19 @@ const hostRefusalDecision = (
   failedChecks: [reason],
   recovery: refusalRecovery(reason, write),
 });
+/**
+ * A failure's code as diagnostics and publication evidence name it. A review whose outcome
+ * Guardian kept refusing fails as `ReviewUnavailable`, but it is a verdict that did not form, not
+ * an outage, so it is named `InvalidOutcome`.
+ */
+const failureCode = (error: MintFailure) =>
+  error.reviewFailure === "InvalidOutcome" ? "InvalidOutcome" : error.code;
 /** The finite checks behind a publication refusal: never a value, path or rationale. */
 const refusalChecks = (error: MintFailure) => [
   ...new Set(
     [
       error.reason,
+      error.reviewFailure === "InvalidOutcome" ? error.reviewFailure : undefined,
       error.review?.reason,
       error.registryIssue,
       error.publicationBlock?.check,
@@ -507,6 +526,10 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
       : { withheldConfirmation: evidence.withheldConfirmation }),
     ...(evidence.checks === undefined ? {} : { checks: evidence.checks }),
     ...(siteAccess === undefined ? {} : { siteAccess }),
+    ...Option.match(Schema.decodeUnknownOption(ExecutionRefusal)(evidence.refusal), {
+      onNone: () => ({}),
+      onSome: (refusal) => ({ refusal }),
+    }),
   };
 };
 
@@ -924,6 +947,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error.code === "ReviewDenied" ||
         error.review !== undefined ||
         error.execution !== undefined;
+      /** Guardian denied or escalated an execution, or denied a publication, in this attempt. */
+      let guardianRefused = recovered?.guardianRefused === true;
       let destinationEvidenceRefusals = recovered?.destinationEvidenceRefusals ?? 0;
       let inputFeedbackRounds = recovered?.inputFeedbackRounds ?? 0;
       /** The last input-feedback review found a tool already public, which never falls back. */
@@ -1046,9 +1071,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // Once live execution ends, a retained publishable receipt keeps the attempt open for
       // source correction and finish_build instead of ending it.
       let executionClosed = recovered?.executionClosed ?? false;
+      // A read repair's example that refused the caller's own value, listing the choices the
+      // page offers, shows the tool now behaves correctly; maintenance cannot change the input.
+      const refusedWithChoices = (entry: ExecutionEvidence) =>
+        request.mode === "maintenance" &&
+        buildEffect !== "write" &&
+        purposes.get(entry.executionId) === "example" &&
+        entry.status === "failed" &&
+        (entry.refusal?.available.length ?? 0) > 0;
       const publishableReceipt = () =>
         executions.some(
           (entry) =>
+            refusedWithChoices(entry) ||
             ((purposes.get(entry.executionId) === "example" ||
               purposes.get(entry.executionId) === "act") &&
               entry.status === "completed" &&
@@ -1598,8 +1632,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         submitted: TaskUpdateRequest,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
         const settings = new Set(submitted.changes.map((change) => change.setting));
-        // A repair keeps the published tool's task. Only a change to its contract, which the
-        // tool's owner confirms, may apply: a requirement, the purpose or an output field.
+        // A repair keeps the published tool's task. Only a change to its contract may apply: a
+        // requirement, the purpose or an output field.
         if (
           request.mode === "maintenance" &&
           (submitted.recommend === "new_mint" ||
@@ -1611,13 +1645,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             reason: "maintenance_setting",
             instruction:
-              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change the tool's owner confirms; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
           };
         if (request.mode !== "maintenance" && settings.has("output"))
           return {
             reason: "output_outside_maintenance",
             instruction:
-              "An output change loosens a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
+              "An output change alters a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
+          };
+        // Removing a field callers receive has the higher bar: a stated reason Guardian judges.
+        const unexplained = submitted.changes.find(
+          (change) =>
+            change.setting === "output" && change.change === "remove" && change.reason === undefined,
+        );
+        if (unexplained !== undefined && unexplained.setting === "output")
+          return {
+            reason: "output_removal_reason",
+            instruction: `Removing ${unexplained.field} takes away a value the tool's callers receive, so it needs a reason, and nothing changed. If the site still shows the value, keep the field and fix the extraction instead. Otherwise add reason to that change: why the field must go, from what the site shows now and where you looked, which Guardian checks against the captures. Then call mint_update again.`,
           };
         if (submitted.recommend === "new_mint") return undefined;
         if (settings.has("effect")) {
@@ -1712,6 +1756,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       const reviewFeedback = (error: MintFailure) =>
         Effect.gen(function* () {
+          guardianRefused = true;
           const rationale = error.review
             ? yield* screenMintText(dependencies, error.review.rationale)
             : "Guardian rejected this submission; rationale unavailable.";
@@ -1773,34 +1818,50 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         question: "the request",
         update: "the update",
       };
+      /** An `InvalidOutcome` answer that ends the attempt; its terminal outcome is already set. */
+      const invalidOutcomeEnded = (instruction: string) =>
+        JSON.stringify({
+          status: "review_invalid_outcome",
+          reviewFailure: "InvalidOutcome",
+          retryable: false,
+          userInputRequired: false,
+          ...availabilityMetadata(),
+          instruction,
+        });
       /**
-       * The agent's answer for a review that ended `InvalidOutcome`. The first goes back to the
-       * agent to revise or withdraw; the second ends the attempt incomplete without a host failure,
-       * since no outage caused it and running the attempt again would repeat it.
+       * The agent's answer for a review that ended `InvalidOutcome`. A host that became
+       * unavailable during the review ends the attempt with its own cause. Otherwise the first goes
+       * back to the agent to revise or withdraw, never to resubmit unchanged, so it is not
+       * `retryable`; once live execution has closed, an execution goes on through its retained
+       * receipt instead. The second ends the attempt incomplete without a host failure, since no
+       * outage caused it and running the attempt again would repeat it.
        */
       const invalidOutcomeAnswer = (kind: keyof typeof invalidOutcomeSubject) =>
         Effect.sync(() => {
+          if (stopUnavailableHost())
+            return invalidOutcomeEnded(
+              "Guardian returned no decision its review allows, so nothing was approved, and the host became unavailable, so the attempt has ended. Preserve recorded effects and receipts.",
+            );
           if (invalidOutcomeRepeated()) {
             terminal ??= {
               build: "incomplete",
               summary:
                 "Guardian returned no decision its review allows, again, so the host ended the attempt without publishing. Nothing it was reviewing was approved; recorded effects and receipts are preserved.",
             };
-            return JSON.stringify({
-              status: "review_invalid_outcome",
-              reviewFailure: "InvalidOutcome",
-              retryable: false,
-              userInputRequired: false,
-              instruction:
-                "Guardian again returned no decision its review allows, so the attempt has ended and nothing was approved. Preserve recorded effects and receipts.",
-            });
+            return invalidOutcomeEnded(
+              "Guardian again returned no decision its review allows, so the attempt has ended and nothing was approved. Preserve recorded effects and receipts.",
+            );
           }
+          const next =
+            kind === "execution" && executionClosed
+              ? "Live execution has ended, so this execution cannot be resubmitted or revised; publish an eligible retained receipt with finish_build, or ask with request_input when publication needs something only the user knows."
+              : `Revise ${invalidOutcomeSubject[kind]} so what is under review is plain, or withdraw it and continue another way; do not submit it again unchanged.`;
           return JSON.stringify({
             status: "review_invalid_outcome",
             reviewFailure: "InvalidOutcome",
-            retryable: true,
             userInputRequired: false,
-            instruction: `Guardian returned no decision this review allows, even after the host named the outcomes it may return, so nothing was approved. This is not a deny and not an outage. Revise ${invalidOutcomeSubject[kind]} so what is under review is plain, or withdraw it and continue another way; do not submit it again unchanged. A second such result ends the attempt.`,
+            ...availabilityMetadata(),
+            instruction: `Guardian returned no decision this review allows, even after the host named the outcomes it may return, so nothing was approved. This is not a deny and not an outage. ${next} A second such result ends the attempt.`,
           });
         });
       /**
@@ -2423,7 +2484,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               diagnoseExecution(
                 submitted,
                 {
-                  code: error.code,
+                  code: failureCode(error),
                   // The root cause's own code, beneath the host's wrapper.
                   rootCode:
                     error.authentication === undefined
@@ -2531,7 +2592,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * still get past is not impossible as asked, and the screened explanation keeps its bound,
        * which screening's longer markers can break, so a takeover's checkpoint still reads it.
        */
-      const blockedRefusal = (screenedExplanation: string, now: number) => {
+      const blockedRefusal = (
+        reason: (typeof BuildBlocked.Type)["reason"],
+        screenedExplanation: string,
+        now: number,
+      ) => {
         const refused = (reason: string, instruction: string) =>
           JSON.stringify({
             status: "blocked_refused",
@@ -2559,6 +2624,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "explanation_too_long",
             "Private values in the explanation made it longer than 500 characters once screened. Shorten it, leave private values out, and call report_blocked again.",
           );
+        // A policy block stands on a refusal on record: Guardian's deny or escalation, or the
+        // owner's no to a confirm question, unless the host's own guidance names the ending. The
+        // minter's reading of its own instructions is none.
+        const ownerRefused = [...answeredQuestions.values()].some(
+          ({ answer }) => typeof answer === "object" && "confirmed" in answer && !answer.confirmed,
+        );
+        if (
+          reason === "policy" &&
+          !guardianRefused &&
+          !ownerRefused &&
+          dependencies.policyBlockAllowed?.(screenedExplanation) !== true
+        )
+          return refused(
+            "policy_not_refused",
+            "Nothing in this attempt refused this: Guardian denied or escalated nothing, and the owner answered no to nothing. Your instructions are not a refusal, so the build has not ended. Continue through the page's own controls. Ask the owner with request_input when only they can decide; their no to a confirm question is a refusal. Use site_lacks_capability only when the site does not offer what the task needs.",
+          );
         return undefined;
       };
       /**
@@ -2584,7 +2665,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 Effect.gen(function* () {
                   yield* diagnose({
                     phase: "blocked_review",
-                    code: error.code,
+                    code: failureCode(error),
                     reviewFailure: error.reviewFailure,
                     reviewPhase: error.reviewPhase,
                   });
@@ -2756,9 +2837,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               confirmation,
               effect: buildEffect === "write" ? "write" : "read",
               ...(yield* publicationRefusals),
-              // The harness reviews a maintenance update only once the owner may confirm it.
+              // The harness reviews a maintenance update only once the owner may confirm it,
+              // unless it only adds or tightens output fields, which nobody needs to confirm.
               ...(request.mode === "maintenance"
-                ? { maintenance: { confirmer: "owner" as const } }
+                ? {
+                    maintenance: {
+                      confirmer: keepsContract(submitted) ? ("none" as const) : ("owner" as const),
+                    },
+                  }
                 : {}),
             },
             {
@@ -3266,6 +3352,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 !evidence ||
                 (!repair &&
                   !confirmedWrite &&
+                  !refusedWithChoices(evidence) &&
                   (evidence.status !== "completed" || !evidence.resultRef)) ||
                 purposes.get(evidence.executionId) === "authenticate" ||
                 purposes.get(evidence.executionId) === "test" ||
@@ -3335,13 +3422,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 recovery:
                   publication._tag === "Right"
                     ? "none"
-                    : publication.left.code === "ReviewUnavailable" ||
-                        publication.left.code === "CaptureUnavailable" ||
-                        publicationOutage(publication.left)
-                      ? "retry"
-                      : publication.left.code === "ReviewDenied"
-                        ? "guardian_feedback"
-                        : refusalRecovery(reason, buildEffect === "write"),
+                    : publication.left.reviewFailure === "InvalidOutcome"
+                      ? "correct_source"
+                      : publication.left.code === "ReviewUnavailable" ||
+                          publication.left.code === "CaptureUnavailable" ||
+                          publicationOutage(publication.left)
+                        ? "retry"
+                        : publication.left.code === "ReviewDenied"
+                          ? "guardian_feedback"
+                          : refusalRecovery(reason, buildEffect === "write"),
               };
               if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
@@ -3350,6 +3439,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               const denial = publication._tag === "Left" ? publication.left.review : undefined;
               const deniedCategory = denial?.findings?.[0]?.category;
+              if (publication._tag === "Left" && publication.left.code === "ReviewDenied")
+                guardianRefused = true;
               publicationDenial =
                 publication._tag === "Left" && publication.left.code === "ReviewDenied"
                   ? {
@@ -3398,7 +3489,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // Screening serializes through JSON, which leaves out undefined fields.
                 const diagnostic = yield* screenMintText(dependencies, {
                   phase: "publication",
-                  code: error.code,
+                  code: failureCode(error),
                   reason: error.reason,
                   screening: error.screening,
                   publicationBlock: error.publicationBlock,
@@ -3563,11 +3654,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     { weakenedOutputs: error.weakenedOutputs ?? [] },
-                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. ${
+                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
                       buildEffect === "write"
                         ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
                         : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
-                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
                   );
                 if (error.reason === "tool_name_taken")
                   return notPublished(
@@ -3708,9 +3799,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             : error.reason === "contract_input_mismatch"
                               ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
                               : request.mode === "maintenance" && buildEffect !== "write"
-                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
                                 : request.mode === "maintenance"
-                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
                                   : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
                       (error.reason === "contract_output_mismatch" &&
                       request.mode === "maintenance" &&
@@ -3920,7 +4011,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 (error) =>
                   diagnose({
                     phase: "question_review",
-                    code: error.code,
+                    code: failureCode(error),
                     reviewFailure: error.reviewFailure,
                     reviewPhase: error.reviewPhase,
                   }).pipe(
@@ -3961,7 +4052,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, submitted.explanation),
                     );
-                    const refusal = blockedRefusal(explanation, yield* Clock.currentTimeMillis);
+                    const refusal = blockedRefusal(
+                      submitted.reason,
+                      explanation,
+                      yield* Clock.currentTimeMillis,
+                    );
                     if (refusal !== undefined) return refusal;
                     const review = yield* reviewBlockedExplanation(explanation);
                     yield* active("publication");
@@ -4048,14 +4143,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
-                    if (request.mode === "maintenance") {
-                      // Only the tool's owner confirms a change to its registered contract.
+                    if (request.mode === "maintenance" && !keepsContract(submitted)) {
+                      // Only the tool's owner confirms a change that takes from the registered
+                      // contract; adding or tightening an output field takes nothing away.
                       const confirmer = yield* maintenanceConfirmer;
                       if (confirmer !== "owner")
                         return taskUpdateAnswer("update_refused", {
                           reason: "owner_unavailable",
                           instruction:
-                            "No one who owns this tool can confirm a contract change now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field, or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
+                            "No one who owns this tool can confirm a change that loosens or removes an output, or changes a requirement or the purpose, now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field (adding or tightening a field needs no confirmation), or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
                         });
                       if (submitted.confirmedBy.length === 0)
                         return taskUpdateAnswer("clarification_required", {
@@ -4098,7 +4194,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       (error) =>
                         diagnose({
                           phase: "task_update_review",
-                          code: error.code,
+                          code: failureCode(error),
                           reviewFailure: error.reviewFailure,
                           reviewPhase: error.reviewPhase,
                         }).pipe(
@@ -4431,6 +4527,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(reviewOutageStartedAt === undefined ? {} : { reviewOutageStartedAt }),
         ...(invalidOutcomes === 0 ? {} : { invalidOutcomes }),
         ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
+        ...(guardianRefused ? { guardianRefused: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,

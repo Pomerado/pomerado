@@ -29,19 +29,21 @@ const agentTest = (input: unknown) =>
 const chosen = { input: "agent_chosen" as const };
 
 describe("preflightTestInput", () => {
-  it("runs a read's live tests on inputs the agent picks, at most two", () => {
+  it("runs a read's live tests on inputs the agent picks, at most four", () => {
     const scope = (history: readonly { readonly input?: "agent_chosen" }[]) => ({
       buildEffect: "read" as const,
       executionHistory: history,
     });
+    const ran = (count: number) => Array.from({ length: count }, () => chosen);
     expect(preflightTestInput(agentTest({ amountMinor: 12 }), scope([]))).toBeUndefined();
-    expect(preflightTestInput(agentTest({ amountMinor: 45 }), scope([chosen]))).toBeUndefined();
-    expect(preflightTestInput(agentTest({ amountMinor: 78 }), scope([chosen, chosen]))).toEqual({
+    expect(preflightTestInput(agentTest({ amountMinor: 45 }), scope(ran(1)))).toBeUndefined();
+    expect(preflightTestInput(agentTest({ amountMinor: 78 }), scope(ran(3)))).toBeUndefined();
+    expect(preflightTestInput(agentTest({ amountMinor: 91 }), scope(ran(4)))).toEqual({
       supported: false,
-      reason: expect.stringContaining("already ran 2 live tests with an input you chose"),
+      reason: expect.stringContaining("already ran 4 live tests with an input you chose"),
     });
     // A step without testInput is the caller's input, whatever the count.
-    expect(preflightTestInput(request(), scope([chosen, chosen]))).toBeUndefined();
+    expect(preflightTestInput(request(), scope(ran(4)))).toBeUndefined();
   });
 
   it("counts an agent-chosen input the operation rejected, and not a test Guardian denied", () => {
@@ -56,7 +58,7 @@ describe("preflightTestInput", () => {
     expect(
       preflightTestInput(agentTest({ amountMinor: 78 }), {
         buildEffect: "read",
-        executionHistory: [...rejected, chosen],
+        executionHistory: [...rejected, chosen, chosen, chosen],
       }),
     ).toMatchObject({ supported: false });
   });

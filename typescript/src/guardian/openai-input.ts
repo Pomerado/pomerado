@@ -145,4 +145,6 @@ export const guardianFollowUpState = <TContext, TOutput extends AgentOutputType>
 export const SourceInput = Schema.Struct({
   path: Schema.String,
   offset: Schema.Int.pipe(Schema.nonNegative()),
+  /** A word or phrase to find: the result is the slices around each match, not a chunk. */
+  match: Schema.optional(Schema.NullOr(Schema.String)),
 });
