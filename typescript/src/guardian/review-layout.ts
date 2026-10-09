@@ -108,8 +108,8 @@ export const guardianDecisionFormat: AgentOutputType = {
               type: "object",
               properties: {
                 path: { type: "string" },
-                byteStart: { type: "integer", minimum: 0 },
-                byteEnd: { type: "integer", minimum: 1 },
+                // The exact text at fault; the host finds its byte range in the file.
+                quote: { type: "string" },
                 category: {
                   type: "string",
                   // The host's own example-input check is never Guardian's.
@@ -134,7 +134,7 @@ export const guardianDecisionFormat: AgentOutputType = {
                   ],
                 },
               },
-              required: ["path", "byteStart", "byteEnd", "category", "explanation", "route"],
+              required: ["path", "quote", "category", "explanation", "route"],
               additionalProperties: false,
             },
           },
