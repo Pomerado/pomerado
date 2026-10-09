@@ -302,9 +302,8 @@ asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md).
 `outcome_ambiguous` when the winning locator matches more than one element, and
 `outcome_timeout` after its `timeout`, 30 s by default. `references/navigation.ts` waits for a
 search's answer and a record's page this way.
-After a search or a filter, prefer waiting for the site's own sign that loading finished, such
-as a spinner gone or a result count shown, before reading results. Treat far fewer results than
-the page's count as a failure.
+After a search or a filter, prefer waiting for the site's own sign that this load finished, such
+as a spinner that showed and went, or a result count that updated, before reading results.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because
