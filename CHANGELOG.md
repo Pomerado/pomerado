@@ -5,6 +5,7 @@
 ### Breaking changes
 
 - The `mint_update` refusal reason `maintenance` is now `maintenance_setting`, and maintenance adds `output_outside_maintenance` and `owner_unavailable`. Migrate by matching `maintenance_setting` where you matched `maintenance`.
+- A maintenance `mint_update` output change may also `add` a field or `tighten` one (optional or nullable to required, or a narrower type), with no confirmation; a `remove` needs `reason`, or it is refused as `output_removal_reason` before review. `PendingTaskUpdate.maintenance.confirmer` may be `none`, for an update that only adds or tightens output fields. A host that compares a repair's output schema against an applied output change must ignore `add` and `tighten`, which loosen nothing.
 - Guardian's execution review returns a required `action` label, `read`, `write` or `authentication`, in the shared output format. An execution allow without one fails to decode and is retried like an outage. An allowed `write` on a step without the new `PendingExecution.writeAuthority` becomes a denial.
   - Migrate recorded Guardian responses by adding `action` to every execution allow, and set `writeAuthority` on the steps that may write.
 - `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows, so every dispatch carries a label: `beforeDispatch(allowed: AllowedExecution)`. Pass the review ID and Guardian's label, or `hostAuthentication` for a sign-in screen the host fills itself.

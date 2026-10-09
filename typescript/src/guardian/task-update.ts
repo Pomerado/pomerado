@@ -27,9 +27,13 @@ const SiteOrigin = Schema.String.pipe(
  * - `effect`: a read build becomes a write build. Nothing turns a write back into a read.
  * - `site`: the build moves to another site origin of the same product's workflow.
  * - `login`: the task now needs a sign-in, or a different login than the one it has.
- * - `output`: in maintenance only, one output field of the published tool's registered contract
- *   loosened, for an output the site no longer offers: made optional or nullable, removed, or its
- *   type widened. `field` names it by path, such as `price.amount` or `items[].currency`.
+ * - `output`: in maintenance only, one output field of the published tool's registered contract,
+ *   by path, such as `price.amount` or `items[].currency`, with `text` saying the change as the
+ *   caller reads it. `add` adds a field and `tighten` makes one stricter (optional or nullable to
+ *   required, or a narrower type): callers keep everything they received, so neither needs
+ *   anyone's confirmation. `optional`, `nullable` and `widen` loosen a field the site no longer
+ *   shows as before, and `remove` drops one with a `reason` the host requires; the tool's owner
+ *   confirms each of these.
  */
 export const TaskChange = Schema.Union(
   Schema.Struct({
@@ -52,8 +56,10 @@ export const TaskChange = Schema.Union(
   Schema.Struct({
     setting: Schema.Literal("output"),
     field: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)),
-    change: Schema.Literal("optional", "nullable", "remove", "widen"),
+    change: Schema.Literal("add", "tighten", "optional", "nullable", "remove", "widen"),
     text: UpdateText,
+    /** Why the field must go, from what the site shows; required for `remove`. */
+    reason: Schema.optional(UpdateText),
   }),
 );
 export type TaskChange = typeof TaskChange.Type;
@@ -95,10 +101,11 @@ export interface PendingTaskUpdate {
    */
   readonly publicationDecisions?: readonly PublicationDecision[];
   /**
-   * Host fact, in maintenance only: the update changes a published tool's registered contract,
-   * and the host checked that the person who answers the build's questions is the tool's owner.
+   * Host fact, in maintenance only: the update changes a published tool's registered contract.
+   * `owner`: the host checked that the person who answers the build's questions is the tool's
+   * owner. `none`: nobody was asked, as only an update that adds or tightens output fields allows.
    */
-  readonly maintenance?: { readonly confirmer: "owner" };
+  readonly maintenance?: { readonly confirmer: "owner" | "none" };
 }
 
 /**
@@ -139,9 +146,11 @@ export const taskUpdateForReview = <E>(
             })),
           )
         : change.setting === "output"
-          ? Effect.all({ field: text(change.field), text: text(change.text) }).pipe(
-              Effect.map((screened): TaskChange => ({ ...change, ...screened })),
-            )
+          ? Effect.all({
+              field: text(change.field),
+              text: text(change.text),
+              ...(change.reason === undefined ? {} : { reason: text(change.reason) }),
+            }).pipe(Effect.map((screened): TaskChange => ({ ...change, ...screened })))
           : "text" in change && change.text !== undefined
             ? text(change.text).pipe(Effect.map((screened) => ({ ...change, text: screened })))
             : Effect.succeed(change),

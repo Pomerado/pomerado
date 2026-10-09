@@ -44,6 +44,7 @@ const dropColor = {
       field: "notes[].color",
       change: "remove",
       text: "The notes page no longer shows a color for any note.",
+      reason: "Every note on the notes page, its detail view included, shows no color any more.",
     },
   ],
   confirmedBy: ["color"],
@@ -174,4 +175,124 @@ it("refuses an output change outside maintenance, where the build sets its own s
   );
   expect(result).toMatchObject({ status: "update_refused", reason: "output_outside_maintenance" });
   expect(host.reviews).toEqual([]);
+});
+
+// A repair may add an output field or tighten one without anyone's confirmation: callers keep
+// everything they already receive. Guardian still reviews the change before the host applies it.
+const example = {
+  purpose: "example",
+  target: "pureFiles",
+  entrypoint: "src/tool.ts",
+  fixtureRefs: [],
+  caseFilter: [],
+  maxWorkers: 1,
+  timeoutSeconds: 30,
+};
+const publication = {
+  entrypoint: "src/tool.ts",
+  executionId: "execution_one",
+  metadata: { name: "notes", description: "Read the saved notes with each note's color" },
+  coverage: "One example ran.",
+};
+
+/** Runs a repair that proposes `update` without asking anyone, then publishes its example. */
+const repairAndPublish = async (update: object, dependencies: Partial<MintDependencies>) => {
+  const results: Record<string, unknown>[] = [];
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(example);
+        results.push(JSON.parse(yield* turn.actions.updateTask!(update)));
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      ...dependencies,
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return {};
+        }),
+    },
+  );
+  const outcome = await f.run();
+  return { result: results[0], outcome, asked };
+};
+
+it.each([
+  {
+    case: "adds an optional field",
+    change: {
+      setting: "output",
+      field: "notes[].label",
+      change: "add",
+      text: "Each note's label as the notes page shows it, or null when the note has none.",
+    },
+  },
+  {
+    case: "tightens a nullable field to required",
+    change: {
+      setting: "output",
+      field: "notes[].color",
+      change: "tighten",
+      text: "Each note's color is always returned; the notes page shows one on every note.",
+    },
+  },
+])("publishes a repair that $case with no confirmation", async ({ change }) => {
+  const host = updateHost();
+  const { result, outcome, asked } = await repairAndPublish(
+    { summary: change.text, changes: [change], confirmedBy: [], recommend: "update" },
+    // Nobody can confirm: an addition or a tightening needs no one.
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("none") },
+  );
+  expect(result).toMatchObject({ status: "updated", task: { revision: 1 } });
+  expect(asked).toBe(0);
+  expect(host.reviews[0]?.update).toMatchObject({
+    changes: [change],
+    maintenance: { confirmer: "none" },
+  });
+  expect(host.applied[0]?.update.changes).toEqual([change]);
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+});
+
+it("refuses removing an output field without a reason, before any review", async () => {
+  const host = updateHost();
+  const { reason: _, ...unexplained } = dropColor.changes[0]!;
+  const result = await propose({ ...dropColor, changes: [unexplained] }, {
+    ...host.dependencies,
+    taskUpdateConfirmer: () => Effect.succeed("owner"),
+  });
+  expect(result).toMatchObject({ status: "update_refused", reason: "output_removal_reason" });
+  expect(host.reviews).toEqual([]);
+  expect(host.applied).toEqual([]);
+});
+
+it("sends a removal with its reason to Guardian, which may refuse it", async () => {
+  const reason = dropColor.changes[0]!.reason;
+  const reviews: TaskUpdateCandidate[] = [];
+  const applied: TaskUpdateApplication[] = [];
+  const result = await propose(dropColor, {
+    reviewTaskUpdate: (candidate) =>
+      Effect.sync(() => {
+        reviews.push(candidate);
+        return {
+          outcome: "reword" as const,
+          rationale: "The captures still show a color on each note.",
+          reviewId: "review",
+        };
+      }),
+    applyTaskUpdate: (application) =>
+      Effect.sync(() => {
+        applied.push(application);
+        return { outcome: "applied" as const };
+      }),
+    askInput: () => Effect.succeed({ color: { type: "choice", value: "drop" } }),
+    taskUpdateConfirmer: () => Effect.succeed("owner"),
+  });
+  expect(reviews[0]?.update).toMatchObject({
+    changes: [{ setting: "output", field: "notes[].color", change: "remove", reason }],
+    maintenance: { confirmer: "owner" },
+  });
+  expect(result).toMatchObject({ status: "reword" });
+  expect(applied).toEqual([]);
 });
