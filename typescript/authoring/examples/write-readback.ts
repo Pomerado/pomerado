@@ -124,8 +124,8 @@ export default defineOperation(
             : "sent",
       });
     const { saved, location } = result;
-    // A page left from before the write, or one that has not loaded this record yet, shows
-    // another task ID. That neither confirms the write nor shows it failed: the write stays
+    // A page left from before the write can show another task ID, and one that has not loaded
+    // this record shows none. Neither confirms the write nor shows it failed: the write stays
     // possibly sent.
     if (
       location !== `/tasks/${saved.id}` ||
