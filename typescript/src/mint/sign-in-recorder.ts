@@ -15,7 +15,7 @@ import {
   isExtraSecret,
   isIdentifier,
   isSecret,
-  keepProvingOrigins,
+  keepNamedOrigins,
   makeSentTracker,
   namedUntrustedOrigins,
   openSignInRecord,
@@ -348,13 +348,16 @@ export const makeSignInRecorder = <E>(input: {
         for (const slot of slots) filled.add(slot);
       },
     );
-    /** The origins the caller trusted for the open sign-in that received its password or code. */
-    const trustedProving = new Set<string>();
+    /**
+     * The origins the caller trusted for the open sign-in, each with whether it received the
+     * password or a code: what a build names until a sign-in verifies.
+     */
+    const trusted = new Map<string, boolean>();
     const close = () => {
       stopHearing?.();
       stopHearing = undefined;
       open = undefined;
-      trustedProving.clear();
+      trusted.clear();
     };
     yield* Effect.addFinalizer(() => Effect.sync(close));
 
@@ -698,13 +701,13 @@ export const makeSignInRecorder = <E>(input: {
           (!carried.some(provesLogin) &&
             !record.steps.some((step) => step.approval !== undefined) &&
             record.codeTyped !== true)
-        )
-          return record?.untrustedOrigins === undefined
+        ) {
+          // An off-site result always names an origin; with none to name, the check fails plainly.
+          const offSite = record === undefined ? [] : namedUntrustedOrigins(record);
+          return offSite.length === 0
             ? { result: credentialsNotSubmitted }
-            : {
-                result: loginSentOffSite(namedUntrustedOrigins(record)),
-                untrustedSignInOrigins: namedUntrustedOrigins(record),
-              };
+            : { result: loginSentOffSite(offSite), untrustedSignInOrigins: offSite };
+        }
         const named = identityValues(
           login.held(),
           values.given(),
@@ -766,15 +769,16 @@ export const makeSignInRecorder = <E>(input: {
       untrustedOrigins: () => (open === undefined ? [] : namedUntrustedOrigins(open)),
       /**
        * What a build names to its caller: the origins its checks named since the last verified
-       * sign-in (`named`), then the open sign-in's own, each once, filtered as a check filters
-       * them now (`keepProvingOrigins`). An early check may have named an origin that heard the
-       * identifier alone, before another received the password.
+       * sign-in (`named`), then the open sign-in's own, each once, by the rule a check names them
+       * by now (`keepNamedOrigins`), with each origin the caller trusted kept until a sign-in
+       * verifies. An early check may have named an origin that heard the identifier alone, before
+       * another received the password.
        */
       namedOrigins: (named: readonly string[]) =>
-        keepProvingOrigins(
+        keepNamedOrigins(
           [...new Set([...named, ...(open === undefined ? [] : namedUntrustedOrigins(open))])],
           open,
-          trustedProving,
+          trusted,
         ),
       /**
        * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
@@ -785,7 +789,7 @@ export const makeSignInRecorder = <E>(input: {
         if (open === undefined) return;
         for (const origin of origins) {
           const credited = trustOrigin(open, origin);
-          if (credited.some(provesLogin)) trustedProving.add(origin);
+          trusted.set(origin, trusted.get(origin) === true || credited.some(provesLogin));
           for (const slot of credited) filled.add(slot);
         }
       },

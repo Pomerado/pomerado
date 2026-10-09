@@ -51,9 +51,9 @@ export interface Pomerado {
    * reviewed the artifact when it was minted. `intent`, `effect` and `authenticationOrigins` are
    * not checked here, so run only artifacts you minted or trust. Its sign-in types the login on
    * the site, the request's `authenticationOrigins` and the ones the artifact saved in
-   * `signIn.authenticationOrigins`, which a caller trusted when its build asked. A read or a confirmed write
-   * returns its output. A failed sign-in fails with `SignInRunFailed`, and any other run with
-   * `RunOutcomeFailure`, which says what it did to the website and how to retry.
+   * `signIn.authenticationOrigins`, which a caller trusted when its build asked. A read or a
+   * confirmed write returns its output. A failed sign-in fails with `SignInRunFailed`, and any
+   * other run with `RunOutcomeFailure`, which says what it did to the website and how to retry.
    */
   readonly run: (
     artifact: MintArtifact,

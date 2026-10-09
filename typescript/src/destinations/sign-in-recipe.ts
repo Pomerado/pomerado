@@ -340,27 +340,33 @@ export const noteFormSubmit = (
   });
 
 /**
- * Of `origins`, the ones a sign-in names to its caller: when the password or a code counts as
- * sent, as once the caller trusted the origin that received it, or an origin received one, only
- * those that received one, since an origin that heard the identifier alone, such as an analytics
- * script's, signs nobody in; else every one. An origin received one when the record's
- * `untrustedOrigins` holds a password or code for it, or it is in `proving`.
+ * Of `origins`, the ones a sign-in names to its caller. An origin is named while a value it heard,
+ * as the record's `untrustedOrigins` holds it, does not count as sent yet, or while the caller
+ * trusted it (`trusted`, whether it received the password or a code) and no sign-in verified
+ * through it. Among those, when any received the password or a code, only those: an origin that
+ * heard the identifier alone, such as an analytics script's, signs nobody in. None is named when
+ * every value each heard already counts, and a check then fails as it always did.
  */
-export const keepProvingOrigins = (
+export const keepNamedOrigins = (
   origins: readonly string[],
   record: SignInRecord | undefined,
-  proving: Iterable<string> = [],
+  trusted: ReadonlyMap<string, boolean> = new Map(),
 ): readonly string[] => {
-  const received = new Set(proving);
-  for (const [origin, slots] of record?.untrustedOrigins ?? [])
-    if ([...slots].some(provesLogin)) received.add(origin);
-  const proofSent = received.size > 0 || [...(record?.submittedSlots ?? [])].some(provesLogin);
-  return proofSent ? origins.filter((origin) => received.has(origin)) : [...origins];
+  const heard = (origin: string) => [...(record?.untrustedOrigins?.get(origin) ?? [])];
+  const named = origins.filter(
+    (origin) =>
+      trusted.has(origin) ||
+      heard(origin).some((slot) => record?.submittedSlots.has(slot) !== true),
+  );
+  const proving = named.filter(
+    (origin) => trusted.get(origin) === true || heard(origin).some(provesLogin),
+  );
+  return proving.length > 0 ? proving : named;
 };
 
-/** The origins in `untrustedOrigins` a sign-in names to its caller (`keepProvingOrigins`). */
+/** The origins in `untrustedOrigins` a sign-in names to its caller (`keepNamedOrigins`). */
 export const namedUntrustedOrigins = (record: SignInRecord): readonly string[] =>
-  keepProvingOrigins([...(record.untrustedOrigins?.keys() ?? [])], record);
+  keepNamedOrigins([...(record.untrustedOrigins?.keys() ?? [])], record);
 
 /**
  * Trusts `origin` for the open sign-in, once the caller confirmed it: the slots its requests

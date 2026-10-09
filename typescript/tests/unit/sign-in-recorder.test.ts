@@ -647,6 +647,57 @@ it("names only the origin that received the password in what a build names, thou
   expect(named).toEqual([identity]);
 });
 
+it("names the origin an identifier-first sign-in sent the identifier to when the password went in the site's own form post, and a yes verifies", async () => {
+  // The identifier goes to the identity service by script; the password screen posts natively to
+  // the site's form, which counts the password alone.
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] =>
+    step.fields.some((field) => "accepts" in field)
+      ? identifierFirst(identity)(step, values)
+      : [formRequest(values)];
+  const later = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const first = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(first.untrustedSignInOrigins).toEqual([identity]);
+      expect(first.result).toMatchObject({ untrustedSignInOrigins: [identity] });
+      expect(recorder.untrustedOrigins()).toEqual([identity]);
+      recorder.trustOrigins([identity]);
+      return yield* recorder.step(signedIn, undefined, Effect.void);
+    }),
+  );
+  expect(later).toMatchObject({ verified: true });
+  const configured = await harness({ authenticationOrigins: [identity], send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      return yield* recorder.step(signedIn, undefined, Effect.void);
+    }),
+  );
+  expect(configured).toMatchObject({ verified: true });
+});
+
+it("fails a check plainly, naming no origin, when every value an origin off the site heard already counts as sent", async () => {
+  // The identity service hears the identifier, which the site's own form post then also counts;
+  // no password or code was sent anywhere.
+  const send = (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] => [
+    ...identifierFirst(identity)(step, values),
+    formRequest(values),
+  ];
+  const { checked, named } = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      const result = yield* recorder.step(signedIn, undefined, Effect.void);
+      return { checked: result, named: recorder.namedOrigins([]) };
+    }),
+  );
+  expect(checked.untrustedSignInOrigins).toBeUndefined();
+  expect(checked.result).toMatchObject({ signedIn: false, failed: "credentials_not_submitted" });
+  expect(checked.result).not.toHaveProperty("untrustedSignInOrigins");
+  expect(checked.result["nextStep"]).not.toContain("untrustedSignInOrigins");
+  expect(named).toEqual([]);
+});
+
 it("names only the origins off the site that received the password, never one that heard the identifier alone, with or without a check", async () => {
   const analytics = "https://analytics.other.test";
   // An analytics script captures the email the first screen sends; the second screen's script
