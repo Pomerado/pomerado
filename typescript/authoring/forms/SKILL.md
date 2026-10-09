@@ -171,8 +171,10 @@ a contracting or checkout form) is a write, even when nothing is submitted yet: 
 such forms save each step as you go. A read build may not fill in or advance such a
 form (it asks the caller and changes its task to a write with `mint_update` first, as the
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
-whose read semantics are established stays a read, and so does a signed-out store, location
-or guest address form (core skill).
+whose read semantics are established stays a read, and so does a signed-out store or location
+form (core skill). A signed-out quote or price form that only fetches is a read too, but
+entering a name, email, phone number or similar personal detail into it is a write: ask the
+caller first, as the writes skill says.
 
 - Walk every step for real, in the session, with the caller's values. Never infer a
   later step's fields, options or wording in place of reaching it; the page after

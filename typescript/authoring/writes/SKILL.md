@@ -24,8 +24,8 @@ published script from what those steps did and publish it. Nothing runs again.
 
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
-Signed out, setting the session's store, location, guest address or delivery or pickup
-mode is part of a read, even through a Save button (core skill).
+Signed out, setting the session's store, location or delivery or pickup mode is part of a
+read, even through a Save button (core skill). Adding to a cart stays a write, signed out too.
 
 ## When a read build finds it needs to write
 
