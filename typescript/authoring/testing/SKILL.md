@@ -48,7 +48,17 @@ several controls in one test whenever that covers more. Check the remaining valu
 against pages you captured where that applies, and list any input no live run set under
 untested in `coverage`, so a reader sees it as unverified. A control that fails
 its test is fixed, never dropped from the schema. A live run that returns partly filled results,
-or passes only when run again, shows a missing wait for content: fix the wait in source.<!-- pomerado:section testing.offline-fixtures -->
+or passes only when run again, shows a missing wait for content: fix the wait in source.
+
+Some hosts also check a read's controls themselves at `finish_build`, before it publishes. They
+build inputs from your input schema (each field's `examples`, every enum member, declared
+bounds, dates a few weeks ahead, paging through your cursor, every optional input at once, a
+search text that matches nothing and a value the page cannot offer) and run each on your current
+source. These runs are the host's, not yours: they never use your four live tests. Give every
+input field public `examples`, return the site's own empty result as an empty list instead of
+throwing, and throw `InvalidInput` with the field and the page's choices when a requested value
+is not offered. A refusal names each failing case's key, verdict, error class and source frame:
+fix that control and call `finish_build` again; the host checks the source as it is then.<!-- pomerado:section testing.offline-fixtures -->
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read

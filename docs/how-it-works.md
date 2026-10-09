@@ -49,6 +49,29 @@ Pomerado has three parts. The minter builds an integration, Guardian reviews the
 - `report_blocked` ends the build only when Guardian allows the explanation, or when its review stays unavailable past the review outage budget, which leaves the caller only the reason's fixed sentence. An unavailable review comes back with `retryable: true` before that. When Guardian asks for a reword, the minter gets the rationale, and may revise the explanation, which Guardian reviews again, or withdraw it and go on.
 - A `contract_input_mismatch` or `contract_output_mismatch` refusal's recovery is `correct_source` in a read build and `write_completion` in a write build.
 
+### Control checks
+
+A host can check each control of a read before it publishes. The harness runs the checks at `finish_build` when the host provides `MintDependencies.controlChecks`. A host without it runs none, and publication behaves as it did before. The local host runs them only when `PomeradoOptions.controlChecks` is set. Writes are never checked live.
+
+- `controlCasePlan` from `pomerado/core/mint/control-cases` builds the cases from the tool's input JSON Schema, as the host reads it offline from the current source. It is pure: the clock, the budget and the priorities are passed in.
+  - The base case sets each required field to its first example, and each date to 21 days after the clock.
+  - One field at a time: every member of an enum with up to six, else the example, the first, middle and last; a boolean's other value; one case per union branch; a string, number or array's examples; an integer's example and minimum.
+  - Bounds: each declared minimum and maximum, a limit's maximum only up to 50, and a paired range set inverted, which may be refused or come back empty but never crash.
+  - Dates in order from the clock, paging through the cursor the output returns, every optional field at once, an empty probe of a search's free-text field with a token that matches nothing, and the sentinel `__unoffered__` for a field whose values are the page's own choices.
+  - A field without `examples` that the schema can't fill, such as free text, refuses publication as `input_examples_missing`, naming the fields.
+  - A case key is the canonical JSON of its changes from the base case, such as `{"sort":"price_asc"}`. It holds schema values and host placeholders such as `$empty_probe` and `$today+21d`, never a caller's value.
+  - Cases are ranked: fields the change touched, then fields a caller failure named, fields whose last result failed, fields never verified, and the rest. The plan keeps 24 by default and never cuts the first two ranks. The cases it cut are listed in coverage.
+- `MintDependencies.controlChecks.runControlCases(plan, bundleDigest)` runs the plan on the source with that digest and returns each case's outcome, with the published revision's results as `baseline` when the host checked one. `runControlCase` and `runControlCasesInOrder` from `pomerado/core/mint/control-runner` add each case's follow-up: page 2 through the returned cursor, or a rerun with the first choice a refusal offered.
+- `evaluateControlChecks` from `pomerado/core/mint/control-verdicts` gives each case `pass`, `empty`, `refused_with_choices`, `fail` or `inconclusive`, and keeps no input or output.
+  - A throw, a refused schema value or a required output field that comes back null fails.
+  - A field whose two or more values all return the base case's output, while the base case returned two or more items, is `control_inert`.
+  - Against a baseline, a case that passed and fails now is `control_regression`, and a field that was non-null and is null now is `output_regression`. A case that fails on both revisions is `control_broken`, so a repair fixes broken controls too.
+  - An inconclusive case, such as a challenge or a host failure, never blocks.
+- A blocking finding refuses publication with that reason. `controlChecks.findings` names each case key, verdict, error class and the authored source frame that failed, such as `src/tool.mjs:12`.
+- When the source changed while the cases ran, the refusal is `controls_stale`, and the next `finish_build` checks the source as it is then. A passing run hands `publish` its `ControlCheckEvidence`, the digest and the results, so a host that reads the source again can refuse `controls_stale` too. Its line of coverage goes to the publication review.
+- Host cases are not the minter's executions. They never count toward its four live tests with an input it chose, and the one-worker rule on its `execute` doesn't bind them, so a host may run cases in parallel browsers. Guardian reviews a check run once, with `currentExecution.input` `schema_generated` and every case's input in `submitted_call.input.cases`.
+- The local host runs the cases one at a time in the build's browser, each on a reset page like any live test, and records one history entry for the run marked `schema_generated`. It has no anti-bot handling, which is a hosted concern.
+
 ### Publication decisions
 
 - `path_screening` stays a refusal the minter fixes, since it can mean a source path holds a credential.
@@ -248,6 +271,7 @@ The package has these entry points.
 - `checkWriteSession` from `pomerado/core/mint/write-session` runs a write session's publication checks. The session sent its write when a step recorded a confirmation, or an act step Guardian labelled a write is `possiblySent` and the outcome review has not found it `not_done`. The local host marks each step its effect journal can't rule out as `possiblySent`.
 - `makeCredentialKeyboard` from `pomerado/core/destinations/credential-keyboard` takes an optional `bindingWorld` function that returns the execution context a credential field resolves in. Without it, the field resolves in the page's main world.
 - `makeRunDialogDecision` from `pomerado/core/browser/dialogs/expected` decides a run's native dialogs from the tool's `acceptedConfirms`. It takes an `IncidentStore` from `pomerado/core/runtime/incidents` and records each decision it makes on its own there. The local host passes `noIncidents`, which records nothing.
+- `controlChecks` in `createPomerado`'s options turns on the local host's control checks, with an optional case `budget` and the clock `now` that generated dates start from. See [Control checks](#control-checks).
 - `pomerado/testing/confirm-popups-contract` holds a fixture page with eight confirm cases and `confirmPopupContractFailures`, which checks a host's run dialog handling against them.
 
 `npx -y -p pomerado pomerado --help` shows the terminal interface for minting and running. Terminal mint keeps its original source-artifact format. Use `pomerado-mcp mint` for generated MCP packaging.

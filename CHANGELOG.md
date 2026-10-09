@@ -53,6 +53,14 @@
 
 ### Other changes
 
+- A host can check each control of a read before it publishes. At `finish_build` the harness builds cases from the tool's input schema (`controlCasePlan` in `pomerado/core/mint/control-cases`), has the host run them through the new optional `MintDependencies.controlChecks.runControlCases(plan, bundleDigest)`, and judges the run (`evaluateControlChecks` in `pomerado/core/mint/control-verdicts`). A host without the hook runs no checks, and publication behaves as before. See "Control checks" in `docs/how-it-works.md`.
+  - Publication may refuse with the new reasons `input_examples_missing`, `control_broken`, `control_inert`, `control_regression`, `output_regression` and `controls_stale`, naming each case key, verdict, error class and failing frame. A host that switches over `MintFailure["reason"]` handles them.
+  - `publish` takes an optional third argument, `ControlCheckEvidence`, the digest of the source the checks ran and their results.
+  - Guardian's `currentExecution.input` and a history entry's `input` may be `schema_generated`, the host's check cases, which never count toward the minter's live tests. The execution policy says how to judge them.
+  - `runControlCase` and `runControlCasesInOrder` from `pomerado/core/mint/control-runner` run a case with its follow-up, the next page or the first offered choice.
+  - The local host runs the checks one at a time when `controlChecks` is set in `createPomerado`'s options. It is off by default.
+  - A local run's failure names the authored source frame that threw, such as `src/tool.mjs:12`.
+  - The testing and publication skills describe host control checks.
 - The minter's guidance asks for broader tools and fuller tests. A read may now run up to four live tests per attempt with an input the minter chose, up from two (`preflightTestInput` in `pomerado/core/mint/step-checks`), and the testing skill asks it to test every control it exposes, spending those tests on the riskiest ones.
   - The core skill adds "Configure, then read": discover a page's choice groups, set them from the input, confirm, then read the values that depend on them. A value the page does not offer throws `errors.InvalidInput(message, { field, available })` listing the page's choices. The runtime change that adds that second argument, and the host behavior that ends such a run at once with the choices, ship separately.
   - Tools expose every control that narrows, orders or configures their results, a location or store included on search, details and cart tools when the site lets a visitor set one. Setting a location, filter, sort or option in the run's own browser is part of a read; Guardian's execution policy says so in the same words, and saving to a signed-in account stays a write.
