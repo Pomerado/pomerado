@@ -64,11 +64,11 @@ account. While building, ask the owner for a location; they may skip it.
 
 ## Results
 
-Read every field of every result from that result's own card on every run. Each result carries
-every fact its card shows (core skill, output fields): the full name with any maker or provider
-line, each amount with its terms, the rating and its count, availability, badges and the
-result's link. When only some cards show a fact, its field is nullable and null exactly on the
-cards that don't. Read the results only once every card you return is filled in. When the site
+Read every field of every result from that result's own card on every run. Lean toward more
+information (core skill, output fields): return the facts on each card a caller could reasonably
+use to choose among results, with full displayed values, and a maker or provider line in its own
+field. When only some cards show a fact, its field is nullable and null exactly on the cards
+that don't. Read the results only once every card you return is filled in. When the site
 marks results as suggestions rather than matches, such as "no exact matches, showing similar
 items", return that. A search that applied every input and got the site's no-results message
 returns an empty list, never an error.

@@ -60,10 +60,11 @@ first:
   Schema form (core skill, the input schema). A read's schemas come from current source, so
   fix one there and call again with the same `executionId`; a required output field its example
   did not return is refused (`contract_output_mismatch`). Values the request needs are required
-  and non-null, even when some records may lack them; a description never excuses a nullable
-  needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a
-  constant where the page shows a value, and titles and names are returned in full (core skill,
-  output fields).
+  and non-null: never loosen one. Only a record whose own page shows no such value may return
+  null, together with a field saying why; a description never excuses a nullable needed value,
+  and Guardian refuses a schema that makes one optional or nullable. No output is a constant
+  where the page shows a value, and titles and names are returned in full (core skill, output
+  fields).
 - **Typed output.** Prefer parsing what the page shows into typed fields over returning a
   result row, card or itinerary as one text blob or summary. Give each fact a caller would
   filter, sort or compare its own field (core skill, output fields). A flight card reading "XX

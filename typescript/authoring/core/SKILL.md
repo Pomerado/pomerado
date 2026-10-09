@@ -223,43 +223,34 @@ then: wire it, ask the owner with `request_input` when the request reads two way
 the description why the tool lacks it. Publication review blocks on the same gaps, and finding
 them at `finish_build` costs a full fix-and-resubmit round.
 
-**Output fields.** Return every distinct fact the page shows about each record or result that a
-caller could use to identify, choose, compare or act on it, not only the values the request
-names. That includes:
-- its identifier;
-- its full name or title as displayed, with the maker, brand or provider when the page shows one;
-- every amount the page shows, each with its unit, period or what it applies to;
-- ratings and their counts;
-- availability and status;
-- the badges and labels the site attaches to it;
-- its links.
+**Never loosen a value the request needs.** The values the request needs are each value it
+names, the record's identifier as the site shows it, and the context those depend on as the page
+shows it, such as dates, a party size or a location. Make each one required and non-null, typed
+so a value the code could not read fails the output check (`Schema.NonEmptyString` for text,
+`Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever the
+request's wording or a description says. A run whose output fails its schema goes to repair.
+- The one exception is a record whose own page genuinely does not show the value, such as an
+  item that is sold out and shows no amount. Then the value may be null only together with a
+  field that says why, such as its availability, and both descriptions say so.
+- Null never covers a value the page shows that the code failed to read: that throws
+  `OperationFailure` naming it. Never turn a read that found nothing into null
+  (`?.innerText ?? null`); a missing element is a failure, not an absence.
+- Before your first example, list the needed values. If the page may not show one, settle it
+  then: find where the site shows it, on every layout its records use, or ask the owner.
 
-The record or result card is the boundary: leave out page-wide navigation and controls.
+**Output fields.** Design the output for what a caller could use, and lean toward more fields
+and more information rather than the minimum: include the facts about each record or result
+that a caller could reasonably use to identify, choose, compare or act on it, not only the values
+the request names. Leave out what is unrelated to the tool's purpose or of no use to a caller.
 - Keep each value's full displayed text. Read the element that holds the whole value, never a
   shorter or secondary one. When the page splits one value across elements, such as a maker
   line above a linked name, return each part in its own field. Never drop either part.
-- Prefer a separate typed field for each fact over dropping it or folding it into another
-  field's text. Never derive a value the page does not show.
-- A field other than the needed values below is nullable only when records on this site can
-  lack it, and it is null exactly when this record does not show it.
+- Prefer a separate typed field for each fact over folding it into another field's text. Never
+  derive a value the page does not show.
+- A field that is not a needed value is nullable when records on this site can lack it, and it
+  is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
-
-**Values the request needs** are each value it names, the record's identifier as the site shows
-it, and the context those depend on as the page shows it, such as dates, a party size or a
-location.
-- Make each one required and non-null, typed so a value the code could not read fails the
-  output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never optional,
-  nullable or plain `Schema.Number`. This holds even when some records might not show it, and
-  even when the request says to report a missing value as "not available": that wording never
-  makes a named fact nullable. A run whose output fails its schema goes to repair.
-- When this record's page lacks a needed value, the code throws `OperationFailure` naming it.
-- Never turn a read that found nothing into null (`?.innerText ?? null`). A missing element is a
-  failure, not an absence.
-- Only the other fields may be nullable, and then only from a positive absence signal on the
-  page.
-- Before your first example, list the needed values. If the page may not show one, settle it
-  then: find where the site shows it, on every layout its records use, or ask the owner.
 
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
