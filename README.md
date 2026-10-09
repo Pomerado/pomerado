@@ -120,7 +120,9 @@ Authority decides what an integration is allowed to do, so choose it deliberatel
 - Use `write` only when the task changes something, such as submitting a form or making a booking
 - A write mint performs the action once while it builds, then reviews the final source without repeating it
 - A read mint that finds the task needs a change asks to switch to write, and your agent's answer decides
-- A run doesn't check authority or intent, and edits to `src/` or `deployment.json` aren't reviewed. A run that signs in replays its sign-in only on the site and the sign-in origins in `deployment.json`
+- A run doesn't check authority or intent, and edits to `src/` or `deployment.json` aren't reviewed. A run that signs in replays its sign-in only on the site and its sign-in origins. A served call takes them from `deployment.json`, and `pomerado run --artifact` from `pomerado.json`
+
+Some sites sign in through a script that sends your login to another website, such as a hosted identity service. Pomerado then asks you once whether the site signs in through that address, when there are one to three such https addresses. Until your password or a code has been sent anywhere, it asks only when there's one. Yes trusts it for signing in only and saves it with the integration. No stops the mint without saving anything. To trust it up front, or to trust one Pomerado doesn't ask about, pass it in `authenticationOrigins` when you call `mint`.
 
 Names start with a lowercase letter and use only lowercase letters, digits and underscores. The integration's folder must not exist yet. Each mint gets 20 minutes of active work, and time spent waiting for your answers doesn't count against it.
 
@@ -133,7 +135,7 @@ pomerado-integrations/example_reader/
 ├── src/                 Generated operation modules
 ├── pomerado.json        Entrypoint, input and output schemas, and the questions a run may ask
 ├── auth-fill.json       Sign-in screens a build that signed in recorded, with no value
-├── deployment.json      Tool name, description, URL, task and authority
+├── deployment.json      Tool name, description, URL, task, authority and sign-in origins
 ├── mcp.mjs              Launcher for the shared Pomerado runtime
 ├── mcp.json             Standard MCP server entry, with no key
 └── README.md            Add commands for each MCP client

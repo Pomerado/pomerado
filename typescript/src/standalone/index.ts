@@ -5,6 +5,7 @@ export type {
   PomeradoRequest,
   MintArtifact,
   MintOutcome,
+  LocalMintOutcome,
 } from "./pomerado.js";
 export { makeInputAsker } from "../inputs/callback.js";
 export { makeTerminalAsker } from "../inputs/terminal.js";

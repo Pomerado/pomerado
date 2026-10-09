@@ -15,12 +15,15 @@ import {
   isExtraSecret,
   isIdentifier,
   isSecret,
+  keepNamedOrigins,
   makeSentTracker,
+  namedUntrustedOrigins,
   openSignInRecord,
   provesLogin,
   recordStep,
   SignInRecipe,
   signInRecipe,
+  trustOrigin,
   Unanswered,
   type SecretMatcher,
   type SignInBrowser,
@@ -45,6 +48,11 @@ export interface SignInStepResult {
   readonly verified?: true;
   /** The owner completed the sign-in's approval. */
   readonly approved?: true;
+  /**
+   * The check found the open sign-in's login sent only to these origins, off the site and its
+   * trusted sign-in origins, each an exact origin; `result` names them for the minter too.
+   */
+  readonly untrustedSignInOrigins?: readonly string[];
 }
 
 /** A verified sign-in's value-free recipe and the address its runs start from. */
@@ -96,6 +104,18 @@ const credentialsNotSubmitted = {
   nextStep:
     "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
 } as const;
+
+/**
+ * The same check when the page's sign-in request carried the login only to `origins`, off the site
+ * and its trusted sign-in origins: it names each exact origin, never a path, query or value, so
+ * the caller can trust it for sign-in.
+ */
+const loginSentOffSite = (origins: readonly string[]) => ({
+  ...credentialsNotSubmitted,
+  untrustedSignInOrigins: origins,
+  nextStep:
+    "The page's sign-in request carried the login to the origins in untrustedSignInOrigins, which are neither this site nor one of the build's sign-in origins, so the host did not count it as sent and cannot take this page as signed in. Signing in again sends it there again. Tell the caller which origin received the login. A build counts a login sent there only once that origin is one of its sign-in origins.",
+});
 
 const identifierUnobserved: SignInStepResult = {
   result: {
@@ -274,6 +294,10 @@ export const makeSignInRecorder = <E>(input: {
       readonly challengeScreens: AutofillScreens;
     };
     readonly published: () => PublishedSignIn | undefined;
+    readonly untrustedOrigins: () => readonly string[];
+    readonly trustOrigins: (origins: readonly string[]) => void;
+    readonly namedOrigins: (named: readonly string[]) => readonly string[];
+    readonly receivedProof: () => boolean;
   },
   never,
   Scope.Scope
@@ -325,10 +349,16 @@ export const makeSignInRecorder = <E>(input: {
         for (const slot of slots) filled.add(slot);
       },
     );
+    /**
+     * The origins the caller trusted for the open sign-in, each with whether it received the
+     * password or a code: what a build names until a sign-in verifies.
+     */
+    const trusted = new Map<string, boolean>();
     const close = () => {
       stopHearing?.();
       stopHearing = undefined;
       open = undefined;
+      trusted.clear();
     };
     yield* Effect.addFinalizer(() => Effect.sync(close));
 
@@ -672,8 +702,13 @@ export const makeSignInRecorder = <E>(input: {
           (!carried.some(provesLogin) &&
             !record.steps.some((step) => step.approval !== undefined) &&
             record.codeTyped !== true)
-        )
-          return { result: credentialsNotSubmitted };
+        ) {
+          // An off-site result always names an origin; with none to name, the check fails plainly.
+          const offSite = record === undefined ? [] : namedUntrustedOrigins(record);
+          return offSite.length === 0
+            ? { result: credentialsNotSubmitted }
+            : { result: loginSentOffSite(offSite), untrustedSignInOrigins: offSite };
+        }
         const named = identityValues(
           login.held(),
           values.given(),
@@ -728,6 +763,45 @@ export const makeSignInRecorder = <E>(input: {
       },
       /** The screens a signed-in check reads now: every screen, and the current sign-in's. */
       screens: () => ({ screens: [...screens], challengeScreens: screens.slice(signInStart) }),
+      /**
+       * The origins off the site and its sign-in origins that the open sign-in's requests carried
+       * the login to, as a check names them, whether or not one ran; none once it is over.
+       */
+      untrustedOrigins: () => (open === undefined ? [] : namedUntrustedOrigins(open)),
+      /**
+       * What a build names to its caller: the origins its checks named since the last verified
+       * sign-in (`named`), then the open sign-in's own, each once, by the rule a check names them
+       * by now (`keepNamedOrigins`), with each origin the caller trusted kept until a sign-in
+       * verifies. An early check may have named an origin that heard the identifier alone, before
+       * another received the password.
+       */
+      namedOrigins: (named: readonly string[]) =>
+        keepNamedOrigins(
+          [...new Set([...named, ...(open === undefined ? [] : namedUntrustedOrigins(open))])],
+          open,
+          trusted,
+        ),
+      /**
+       * Whether the open sign-in sent the password or a code anywhere: a request the host read
+       * carried one to the site or any other origin, counted or not (`proofCarried`), or an
+       * exploration typed a code; false once no sign-in is open. Until then the origins a check
+       * names, as before the password screen, heard no password or code.
+       */
+      receivedProof: () =>
+        open !== undefined && (open.proofCarried === true || open.codeTyped === true),
+      /**
+       * The caller trusted `origins` for this sign-in: what the open sign-in sent there counts as
+       * sent, and its next check may verify it. Nothing is typed again, and a secret credited
+       * this way counts as filled, as one the request rule credited does.
+       */
+      trustOrigins: (origins: readonly string[]) => {
+        if (open === undefined) return;
+        for (const origin of origins) {
+          const credited = trustOrigin(open, origin);
+          trusted.set(origin, trusted.get(origin) === true || credited.some(provesLogin));
+          for (const slot of credited) filled.add(slot);
+        }
+      },
       /** The latest verified sign-in, while no later sign-in reached the site; else none. */
       published: () => {
         if (verified === undefined || verified.signIn !== signIns) return undefined;

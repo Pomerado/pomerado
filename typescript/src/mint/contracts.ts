@@ -104,14 +104,17 @@ export interface RunnerChannels {
 /**
  * What spent an attempt's sign-ins: its one extra sign-in after a verified one, the sign-ins it
  * allows on a recovery's new profile, its one retry of a sign-in that submitted the login but
- * never verified and was not rejected, or the host's identical refusals in a row while typing into
- * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past.
+ * never verified and was not rejected, the host's identical refusals in a row while typing into
+ * a sign-in screen (`maximumHostRefusals`), which no correction of the step got past, or the
+ * caller's refusal to trust the origin off the site that the site's sign-in sent the login to,
+ * so no sign-in of the site can verify.
  */
 export type SpentSignIn =
   | "relogin_spent"
   | "fresh_profile_sign_ins_spent"
   | "sign_in_retry_spent"
-  | "host_refusals_repeated";
+  | "host_refusals_repeated"
+  | "sign_in_origin_untrusted";
 
 export type { SessionLoss };
 
@@ -175,6 +178,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    * was refused, once the attempt's sign-ins are spent: the build ends `sign_in_unavailable`.
    */
   readonly spentSignIn?: SpentSignIn;
+  /**
+   * The origins off the site and its sign-in origins that a sign-in no check verified sent the
+   * login to, each an exact origin, which a publication refused as `autofill_recipe_not_verified`
+   * names to the minter.
+   */
+  readonly untrustedSignInOrigins?: readonly string[];
   /**
    * Set by the host when the site lost its signed-in session, as on a page load, and the host
    * could not sign in again: the build ends `sign_in_unavailable` with this cause.
@@ -277,7 +286,10 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "repair_unchanged"
     /** The saved login to sign in with stayed held by another job through the host's wait. */
     | "login_in_use"
-    /** A shared browser sign-in repair cannot publish without a verified replacement recipe. */
+    /**
+     * A shared browser sign-in repair cannot publish without a verified replacement recipe, nor a
+     * local build that rests on a step it ran after a sign-in no check verified.
+     */
     | "autofill_recipe_not_verified"
     | "source_storage"
     | "registry_publication"

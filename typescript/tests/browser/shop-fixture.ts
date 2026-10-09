@@ -19,6 +19,17 @@ export const shopAccount = { username: "ada@example.test", password: "correct-ho
 export const shopCode = "482913";
 /** How many help links the two-screen sign-in's password screen shows besides its 4 controls. */
 export const shopHelpLinks = 40;
+/**
+ * A host on another site, whose identity service the shop's script sign-ins, `/identity-login` and
+ * the identifier-first `/identity-steps`, send the login to. A browser maps it to the shop's
+ * server, which answers it on the same port.
+ */
+export const identityHost = "accounts.identity.test";
+/**
+ * A host on a third site, whose analytics service `/identity-steps?analytics=on` tells the
+ * identifier screen's email to, as a marketing tag does. A browser maps it to the shop's server.
+ */
+export const analyticsHost = "collect.analytics.test";
 /** An account the shop has locked: it answers 423 whatever the password. */
 export const lockedShopAccount = {
   username: "grace@example.test",
@@ -40,6 +51,12 @@ interface ShopState extends StoreState {
   loginPageLoads: number;
   /** Posts to the two-screen sign-in's session endpoint, whatever they carry. */
   sessionPosts: number;
+  /** Posts of a login to the identity service on `identityHost`, its preflights left out. */
+  identityPosts: number;
+  /** Posts to the analytics service on `analyticsHost`, its preflights left out. */
+  analyticsPosts: number;
+  /** The notes the signed-in account saved on `/account/note`, in order. */
+  accountNotes: string[];
   /** The HTTP version's contract: `error` and `changed` break it for curl traffic only. */
   api: "ok" | "error" | "changed";
   /** `refuse` makes the modeled Kernel curl fail before sending anything. */
@@ -114,6 +131,8 @@ interface ShopSecrets {
   readonly signedIn: string;
   /** A sign-in that sent the password and waits for its code. */
   readonly pending: string;
+  /** The token the identity service issues for the shop's account. */
+  readonly identityToken: string;
 }
 
 /** A sign-in body's username and password, when it is an object that carries them. */
@@ -137,7 +156,7 @@ const shopRoutes = (
   secrets: ShopSecrets,
   hanging: ServerResponse[],
 ): ReadonlyMap<string, Route> => {
-  const { sessionValue, csrfValue, signedIn, pending } = secrets;
+  const { sessionValue, csrfValue, signedIn, pending, identityToken } = secrets;
   const sessionCookies = [
     `shop_session=${sessionValue}; Path=/; Secure; HttpOnly; SameSite=Lax`,
     `csrf_token=${csrfValue}; Path=/; Secure; SameSite=Lax`,
@@ -328,6 +347,132 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     });
     response.end();
   };
+  // A sign-in whose script sends the login to an identity service on another site, then trades the
+  // token it returns for the shop's session, as a single-page site on a hosted identity service
+  // does. The form has no action and the shop's own origin never receives the password.
+  const identityLogin: Route = (request, response) =>
+    html(
+      response,
+      `<title>Sign in</title><form id="login"><label>Email<input name="username" type="email" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>
+<script>const identity='https://${identityHost}:'+location.port;document.querySelector('#login').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target);const signedIn=await fetch(identity+'/v1/sign-in?key=public',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:form.get('username'),password:form.get('password')})});if(!signedIn.ok)return;const {idToken}=await signedIn.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
+      { "set-cookie": cookiesFor(request) },
+    );
+  /** A JSON post's field `key`, or undefined. */
+  const field = (body: unknown, key: string) =>
+    typeof body === "object" && body !== null && key in body
+      ? (body as Readonly<Record<string, unknown>>)[key]
+      : undefined;
+  // The handle the identity service gives an identifier-first sign-in between its two screens.
+  const identityState = `state-${identityToken.slice(4)}`;
+  /**
+   * An identity service endpoint: it answers its own preflight, and a JSON post with what
+   * `answer` gives for its body, or a 400 when that is nothing.
+   */
+  const identityEndpoint =
+    (answer: (body: unknown) => object | undefined): Route =>
+    async (request, response) => {
+      const cors = {
+        "access-control-allow-origin": request.headers.origin ?? "*",
+        "access-control-allow-headers": "content-type",
+        "access-control-allow-methods": "POST",
+      };
+      if (request.method === "OPTIONS") {
+        response.writeHead(204, cors);
+        return void response.end();
+      }
+      if (request.method !== "POST") return json(response, 404, {});
+      state.identityPosts += 1;
+      const answered = answer(JSON.parse((await readBody(request)) || "null"));
+      response.writeHead(answered === undefined ? 400 : 200, {
+        "content-type": "application/json",
+        ...cors,
+      });
+      response.end(JSON.stringify(answered ?? { error: "invalid login" }));
+    };
+  // A token for the shop's account, for the whole login at once.
+  const identitySignIn = identityEndpoint((body) =>
+    field(body, "email") === shopAccount.username &&
+    field(body, "password") === shopAccount.password
+      ? { idToken: identityToken }
+      : undefined,
+  );
+  // An identifier-first sign-in's first screen: the identifier alone, for a state handle.
+  const identityIdentify = identityEndpoint((body) =>
+    field(body, "identifier") === shopAccount.username ? { stateHandle: identityState } : undefined,
+  );
+  /** Whether a second screen's post carries the state handle and the account's password. */
+  const answersChallenge = (body: unknown) =>
+    field(body, "stateHandle") === identityState &&
+    field(body, "password") === shopAccount.password;
+  // Its second screen: the password alone with the state handle, for a token.
+  const identityChallenge = identityEndpoint((body) =>
+    answersChallenge(body) ? { idToken: identityToken } : undefined,
+  );
+  // The shop's own end of a second screen that posts the password to the site instead, with the
+  // state handle and without the identifier: the shop's session.
+  const identityPassword: Route = async (request, response) => {
+    if (!answersChallenge(JSON.parse((await readBody(request)) || "null")))
+      return json(response, 401, { error: "invalid login" });
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
+    });
+    response.end(JSON.stringify({ ok: true }));
+  };
+  // An analytics service that takes any JSON post, as a marketing tag's collector does. It answers
+  // its own preflight and signs nobody in.
+  const analyticsCollect: Route = async (request, response) => {
+    const cors = {
+      "access-control-allow-origin": request.headers.origin ?? "*",
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-methods": "POST",
+    };
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, cors);
+      return void response.end();
+    }
+    if (request.method !== "POST") return json(response, 404, {});
+    state.analyticsPosts += 1;
+    await readBody(request);
+    response.writeHead(204, cors);
+    response.end();
+  };
+  // An identifier-first sign-in on one page, as an embedded identity widget runs it: its first
+  // screen sends the identifier to the identity service and shows the second, whose password goes
+  // there too, or with `?password=site` to the shop, each with the state handle. With
+  // `?analytics=on` the first screen also sends the email to the analytics service.
+  const identitySteps: Route = (request, response) =>
+    html(
+      response,
+      `<title>Sign in</title><form id="identify"><label>Email<input name="username" type="email" autocomplete="username"></label><button id="next">Next</button></form><form id="challenge" hidden><label>Password<input name="password" type="password" autocomplete="current-password"></label><button id="verify">Sign in</button></form>
+<script>const identity='https://${identityHost}:'+location.port;const query=new URLSearchParams(location.search);const toSite=query.get('password')==='site';const analytics=query.get('analytics')==='on'?'https://${analyticsHost}:'+location.port:'';let stateHandle='';const post=(url,body)=>fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.querySelector('#identify').addEventListener('submit',async event=>{event.preventDefault();const email=new FormData(event.target).get('username');const [identified]=await Promise.all([post(identity+'/v1/identify',{identifier:email}),...(analytics?[post(analytics+'/v1/collect',{event:'identify',email})]:[])]);if(!identified.ok)return;({stateHandle}=await identified.json());event.target.hidden=true;document.querySelector('#challenge').hidden=false});document.querySelector('#challenge').addEventListener('submit',async event=>{event.preventDefault();const answer={stateHandle,password:new FormData(event.target).get('password')};if(toSite){if((await post('/api/identity-password',answer)).ok)location.href='/account';return}const answered=await post(identity+'/v1/challenge',answer);if(!answered.ok)return;const {idToken}=await answered.json();const session=await fetch('/api/identity-session',{method:'POST',headers:{authorization:'Bearer '+idToken}});if(session.ok)location.href='/account'})</script>`,
+      { "set-cookie": cookiesFor(request) },
+    );
+  // Trades the identity service's token for the shop's session. It never sees the password.
+  const identitySession: Route = (request, response) => {
+    if (request.headers.authorization !== `Bearer ${identityToken}`)
+      return json(response, 401, { error: "invalid token" });
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "set-cookie": [`shop_session=${signedIn}; Path=/; Secure; HttpOnly; SameSite=Lax`],
+    });
+    response.end(JSON.stringify({ ok: true }));
+  };
+  // The account's note: a signed-out visit goes to the identity sign-in, a signed-in post saves it.
+  const accountNote: Route = async (request, response) => {
+    if (cookieOf(request, "shop_session") !== signedIn) {
+      response.writeHead(303, { location: "/identity-login" });
+      return void response.end();
+    }
+    if (request.method === "POST") {
+      state.accountNotes.push(new URLSearchParams(await readBody(request)).get("note") ?? "");
+      return html(response, `<title>Note</title><p id="saved">Saved</p>`);
+    }
+    return html(
+      response,
+      `<title>Note</title><p id="account">${shopAccount.username}</p><form method="post" action="/account/note"><label>Note<input id="note" name="note"></label><button id="save">Save</button></form>`,
+    );
+  };
   return new Map([
     ...storeRoutes({
       state,
@@ -348,6 +493,15 @@ fetch('/api/products?q='+encodeURIComponent(new URLSearchParams(location.search)
     ["/orders", orders],
     ["/two-factor", twoFactor],
     ["/hang", hang],
+    ["/identity-login", identityLogin],
+    ["/v1/sign-in", identitySignIn],
+    ["/identity-steps", identitySteps],
+    ["/v1/identify", identityIdentify],
+    ["/v1/challenge", identityChallenge],
+    ["/api/identity-password", postOnly(identityPassword)],
+    ["/api/identity-session", postOnly(identitySession)],
+    ["/v1/collect", analyticsCollect],
+    ["/account/note", accountNote],
   ]);
 };
 
@@ -383,6 +537,9 @@ export const startShop = async (directory: string): Promise<Shop> => {
     loginPosts: 0,
     loginPageLoads: 0,
     sessionPosts: 0,
+    identityPosts: 0,
+    analyticsPosts: 0,
+    accountNotes: [],
     api: "ok",
     curl: "ok",
     loginSubmit: "enabled",
@@ -397,8 +554,13 @@ export const startShop = async (directory: string): Promise<Shop> => {
   const csrfValue = `csrf-${randomBytes(12).toString("hex")}`;
   const signedIn = `acct-${randomBytes(12).toString("hex")}`;
   const pending = `pend-${randomBytes(12).toString("hex")}`;
+  const identityToken = `idt-${randomBytes(12).toString("hex")}`;
   const hanging: ServerResponse[] = [];
-  const routes = shopRoutes(state, { sessionValue, csrfValue, signedIn, pending }, hanging);
+  const routes = shopRoutes(
+    state,
+    { sessionValue, csrfValue, signedIn, pending, identityToken },
+    hanging,
+  );
   const notFound: Route = (_request, response) => json(response, 404, {});
   const server = createServer(
     {

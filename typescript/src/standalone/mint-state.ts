@@ -231,6 +231,11 @@ export const mintState = (
         readonly journal: LocalOperationJournal;
         /** Guardian's label of the step's website effect. */
         readonly action?: GuardianAction;
+        /**
+         * An act or example step dispatched once the build's open sign-in sent the login and before
+         * any check verified it: the host cannot tell whether it ran signed in.
+         */
+        readonly afterUnverifiedSignIn?: true;
       }
     >();
     /** The outcome reviewer's newest assessment of each write, by execution. */
@@ -264,11 +269,23 @@ export const mintState = (
      */
     const bindSite = (siteOrigin: string, authenticationOrigins: readonly string[]) =>
       Effect.gen(function* () {
+        /**
+         * The site's sign-in origins: the request's, then each the caller trusted when the host
+         * asked, which count for sign-in only, never for Guardian's allowed origins. Each origin
+         * is asked about once.
+         */
+        const trusted: string[] = [];
+        const signInOrigins = {
+          trusted,
+          asked: new Set<string>(),
+          all: (): readonly string[] => [...new Set([...authenticationOrigins, ...trusted])],
+        };
         const signInBrowser = makeSignInBrowser({
           page: browser,
           keyboard: browser.keyboard,
           siteOrigin: siteOrigin,
           authenticationOrigins,
+          trusted: () => trusted,
           onRequest: browser.onRequest,
           typing: session.signInTyping,
         });
@@ -370,7 +387,12 @@ export const mintState = (
           spent: signInsSpent,
           saveSession: start.saveSession,
         });
-        return { recorder, markers, start, sessionSignIn };
+        /**
+         * The origins a signed-in check found the login sent only to, off the site and its sign-in
+         * origins, since the last verified sign-in: what an unpublished build names to its caller.
+         */
+        const untrustedSignInOrigins = new Set<string>();
+        return { recorder, markers, start, sessionSignIn, untrustedSignInOrigins, signInOrigins };
       });
     let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
     // A later binding lives as long as the first: until the request's scope closes.
@@ -402,6 +424,19 @@ export const mintState = (
       get sessionSignIn() {
         return bound.sessionSignIn;
       },
+      get untrustedSignInOrigins() {
+        return bound.untrustedSignInOrigins;
+      },
+      get signInOrigins() {
+        return bound.signInOrigins;
+      },
+      /**
+       * What an unpublished build names to its caller: the origins its checks named since the last
+       * verified sign-in, then the ones the open sign-in's requests carried the login to, so a
+       * build that never checked its sign-in names them too.
+       */
+      namedSignInOrigins: (): readonly string[] =>
+        bound.recorder.namedOrigins([...bound.untrustedSignInOrigins]),
       /**
        * Binds the build to another site, for a task update the host applies, with no sign-in
        * origins of its own; nothing switches unless it succeeds.

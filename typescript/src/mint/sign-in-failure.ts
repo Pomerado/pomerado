@@ -142,6 +142,8 @@ const spentReason: Record<SpentSignIn, string> = {
     "the sign-ins the attempt allows on a recovery's new profile are spent",
   sign_in_retry_spent: "the attempt's one retry of a sign-in whose outcome was unclear is spent",
   host_refusals_repeated: `the host refused the same field of the same screen the same way ${maximumHostRefusals} times in a row, and no correction of the step got past it`,
+  sign_in_origin_untrusted:
+    "the caller did not trust the origin the site's sign-in sent the login to, so no sign-in of the site can verify",
 };
 
 /**

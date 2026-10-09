@@ -10,6 +10,7 @@ import type { GuardianAction } from "../guardian/review-contracts.js";
 import type { MintReviewFeedback } from "../mint/input-feedback.js";
 import {
   hostAuthentication,
+  MintFailure,
   type AllowedExecution,
   type MintDependencies,
   type ExecutionEvidence,
@@ -40,6 +41,13 @@ import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
+import { failureDetail } from "../runtime/failure-detail.js";
+import type { SignInStepResult } from "../mint/sign-in-recorder.js";
+import {
+  signInOriginsToAsk,
+  trustSignInOriginsQuestion,
+  trustsSignInOrigins,
+} from "./sign-in-origin-question.js";
 import type { MintState } from "./mint-state.js";
 import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
@@ -110,6 +118,68 @@ const executeCommand = (
       }),
     );
   });
+/** The caller's answer to the trust question did not arrive, so nothing was trusted. */
+const trustQuestionFailure = (cause: unknown) =>
+  new MintFailure({
+    code: "Unavailable",
+    ...(cause instanceof InputRequestFailure && cause.code === "NoResponse"
+      ? { noResponse: { possibleCommit: false } }
+      : {}),
+    failureDetail: failureDetail("mint_host_dependency_failed", {
+      operation: "standalone.sign_in_origin",
+      phase: "sign_in_input",
+      error: cause,
+    }),
+  });
+
+/**
+ * A signed-in check that found the login sent only to origins that are neither the site nor one
+ * of its sign-in origins asks the caller once whether to trust them, when `signInOriginsToAsk`
+ * allows. A yes trusts them for sign-in only, credits what the sign-in sent there and checks
+ * again, typing nothing. They stay among the origins an unpublished build names until a sign-in
+ * verifies. A no ends sign-in in the build. Anything else keeps the check's result, as does a
+ * check that names two or more origins before a password or a code went anywhere, which marks
+ * none of them asked.
+ */
+const askToTrustSignInOrigins = (
+  state: MintState,
+  signIn: NonNullable<ExecutionRequest["signInStep"]>,
+  loginUrl: string | undefined,
+  checked: SignInStepResult,
+) =>
+  Effect.gen(function* () {
+    const { signInOrigins, recorder, context } = state;
+    const origins =
+      checked.untrustedSignInOrigins === undefined
+        ? undefined
+        : signInOriginsToAsk(checked.untrustedSignInOrigins, {
+            siteOrigin: context.siteOrigin,
+            trusted: signInOrigins.all(),
+            asked: signInOrigins.asked,
+            receivedProof: recorder.receivedProof(),
+          });
+    if (origins === undefined) return checked;
+    for (const origin of origins) signInOrigins.asked.add(origin);
+    // The site as the owner's questions name it: its host, without `www.`.
+    const site = new URL(context.siteOrigin).hostname.replace(/^www\./u, "");
+    const answers = yield* state
+      .mintAsk(trustSignInOriginsQuestion(site, origins))
+      .pipe(Effect.mapError(trustQuestionFailure));
+    if (!trustsSignInOrigins(answers))
+      return yield* new MintFailure({
+        code: "Unavailable",
+        authentication: {
+          phase: "credential_submit",
+          code: "CredentialTargetRefused",
+          afterSubmission: true,
+        },
+        spentSignIn: "sign_in_origin_untrusted",
+      });
+    signInOrigins.trusted.push(...origins);
+    recorder.trustOrigins(origins);
+    return yield* recorder.step(signIn, loginUrl, Effect.void);
+  });
+
 /**
  * A sign-in step: a screen the recorder fills, an approval, a rejected value or a signed-in check.
  * Each belongs to the sign-in under way, and after a verified sign-in the first one starts a new
@@ -129,15 +199,25 @@ const executeAuthentication = (
     yield* start.enter;
     start.signIn();
     if (!("signedIn" in signIn)) markers.signInStep();
-    const step = yield* recorder.step(
+    const recorded = yield* recorder.step(
       signIn,
       loginUrl,
       // The host fills the sign-in itself, after its own review of each screen.
       Effect.zipRight(markers.beforeTyping, beforeDispatch?.(hostAuthentication) ?? Effect.void),
     );
+    // The origins a check named stay named, by the build, until a sign-in verifies: the first
+    // check's before the caller answers, and the check after a yes's too.
+    const offSite = state.untrustedSignInOrigins;
+    for (const origin of recorded.untrustedSignInOrigins ?? []) offSite.add(origin);
+    const step =
+      "signedIn" in signIn
+        ? yield* askToTrustSignInOrigins(state, signIn, loginUrl, recorded)
+        : recorded;
+    for (const origin of step.untrustedSignInOrigins ?? []) offSite.add(origin);
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
     const authenticated = step.verified === true && start.verified();
+    if (authenticated) offSite.clear();
     const result =
       step.report === undefined
         ? step.result
@@ -274,6 +354,8 @@ interface ReceiptInput {
   readonly journal: Journal;
   /** A failed act step that may have committed its write: read back before writing again. */
   readonly writeSession?: { readonly verifyFirst: true; readonly notice: string };
+  /** The step ran after the host sent a login no check verified; see `afterUnverifiedSignIn`. */
+  readonly afterUnverifiedSignIn?: true;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -295,7 +377,7 @@ const failedReceipt = (
     const { runs } = state;
     const { secrets } = state.session;
     const { scriptQuestion, unanswered } = questions;
-    const { writeSession } = receipt;
+    const { writeSession, afterUnverifiedSignIn } = receipt;
 
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
@@ -313,6 +395,7 @@ const failedReceipt = (
       purpose: execution.purpose,
       journal: failureJournal,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      ...(afterUnverifiedSignIn === undefined ? {} : { afterUnverifiedSignIn }),
     });
     const evidence: ExecutionEvidence = {
       executionId: id,
@@ -344,6 +427,7 @@ const failedReceipt = (
 const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =>
   Effect.gen(function* () {
     const { state, execution, id, sources, input, intentDerivedInput, reviewed, journal } = receipt;
+    const { afterUnverifiedSignIn } = receipt;
     const { runs } = state;
     const { projection } = state.session;
 
@@ -371,6 +455,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       purpose: execution.purpose,
       journal: result,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
+      ...(afterUnverifiedSignIn === undefined ? {} : { afterUnverifiedSignIn }),
     });
     yield* journal?.record(evidence) ?? Effect.void;
     return evidence;
@@ -437,7 +522,7 @@ const authoredExecution = (
       execution.purpose === "explore" && live
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
-    const signInOrigins = context.authenticationOrigins;
+    const signInOrigins = state.signInOrigins.all();
     const watch =
       codes.length === 0
         ? undefined
@@ -445,6 +530,10 @@ const authoredExecution = (
     yield* allowedOf(reviewed).pipe(
       Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
     );
+    // The open sign-in sent the login and no check verified it, so this live step may run signed
+    // in, as an explore on the page that sign-in left does: a publication that rests on it, an
+    // act step, an example or an explore, needs a recorded sign-in.
+    const afterUnverifiedSignIn = live && start.submitted;
     if (execution.purpose === "act") {
       writeSession.started = true;
       // Guardian allowed the step on this input, so the session runs it from here on.
@@ -542,6 +631,7 @@ const authoredExecution = (
           reviewed,
           journal,
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
+          ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

@@ -97,8 +97,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   literal in the helper the composed script imports. Runs accept a popup without
   asking only at the step the session accepted it at, so the host refuses to publish
   a composed script that drops one.
-- Mark every step that can change saved state, including an autosave, a saved form
-  step and a payment submission whose next screen is unknown. Call
+- Mark only the step whose click saves or submits. Opening or filling an unsaved
+  form is not a commit step. Mark every such step, including an autosave, a saved
+  form step and a payment submission whose next screen is unknown. Call
   `enteringCommit("place-order")` right before the execute call that can send that
   change, and declare the names in order as `write.commits`. Use the same marked
   helper in the session and the composed script. If the call returns an unexpected
@@ -123,6 +124,28 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `verified`. It publishes flagged, and its runs report the write as possibly
   completed. A session in which any step recorded a confirmation is never
   `unverifiable`; publish against the confirming step.
+- The first read-back that matches confirms the write; stop there. It matches when it shows
+  the written record after the write, found by something the write produced or entered (its
+  number, its own reference or the exact values entered), and every field the caller asked
+  for that the view shows agrees (the read before the commit already checked what you
+  entered). When the write changed state that already existed, the same read also checks
+  that only the requested change happened. Write each read-back step to check that match in
+  its own code and call `verified()` when it holds, so the first one that matches is the
+  confirming step. Read one confirmation, list or detail view: find the record there by that
+  identity, never by its position, such as the first or newest row. Read only that record,
+  and the view's other rows only where the before-and-after check or another skill, such as
+  the cart skill, compares them. Read another page, in that same step before `verified()`,
+  only for a field the view did not show and the tool's output promises.
+- State from before the write never matches. Require something only the finished write can
+  show: the number or reference it produced, or a value it changed from what you read before
+  it, such as a status that now reads Sent or a row that was not there. A list still showing
+  the row from before the write, or a table that has not reloaded yet, neither confirms the
+  write nor shows that it did not happen. Values you entered find the record but never prove
+  it new. When they are all a create's read-back can match, read that list before the write
+  too, in the session and the composed script, note the rows that already match (their count
+  or ids), and count only a new one: a row whose id you had not seen, or the one match where
+  there was none. When two rows match after the write and no noted id shows which one is new,
+  values alone do not confirm it.
 - Never repeat a step blindly. If an `act` step fails after the page sent a
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
@@ -245,7 +268,7 @@ See `references/write-session.ts` for two steps and the composed script, and
 
 Perform the authorized task once through live `act` steps, preserving the shared effect journal and caller choices. Wait for actual confirmation and read back committed state. Declare `verified`, `unverifiable`, and their confirmation behavior accurately using the existing SDK; a missing result alone never proves the write absent.
 
-Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark every step that can change saved state, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
+Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step. Mark every such step, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
 
 Compose `src/tool.mjs` from the original reviewed steps and confirming observation. You may check source/schema and pure helpers offline, but never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
 
