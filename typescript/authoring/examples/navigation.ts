@@ -50,9 +50,9 @@ export const detailNavigation = defineOperation(
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const recordId = ${JSON.stringify(input.record_id)};
         // The outcome a wait settles on, or the one that stayed ambiguous; undefined after a timeout.
-        const settle = async (outcomes) => {
+        const settle = async (outcomes, options) => {
           try {
-            return { shown: await waitForOutcome(outcomes) };
+            return { shown: await waitForOutcome(outcomes, options) };
           } catch (error) {
             if (error.name !== "OutcomeWaitFailure") throw error;
             return { ambiguous: error.outcome };
@@ -63,9 +63,9 @@ export const detailNavigation = defineOperation(
         const search = page.getByRole("search").getByRole("searchbox", { name: "Record ID", exact: true });
         if ((await search.count()) !== 1) return { failure: "search_unavailable" };
         await search.fill(recordId, { timeout: 30000 });
-        await search.press("Enter", { timeout: 30000 });
-        // The search has finished only when the site shows its answer, once its results stop
-        // being busy: its error, its own word that nothing matches, or one matching link.
+        // The search has finished only when the site shows its answer to this search, once its
+        // results stop being busy: its error, its own word that nothing matches, or one matching
+        // link. Pressing Enter is the wait's action, so nothing shown before it is the answer.
         const results = page
           .getByRole("region", { name: "Search results", exact: true })
           .and(page.locator(':not([aria-busy="true"])'));
@@ -74,7 +74,7 @@ export const detailNavigation = defineOperation(
           failed: page.getByRole("alert"),
           none: results.getByRole("status").filter({ hasText: /^No matching records$/ }),
           found: links,
-        });
+        }, { action: () => search.press("Enter", { timeout: 30000 }) });
         // Only the site's own empty result says the record does not exist.
         if (searched.shown === "none") return { refused: "The site's search lists no record with this ID" };
         if (searched.shown !== "found")
