@@ -77,6 +77,7 @@ import {
   minterHistory,
 } from "./outcome-review.js";
 import { readImportClosure } from "./operation-source.js";
+import { controlCheckStage, controlsStaleInstruction } from "./control-stage.js";
 import { contentDigest } from "./step-checks.js";
 import type {
   LiveMinterHistory,
@@ -3242,16 +3243,51 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const readBackUnavailable = withheld
                 ? yield* screenMintText(dependencies, proposed.readBackUnavailable ?? "")
                 : undefined;
+              // A read's controls are checked before it publishes, when the host checks them:
+              // cases built from its input schema run on the current source. A write is never
+              // checked live. The host's cases are not the minter's executions, so neither its
+              // live-test allowance nor its one-worker rule applies to them.
+              const controls =
+                dependencies.controlChecks === undefined || write || actStep
+                  ? undefined
+                  : yield* controlCheckStage(
+                      dependencies.controlChecks,
+                      proposed.entrypoint,
+                      async (path) => {
+                        if ((await session.pathExists?.(path)) === false) return undefined;
+                        const text: unknown = await session.readFile?.({ path });
+                        return typeof text === "string" ? text : undefined;
+                      },
+                    );
+              if (controls?.status === "refused") {
+                pendingDecision = hostRefusalDecision(controls.reason, evidence.executionId, write);
+                yield* diagnose({
+                  phase: "publication",
+                  code: "PublicationUnavailable",
+                  reason: controls.reason,
+                });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason: controls.reason,
+                  ...controls.details,
+                  userInputRequired: false,
+                  instruction: controls.instruction,
+                  executionContext: yield* executionContext(),
+                });
+              }
               const publication = yield* dependencies
                 .publish(
                   {
                     entrypoint: proposed.entrypoint,
                     executionId: proposed.executionId,
                     metadata: proposed.metadata,
-                    coverage,
+                    coverage:
+                      controls === undefined ? coverage : `${coverage}\n${controls.coverage}`,
                     ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
                   },
                   evidence,
+                  ...(controls?.evidence === undefined ? [] : [controls.evidence]),
                 )
                 .pipe(Effect.either);
               const reviewId =
@@ -3683,6 +3719,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         : "No fresh example can replace it in this attempt, which ends here. Preserve the recorded receipt."),
                   );
                 }
+                // A host that binds publication to the source its control checks ran found it
+                // changed since: the next finish_build checks the source as it is.
+                if (error.reason === "controls_stale")
+                  return notPublished(error.code, error.reason, {}, controlsStaleInstruction);
                 if (outputUnavailable)
                   return notPublished(
                     error.code,
