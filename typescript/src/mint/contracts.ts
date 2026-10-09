@@ -10,6 +10,12 @@ import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
+import type {
+  ControlCasePriorities,
+  ControlCaseCut,
+  ControlCheckPlan,
+} from "./control-cases.js";
+import type { ControlCaseResult, ControlCheckRun } from "./control-verdicts.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
   OriginalPolicyFailureCode,
@@ -347,7 +353,19 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
     | "capture_not_saved"
     /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
-    | "output_obligation_weakened";
+    | "output_obligation_weakened"
+    /** Control checks: an input field has no `examples` to build its cases from. */
+    | "input_examples_missing"
+    /** Control checks: a case failed (a throw, a refused schema value, a required output null). */
+    | "control_broken"
+    /** Control checks: every value of a field returned the base case's output. */
+    | "control_inert"
+    /** Control checks: a case that passed on the published revision fails on the candidate. */
+    | "control_regression"
+    /** Control checks: an output field non-null on the published revision is null now. */
+    | "output_regression"
+    /** Control checks: the source to publish is not the source the checks ran. */
+    | "controls_stale";
   /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
   readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
@@ -1723,6 +1741,8 @@ export interface MintDependencies {
   readonly publish: (
     request: PublicationRequest,
     evidence: ExecutionEvidence,
+    /** Present when `controlChecks` ran and allowed this publication. */
+    controlChecks?: ControlCheckEvidence,
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;
@@ -1733,6 +1753,60 @@ export interface MintDependencies {
   readonly outcomeReview?: OutcomeReviewHost;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
+  /**
+   * Control checks of a read before it publishes (`ControlCheckHost`). Absent, the harness runs
+   * none and publication behaves as it did before control checks.
+   */
+  readonly controlChecks?: ControlCheckHost;
+}
+
+/**
+ * What a host provides for control checks. At `finish_build` of a read, the harness reads the
+ * current source's schemas, builds the case plan (`controlCasePlan`), and calls
+ * `runControlCases` with it and the digest of the source it checks. It then judges the run
+ * (`evaluateControlChecks`) and refuses publication on a blocking finding, naming the case key,
+ * verdict, error class and failing frame. Host check cases are not the minter's executions: they
+ * never count toward its live-test allowance, and the one-worker rule on the minter's `execute`
+ * does not bind them, so a host may run cases in parallel browsers.
+ */
+export interface ControlCheckHost {
+  /**
+   * The current source's declared input and output JSON Schemas for `entrypoint`, read offline
+   * without running the operation.
+   */
+  readonly schemas: (
+    entrypoint: string,
+  ) => Effect.Effect<{ readonly input: unknown; readonly output: unknown }, MintFailure>;
+  /**
+   * Runs every case of `plan` on the current source, whose digest is `bundleDigest`, and returns
+   * each case's outcome, with the published revision's results as `baseline` when it checked one.
+   * Each case runs as a live test of a read on a fresh page, with its input marked
+   * `schema_generated` for Guardian. A case the host could not judge is `inconclusive`, which
+   * never blocks. A failure of the hook itself leaves every case inconclusive.
+   */
+  readonly runControlCases: (
+    plan: ControlCheckPlan,
+    bundleDigest: string,
+  ) => Effect.Effect<ControlCheckRun, MintFailure>;
+  /** The most cases a run keeps; `defaultControlCaseBudget` when absent. */
+  readonly budget?: number;
+  /** What the host knows about which fields to check first. */
+  readonly priorities?: (entrypoint: string) => Effect.Effect<ControlCasePriorities, MintFailure>;
+  /** Fields a run found the page offers choices for, which get the unoffered-value probe. */
+  readonly pageChoiceFields?: () => readonly string[];
+  /** The clock dates are generated from; the system clock when absent. */
+  readonly now?: () => Date;
+}
+
+/**
+ * What the harness passes `publish` once control checks allowed it: the digest of the source they
+ * ran and their results. A host that reads the source again to publish compares the digest and
+ * refuses with `controls_stale` when the source changed after the checks.
+ */
+export interface ControlCheckEvidence {
+  readonly bundleDigest: string;
+  readonly results: readonly ControlCaseResult[];
+  readonly notChecked: readonly ControlCaseCut[];
 }
 
 /**

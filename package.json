@@ -247,6 +247,21 @@
       "import": "./dist/typescript/src/mint/contracts.js",
       "default": "./dist/typescript/src/mint/contracts.js"
     },
+    "./core/mint/control-cases": {
+      "types": "./dist/typescript/src/mint/control-cases.d.ts",
+      "import": "./dist/typescript/src/mint/control-cases.js",
+      "default": "./dist/typescript/src/mint/control-cases.js"
+    },
+    "./core/mint/control-runner": {
+      "types": "./dist/typescript/src/mint/control-runner.d.ts",
+      "import": "./dist/typescript/src/mint/control-runner.js",
+      "default": "./dist/typescript/src/mint/control-runner.js"
+    },
+    "./core/mint/control-verdicts": {
+      "types": "./dist/typescript/src/mint/control-verdicts.d.ts",
+      "import": "./dist/typescript/src/mint/control-verdicts.js",
+      "default": "./dist/typescript/src/mint/control-verdicts.js"
+    },
     "./core/mint/diagnostics": {
       "types": "./dist/typescript/src/mint/diagnostics.d.ts",
       "import": "./dist/typescript/src/mint/diagnostics.js",

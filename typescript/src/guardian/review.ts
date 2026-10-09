@@ -299,9 +299,10 @@ export interface PendingExecution {
        * agent_chosen: a read's live test on an input the minting agent chose instead of the
        * caller's. intent_derived: a read's example or a write's act step whose caller sent empty
        * input runs the agent's reading of the intent and the owner's answered questions as its
-       * submitted input.
+       * submitted input. schema_generated: the host's control checks of a read, whose
+       * submitted_call.input lists the inputs the host built from the tool's own input schema.
        */
-      readonly input?: "agent_chosen" | "intent_derived";
+      readonly input?: "agent_chosen" | "intent_derived" | "schema_generated";
       /**
        * Host facts about an offline command's sandbox. The submitted entrypoint is the command
        * text itself; the host runs it through its own shell wrapper, which is not reviewed.
@@ -347,8 +348,11 @@ export interface PendingExecution {
       readonly effect: "not_sent" | "possible" | "verified";
       /** True only after the host confirms cleanup of this execution's sandbox. */
       readonly executorStopped?: boolean;
-      /** The live test ran an input the minting agent chose; the attempt's count of them. */
-      readonly input?: "agent_chosen";
+      /**
+       * agent_chosen: the live test ran an input the minting agent chose; the attempt's count of
+       * them. schema_generated: the host's control checks, which never count toward it.
+       */
+      readonly input?: "agent_chosen" | "schema_generated";
       /**
        * The task revision the execution ran under, once an update applied: 0 for the original
        * request, else the `taskUpdates` revision then in force. What it did is judged against that

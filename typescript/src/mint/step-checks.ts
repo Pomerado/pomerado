@@ -33,7 +33,8 @@ export const preflightTestInput = (
   submitted: ExecutionRequest,
   scope: {
     readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly executionHistory: readonly { readonly input?: "agent_chosen" }[];
+    /** Host check cases are marked `schema_generated` and never count toward the allowance. */
+    readonly executionHistory: readonly { readonly input?: "agent_chosen" | "schema_generated" }[];
   },
 ): Refusal | undefined => {
   if (submitted.testInput === undefined) return undefined;
