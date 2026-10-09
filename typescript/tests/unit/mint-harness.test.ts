@@ -1505,7 +1505,12 @@ it("sends a blocked explanation whose outcome Guardian refused back once, then e
       }),
     { reviewQuestion: invalidOutcome },
   );
-  expect((await f.run()).blocked).toEqual({ reason: "site_lacks_capability" });
+  const outcome = await f.run();
+  expect(outcome.blocked).toEqual({ reason: "site_lacks_capability" });
+  expect(phaseDiagnostics(outcome, "blocked_review")).toEqual([
+    expect.objectContaining({ code: "InvalidOutcome" }),
+    expect.objectContaining({ code: "InvalidOutcome" }),
+  ]);
 });
 
 it("ends a taken-over attempt at its first refused outcome when its checkpoint already has one", async () => {
@@ -1639,6 +1644,7 @@ it("ends with the host's own cause when it fails during a refused-outcome review
         expect(JSON.parse(yield* turn.actions.requestInput(question))).toMatchObject({
           status: "review_invalid_outcome",
           retryable: false,
+          executionAvailability: "host_unavailable",
         });
       }),
     {
@@ -1674,6 +1680,7 @@ it("points a refused-outcome execution to its retained receipt once live executi
           executionAvailability: "host_unavailable",
         });
         expect(answer).not.toHaveProperty("retryable");
+        expect(JSON.stringify(answer)).toContain("finish_build");
         expect(turn.isComplete()).toBe(false);
         yield* turn.actions.finish(publication);
       }),
@@ -1699,7 +1706,37 @@ it("points a refused-outcome execution to its retained receipt once live executi
       },
     },
   );
-  expect(await f.run()).toMatchObject({ build: "published" });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  expect(phaseDiagnostics(outcome, "execution")).toEqual([
+    expect.objectContaining({ code: "InvalidOutcome" }),
+  ]);
+});
+
+// A task update review whose outcome Guardian kept refusing was diagnosed as an outage.
+it("diagnoses a refused-outcome update review as InvalidOutcome and sends it back to revise", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const answer: unknown = JSON.parse(
+          yield* turn.actions.updateTask!({
+            summary: "Read the notes from a different day.",
+            changes: [{ setting: "input", values: { day: "2026-11-02" } }],
+            confirmedBy: [],
+            recommend: "update",
+          }),
+        );
+        expect(answer).toMatchObject({ status: "review_invalid_outcome" });
+        expect(answer).not.toHaveProperty("retryable");
+      }),
+    {
+      reviewTaskUpdate: invalidOutcome,
+      applyTaskUpdate: () => Effect.succeed({ outcome: "applied" as const }),
+    },
+  );
+  expect(phaseDiagnostics(await f.run(), "task_update_review")).toEqual([
+    expect.objectContaining({ code: "InvalidOutcome" }),
+  ]);
 });
 
 it("keeps two answered requests in one attempt and publishes with both answers", async () => {
