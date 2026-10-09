@@ -17,6 +17,7 @@ import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.j
 import { defineOperation } from "../../src/runtime/operation.js";
 import { ScriptInput, makeScriptInput } from "../../src/runtime/script-input.js";
 import type { ScriptQuestionHandler } from "../../src/runtime/script-input.js";
+import type { InputRequest } from "../../src/runtime/input-request.js";
 
 import type { BrowserExecuteResponse } from "../../src/runtime/browser-execution.js";
 import type {
@@ -604,6 +605,48 @@ return await shown;`),
       () => slow({ code: "693104" }),
     );
     expect(exit).toEqual(Exit.succeed({ deleted: true, remainingMs: 60_000 }));
+  });
+});
+
+describe("askOne", () => {
+  const questions = {
+    branch: { type: "choice", prompt: "Which location?" },
+    code: { type: "secret", secretKind: "one_time_code", prompt: "The code the site sent?" },
+  } as const;
+  /** Asks a choice and a code one at a time and returns each answer exactly as askOne gives it. */
+  const script = defineOperation(
+    { input: Schema.Struct({}), output: Schema.Unknown, questions },
+    async ({ askOne }) => {
+      const branch = await askOne("branch", {
+        options: [
+          { value: "/locations/north", label: "North" },
+          { value: "/locations/south", label: "South" },
+        ],
+      });
+      const code = await askOne("code");
+      return { branch, code };
+    },
+  );
+
+  it("returns the one question's answer itself, not one answer per id", async () => {
+    const asked: InputRequest[] = [];
+    const answer: ScriptQuestionHandler = (request) =>
+      Effect.sync(() => {
+        asked.push(request);
+        return request.questions[0]?.id === "branch" ? { branch: "o2" } : { code: "693104" };
+      });
+    const { client } = fakeKernel(() => ({ success: true, result: null }));
+    const { exit } = await run(
+      executeKernelOperation(script, {}, { kernel: client, sessionId: "session-1" }).pipe(
+        Effect.provideService(ScriptInput, makeScriptInput(questions, answer)),
+      ),
+    );
+    expect(exit).toEqual(Exit.succeed({ branch: "/locations/south", code: "693104" }));
+    // Each call asks its one question, a choice with the page's options as labels.
+    expect(asked.map((request) => request.questions)).toMatchObject([
+      [{ id: "branch", type: "choice", options: [{ label: "North" }, { label: "South" }] }],
+      [{ id: "code", type: "secret" }],
+    ]);
   });
 });
 
