@@ -69,8 +69,10 @@ export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
  * caller's to correct, so the run fails as `InvalidInput`. Scripts throw it as
  * `errors.InvalidInput`, never for a page or control that changed. When the value is not among
  * the choices the page offers, the script names the input and lists them:
- * `new errors.InvalidInput(message, { field: "size", available: ["One Size"] })`. A host that
- * repairs may check a refusal without choices and ask the caller first.
+ * `new errors.InvalidInput(message, { field: "size", available: ["One Size"] })`. The caller then
+ * picks one of them, so nothing asks it for a replacement. Only a refusal without choices, of a
+ * free-form value the page lists no options for, may be checked by a host that repairs, which
+ * may ask the caller whether the value is invalid.
  */
 class InputRejected extends Error {
   override readonly name = "InvalidInput";
