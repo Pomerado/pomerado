@@ -182,6 +182,7 @@ Your agent then calls `get_job`. Each call waits up to 30 seconds and returns th
 
 - `"build": "published"` means Pomerado ran the task, Guardian approved the source, and the integration is saved.
 - `"build": "incomplete"` comes with a `summary` and saves nothing. The folder is removed, so you can retry with the same name.
+- `"untrustedSignInOrigins"` lists each origin the site's sign-in sent your login to when that origin isn't the site's. Pomerado counts a login sent there only once you pass the origin in the `mint` call's `authenticationOrigins`. Add it if you trust it, and mint again.
 - A `"status": "failed"` job carries an `error`. See [Troubleshooting](#troubleshooting).
 
 To use the integration, follow the steps in the README's [Use your integration](../README.md#use-your-integration).

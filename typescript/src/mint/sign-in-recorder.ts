@@ -45,6 +45,11 @@ export interface SignInStepResult {
   readonly verified?: true;
   /** The owner completed the sign-in's approval. */
   readonly approved?: true;
+  /**
+   * The check found the open sign-in's login sent only to these origins, off the site and its
+   * trusted sign-in origins, each an exact origin; `result` names them for the minter too.
+   */
+  readonly untrustedSignInOrigins?: readonly string[];
 }
 
 /** A verified sign-in's value-free recipe and the address its runs start from. */
@@ -96,6 +101,18 @@ const credentialsNotSubmitted = {
   nextStep:
     "No sign-in step since the last verified sign-in sent the login's identifier with a password, a code or a completed approval, so the host cannot take this page as signed in. A verified sign-in is over, so checking it again counts for nothing. Send the sign-in screens' signInSteps first, then check again.",
 } as const;
+
+/**
+ * The same check when the page's sign-in request carried the login only to `origins`, off the site
+ * and its trusted sign-in origins: it names each exact origin, never a path, query or value, so
+ * the caller can trust it for sign-in.
+ */
+const loginSentOffSite = (origins: readonly string[]) => ({
+  ...credentialsNotSubmitted,
+  untrustedSignInOrigins: origins,
+  nextStep:
+    "The page's sign-in request carried the login to the origins in untrustedSignInOrigins, which are neither this site nor one of the build's sign-in origins, so the host did not count it as sent and cannot take this page as signed in. Signing in again sends it there again. Tell the caller which origin received the login. A build counts a login sent there only once that origin is one of its sign-in origins.",
+});
 
 const identifierUnobserved: SignInStepResult = {
   result: {
@@ -673,7 +690,12 @@ export const makeSignInRecorder = <E>(input: {
             !record.steps.some((step) => step.approval !== undefined) &&
             record.codeTyped !== true)
         )
-          return { result: credentialsNotSubmitted };
+          return record?.untrustedOrigins === undefined
+            ? { result: credentialsNotSubmitted }
+            : {
+                result: loginSentOffSite([...record.untrustedOrigins.keys()]),
+                untrustedSignInOrigins: [...record.untrustedOrigins.keys()],
+              };
         const named = identityValues(
           login.held(),
           values.given(),
