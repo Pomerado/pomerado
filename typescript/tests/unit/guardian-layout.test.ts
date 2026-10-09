@@ -158,10 +158,11 @@ const recording = () => {
   return { diagnostics, events, transcripts };
 };
 
-it("keeps instructions, tools and output format identical across all five review kinds", async () => {
+it("keeps instructions, tools and output format identical across all six review kinds", async () => {
   const requests = scripted([
     [allow],
     [decision({ outcome: "allow_business", rationale: "Only the owner knows the branch." })],
+    [decision({ outcome: "clarify", rationale: "The owner has not confirmed the branch." })],
     [allow],
     [
       decision({
@@ -186,6 +187,19 @@ it("keeps instructions, tools and output format identical across all five review
       {
         questions: [{ id: "branch", type: "text", prompt: "Which branch?" }],
         credentialsAvailable: false,
+      },
+      reader,
+    ),
+  );
+  const update = await Effect.runPromise(
+    guardian.reviewTaskUpdate(
+      pending,
+      {
+        summary: "Read the north branch's hours instead.",
+        changes: [{ setting: "input", values: { branch: "north" } }],
+        recommend: "update",
+        confirmation: [],
+        effect: "read",
       },
       reader,
     ),
@@ -216,7 +230,7 @@ it("keeps instructions, tools and output format identical across all five review
     guardian.reviewHostKind(pending, listing({ primaryOrigin: "https://hours.example.test" })),
   );
 
-  expect(requests).toHaveLength(5);
+  expect(requests).toHaveLength(6);
   expect(new Set(requests.map(prefixHash)).size).toBe(1);
   // Each review continues the one before it, so the provider can reuse the cached history.
   for (let index = 1; index < requests.length; index++) {
@@ -226,7 +240,7 @@ it("keeps instructions, tools and output format identical across all five review
   }
   expect(
     requests.map((request) => (reviewRequest(request).trusted_review as { kind: string }).kind),
-  ).toEqual(["execution", "question", "recovery", "publication", "catalog_listing"]);
+  ).toEqual(["execution", "question", "update", "recovery", "publication", "catalog_listing"]);
   expect(execution.decision).toEqual({
     outcome: "allow",
     rationale: "Reads the hours only.",
@@ -236,6 +250,7 @@ it("keeps instructions, tools and output format identical across all five review
     outcome: "allow_business",
     rationale: "Only the owner knows the branch.",
   });
+  expect(update.decision.outcome).toBe("clarify");
   expect(recovery.decision.outcome).toBe("allow");
   expect(publication.decision).toMatchObject({
     outcome: "allow",
@@ -872,5 +887,84 @@ it("keeps an earlier private host kind's exchange out of a later review's failed
   const readable = JSON.stringify({ events, transcripts });
   expect(readable).toContain("call_turn_limit");
   expect(readable).not.toContain("synthetic-private-evidence-marker");
+  expect(readable).not.toContain("synthetic-private-rationale-marker");
+});
+
+// The host's correction of a refused outcome is a plain user message, which ends a private
+// exchange in readable records, so the private kind's later rationale showed in clear there.
+it("ends a private host kind's refused outcome at once, so no correction reaches a readable record", async () => {
+  const requests: ModelRequest[] = [];
+  setDefaultModelProvider({
+    getModel: () => ({
+      getResponse: async (request) => {
+        requests.push(request);
+        const input = typeof request.input === "string" ? [] : request.input;
+        const last = input.at(-1);
+        const content = last !== undefined && "content" in last ? last.content : undefined;
+        const kind =
+          typeof content === "string" && content.startsWith("{")
+            ? (reviewRequest(request).trusted_review as { kind: string }).kind
+            : "follow-up";
+        const output =
+          kind === "catalog_listing"
+            ? decision({ outcome: "escalate", rationale: "Refused.", label: "listable" })
+            : kind === "follow-up"
+              ? decision({
+                  outcome: "deny",
+                  rationale: "Names synthetic-private-rationale-marker.",
+                  label: "owner_specific",
+                })
+              : allow;
+        return { usage: new Usage(), output: [output] };
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  });
+  const timing: ModelDiagnosticTiming = {
+    phase: "completed",
+    sequence: 0,
+    occurredAtUtc: "2026-01-01T00:00:00.000Z",
+    occurredMonotonicMs: 0,
+    queueMs: 0,
+  };
+  // An observer that keeps each completed run's history in its readable record.
+  const observerFactory: ModelObserverFactory = (persist) => {
+    const persisted: Promise<void>[] = [];
+    return {
+      attach: () => undefined,
+      tool: (_call, invoke) => invoke(),
+      provider: (provider) => provider,
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: (history) => {
+        persisted.push(persist({ history }, timing));
+      },
+      failed: () => undefined,
+      takeNativeCall: () => undefined,
+      durabilityFailure: () => undefined,
+      terminal: () => ({ phase: "terminal", timing, value: {} }),
+      flush: async () => {
+        await Promise.all(persisted);
+      },
+    };
+  };
+  const { diagnostics, events, transcripts } = recording();
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, { ...native, observerFactory }),
+    diagnostics,
+    {},
+  );
+  const hosted = await Effect.runPromise(
+    Effect.either(guardian.reviewHostKind(pending, listing({ primaryOrigin: "synthetic" }))),
+  );
+  expect(hosted).toMatchObject({ _tag: "Left", left: { code: "InvalidOutcome" } });
+  expect(requests).toHaveLength(1);
+  const later = await Effect.runPromise(guardian.review(pending, sourcesOf(files())));
+  expect(later.decision.outcome).toBe("allow");
+  const readable = JSON.stringify({ events, transcripts });
+  expect(readable).toContain("Reads the hours only.");
   expect(readable).not.toContain("synthetic-private-rationale-marker");
 });

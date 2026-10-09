@@ -408,9 +408,9 @@ export interface ReviewTurn {
   readonly readSource: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>;
   /**
    * The follow-up the reviewer sends, in the same review, when the host cannot take its output
-   * yet: once for an outcome the review's kind does not return, and up to `requiredReadRounds`
-   * times for a required read it did not do. Undefined when the output stands; a reviewer sends
-   * at most `reviewFollowUpRounds`.
+   * yet: once for an outcome the review's kind does not return (never for a private host kind),
+   * and up to twice for a required read it did not do. Undefined when the output stands; a
+   * reviewer sends at most `reviewFollowUpRounds`.
    */
   readonly followUp?: (raw: unknown) => string | undefined;
   readonly reportUsage?: (usage: GuardianUsage) => Effect.Effect<void>;
@@ -956,7 +956,11 @@ export const makeGuardian = (
         const outcomes = reviewOutcomesOf(pending);
         /** A decision whose outcome this review's kind does not return. */
         const outcomeRefused = (raw: unknown) =>
-          typeof raw === "object" && raw !== null && !outcomeAccepted(pending, raw);
+          typeof raw === "object" &&
+          raw !== null &&
+          !Array.isArray(raw) &&
+          typeof Reflect.get(raw, "outcome") === "string" &&
+          !outcomeAccepted(pending, raw);
         let outcomeCorrected = false;
         let readRounds = 0;
         const unread = (raw: unknown) =>
@@ -993,7 +997,9 @@ export const makeGuardian = (
               "guardian.usage",
             ),
           followUp: (output) => {
-            if (!outcomeCorrected && outcomeRefused(output)) {
+            // A private kind's exchange ends only at the next review request, so a correction
+            // would carry its later output into readable records; it fails at once instead.
+            if (!outcomeCorrected && !privateKind && outcomeRefused(output)) {
               outcomeCorrected = true;
               followUpRounds++;
               return `The host did not accept this decision: a ${kindName} review returns only the outcome ${outcomes.join(", ")}, as trusted_review.outcomes lists. Decide this review again under its policy and return one of them.`;

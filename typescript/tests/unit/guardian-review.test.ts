@@ -388,6 +388,10 @@ describe("Guardian modeled reviewer contract", () => {
     }
     for (const [raw, code] of [
       [undefined, "InvalidDecision"],
+      // Not a decision at all, so no outcome to refuse.
+      [{}, "InvalidDecision"],
+      [[], "InvalidDecision"],
+      [{ outcome: 1, rationale: "Not a string" }, "InvalidDecision"],
       [{ outcome: "approved", rationale: "Wrong enum" }, "InvalidOutcome"],
       [{ outcome: "allow" }, "InvalidDecision"],
     ] as const) {
