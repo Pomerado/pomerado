@@ -124,6 +124,28 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `verified`. It publishes flagged, and its runs report the write as possibly
   completed. A session in which any step recorded a confirmation is never
   `unverifiable`; publish against the confirming step.
+- The first read-back that matches confirms the write; stop there. It matches when it shows
+  the written record after the write, found by something the write produced or entered (its
+  number, its own reference or the exact values entered), and every field the caller asked
+  for that the view shows agrees (the read before the commit already checked what you
+  entered). When the write changed state that already existed, the same read also checks
+  that only the requested change happened. Write each read-back step to check that match in
+  its own code and call `verified()` when it holds, so the first one that matches is the
+  confirming step. Read one confirmation, list or detail view: find the record there by that
+  identity, never by its position, such as the first or newest row. Read only that record,
+  and the view's other rows only where the before-and-after check or another skill, such as
+  the cart skill, compares them. Read another page, in that same step before `verified()`,
+  only for a field the view did not show and the tool's output promises.
+- State from before the write never matches. Require something only the finished write can
+  show: the number or reference it produced, or a value it changed from what you read before
+  it, such as a status that now reads Sent or a row that was not there. A list still showing
+  the row from before the write, or a table that has not reloaded yet, neither confirms the
+  write nor shows that it did not happen. Values you entered find the record but never prove
+  it new. When they are all a create's read-back can match, read that list before the write
+  too, in the session and the composed script, note the rows that already match (their count
+  or ids), and count only a new one: a row whose id you had not seen, or the one match where
+  there was none. When two rows match after the write and no noted id shows which one is new,
+  values alone do not confirm it.
 - Never repeat a step blindly. If an `act` step fails after the page sent a
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be

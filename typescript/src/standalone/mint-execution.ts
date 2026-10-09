@@ -137,7 +137,9 @@ const trustQuestionFailure = (cause: unknown) =>
  * of its sign-in origins asks the caller once whether to trust them, when `signInOriginsToAsk`
  * allows. A yes trusts them for sign-in only, credits what the sign-in sent there and checks
  * again, typing nothing. They stay among the origins an unpublished build names until a sign-in
- * verifies. A no ends sign-in in the build. Anything else keeps the check's result.
+ * verifies. A no ends sign-in in the build. Anything else keeps the check's result, as does a
+ * check that names two or more origins before a password or a code went anywhere, which marks
+ * none of them asked.
  */
 const askToTrustSignInOrigins = (
   state: MintState,
@@ -154,6 +156,7 @@ const askToTrustSignInOrigins = (
             siteOrigin: context.siteOrigin,
             trusted: signInOrigins.all(),
             asked: signInOrigins.asked,
+            receivedProof: recorder.receivedProof(),
           });
     if (origins === undefined) return checked;
     for (const origin of origins) signInOrigins.asked.add(origin);

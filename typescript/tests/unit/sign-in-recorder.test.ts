@@ -647,6 +647,71 @@ it("names only the origin that received the password in what a build names, thou
   expect(named).toEqual([identity]);
 });
 
+it("says whether the open sign-in sent a password or a code anywhere, the site included and counted or not, so a host can tell a check before the password screen apart", async () => {
+  const analytics = "https://analytics.other.test";
+  /** A script's post of `body` to `url`. */
+  const post = (url: string, body: object): SignInRequest => ({
+    url,
+    method: "POST",
+    body: JSON.stringify(body),
+    channel: "http",
+    resourceType: "fetch",
+  });
+  // The identifier screen's email reaches the identity service and an analytics script; the
+  // password screen's requests are `password`'s.
+  const sending =
+    (password: (values: readonly string[]) => readonly SignInRequest[]) =>
+    (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] =>
+      step.fields.some((field) => "accepts" in field)
+        ? [
+            post(`${identity}/v1/identify`, { identifier: values[0] }),
+            post(`${analytics}/capture`, { email: values[0] }),
+          ]
+        : password(values);
+  const toIdentity = (values: readonly string[]) => [
+    post(`${identity}/v1/challenge`, { stateHandle: "state-1", password: values[0] }),
+  ];
+  const host = harness({ send: sending(toIdentity) });
+  const proofs = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      // A check before the password screen names both, and no password went anywhere yet.
+      const early = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(early.untrustedSignInOrigins).toEqual([identity, analytics]);
+      const beforePassword = recorder.receivedProof();
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const later = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(later.untrustedSignInOrigins).toEqual([identity]);
+      const afterPassword = recorder.receivedProof();
+      recorder.trustOrigins([identity]);
+      const verified = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(verified).toMatchObject({ verified: true });
+      return { beforePassword, afterPassword, afterVerified: recorder.receivedProof() };
+    }),
+  );
+  expect(proofs).toEqual({ beforePassword: false, afterPassword: true, afterVerified: false });
+  expect(host.filled).toHaveLength(2);
+  /** Signs in through both screens and checks: what the check named, and whether a proof went. */
+  const afterCheck = (password: (values: readonly string[]) => readonly SignInRequest[]) =>
+    harness({ send: sending(password) }).run((recorder) =>
+      Effect.gen(function* () {
+        yield* recorder.step(identifierOnly, undefined, Effect.void);
+        yield* recorder.step(passwordOnly, undefined, Effect.void);
+        const checked = yield* recorder.step(signedIn, undefined, Effect.void);
+        return { named: checked.untrustedSignInOrigins, proof: recorder.receivedProof() };
+      }),
+    );
+  // The password went to the site without the identifier: nothing counts, and both origins off
+  // the site heard the email alone, but a password went somewhere.
+  const toSite = await afterCheck((values) => [
+    post(`${origin}/api/password`, { stateHandle: "state-1", password: values[0] }),
+  ]);
+  expect(toSite).toEqual({ named: [identity, analytics], proof: true });
+  // A password screen whose request the host never heard sent nothing it can tell.
+  const unheard = await afterCheck(() => []);
+  expect(unheard).toEqual({ named: [identity, analytics], proof: false });
+});
+
 it("names the origin an identifier-first sign-in sent the identifier to when the password went in the site's own form post, and a yes verifies", async () => {
   // The identifier goes to the identity service by script; the password screen posts natively to
   // the site's form, which counts the password alone.

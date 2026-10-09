@@ -204,6 +204,8 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["pagination", "1. Validate cursor/query/account scope before browser effects."],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
   ["writes", "A write build changes something real on the caller's account"],
+  ["writes", "- The first read-back that matches confirms the write; stop there."],
+  ["writes", "- State from before the write never matches."],
   [
     "writes",
     "Write `src/tool.mjs`, the `playwright` version: a Kernel script running the whole flow",
@@ -586,6 +588,37 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+/*
+ * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
+ * other pages for minutes, some of them refused for not proving the record or for reading without
+ * bound. The first bounded read-back that matches confirms the write, and nothing from before the
+ * write, such as a list that has not reloaded, can match.
+ */
+it("has a write confirm from its first matching read-back, never from state before the write", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "- The first read-back that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the exact values entered), and every field the caller asked for that the view shows agrees (the read before the commit already checked what you entered). When the write changed state that already existed, the same read also checks that only the requested change happened. Write each read-back step to check that match in its own code and call `verified()` when it holds, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
+  );
+  // Entered values find a record but never prove it new.
+  expect(writes).toContain(
+    "- State from before the write never matches. Require something only the finished write can show: the number or reference it produced, or a value it changed from what you read before it, such as a status that now reads Sent or a row that was not there. A list still showing the row from before the write, or a table that has not reloaded yet, neither confirms the write nor shows that it did not happen. Values you entered find the record but never prove it new. When they are all a create's read-back can match, read that list before the write too, in the session and the composed script, note the rows that already match (their count or ids), and count only a new one: a row whose id you had not seen, or the one match where there was none. When two rows match after the write and no noted id shows which one is new, values alone do not confirm it.",
+  );
+  // The rules on commit marks and uncertain outcomes stay as they were.
+  expect(writes).toContain(
+    "- Mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step.",
+  );
+  expect(writes).toContain(
+    "- Never repeat a step blindly. If an `act` step fails after the page sent a state-changing request or opened a socket, after it entered a commit mark, or without returning a result at all (its page was lost), the write may already be committed;",
+  );
+  // The reference the skill points to confirms from its one matching view the same way.
+  expect(
+    (await readFile("typescript/authoring/examples/write-readback.ts", "utf8")).replace(/\s+/g, " "),
+  ).toContain("// The first read-back that matches confirms the write");
+});
+
 // A write that passed the page's headings to `verified` lost its receipt. With no argument there
 // is nothing to get wrong, so no skill or reference teaches the argument form any more.
 it("teaches every write to call verified() with no argument and declare a read-back", async () => {
@@ -616,15 +649,15 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["fcf5254d237bc9becca697d1a4ff7ad517f9c674a83ee0d87501270174bbc87d", "core"],
+    ["b9fa5c371d4aa3e684d17d32e929265ccb173fac7c7ded10ae13c35861834213", "core"],
     ["75e1c1b2e0c1f0982e74dedc54012f0a0f39cf632a9c2273e6dd58b694649c29", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["50b398c0abef87fa73454d8a7d0eb3e60341827dbac6fd90f6c4725219136e05", "forms"],
-    ["f0ef6a0401c56b96703c8b9cbd56dcf909fa8531cc4f105eb2c0b65e882a1fc8", "writes"],
+    ["1c4e5cb13f98646550e66b89a3bed9677860c2bfeb135d9708195046565e9a51", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["f5fb5e10ab4a92672150697f2c6eb5fa1008d3ff222d717cade234128f0e65b1", "caller-input"],
+    ["ab3b01002b9d8030f326f6a9e8d7c0707c85ad055723b9ce5d4526b919a823c7", "caller-input"],
     ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
     ["07b6a17fea6454ed6567aa8b719ad24f6693fdf58dd907eb3f3b696d2caf22b1", "workspace/AGENTS.md"],
     ["78499d90440047fbd9601f0b9728e742277434a1fac2cd25197577fbc066957c", "workspace/README.md"],
