@@ -12,7 +12,11 @@ export type {
 export { Deadline, timeoutDefaults } from "../runtime/deadline.js";
 export { contractJsonSchema, defineOperation, executeOperation } from "../runtime/operation.js";
 export { OperationFailure, operationErrors } from "../runtime/kernel-operation.js";
-export type { KernelOperationContext, ScriptAsk } from "../runtime/kernel-operation.js";
+export type {
+  KernelOperationContext,
+  ScriptAsk,
+  ScriptAskOne,
+} from "../runtime/kernel-operation.js";
 export type { Operation, WriteDeclaration } from "../runtime/operation.js";
 export { runSupportedVariant, VariantSelectionFailed } from "../runtime/variants.js";
 export type { SupportedVariant, VariantApplicability } from "../runtime/variants.js";
@@ -47,9 +51,11 @@ export {
 } from "../runtime/errors.js";
 export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/errors.js";
 export { CalendarDate, formControlsCode } from "./form-controls.js";
+export { outcomeWaitCode } from "./outcome-wait.js";
 export { FileInput, FileOutput, FileRefused, defaultFileLimits } from "../runtime/files.js";
 export type { FileObject, FileLimits, PlacedFile, ScriptFiles } from "../runtime/files.js";
 export type { FormControlShape } from "./form-controls.js";
+export type { OutcomeObservation } from "./outcome-wait.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";
 export type { DialogActionPort } from "./dialogs/action.js";

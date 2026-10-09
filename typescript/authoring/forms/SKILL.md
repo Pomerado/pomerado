@@ -13,10 +13,12 @@ waiters before triggers, in the same call. Native dialogs go to the host through
 `page.waitForLoadState("domcontentloaded")` may resolve for the document already
 loaded. Pairing it with a click does not prove a new navigation has completed.
 When the observed control navigates, arm a waiter tied to that transition before
-clicking, then wait for the relevant result or explicit empty state under the
-verified query. For an in-page update, wait for evidence that the new query has
-completed. An immediate snapshot with an empty title and missing controls can be
-a transition observation; it does not establish an empty business result.
+clicking, then wait with `waitForOutcome`, the click passed as its `action`, for every answer
+the site can give under the verified query: its results, its explicit empty state, a greyed-out
+choice, its error or refusal (core skill).
+For an in-page update, wait for evidence that the new query has completed. An
+immediate snapshot with an empty title and missing controls can be a transition
+observation; it does not establish an empty business result.
 
 Derive `getByRole` names from a scoped `locator.ariaSnapshot()` or a retained ARIA
 snapshot. `getAttribute("aria-label")` reads only that DOM attribute, not the

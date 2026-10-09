@@ -51,6 +51,21 @@ const reviewOutcomes = {
   update: ["allow", "clarify", "reword", "new_mint"],
 } as const satisfies Record<Exclude<ReviewKind, "host">, readonly GuardianOutcome[]>;
 
+/**
+ * The outcomes the review may return, as its request lists them in `trusted_review.outcomes`
+ * and the host checks them.
+ */
+export const reviewOutcomesOf = (pending: PendingExecution): readonly GuardianOutcome[] => {
+  const kind = reviewKindOf(pending);
+  return kind === "host" ? (pending.hostReview?.outcomes ?? []) : reviewOutcomes[kind];
+};
+
+/** Whether a decision's outcome is one its review may return. */
+export const outcomeAccepted = (pending: PendingExecution, raw: unknown): boolean =>
+  typeof raw === "object" &&
+  raw !== null &&
+  (reviewOutcomesOf(pending) as readonly unknown[]).includes(Reflect.get(raw, "outcome"));
+
 /** The decision fields besides outcome and rationale that each kind uses. */
 const reviewFields: Record<ReviewKind, readonly string[]> = {
   execution: ["action"],
@@ -138,10 +153,7 @@ export const guardianDecisionFormat: AgentOutputType = {
 export const decisionForKind = (pending: PendingExecution, raw: unknown): unknown => {
   if (typeof raw !== "object" || raw === null) return raw;
   const kind = reviewKindOf(pending);
-  const outcome: unknown = Reflect.get(raw, "outcome");
-  const allowed: readonly unknown[] =
-    kind === "host" ? (pending.hostReview?.outcomes ?? []) : reviewOutcomes[kind];
-  if (!allowed.includes(outcome)) return undefined;
+  if (!outcomeAccepted(pending, raw)) return undefined;
   const fields = new Set(["outcome", "rationale", ...reviewFields[kind]]);
   return Object.fromEntries(
     Object.entries(raw).filter(
