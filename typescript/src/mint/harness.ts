@@ -102,6 +102,16 @@ import {
   screenMintText,
 } from "./workspace.js";
 
+/**
+ * Whether a maintenance update only adds or tightens output fields: callers keep everything the
+ * registered contract gives them, so nobody needs to confirm it.
+ */
+const keepsContract = (update: TaskUpdateRequest) =>
+  update.changes.every(
+    (change) =>
+      change.setting === "output" && (change.change === "add" || change.change === "tighten"),
+  );
+
 /** Each loosened field and how, for the minter; a host refusal that names none reads as a sentence. */
 const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
   weakened.length === 0
@@ -1614,8 +1624,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         submitted: TaskUpdateRequest,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
         const settings = new Set(submitted.changes.map((change) => change.setting));
-        // A repair keeps the published tool's task. Only a change to its contract, which the
-        // tool's owner confirms, may apply: a requirement, the purpose or an output field.
+        // A repair keeps the published tool's task. Only a change to its contract may apply: a
+        // requirement, the purpose or an output field.
         if (
           request.mode === "maintenance" &&
           (submitted.recommend === "new_mint" ||
@@ -1627,13 +1637,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             reason: "maintenance_setting",
             instruction:
-              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change the tool's owner confirms; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
           };
         if (request.mode !== "maintenance" && settings.has("output"))
           return {
             reason: "output_outside_maintenance",
             instruction:
-              "An output change loosens a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
+              "An output change alters a published tool's registered contract, so only maintenance makes one. This build sets its own output schema: change it in the source.",
+          };
+        // Removing a field callers receive has the higher bar: a stated reason Guardian judges.
+        const unexplained = submitted.changes.find(
+          (change) =>
+            change.setting === "output" && change.change === "remove" && change.reason === undefined,
+        );
+        if (unexplained !== undefined && unexplained.setting === "output")
+          return {
+            reason: "output_removal_reason",
+            instruction: `Removing ${unexplained.field} takes away a value the tool's callers receive, so it needs a reason, and nothing changed. If the site still shows the value, keep the field and fix the extraction instead. Otherwise add reason to that change: why the field must go, from what the site shows now and where you looked, which Guardian checks against the captures. Then call mint_update again.`,
           };
         if (submitted.recommend === "new_mint") return undefined;
         if (settings.has("effect")) {
@@ -2793,9 +2813,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               confirmation,
               effect: buildEffect === "write" ? "write" : "read",
               ...(yield* publicationRefusals),
-              // The harness reviews a maintenance update only once the owner may confirm it.
+              // The harness reviews a maintenance update only once the owner may confirm it,
+              // unless it only adds or tightens output fields, which nobody needs to confirm.
               ...(request.mode === "maintenance"
-                ? { maintenance: { confirmer: "owner" as const } }
+                ? {
+                    maintenance: {
+                      confirmer: keepsContract(submitted) ? ("none" as const) : ("owner" as const),
+                    },
+                  }
                 : {}),
             },
             {
@@ -3603,11 +3628,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     { weakenedOutputs: error.weakenedOutputs ?? [] },
-                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, as required and as typed. ${
+                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
                       buildEffect === "write"
                         ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
                         : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
-                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
                   );
                 if (error.reason === "tool_name_taken")
                   return notPublished(
@@ -3748,9 +3773,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                             : error.reason === "contract_input_mismatch"
                               ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
                               : request.mode === "maintenance" && buildEffect !== "write"
-                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
                                 : request.mode === "maintenance"
-                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, or end with report_blocked, reason site_lacks_capability, naming the field."
+                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
                                   : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
                       (error.reason === "contract_output_mismatch" &&
                       request.mode === "maintenance" &&
@@ -4092,14 +4117,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
-                    if (request.mode === "maintenance") {
-                      // Only the tool's owner confirms a change to its registered contract.
+                    if (request.mode === "maintenance" && !keepsContract(submitted)) {
+                      // Only the tool's owner confirms a change that takes from the registered
+                      // contract; adding or tightening an output field takes nothing away.
                       const confirmer = yield* maintenanceConfirmer;
                       if (confirmer !== "owner")
                         return taskUpdateAnswer("update_refused", {
                           reason: "owner_unavailable",
                           instruction:
-                            "No one who owns this tool can confirm a contract change now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field, or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
+                            "No one who owns this tool can confirm a change that loosens or removes an output, or changes a requirement or the purpose, now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field (adding or tightening a field needs no confirmation), or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
                         });
                       if (submitted.confirmedBy.length === 0)
                         return taskUpdateAnswer("clarification_required", {
