@@ -276,22 +276,22 @@ selector or repeat the action in a follow-up read.
 After a step whose answer can vary, such as a search, a filter, a date pick or a submit, name
 every way the page can answer: results, an empty or sold-out message, a greyed-out choice
 (`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
-error, a pick-one list. Never wait only for the happy result. Import `outcomeWaitCode` from the
-runtime, put it at the top of the call's code, and wait with `waitForOutcome({ refused, failed,
-unavailable, empty, results }, { action })`, one scoped locator per answer, each an element
-only that answer has, such as a results list that holds a row. The first listed wins when
-several show, so list a refusal, error or greyed-out choice first, then the empty state, then
-results. Pass the step itself as `action`, such as `() => apply.click()`: the wait runs it once,
-and an answer the page already showed before it counts only after staying unchanged for
-`unchangedMs`, 2 s by default, so a list the step has not yet re-rendered is not read while a
-step that leaves the same answer still resolves; a new or changed element counts at once. Read
-results; return an empty list for a listing's empty state; throw
-`InvalidInput` with the site's own words for a refusal or a greyed-out choice the input asked
-for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an `Error`
-named `OutcomeWaitFailure` whose message says what each outcome matched: `outcome_ambiguous`
-when the winning locator matches more than one element, and `outcome_timeout` after its
-`timeout`, 30 s by default. `references/navigation.ts` waits for a search's answer and a
-record's page this way.
+error, a pick-one list. Prefer naming every answer over waiting only for the happy result.
+Import `outcomeWaitCode` from the runtime, put it at the top of the call's code, and wait with
+`waitForOutcome({ refused, failed, unavailable, empty, results }, { action })`, one scoped
+locator per answer, each an element only that answer has, such as a results list that holds a
+row. The first listed wins when several show, so list a refusal, error or greyed-out choice
+first, then the empty state, then results. Pass the step itself as `action`, such as
+`() => apply.click()`: the wait runs it once, and an answer the page already showed before it counts
+only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
+re-rendered is not read while a step that leaves the same answer still resolves; a new or
+changed element counts at once. Read results; return an empty list for a listing's empty state;
+throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
+asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an
+`Error` named `OutcomeWaitFailure` whose message says what each outcome matched:
+`outcome_ambiguous` when the winning locator matches more than one element, and
+`outcome_timeout` after its `timeout`, 30 s by default. `references/navigation.ts` waits for a
+search's answer and a record's page this way.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because

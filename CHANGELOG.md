@@ -168,7 +168,7 @@
   - The first listed outcome wins when several show, so a site's error, a refusal or a greyed-out choice listed first wins over results beside it. It answers once two looks in a row agree.
   - `action` is the step itself. What an outcome showed before it, the same element with the same text, counts only after staying so for `unchangedMs` (2 s by default), so results a filter has not yet re-rendered are not read, and a filter that leaves the same results still resolves. A new or changed element counts at once.
   - It throws an `Error` named `OutcomeWaitFailure` with `reason` and per-outcome `observations` (`OutcomeObservation`, a count of matches, of visible ones and, after an action, of changed ones), and a message naming both: `outcome_ambiguous` when the winning locator matches more than one element, which it never picks among, and `outcome_timeout` when nothing showed within `timeout`, 30 s by default.
-  - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, never only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
+  - The core, forms and search skills tell the minter to name every way a step's page can answer and wait with it, rather than only for the happy result. The navigation reference waits for its search's answer, its record's page and its verification page this way.
   - Other hosts get it from `pomerado/core/browser/outcome-wait`.
 
 ### Fixes
