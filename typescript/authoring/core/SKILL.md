@@ -171,10 +171,10 @@ that asks.
   own location control, take the site's matching suggestion, read the applied location back
   from the page and return it. Left unset, return the location the page shows and say in the
   description that the site picks it, which can differ from run to run. While building, ask
-  the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location or
-  store in the run's own browser is part of the read, never a write: the run's browser is
-  fresh and discarded, so nothing is saved, and a tool that never signs in has no account to
-  change. In a signed-in tool, use the site's per-visit location control and never save an
+  the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location,
+  store, guest address or delivery or pickup mode in the run's own browser is part of the read,
+  never a write, even through a Save button: the run's browser is fresh and discarded, so
+  nothing is saved, and a tool that never signs in has no account to change. In a signed-in tool, use the site's per-visit location control and never save an
   address, default store or preference to the account.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
