@@ -12,11 +12,12 @@ import { guardianDecisionFormat, reviewKindOf, withholdPrivateReviews } from "./
 import { guardianContinuityPolicy } from "./session.js";
 import { guardianPublicationPolicy } from "./publication.js";
 import { guardianModel, guardianReviewTimeout } from "./model.js";
+import { sourceMatches } from "./source.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { Agent, AgentsError, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
-import { Effect, Exit, Schema } from "effect";
+import { Duration, Effect, Exit, Schema } from "effect";
 import { requiredReadRounds, ReviewFailure } from "./review.js";
 import { withTenantPolicy } from "./upstream-policy.js";
 import type { GuardianUsage, Reviewer, ReviewTurn } from "./review.js";
@@ -239,6 +240,46 @@ const withheldFromObserver = (
   return through(observe(through(base, restore)), hide);
 };
 
+/**
+ * A model provider that reports how long each call took whose response compacted the
+ * conversation. A compaction is the provider's work on the conversation, not the review's.
+ */
+const timedCompactions = (
+  provider: ModelProvider,
+  compacted: (ms: number) => void,
+): ModelProvider => ({
+  getModel: async (name?: string) => {
+    const model = await provider.getModel(name);
+    return {
+      ...model,
+      getResponse: async (request: ModelRequest) => {
+        const started = performance.now();
+        const response = await model.getResponse(request);
+        if (response.output.some((item) => item.type === "compaction"))
+          compacted(performance.now() - started);
+        return response;
+      },
+      getStreamedResponse: (request: ModelRequest) => model.getStreamedResponse(request),
+    };
+  },
+});
+
+/**
+ * Ends after `limitMs` of review time. Time the provider spent compacting the conversation does
+ * not count: each finished compacting call moves the end later by its duration. A compacting call
+ * still running at the end is cut off with the review.
+ */
+const reviewDeadline = (limitMs: number, compactingMs: () => number) =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.millis(limitMs));
+    let granted = 0;
+    while (compactingMs() > granted) {
+      const extra = compactingMs() - granted;
+      granted += extra;
+      yield* Effect.sleep(Duration.millis(extra));
+    }
+  });
+
 const reviewerWithPolicy = (
   policy: string,
   developmentPublicRead: boolean,
@@ -281,11 +322,15 @@ const reviewerWithPolicy = (
           const readSource = tool({
             name: "read_source",
             description:
-              "Read a screened chunk of available source or capture evidence without executing it. Follow nextOffset if hasMore; do not compute offsets ahead, since a read past the end returns an empty chunk.",
+              "Read a screened chunk of available source or capture evidence without executing it. Follow nextOffset if hasMore; do not compute offsets ahead, since a read past the end returns an empty chunk. With match, a word or phrase, it returns instead only the slices of the whole file around each case-insensitive occurrence, each with its byte offset: query a capture or other large file for what a question needs rather than reading it whole. Pass match null for a plain read.",
             parameters: {
               type: "object",
-              properties: { path: { type: "string" }, offset: { type: "integer", minimum: 0 } },
-              required: ["path", "offset"],
+              properties: {
+                path: { type: "string" },
+                offset: { type: "integer", minimum: 0 },
+                match: { type: ["string", "null"] },
+              },
+              required: ["path", "offset", "match"],
               additionalProperties: false,
             },
             execute: async (input: unknown, _context, details) => {
@@ -294,9 +339,12 @@ const reviewerWithPolicy = (
               });
               // Awaited traced call/result records bracket each host source read.
               const invoke = () =>
-                Effect.runPromise(turn.readSource(args.path, args.offset), {
-                  signal: reviewSignal,
-                });
+                Effect.runPromise(
+                  args.match === undefined || args.match === null || args.match.trim() === ""
+                    ? turn.readSource(args.path, args.offset)
+                    : sourceMatches(turn.readSource, args.path, args.match),
+                  { signal: reviewSignal },
+                );
               const observation = diagnostics
                 ? await diagnostics.tool(
                     {
@@ -306,10 +354,7 @@ const reviewerWithPolicy = (
                         : { callId: details.toolCall.callId }),
                       arguments: details?.toolCall?.arguments ?? JSON.stringify(input),
                     },
-                    () =>
-                      Effect.runPromise(turn.readSource(args.path, args.offset), {
-                        signal: reviewSignal,
-                      }),
+                    invoke,
                   )
                 : await invoke();
               if (turn.session && details?.toolCall?.callId)
@@ -384,6 +429,11 @@ const reviewerWithPolicy = (
               () => activeState.history,
               () => reviewSignal,
             );
+          // Time the provider spent on model calls that compacted the conversation.
+          let compactingMs = 0;
+          runner.config.modelProvider = timedCompactions(runner.config.modelProvider, (ms) => {
+            compactingMs += ms;
+          });
           const flushDiagnostics = async () => {
             try {
               await diagnostics?.flush();
@@ -463,18 +513,24 @@ const reviewerWithPolicy = (
                   });
                 },
               }).pipe(
-                Effect.timeoutFail({
-                  duration: guardianReviewTimeout(developmentPublicRead),
-                  onTimeout: () => {
-                    failurePhase = "review_deadline";
-                    const failure = new ReviewFailure({
-                      code: "Unavailable",
-                      reviewPhase: failurePhase,
-                    });
-                    diagnostics?.failed(failure);
-                    return failure;
-                  },
-                }),
+                Effect.raceFirst(
+                  reviewDeadline(
+                    guardianReviewTimeout(developmentPublicRead),
+                    () => compactingMs,
+                  ).pipe(
+                    Effect.zipRight(
+                      Effect.suspend(() => {
+                        failurePhase = "review_deadline";
+                        const failure = new ReviewFailure({
+                          code: "Unavailable",
+                          reviewPhase: failurePhase,
+                        });
+                        diagnostics?.failed(failure);
+                        return Effect.fail(failure);
+                      }),
+                    ),
+                  ),
+                ),
               ),
               { signal },
             );
