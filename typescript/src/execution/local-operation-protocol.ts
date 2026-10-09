@@ -4,10 +4,24 @@ import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { FileField, fileReferenceMaxLength } from "../runtime/files.js";
+import { maximumRefusalChoiceLength, maximumRefusalChoices } from "../runtime/operation-failure.js";
 
 const InputIssue = Schema.Struct({
   path: Schema.String.pipe(Schema.maxLength(maximumInputIssuePath)),
   issue: Schema.Literal("missing", "invalid"),
+});
+
+const RefusalText = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(maximumRefusalChoiceLength),
+);
+/** A script's refusal: the input it names and the choices the page offers for it. */
+export const InputRefusal = Schema.Struct({
+  field: Schema.optionalWith(RefusalText, { exact: true }),
+  available: Schema.optionalWith(
+    Schema.Array(RefusalText).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
+    { exact: true },
+  ),
 });
 
 const Id = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200));
@@ -105,6 +119,7 @@ export const LocalOperationMessage = Schema.Union(
       Schema.Array(InputIssue).pipe(Schema.maxItems(maximumInputIssues)),
       { exact: true },
     ),
+    refusal: Schema.optionalWith(InputRefusal, { exact: true }),
     ...JournalFields,
   }),
 );

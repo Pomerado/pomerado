@@ -37,6 +37,7 @@ const { ExecutionContext, makeEffectJournal } = await import("../runtime/context
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
+const { boundedRefusalDetail } = await import("../runtime/operation-failure.js");
 const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
 const { makeScriptInput, ScriptInput, ScriptInputFailure } =
   await import("../runtime/script-input.js");
@@ -44,6 +45,8 @@ const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
+const refusalOf = (detail: { readonly field?: string; readonly available?: readonly string[] }) =>
+  detail.field === undefined && detail.available === undefined ? {} : { refusal: detail };
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -324,6 +327,10 @@ await Effect.runPromise(
               : {}),
             ...(error instanceof InvalidInput && error.issues !== undefined
               ? { inputIssues: error.issues }
+              : {}),
+            // A script's refusal names its input and the choices the page offers, when it read them.
+            ...("_tag" in error && error._tag === "InvalidInput"
+              ? refusalOf(boundedRefusalDetail(error))
               : {}),
             ...("code" in error && typeof error.code === "string"
               ? { code: error.code }

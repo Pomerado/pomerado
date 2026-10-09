@@ -31,17 +31,59 @@ export interface HttpAnswerFailure {
   readonly bytes: number;
 }
 
+/** The most choices a refusal lists, and the longest each may be. */
+export const maximumRefusalChoices = 100;
+export const maximumRefusalChoiceLength = 200;
+
+/**
+ * Which input a refusal names and every choice the page offers for it, exactly as shown. A host
+ * tells the caller the choices, so the caller can pick one; a host that repairs has nothing to
+ * check when the page listed them.
+ */
+export interface InputRefusalDetail {
+  readonly field?: string;
+  readonly available?: readonly string[];
+}
+
+/** The detail as a host may carry it: a bounded field name and up to the most choices, each bounded. */
+export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
+  if (typeof detail !== "object" || detail === null) return {};
+  const field: unknown = Reflect.get(detail, "field");
+  const available: unknown = Reflect.get(detail, "available");
+  const choices = Array.isArray(available)
+    ? available
+        .filter((choice): choice is string => typeof choice === "string" && choice.trim() !== "")
+        .slice(0, maximumRefusalChoices)
+        .map((choice) => choice.slice(0, maximumRefusalChoiceLength))
+    : [];
+  return {
+    ...(typeof field === "string" && field.trim() !== ""
+      ? { field: field.slice(0, maximumRefusalChoiceLength) }
+      : {}),
+    ...(choices.length > 0 ? { available: choices } : {}),
+  };
+};
+
 /**
  * The site refused a caller's value, such as a past date or an unknown airport code. It is the
- * caller's to correct, so the run fails as `InvalidInput`. A host that repairs may first check the
- * value and ask the caller. Scripts throw it as `errors.InvalidInput`, never for a page or control
- * that changed.
+ * caller's to correct, so the run fails as `InvalidInput`. Scripts throw it as
+ * `errors.InvalidInput`, never for a page or control that changed. When the value is not among
+ * the choices the page offers, the script names the input and lists them:
+ * `new errors.InvalidInput(message, { field: "size", available: ["One Size"] })`. The caller then
+ * picks one of them, so nothing asks it for a replacement. Only a refusal without choices, of a
+ * free-form value the page lists no options for, may be checked by a host that repairs, which
+ * may ask the caller whether the value is invalid.
  */
 class InputRejected extends Error {
   override readonly name = "InvalidInput";
   readonly _tag = "InvalidInput";
-  constructor(message: string) {
+  readonly field?: string;
+  readonly available?: readonly string[];
+  constructor(message: string, detail?: InputRefusalDetail) {
     super(message.slice(0, 4096));
+    const bounded = boundedRefusalDetail(detail);
+    if (bounded.field !== undefined) this.field = bounded.field;
+    if (bounded.available !== undefined) this.available = bounded.available;
   }
 }
 

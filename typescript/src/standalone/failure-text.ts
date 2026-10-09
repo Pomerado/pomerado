@@ -49,9 +49,19 @@ const sentences: {
   },
   input_rejected: (outcome) => {
     const reason = detail(outcome, "reason");
+    const available = outcome.details["available"];
+    const choices = Array.isArray(available)
+      ? available.filter((choice): choice is string => typeof choice === "string")
+      : [];
+    const field = detail(outcome, "field");
     return {
-      message: `The tool or the website refused a value in the input.${reason === undefined ? "" : ` ${reason}`}`,
-      remediation: then(outcome, "Correct the input and run it again."),
+      message: `The tool or the website refused a value in the input.${reason === undefined ? "" : ` ${reason}`}${choices.length === 0 ? "" : ` Available${field === undefined ? "" : ` for ${field}`}: ${choices.join(", ")}.`}`,
+      remediation: then(
+        outcome,
+        choices.length === 0
+          ? "Correct the input and run it again."
+          : "Choose one of the available values and run it again.",
+      ),
     };
   },
   login_identity_conflict: (outcome) => ({

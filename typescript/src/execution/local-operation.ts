@@ -9,6 +9,7 @@ import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
+import type { InputRefusalDetail } from "../runtime/operation-failure.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { asksAsDeclared } from "./declared-questions.js";
 import {
@@ -78,6 +79,8 @@ export class LocalOperationFailure extends Error {
   readonly reported: boolean;
   /** The host could not sign the page in again while the script waited in `ensureSignedIn`. */
   readonly sessionLoss?: "session_not_kept";
+  /** The input a script's `InvalidInput` named and the choices the page offers for it. */
+  readonly refusal?: InputRefusalDetail;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -85,11 +88,16 @@ export class LocalOperationFailure extends Error {
     readonly tag?: string,
     /** Where the operation's input schema rejected its input, on an `InvalidInput`. */
     readonly inputIssues?: readonly InputIssue[],
-    options: { readonly reported?: boolean; readonly sessionLoss?: "session_not_kept" } = {},
+    options: {
+      readonly reported?: boolean;
+      readonly sessionLoss?: "session_not_kept";
+      readonly refusal?: InputRefusalDetail;
+    } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
+    if (options.refusal !== undefined) this.refusal = options.refusal;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -250,7 +258,10 @@ const handleTerminalMessage = (
           message.code,
           message.tag,
           message.inputIssues,
-          message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss },
+          {
+            ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
+            ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+          },
         ),
       ),
     );
