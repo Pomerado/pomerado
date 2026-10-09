@@ -5,6 +5,8 @@
 ### Breaking changes
 
 - The `mint_update` refusal reason `maintenance` is now `maintenance_setting`, and maintenance adds `output_outside_maintenance` and `owner_unavailable`. Migrate by matching `maintenance_setting` where you matched `maintenance`.
+- `ReviewTurn.missingRead` is now `ReviewTurn.followUp`, and `requiredReadRounds` is now `reviewFollowUpRounds`, three rounds: a reviewer sends the host's follow-up in the same review for an outcome the review's kind does not return, once, as well as for a skipped entrypoint read. `ReviewFailure` adds the code `InvalidOutcome` for an outcome still refused after that follow-up, which is not retried as an outage.
+  - Migrate a host's own `Reviewer` by calling `turn.followUp` where it called `turn.missingRead`, for up to `reviewFollowUpRounds` rounds, and handle `InvalidOutcome` where it handles `InvalidDecision`.
 - Guardian's execution review returns a required `action` label, `read`, `write` or `authentication`, in the shared output format. An execution allow without one fails to decode and is retried like an outage. An allowed `write` on a step without the new `PendingExecution.writeAuthority` becomes a denial.
   - Migrate recorded Guardian responses by adding `action` to every execution allow, and set `writeAuthority` on the steps that may write.
 - `MintDependencies.reviewAndExecute`'s dispatch fence is a function of the allow it follows, so every dispatch carries a label: `beforeDispatch(allowed: AllowedExecution)`. Pass the review ID and Guardian's label, or `hostAuthentication` for a sign-in screen the host fills itself.
@@ -169,6 +171,7 @@
 
 ### Fixes
 
+- A Guardian question or task update review was asked for the execution outcomes allow, deny or escalate before its own, so it could return `allow` where a question review accepts only `allow_business`, `authentication` or `reword`. The host then retried that review as an outage with backoff, from the same input. Each review's request now lists its own outcomes in `trusted_review.outcomes`, only execution, recovery and publication reviews get the execution outcome policy, and a refused outcome gets one correction in the same review before it fails as `InvalidOutcome`.
 - A local build no longer publishes a tool that rests on a sign-in it never verified. A write build could sign in again in the middle of its session, write, and publish with no sign-in, so every later run started signed out. `finish_build` now refuses as `autofill_recipe_not_verified` when a step the publication rests on ran after a sign-in sent the login and before any check verified it, and the build has no verified sign-in to publish. A write rests on every act step of its session, and a read on the example or explore it publishes. A read is refused even when its example ran signed out.
 - Guardian's source reads on the local host now find the SDK under `operation/`, where authored source imports it as `../../runtime/index.js` from `src/`. A read of `operation/runtime/index.js` or `operation/browser/form-controls.js` returns the trusted SDK file. It used to fail as unavailable. An authored file at the same path still comes first.
 
