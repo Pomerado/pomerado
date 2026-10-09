@@ -39,7 +39,7 @@ export const signInOriginsToAsk = (
 };
 
 /** `a`, `a and b`, or `a, b and c`. */
-const listed = (origins: readonly string[]) =>
+export const listed = (origins: readonly string[]) =>
   origins.length < 2
     ? (origins[0] ?? "")
     : `${origins.slice(0, -1).join(", ")} and ${origins.at(-1) ?? ""}`;

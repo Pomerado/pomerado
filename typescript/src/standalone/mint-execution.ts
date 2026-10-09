@@ -134,9 +134,10 @@ const trustQuestionFailure = (cause: unknown) =>
 
 /**
  * A signed-in check that found the login sent only to origins that are neither the site nor one
- * of its sign-in origins asks the caller once whether to trust them, when `signInOriginsToAsk` allows. A yes
- * trusts them for sign-in only, credits what the sign-in sent there and checks again, typing
- * nothing. A no ends sign-in in the build. Anything else keeps the check's result.
+ * of its sign-in origins asks the caller once whether to trust them, when `signInOriginsToAsk`
+ * allows. A yes trusts them for sign-in only, credits what the sign-in sent there and checks
+ * again, typing nothing. They stay among the origins an unpublished build names until a sign-in
+ * verifies. A no ends sign-in in the build. Anything else keeps the check's result.
  */
 const askToTrustSignInOrigins = (
   state: MintState,
@@ -172,8 +173,6 @@ const askToTrustSignInOrigins = (
         spentSignIn: "sign_in_origin_untrusted",
       });
     signInOrigins.trusted.push(...origins);
-    // A trusted origin is no longer one an unpublished build names as untrusted.
-    for (const origin of origins) state.untrustedSignInOrigins.delete(origin);
     recorder.trustOrigins(origins);
     return yield* recorder.step(signIn, loginUrl, Effect.void);
   });
@@ -203,12 +202,15 @@ const executeAuthentication = (
       // The host fills the sign-in itself, after its own review of each screen.
       Effect.zipRight(markers.beforeTyping, beforeDispatch?.(hostAuthentication) ?? Effect.void),
     );
+    // The origins a check named stay named, by the build, until a sign-in verifies: the first
+    // check's before the caller answers, and the check after a yes's too.
     const offSite = state.untrustedSignInOrigins;
     for (const origin of recorded.untrustedSignInOrigins ?? []) offSite.add(origin);
     const step =
       "signedIn" in signIn
         ? yield* askToTrustSignInOrigins(state, signIn, loginUrl, recorded)
         : recorded;
+    for (const origin of step.untrustedSignInOrigins ?? []) offSite.add(origin);
     if ("fields" in signIn && step.report !== undefined) start.sent(step.report, signIn.fields);
     if (step.approved === true) start.approved();
     const authenticated = step.verified === true && start.verified();

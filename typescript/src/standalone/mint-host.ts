@@ -25,6 +25,7 @@ import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
 import { mintError } from "./errors.js";
 import { memoryPublicationDecisions } from "./publication-decisions.js";
+import { listed, signInOriginsToAsk } from "./sign-in-origin-question.js";
 import type { FileHandles } from "../mint/file-handles.js";
 /**
  * Steps the local host refuses before review. It keeps no write maintenance, so it has no
@@ -159,9 +160,11 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
   return dependencies;
 };
 /**
- * An unpublished build names the origins its open sign-in sent the login to, off the site and the
- * request's sign-in origins, in its outcome and its summary, so its caller can trust one when
- * asked, or add it to `authenticationOrigins`, and mint again.
+ * An unpublished build names the origins its sign-in sent the login to since the last verified
+ * sign-in, off the site and the request's sign-in origins, in its outcome and its summary, so its
+ * caller can trust one when asked, or add it to `authenticationOrigins`, and mint again. One the
+ * caller trusted during the build stays named, since no sign-in verified through it and nothing
+ * saved it, and its summary says to pass it up front.
  */
 const withUntrustedSignInOrigins = (
   outcome: MintOutcome,
@@ -169,12 +172,36 @@ const withUntrustedSignInOrigins = (
 ): LocalMintOutcome => {
   const origins = [...state.untrustedSignInOrigins];
   if (outcome.build === "published" || origins.length === 0) return outcome;
-  const one = origins.length === 1;
-  const listed = one ? origins.join("") : `${origins.slice(0, -1).join(", ")} and ${origins.at(-1)}`;
+  const trusted = origins.filter((origin) => state.signInOrigins.trusted.includes(origin));
+  const untrusted = origins.filter((origin) => !trusted.includes(origin));
+  const them = (some: readonly string[]) => (some.length === 1 ? "it" : "them");
+  // A later build asks only about the origins `signInOriginsToAsk` allows.
+  const asks =
+    signInOriginsToAsk(untrusted, {
+      siteOrigin: state.context.siteOrigin,
+      trusted: [],
+      asked: new Set(),
+    }) !== undefined;
+  const sentences = [
+    ...(untrusted.length === 0
+      ? []
+      : [
+          `The sign-in sent the login to ${listed(untrusted)}, which ${untrusted.length === 1 ? "is" : "are"} not trusted for sign-in.`,
+          asks
+            ? `Answer yes when asked, or pass ${them(untrusted)} in authenticationOrigins, and build again.`
+            : `Pass ${them(untrusted)} in authenticationOrigins and build again.`,
+        ]),
+    ...(trusted.length === 0
+      ? []
+      : [
+          `The sign-in sent the login to ${listed(trusted)}, which the caller trusted for sign-in, but no check verified a sign-in through ${them(trusted)}.`,
+          `Pass ${them(trusted)} in authenticationOrigins and build again, so the login sent there counts from the first screen.`,
+        ]),
+  ];
   return {
     ...outcome,
     untrustedSignInOrigins: origins,
-    summary: `${outcome.summary} The sign-in sent the login to ${listed}, which ${one ? "is" : "are"} not trusted for sign-in. Answer yes when asked, or pass ${one ? "it" : "them"} in authenticationOrigins, and build again.`,
+    summary: [outcome.summary, ...sentences].join(" "),
   };
 };
 export const mintRequest = (

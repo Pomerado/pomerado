@@ -475,6 +475,104 @@ it("verifies once the caller trusts the origin the script sent the whole login t
   expect(trustedLater).toEqual(trustedUpFront);
 });
 
+/** An identifier-first sign-in's first screen, its identifier alone. */
+const identifierOnly: SignInStep = {
+  fields: [{ selector: "#user", accepts: ["username"] }],
+  submit: "#next",
+};
+/**
+ * An identifier-first sign-in's script: the first screen's request sends the identifier alone to
+ * the identity service, and the second's sends the password alone, with the state handle it got,
+ * to `passwordTo`.
+ */
+const identifierFirst =
+  (passwordTo: string) =>
+  (step: AutofillStep, values: readonly string[]): readonly SignInRequest[] =>
+    step.fields.some((field) => "accepts" in field)
+      ? [
+          {
+            url: `${identity}/v1/identify`,
+            method: "POST",
+            body: JSON.stringify({ identifier: values[0] }),
+            channel: "http",
+            resourceType: "fetch",
+          },
+        ]
+      : [
+          {
+            url: `${passwordTo}/v1/challenge`,
+            method: "POST",
+            body: JSON.stringify({ stateHandle: "state-1", password: values[0] }),
+            channel: "http",
+            resourceType: "fetch",
+          },
+          // Another origin that first hears the password alone is never named.
+          {
+            url: "https://telemetry.other.test/collect",
+            method: "POST",
+            body: JSON.stringify({ field: values[0] }),
+            channel: "http",
+            resourceType: "xhr",
+          },
+        ];
+
+it("verifies once the caller trusts the origin an identifier-first sign-in sent each screen's value to, and records the configured sign-in's recipe", async () => {
+  const send = identifierFirst(identity);
+  const untrusted = harness({ send });
+  const trustedLater = await untrusted.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const first = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(first.untrustedSignInOrigins).toEqual([identity]);
+      expect(recorder.untrustedOrigins()).toEqual([identity]);
+      recorder.trustOrigins([identity]);
+      const checked = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(checked).toMatchObject({ verified: true, result: { signedIn: true } });
+      return recorder.published();
+    }),
+  );
+  expect(untrusted.filled).toHaveLength(2);
+  const configured = harness({ authenticationOrigins: [identity], send });
+  const trustedUpFront = await configured.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const checked = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(checked).toMatchObject({ verified: true });
+      return recorder.published();
+    }),
+  );
+  expect(trustedLater).toBeDefined();
+  expect(trustedLater).toEqual(trustedUpFront);
+});
+
+it("verifies an identifier-first sign-in that sends the identifier off the site and the password alone to the site only when that origin is configured up front", async () => {
+  const send = identifierFirst(origin);
+  const later = await harness({ send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      const first = yield* recorder.step(signedIn, undefined, Effect.void);
+      expect(first.untrustedSignInOrigins).toEqual([identity]);
+      recorder.trustOrigins([identity]);
+      return yield* recorder.step(signedIn, undefined, Effect.void);
+    }),
+  );
+  // A known limit: the site's request carried the password without the identifier, and trusting
+  // the identity service later credits only the identifier it heard.
+  expect(later.verified).toBeUndefined();
+  expect(later.result).toMatchObject({ failed: "credentials_not_submitted" });
+  const configured = await harness({ authenticationOrigins: [identity], send }).run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      return yield* recorder.step(signedIn, undefined, Effect.void);
+    }),
+  );
+  expect(configured).toMatchObject({ verified: true });
+});
+
 it("takes a code an exploration typed as the proof after a sent identifier", async () => {
   const host = harness();
   const result = await host.run((recorder) =>
