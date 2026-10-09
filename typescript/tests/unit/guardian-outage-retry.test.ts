@@ -65,7 +65,7 @@ it.each([
   ],
   ["a turn limit", () => new ReviewFailure({ code: "TurnLimitExceeded" })],
   ["a required source read that failed", () => new ReviewFailure({ code: "SourceUnavailable" })],
-  ["a decision that does not decode", () => ({ outcome: "maybe", rationale: "unsure" })],
+  ["a decision that does not decode", () => ({ outcome: "allow", rationale: "" })],
 ] as const)(
   "reviews again after %s and returns the decision that completes",
   async (_, failure) => {
@@ -269,7 +269,7 @@ it("keeps the follow-up rounds for a skipped entrypoint read inside one attempt"
             action: "read",
           };
           for (let round = 0; round < 2; round++) {
-            if (turn.missingRead?.(output) === undefined) break;
+            if (turn.followUp?.(output) === undefined) break;
             if (readsWhenAsked) yield* turn.readSource(turn.pending.entrypoint, 0);
           }
           return output;

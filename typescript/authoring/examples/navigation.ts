@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, outcomeWaitCode } from "../../src/browser/index.js";
 
 const RecordId = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,100}$/));
 const Detail = Schema.Union(
@@ -43,46 +43,42 @@ export const detailNavigation = defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 120,
       code: `
+        ${outcomeWaitCode}
         // On the site: any https host on the host's site domain, else the site origin alone.
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const recordId = ${JSON.stringify(input.record_id)};
-        // Poll while the page is in a pending state. Polling only observes.
-        const settle = async (classify, pending) => {
-          const until = Date.now() + 30000;
-          let state = await classify();
-          while (pending.includes(state) && Date.now() < until) {
-            await page.waitForTimeout(100);
-            state = await classify();
+        // The outcome a wait settles on, or the one that stayed ambiguous; undefined after a timeout.
+        const settle = async (outcomes, options) => {
+          try {
+            return { shown: await waitForOutcome(outcomes, options) };
+          } catch (error) {
+            if (error.name !== "OutcomeWaitFailure") throw error;
+            return { ambiguous: error.outcome };
           }
-          return state;
         };
         // The entry page holds no caller input. Type the identifier into the site's own search.
         await page.goto(${JSON.stringify(siteOrigin)}, { waitUntil: "domcontentloaded", timeout: 30000 });
         const search = page.getByRole("search").getByRole("searchbox", { name: "Record ID", exact: true });
         if ((await search.count()) !== 1) return { failure: "search_unavailable" };
         await search.fill(recordId, { timeout: 30000 });
-        await search.press("Enter", { timeout: 30000 });
-        const results = page.getByRole("region", { name: "Search results", exact: true });
+        // The search has finished only when the site shows its answer to this search, once its
+        // results stop being busy: its error, its own word that nothing matches, or one matching
+        // link. Pressing Enter is the wait's action, so nothing shown before it is the answer.
+        const results = page
+          .getByRole("region", { name: "Search results", exact: true })
+          .and(page.locator(':not([aria-busy="true"])'));
         const links = results.getByRole("link", { name: recordId, exact: true });
-        const noMatch = results.getByRole("status").filter({ hasText: /^No matching records$/ });
-        // The search has finished only when the site shows its outcome: one matching link, or its
-        // own word that nothing matches. A busy, failed or unknown page proves nothing either way.
-        const searched = async () => {
-          if ((await page.getByRole("alert").count()) > 0) return "results_unavailable";
-          if ((await results.count()) !== 1) return "loading";
-          if ((await results.getAttribute("aria-busy")) === "true") return "loading";
-          const found = await links.count();
-          if (found > 1) return "result_ambiguous";
-          if (found === 1) return "found";
-          return (await noMatch.count()) === 1 ? "no_match" : "loading";
-        };
-        const outcome = await settle(searched, ["loading"]);
+        const searched = await settle({
+          failed: page.getByRole("alert"),
+          none: results.getByRole("status").filter({ hasText: /^No matching records$/ }),
+          found: links,
+        }, { action: () => search.press("Enter", { timeout: 30000 }) });
         // Only the site's own empty result says the record does not exist.
-        if (outcome === "no_match") return { refused: "The site's search lists no record with this ID" };
-        if (outcome !== "found")
-          return { failure: outcome === "loading" ? "results_unavailable" : outcome };
+        if (searched.shown === "none") return { refused: "The site's search lists no record with this ID" };
+        if (searched.shown !== "found")
+          return { failure: searched.ambiguous === "found" ? "result_ambiguous" : "results_unavailable" };
         const resultsUrl = page.url();
         // The final page is checked against the link's own href, a URL the site produced.
         const target = new URL(await links.getAttribute("href"), resultsUrl);
@@ -91,35 +87,32 @@ export const detailNavigation = defineOperation(
         const detail = page.getByRole("region", { name: "Record details", exact: true });
         const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
         const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
-        // Classify the page. The site, path and the page's own record id must all match the request.
-        const classify = async () => {
+        // Wait for the record's page, then check that the site, path and the page's own record
+        // id all match the request.
+        const offTarget = () => {
           const current = new URL(page.url());
-          if (!onSite(current)) return "target_mismatch";
-          if (current.pathname !== targetPath) return "target_mismatch";
-          const details = await detail.count();
-          const interstitials = await interstitial.count();
-          if (details + interstitials > 1) return "detail_unavailable";
-          if (details === 1)
-            return (await detail.getAttribute("data-record-id")) === recordId
-              ? "detail"
-              : "identity_mismatch";
-          if (interstitials === 1) {
-            if ((await interstitial.getAttribute("data-record-id")) !== recordId)
-              return "identity_mismatch";
-            return (await proceed.count()) === 1 ? "interstitial" : "interstitial_unowned";
-          }
-          return "loading";
+          return !onSite(current) || current.pathname !== targetPath;
+        };
+        const reached = async (outcomes) => {
+          // A page already off the target fails at once; one that moves there while loading fails after.
+          if (offTarget()) return "target_mismatch";
+          const { shown } = await settle(outcomes);
+          if (offTarget()) return "target_mismatch";
+          if (shown === undefined) return "detail_unavailable";
+          const shownId = await (shown === "detail" ? detail : interstitial).getAttribute("data-record-id");
+          if (shownId !== recordId) return "identity_mismatch";
+          if (shown === "interstitial" && (await proceed.count()) !== 1) return "interstitial_unowned";
+          return shown;
         };
         await links.click({ timeout: 30000 });
         await page.waitForURL((url) => url.href !== resultsUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-        let state = await settle(classify, ["loading"]);
+        let state = await reached({ detail, interstitial });
         // Continue only through an interstitial whose own identity matches the request.
         if (state === "interstitial") {
           await proceed.click({ timeout: 30000 });
-          state = await settle(classify, ["loading", "interstitial"]);
+          state = await reached({ detail });
         }
-        if (state !== "detail")
-          return { failure: state === "loading" || state === "interstitial" ? "detail_unavailable" : state };
+        if (state !== "detail") return { failure: state };
         const heading = detail.getByRole("heading", { level: 1 });
         if ((await heading.count()) !== 1) return { failure: "detail_unavailable" };
         const title = (await heading.innerText()).trim();
@@ -162,12 +155,15 @@ export default defineOperation(
     const first = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${outcomeWaitCode}
         await page.goto(${JSON.stringify(`${site.origin}/catalog`)}, { waitUntil: "domcontentloaded", timeout: 30000 });
-        const heading = page.getByRole("heading", { name: "Catalog", exact: true });
-        // This site's observed verification page says "Verifying your browser".
-        const challenge = page.getByText("Verifying your browser", { exact: true });
-        await heading.or(challenge).waitFor({ timeout: 30000 });
-        if (await challenge.isVisible()) return { challenge: true };
+        // This site's observed verification page says "Verifying your browser". It wins over the
+        // heading when both show.
+        const shown = await waitForOutcome({
+          challenge: page.getByText("Verifying your browser", { exact: true }),
+          heading: page.getByRole("heading", { name: "Catalog", exact: true }),
+        });
+        if (shown === "challenge") return { challenge: true };
         ${readHeading}
       `,
     });

@@ -99,6 +99,9 @@ that asks.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
+- Prefer keying only on what the caller asked for. A detail that changes from one listing to
+  the next, such as a seating label or a room name, shouldn't decide whether the tool books or
+  refuses unless the caller chose it.
 - If the schema lists an option your code doesn't read results for yet, prefer throwing a plain
   error for that option over returning results for another one. A repair adds it when a caller
   needs it.
@@ -112,10 +115,17 @@ that asks.
   suggestion's full display text or an internal id the caller cannot know (an id the site
   shows on its own pages, such as a product number, is not internal). A closed list
   of options stays an enum of the site's options, as above. When the options come from a
-  query, as in an autocomplete, typeahead or searchable combobox, the tool types the
-  caller's value and picks the matching suggestion itself: an exact code or name match
-  wins (an airport code picks that airport, not its city), and it throws `InvalidInput`
-  only when nothing matches or several match equally.
+  query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
+  up the way a person would. Type the caller's value into the site's own search and read
+  every suggestion or result it shows. Prefer matching names loosely, ignoring case,
+  punctuation, apostrophe style and a location the site adds to the name, such as a
+  neighborhood or an airport code in brackets, over waiting for an element named exactly as
+  the caller typed it. A whole-name or code match outranks a partial one, so an airport code
+  picks that airport, not its city. Then count the matches at the best rank. With none,
+  throw `InvalidInput` at once, saying the site has no match and naming the closest entries
+  it showed. With one, use it. With several, ask the caller which one with a declared choice
+  question whose options are those matches as the site labels them
+  (.agents/caller-input/SKILL.md).
 - On a write, every choice the session met is an input: each option on the path,
   add-ons and pre-selected defaults included. Make it required when the site requires
   a choice (a fare class) and optional when it does not (a seat). An unset optional input
@@ -257,7 +267,8 @@ that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
 challenge. Wait for a unique operation control or page state before testing absence
-or choosing a fallback. Use `locator.waitFor` or a bounded polling loop;
+or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+(below) when the page can answer more than one way, or a bounded polling loop;
 `count()` and `isVisible()` only observe the current instant. A ready page should
 pass immediately; do not add a fixed sleep. Share one bounded navigation deadline across navigation
 and first-page readiness, as in `references/navigation.ts`. Readiness polling
@@ -272,6 +283,25 @@ original deadline. Never repeat the click or submission as part of that recovery
 Use observed conditions, without fixed sleeps or whole-page network-idle waits.
 For an unknown destination, inspect after the document transition; do not invent a
 selector or repeat the action in a follow-up read.
+After a step whose answer can vary, such as a search, a filter, a date pick or a submit, name
+every way the page can answer: results, an empty or sold-out message, a greyed-out choice
+(`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
+error, a pick-one list. Prefer naming every answer over waiting only for the happy result.
+Import `outcomeWaitCode` from the runtime, put it at the top of the call's code, and wait with
+`waitForOutcome({ refused, failed, unavailable, empty, results }, { action })`, one scoped
+locator per answer, each an element only that answer has, such as a results list that holds a
+row. The first listed wins when several show, so list a refusal, error or greyed-out choice
+first, then the empty state, then results. Pass the step itself as `action`, such as
+`() => apply.click()`: the wait runs it once, and an answer the page already showed before it counts
+only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
+re-rendered is not read while a step that leaves the same answer still resolves; a new or
+changed element counts at once. Read results; return an empty list for a listing's empty state;
+throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
+asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an
+`Error` named `OutcomeWaitFailure` whose message says what each outcome matched:
+`outcome_ambiguous` when the winning locator matches more than one element, and
+`outcome_timeout` after its `timeout`, 30 s by default. `references/navigation.ts` waits for a
+search's answer and a record's page this way.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because
@@ -307,9 +337,9 @@ Never call `.first()` (or `.nth(0)`) on a broad text or regex match, whether to
 click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
-then check that exactly one element matches. When several candidates remain,
-inspect them and choose by evidence such as section, accessible name and
-destination before clicking or waiting. A readiness wait targets one specific
+then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
+returns. When several candidates remain, inspect them and choose by evidence such as
+section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
 For a detail read, reach the record through the site's own search, list or link for the
