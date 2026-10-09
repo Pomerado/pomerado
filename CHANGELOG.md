@@ -181,6 +181,7 @@
   - Other hosts get it from `pomerado/core/browser/outcome-wait`.
   - A run whose `waitForOutcome` saw no outcome in time fails as `BrowserActionTimeout`, as a native Playwright wait's timeout does, so a host keeps the browser and reports it as a browser action timeout. `outcome_ambiguous` stays the tool's own failure.
 - A script's context adds `askOne(id, question)`, a thin wrapper over `ask` that asks one declared question and returns that answer itself. `ask` with a list or an object returns one answer per id, such as `{ seat: "12A" }`, so the caller-input skill now says to read `answer.<id>` and names `askOne` for one question. `pomerado/runtime` exports its type as `ScriptAskOne`.
+- The core skill tells the minter to prefer waiting, after a search or a filter, for the site's own sign that loading finished, such as a spinner gone or a result count shown, before reading results, and to treat far fewer results than the page's count as a failure. A list that fills in as it loads, or an old list that stays up before a reload, can pass the outcome wait's unchanged check.
 
 ### Fixes
 
