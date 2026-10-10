@@ -519,7 +519,10 @@ const reviewerWithPolicy = (
               }).pipe(
                 Effect.raceFirst(
                   reviewDeadline(
-                    guardianReviewTimeout(developmentPublicRead),
+                    guardianReviewTimeout(
+                      developmentPublicRead,
+                      reviewKindOf(turn.pending) === "publication",
+                    ),
                     () => compactingMs,
                   ).pipe(
                     Effect.zipRight(

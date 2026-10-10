@@ -227,9 +227,12 @@ export const publicationCaptureQueryPolicy =
 export const publicationDecisionPolicy =
   "Return outcome, a concise rationale explaining the actual evidence and any correction needed, a reason enum and findings, each with its exact manifest path, quote, category and explanation. quote is the exact text at fault as read_source showed it, copied, never retyped, long enough to occur once in the file, at most a few lines; never compute byte offsets or read a file again to find them. Never include credential values in the rationale. Use reason privacy for privacy corrections, source_correction for code/schema/guard corrections, example_value findings included (a composed write that does not perform or return its declared confirmation or read-back is a confirmation finding), unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the name, description or a declared variant promises what the source does not do, input_feedback with outcome deny when every finding is account_specific_enum or input_option (the minter fixes them; they never block publication on their own), host_owned with outcome deny when every finding is in an owner: host file other than publication/definition.json that no source or metadata edit can fix, authority for missing authority, evidence for insufficient evidence, approved only with allow and no findings. Narrowing a claim is never the fix for an output: a needed value, or a fact the page shows, that the output does not return in full is source_correction, to read it. With any other finding, use that finding's reason and keep the input findings beside it. Return every finding the evidence supports in this one review, not one per round. With reason evidence, name each missing item in the rationale.";
 
-/** What each finding's explanation tells the minter, so one revision fixes them all. */
+/**
+ * That the review lists every finding, and what each finding's explanation tells the minter, so
+ * one revision fixes them all.
+ */
 export const publicationFindingFeedback =
-  "Each finding's explanation, in at most three sentences the minter can act on alone, says what is wrong, the evidence (the file and what it shows) and the fix, never a credential value.";
+  "List every finding you see in the bundle, not only the first, so the author can fix them together. Each finding's explanation, in at most three sentences the minter can act on alone, says what is wrong, the evidence (the file and what it shows) and the fix, never a credential value.";
 
 /**
  * Guardian's policy for a publication review: what ships, who wrote each file, and the privacy,
