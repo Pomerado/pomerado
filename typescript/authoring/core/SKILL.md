@@ -157,6 +157,10 @@ that asks.
   it showed. With one, use it. With several, ask the caller which one with a declared choice
   question whose options are those matches as the site labels them
   (.agents/caller-input/SKILL.md).
+- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
+  match that accepts the usual forms of the same name, such as a city alone or with its
+  state and country, or a company with or without Ltd. or Inc. Never require an exact match.
+  When more than one option matches, list them for the caller instead of picking one.
 - On a write, every choice the session met is an input: each option on the path,
   add-ons and pre-selected defaults included. Make it required when the site requires
   a choice (a fare class) and optional when it does not (a seat). An unset optional input

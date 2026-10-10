@@ -284,6 +284,7 @@
 - The HTTP version reference shows a site's refusal of a caller's value failing as `operationErrors.InvalidInput` with the input field and the site's choices.
 - Guardian's execution policy counts a read's HTTP version that sends the page's own signed-out search-state save, a PUT or POST included, before its query as part of the read.
 - The writes skill and the workspace guide say a refused publication keeps live execution on the same browser, still signed in, so the minter reads `page.url()` first and prefers not to sign in again. Only a publication whose capture failed leaves a fresh browser on a new, empty profile. The `http-mcp` skill says a refused publication does not skip the HTTP-version ask, and the ask's own message no longer says it comes only while live capture is open.
+- The core skill and Guardian's execution and publication policies say a tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, never an exact one, and lists the options for the caller instead of picking one when more than one matches.
 
 ### Fixes
 

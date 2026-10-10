@@ -172,6 +172,10 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
   ["core", "- Make one execute call per operation."],
   ["core", "- The code works for every value the schema accepts."],
+  [
+    "core",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a city alone or with its state and country, or a company with or without Ltd. or Inc. Never require an exact match. When more than one option matches, list them for the caller instead of picking one.",
+  ],
   ["core", "Take the site origin from the context's `siteOrigin`."],
   ["core", "The tools and the files you may edit are in `AGENTS.md`."],
   ["core", "Read their bodies only when useful."],
@@ -722,7 +726,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["03d33921ece2b6577814e68c9759fb2d8748d02589747135fa8d07fbbe58424e", "core"],
+    ["1514f263ee2d0c27a3873deff3b762b5efaa7ca737e2f3a9f26199a5f0f19116", "core"],
     ["70e5a52f57bd96d565e14d8f442819f950f947eb8f29d988b58c6f7a5e1b6781", "search"],
     ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
     ["f8e46b7634947b10db4a1de32fdf7d3717422c5d5b4dd43fa9cc7369477a201a", "testing"],

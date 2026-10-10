@@ -2,7 +2,10 @@ import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import {
   guardianPublicationPolicy,
@@ -419,6 +422,15 @@ describe("the publication policy", () => {
       "never ask for a source correction or another run for it. When such a file shows a problem the minter's source causes, the finding keeps its ordinary reason and the rationale names the source to change.",
     );
     expect(policy).not.toContain("  ");
+  });
+
+  // A caller's place, venue or company name matches in its usual forms, so neither the review of
+  // a live step nor the publication review asks a tool to require an exact match.
+  it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
+    const rule =
+      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches, the tool lists them for the caller instead of picking one.";
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
 
   // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,
