@@ -286,6 +286,7 @@
 - The writes skill and the workspace guide say a refused publication keeps live execution on the same browser, still signed in, so the minter reads `page.url()` first and prefers not to sign in again. Only a publication whose capture failed leaves a fresh browser on a new, empty profile. The `http-mcp` skill says a refused publication does not skip the HTTP-version ask, and the ask's own message no longer says it comes only while live capture is open.
 - The core skill and Guardian's execution and publication policies say a tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, never an exact one, and lists the options for the caller instead of picking one when more than one matches.
 - The search skill says that when the site's search has no control for one of the caller's filters, the tool prefers leaving the site's default, filtering the returned rows to the caller's value and saying so in the description.
+- Guardian's execution policy counts searching with the site's broader setting or its default as a routine implementation choice when the site's form has no setting for a request's constraint, such as a cabin class with only "Show all".
 
 ### Fixes
 
