@@ -18,10 +18,7 @@ to confirm it.
 
 On a one-time-code screen, prefer one read that finds the code fields, the submit and any
 remember-this-device box with its checked state. Then send the code step at once. Codes expire in
-minutes, so ask for the code before any other probing.
-
-When the site refuses a one-time code, prefer clicking its resend control before asking the
-caller again. Then ask for the new code.
+minutes, so send that step before any other probing.
 
 Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
