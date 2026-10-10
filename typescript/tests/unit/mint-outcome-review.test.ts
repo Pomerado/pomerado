@@ -375,10 +375,8 @@ it("settles a write done from its own commit request's status in the step's resu
   expect(instructions).toContain(
     "or the write's commit request: in the step that clicked the final commit control, a request to the site's own origin on the route the session's commit used, listed in that step's stateChangingRequests with a 2xx or 3xx status, and no error after it in its readable response or on the page.",
   );
-  // A request the site only queued, or a commit step with no request, settles nothing by itself.
-  expect(instructions).toContain(
-    "A 202 or a response that says the work is queued needs a readback.",
-  );
+  // A request the site queued counts, and a commit step with no request settles nothing by itself.
+  expect(instructions).toContain("A 202 or a response that says the work is queued counts too.");
   expect(instructions).toContain(
     "or a commit step with no commit request recorded, which a websocket or GET commit can explain.",
   );
