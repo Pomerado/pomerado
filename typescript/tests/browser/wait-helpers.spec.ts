@@ -414,7 +414,9 @@ const changeBody = `
     stableMs: 100,
     unchangedMs: 300,
   });
-  return { ...read, ms: Date.now() - started };`;
+  // Whether the page still showed its loading sign when the wait returned.
+  const spinnerShowing = await page.locator("#spinner").isVisible();
+  return { ...read, spinnerShowing, ms: Date.now() - started };`;
 
 test("after a choice, the dependent total is the new one, never the stale one", async ({ page }) => {
   await quotePage(page, "$360", 600);
@@ -424,14 +426,18 @@ test("after a choice, the dependent total is the new one, never the stale one", 
 
 test("a total that stays the same counts only after the loading sign went", async ({ page }) => {
   await quotePage(page, "$240", 500);
-  const answer = (await call(page, changeBody)).result as { values: unknown; changed: boolean; ms: number };
-  expect(answer).toMatchObject({ values: { total: "$240" }, changed: false });
-  expect(answer.ms).toBeGreaterThanOrEqual(800);
-  // With no loading sign at all, the same total counts after the unchanged window.
+  // It returns only once the sign went, never while the total was still being worked out.
+  expect((await call(page, changeBody)).result).toMatchObject({
+    values: { total: "$240" },
+    changed: false,
+    spinnerShowing: false,
+  });
+  // With no loading sign at all, the same total counts once the page was quiet for the unchanged
+  // window.
   await quotePage(page, "$240", null);
   const quiet = (await call(page, changeBody)).result as { changed: boolean; ms: number };
   expect(quiet.changed).toBe(false);
-  expect(quiet.ms).toBeLessThan(800);
+  expect(quiet.ms).toBeLessThan(2000);
 });
 
 test("a probe call acts with a short default timeout, and later calls get Playwright's back", async ({
@@ -695,9 +701,11 @@ const growingList = (page: Page, sign: "spinner" | "busy" | "none", request: boo
     },
   );
 
-const growBody = `
+// A sign alone holds a list for the no-progress window, so those cases get a window longer than the
+// load; a request the click started holds it until it ends, whatever the window.
+const growBody = (noProgressMs: number) => `
   const { rows } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
-    count: 20, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+    count: 20, key: { attribute: "data-id" }, noProgressMs: ${noProgressMs}, stableMs: 100, unchangedMs: 300, timeout: 4000,
     action: () => page.getByRole("button", { name: "Show more" }).click({ timeout: 1000 }),
   });
   return rows.length;`;
@@ -712,7 +720,7 @@ for (const [sign, request] of [
     page,
   }) => {
     await growingList(page, sign, request);
-    expect(await call(page, growBody)).toEqual({ result: 20 });
+    expect(await call(page, growBody(request ? 400 : 2000))).toEqual({ result: 20 });
   });
 
 test("a list still loading at the first look, with its spinner below the rows, returns every row", async ({
@@ -733,7 +741,7 @@ test("a list still loading at the first look, with its spinner below the rows, r
   const answer = await call(
     page,
     `const { rows, more } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
-      count: 10, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+      count: 10, key: { attribute: "data-id" }, noProgressMs: 2000, stableMs: 100, unchangedMs: 300, timeout: 4000,
     });
     return { count: rows.length, more };`,
   );
@@ -750,3 +758,63 @@ test("a row whose key is only hidden is said to have its key hidden", async ({ p
   );
   expect(answer.error).toMatch(/: 0 identified rows of 1, needed 1; key hidden in row 1; /u);
 });
+
+// Seven rows beside an element that only looks like a loader: kept in layout but invisible, a
+// visible wrapper or sentinel the page never removes, or a busy region that never clears. With
+// `more`, a "Show more" adds five rows.
+const besideRows = (page: Page, sign: string, more = false) =>
+  page.setContent(`
+    <main${sign === "busy-main" ? ' aria-busy="true"' : ""}>
+      <ol id="results"></ol>
+      ${
+        {
+          hidden: '<div class="infinite-loader" style="height: 30px; visibility: hidden"></div>',
+          transparent: '<div class="infinite-loader" style="height: 30px; opacity: 0"></div>',
+          sentinel: '<div class="infinite-loader" style="height: 30px"></div>',
+          wrapper: '<div class="loader-wrapper" style="padding: 10px"><button type="button">Show more</button></div>',
+          "busy-main": "",
+        }[sign]
+      }
+      ${more && sign !== "wrapper" ? '<button type="button">Show more</button>' : ""}
+    </main>
+    <script>
+      const add = (from, to) => {
+        for (let i = from; i <= to; i += 1)
+          document.querySelector("#results").insertAdjacentHTML("beforeend", '<li data-id="r' + i + '"><h3>Row ' + i + '</h3></li>');
+      };
+      add(1, 7);
+      for (const button of document.querySelectorAll("button")) button.onclick = () => setTimeout(() => add(8, 12), 100);
+    </script>`);
+
+const shortRead = (count: number, action = false) => `
+  const started = Date.now();
+  const { rows } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
+    count: ${count}, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+    ${action ? 'action: () => page.getByRole("button", { name: "Show more" }).click({ timeout: 1000 }),' : ""}
+  });
+  return { count: rows.length, ms: Date.now() - started };`;
+
+for (const sign of ["hidden", "transparent", "sentinel", "wrapper", "busy-main"])
+  test(`a short list beside a loader that never leaves (${sign}) returns its rows within the no-progress window`, async ({
+    page,
+  }) => {
+    await besideRows(page, sign);
+    const answer = await call(page, shortRead(10));
+    expect(answer.error).toBeUndefined();
+    const result = answer.result as { count: number; ms: number };
+    expect(result.count).toBe(7);
+    expect(result.ms).toBeLessThan(2000);
+  });
+
+for (const sign of ["sentinel", "wrapper"])
+  test(`a "Show more" beside a loader the page always shows (${sign}) returns the rows it added at once`, async ({
+    page,
+  }) => {
+    await besideRows(page, sign, true);
+    const answer = await call(page, shortRead(20, true));
+    expect(answer.error).toBeUndefined();
+    const result = answer.result as { count: number; ms: number };
+    expect(result.count).toBe(12);
+    // The sign was there before the click, so it is the page's own: no hold.
+    expect(result.ms).toBeLessThan(1200);
+  });

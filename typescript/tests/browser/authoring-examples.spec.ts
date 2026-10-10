@@ -469,9 +469,10 @@ for (const [template, landing] of [
 // after a short load, their names filling in a moment after the rows appear. With "removed" the
 // button goes once every room shows; with "stuck" it stays and adds nothing.
 const roomNames = ["North room", "South room", "East room", "West room"];
-const appendingRooms = async (page: Page, total: number, ending: "removed" | "stuck") => {
+const appendingRooms = async (page: Page, total: number, ending: "removed" | "stuck", sentinel = false) => {
   await page.setContent(`
-    <ul aria-label="Rooms"></ul><button>Show more</button><output id="clicks">0</output>
+    <main><ul aria-label="Rooms"></ul>${sentinel ? '<div class="infinite-loader" style="height: 20px"></div>' : ""}</main>
+    <button>Show more</button><output id="clicks">0</output>
     <script>{
       const names = ${JSON.stringify(roomNames.slice(0, total))};
       let shown = 0;
@@ -504,6 +505,18 @@ test("append example reads each step's filled-in new rows until the control goes
   page,
 }) => {
   await appendingRooms(page, 4, "removed");
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example ends at the control going beside a loader the page always shows", async ({ page }) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The first page's loader counts until it held for the runtime's fixed 8 s no-progress window.",
+  });
+  await appendingRooms(page, 4, "removed", true);
   expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
     Either.right({ rooms: roomList(4), coverage: "complete" }),
   );

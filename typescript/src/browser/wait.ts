@@ -48,8 +48,10 @@ export interface WaitRecord {
  *   on a form control) counts while it shows until it has held for `noProgressMs`. Determinate
  *   bars (ratings, steps, meters) never count, and signs showing before the action in the same
  *   number, or class hints already there at the first look, are the page's own decoration.
- *   `waitForRows` also counts, for as long as it shows, any such sign beside its rows (in their
- *   container or the element around it, never inside a row);
+ *   `waitForRows` also counts a sign beside its rows (in their container or the element around
+ *   it, never inside a row, and only when it is visible): one there before the action, in the
+ *   same number, is the page's own; any other counts while it shows, until it and the rows have
+ *   held for `noProgressMs` with no request the action started in flight;
  * - DOM changes inside the author's `region` (never the whole page: carousels and ads never stop);
  * - one of the site's own `document`, `xhr` or `fetch` requests in flight (the site is
  *   `siteDomain`, else a conservative guess from the page's host). A request the action started
@@ -180,7 +182,7 @@ const waitProgress = (options = {}) => {
   // Generic signs, each kind with its count before the action (or, for class hints, at the first
   // look), its count at the last look and when that last changed. A sign counts while it shows
   // more than before, until its count has held for the no-progress window. A sign that stays is
-  // part of the page. (waitForRows also counts the signs beside its rows: see waitListSigns.)
+  // part of the page. (waitForRows also judges the signs beside its rows: see listSigns.)
   const generic = {
     signs: { selector: waitLoadingSigns, holdMs: noProgressMs, before: undefined, count: 0, changedAt: started, shows: false },
     classes: {
@@ -293,6 +295,11 @@ const waitProgress = (options = {}) => {
       return loadingShows || (pageSigns && (generic.signs.shows || generic.classes.shows)) ||
         now - causedEnded < (options.unchangedMs ?? waitLimits.unchanged) ||
         [...pending.values()].some(({ at, caused }) => now - at < (caused ? waitLimits.lateFillCap : busyRequestMs));
+    },
+    // A request the action started still in flight.
+    causedInflight: () => {
+      const now = Date.now();
+      return [...pending.values()].some(({ at, caused }) => caused && now - at < waitLimits.lateFillCap);
     },
     diagnostics: () => ({
       signs: Object.fromEntries(Object.entries(signs).map(([kind, sign]) => [kind, { ...sign }])),
@@ -516,9 +523,13 @@ const waitReadInPage = (elements, spec) => {
     return { state: "filled", value };
   };
   // How many loading signs show beside a list's rows: in the rows' container or the element around
-  // it, or busy on an element around them, but never inside a row. A decoration lives in its card,
-  // while a list still loading shows its spinner, skeleton or busy state beside the rows. A class
-  // hint that holds rows is their layout, not a sign.
+  // it, never inside a row. A decoration lives in its card, while a list still loading shows its
+  // spinner, skeleton or busy state beside the rows. A class hint that holds rows is their layout,
+  // not a sign, and a sign kept in layout but invisible (visibility or opacity) does not show.
+  const shown = (element) =>
+    typeof element.checkVisibility === "function"
+      ? element.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+      : element.getClientRects().length > 0;
   const listSigns = (rows, selectors) => {
     if (rows.length === 0) return 0;
     let common = rows[0].parentElement;
@@ -527,19 +538,16 @@ const waitReadInPage = (elements, spec) => {
     const outer = common.parentElement;
     const root = outer === null || outer === document.body || outer === document.documentElement ? common : outer;
     let count = 0;
-    for (let node = root.parentElement; node !== null; node = node.parentElement)
-      if (node.matches(selectors.signs) && visible(node)) count += 1;
     for (const element of [root, ...root.querySelectorAll(selectors.all)])
       if (
         element.matches(selectors.all) &&
-        visible(element) &&
+        shown(element) &&
         !rows.some((row) => row.contains(element)) &&
         (element.matches(selectors.signs) || !rows.some((row) => element.contains(row)))
       )
         count += 1;
     return count;
   };
-  // One look reads the rows and the signs beside them together, so neither is staler.
   if (spec.mode === "rows")
     return { signs: listSigns(elements, spec.signs), rows: elements.map((row) => {
       // A row's field is its first visible match, such as the price a responsive card shows
@@ -697,7 +705,21 @@ const waitForRows = async (rows, fields, options = {}) => {
   const settle = options.stableMs ?? waitLimits.settle;
   const fewSettle = Math.max(settle, options.unchangedMs ?? waitLimits.unchanged);
   spec.signs = { all: waitLoadingSigns + ", " + waitLoadingClasses, signs: waitLoadingSigns };
-  return valueWaitLoop("waitForRows", options, async (progress) => {
+  const noProgressMs = options.noProgressMs ?? waitLimits.answer;
+  // The signs beside the rows. Those there before the action, in the same number, are the page's
+  // own. One that came after it, or that shows without an action, counts while it shows, until it
+  // and the rows have held unchanged for noProgressMs with no request the action started still in
+  // flight: then it is decoration too, so a sign that never leaves costs one window, never the cap.
+  let signsBefore = 0;
+  let signsCount;
+  let signsChangedAt = 0;
+  let rowsSeen;
+  let rowsChangedAt = 0;
+  const prepare = async () => {
+    await options.prepare?.();
+    if (options.action !== undefined) signsBefore = (await rows.evaluateAll(waitReadInPage, spec)).signs;
+  };
+  return valueWaitLoop("waitForRows", { ...options, prepare }, async (progress) => {
     const { rows: read, signs: listSigns } = await rows.evaluateAll(waitReadInPage, spec);
     const identified = read.filter((row) => row.key.state === "filled");
     const hiddenKeys = read.flatMap((row, index) => (row.key.state === "hidden" ? [index + 1] : []));
@@ -723,14 +745,28 @@ const waitForRows = async (rows, fields, options = {}) => {
     const complete = problems.length === 0;
     const few = taken.length < count;
     if (hiddenKeys.length > 0) problems.push("key hidden" + valueWaitRows(hiddenKeys));
+    const now = Date.now();
+    if (listSigns !== signsCount) {
+      signsCount = listSigns;
+      signsChangedAt = now;
+    }
+    const rowsNow = JSON.stringify(taken);
+    if (rowsNow !== rowsSeen) {
+      rowsSeen = rowsNow;
+      rowsChangedAt = now;
+    }
+    const listLoading = listSigns > signsBefore &&
+      (now - Math.max(signsChangedAt, rowsChangedAt) < noProgressMs || progress.causedInflight());
     return {
       // No identified row is never an answer: an empty list is waitForOutcome's to decide. Fewer
       // rows than asked are an answer only once nothing shows the list is still loading.
-      ready: () => complete && taken.length > 0 && (!few || (listSigns === 0 && !progress.busy(false))),
-      signs: listSigns > 0,
+      ready: () => complete && taken.length > 0 && (!few || (!listLoading && !progress.busy(false))),
+      signs: listLoading,
       settleMs: few ? fewSettle : settle,
       filled: taken.length * 1000 + filledCount,
-      snapshot: JSON.stringify(taken),
+      // The rows are read before the signs beside them, so a loader leaving in between restarts
+      // the settle, and the next look sees the rows it left for.
+      snapshot: JSON.stringify([listSigns, taken]),
       reason: "values_loading",
       problems:
         identified.length + " identified rows of " + read.length + ", needed " + count +
@@ -841,7 +877,8 @@ const waitForChange = async (fields, options = {}) => {
  * the value waits `settle` (0.5 s) between their two looks. While it waits it watches the page's
  * progress: the site's own loading sign passed as `loading`, for as long as it shows; a generic
  * sign (a busy region, an indeterminate progress bar, a skeleton, shimmer, spinner or loader class,
- * within `region` when named) only while it is new, so decorations never hold a wait; DOM changes
+ * within `region` when named) only while it is new, so a decoration holds a wait for at most one
+ * no-progress window, and one there before the action not at all; DOM changes
  * inside the `region` you name; one of the site's own document or API requests in flight (beacons,
  * polls and long-open requests aside; pass the context's `siteDomain` to say which hosts are the
  * site's); the URL changing; and the wait's own reads filling or changing. It keeps waiting while progress
@@ -880,8 +917,9 @@ const waitForChange = async (fields, options = {}) => {
  * placeholder }` (no selector reads the row itself), read from its first visible match; a needed
  * text field whose matches are all hidden is reported `hidden`. A row without a key is a
  * placeholder slot and is skipped. When fewer identified rows than `count` exist, it returns them
- * once their count and values held for `unchangedMs` with no loading sign beside the rows and no
- * request the action started still in flight; no identified row at all
+ * once their count and values held for `unchangedMs`, no loading sign beside the rows still counts,
+ * no request the action started is in flight, and no other site request started under 4 s ago is;
+ * no identified row at all
  * is never an answer, so decide an empty list with `waitForOutcome` first. Options also take
  * `action` (run once first, such as a "load more" click), `loading`, `region`, `siteDomain`,
  * `noProgressMs` and `timeout` (default `lateFillCap`, 15 s).
