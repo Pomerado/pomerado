@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults, waitCode } from "../../src/browser/index.js";
 
 const PageOption = Schema.Struct({ value: Schema.NonEmptyString, label: Schema.NonEmptyString });
 const Offer = Schema.Union(
@@ -108,6 +108,7 @@ export default defineOperation(
     const booked = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${waitCode}
         const chosenSeat = ${JSON.stringify(answer.seat)};
         const chosenTraveler = ${JSON.stringify(answer.traveler)};
         const seatMap = page.getByRole("radiogroup", { name: "Seats", exact: true });
@@ -116,9 +117,16 @@ export default defineOperation(
         if ((await seat.count()) !== 1 || (await seat.isDisabled())) return { failure: "choice_gone" };
         await seat.check({ timeout: ${timeoutDefaults.action} });
         await page.getByLabel("Traveler", { exact: true }).selectOption(chosenTraveler, { timeout: ${timeoutDefaults.action} });
-        await page.getByRole("button", { name: "Book", exact: true }).click({ timeout: ${timeoutDefaults.action} });
+        // The booking is sent once; a page that shows no confirmation is reported unconfirmed.
+        const book = page.getByRole("button", { name: "Book", exact: true });
         const confirmation = page.getByRole("status", { name: "Booking confirmation", exact: true });
-        const shown = await confirmation.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} }).then(() => true, () => false);
+        const shown = await waitForOutcome({ confirmation }, { action: () => book.click({ timeout: waitLimits.action }) }).then(
+          () => true,
+          (error) => {
+            if (error.name !== "OutcomeWaitFailure") throw error;
+            return false;
+          },
+        );
         if (!shown) return { failure: "not_confirmed" };
         return { reference: await confirmation.getAttribute("data-reference") };
       `,

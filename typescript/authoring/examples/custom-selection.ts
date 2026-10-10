@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
+import { defineOperation, waitCode } from "../../src/browser/index.js";
 
 const AirportCode = Schema.String.pipe(Schema.pattern(/^[A-Z]{1,4}$/));
 
@@ -24,34 +24,35 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${waitCode}
         const code = ${JSON.stringify(input.code)};
         const query = ${JSON.stringify(input.query)};
         const combobox = page.getByRole("combobox", { name: "Airport", exact: true });
+        await waitForOutcome({ combobox });
         // Search only inside the listbox this control owns, never the whole page.
-        const popupId = await combobox.getAttribute("aria-controls", { timeout: ${timeoutDefaults.answerCap} });
+        const popupId = await combobox.getAttribute("aria-controls", { timeout: waitLimits.action });
         if (!popupId) return { failure: "ownership_unknown" };
         const popup = page.locator("[id=" + JSON.stringify(popupId) + "]");
         if ((await combobox.getAttribute("aria-expanded")) !== "true")
-          await combobox.click({ timeout: ${timeoutDefaults.action} });
-        await combobox.fill(query, { timeout: ${timeoutDefaults.action} });
+          await combobox.click({ timeout: waitLimits.action });
         // Old options can stay visible, so wait until the listbox answers this query.
-        await popup
-          .and(page.locator("[data-query=" + JSON.stringify(query) + "]"))
-          .waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} });
+        await waitForOutcome(
+          { answered: popup.and(page.locator("[data-query=" + JSON.stringify(query) + "]")) },
+          { action: () => combobox.fill(query, { timeout: waitLimits.action }) },
+        );
         const option = popup.locator("[role=option][data-key=" + JSON.stringify(code) + "]");
         if ((await option.count()) !== 1) return { failure: "option_missing" };
         if ((await option.getAttribute("aria-disabled")) === "true")
           return { failure: "option_disabled" };
-        await option.click({ timeout: ${timeoutDefaults.action} });
         // The control's name can change after a choice, so read the committed code from the
-        // site's status instead of the combobox.
+        // site's status instead of the combobox. The click is the wait's action, so a status
+        // that never changes is confirmed unchanged, never waited out.
         const selected = page.getByRole("status", { name: "Selected airport", exact: true });
-        const until = Date.now() + ${timeoutDefaults.answerCap};
-        while (Date.now() < until) {
-          if ((await selected.textContent()) === code) return { code };
-          await page.waitForTimeout(100);
-        }
-        return { failure: "not_committed" };
+        const { values } = await waitForChange(
+          { code: selected },
+          { action: () => option.click({ timeout: waitLimits.action }) },
+        );
+        return values.code === code ? { code } : { failure: "not_committed" };
       `,
     });
     if (!answer.success)

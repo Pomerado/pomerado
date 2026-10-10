@@ -29,9 +29,9 @@ export const pickTravelDate = defineOperation(
         ${waitCode}
         const date = ${JSON.stringify(input.date)};
         const field = page.getByRole("textbox", { name: "Travel date", exact: true });
-        await field.click({ timeout: waitLimits.action });
+        // A popup that never opens fails once the page stops progressing.
         const popup = page.getByRole("dialog", { name: "Choose date", exact: true });
-        await popup.waitFor({ state: "visible", timeout: waitLimits.answerCap });
+        await waitForOutcome({ popup }, { action: () => field.click({ timeout: waitLimits.action }) });
         // The months the popup shows, as its panels name them.
         const shownMonths = { months: { locator: popup.locator("[data-month]"), attribute: "data-month", all: true } };
         let months = await popup.locator("[data-month]").evaluateAll((panels) =>

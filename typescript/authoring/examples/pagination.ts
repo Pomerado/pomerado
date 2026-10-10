@@ -67,12 +67,14 @@ export const readRooms = defineOperation(
       limitation: Schema.optional(Schema.String),
     }),
   },
-  async ({ kernel, sessionId, input, errors }) => {
+  async ({ kernel, sessionId, siteDomain, input, errors }) => {
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 120,
       code: `
         ${waitCode}
         const limit = ${input.limit};
+        // The site's own requests, on every host of its domain, count as progress.
+        const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
         const list = page.getByRole("list", { name: "Rooms", exact: true });
         const rows = list.getByRole("listitem");
         const more = page.getByRole("button", { name: "Show more", exact: true });
@@ -81,6 +83,7 @@ export const readRooms = defineOperation(
             count,
             key: { attribute: "data-room-id" },
             region: list,
+            ...site,
             ...(action === undefined ? {} : { action }),
           });
         // An empty list is an answer only the site's own words give, never a list without rows.
@@ -89,13 +92,16 @@ export const readRooms = defineOperation(
         const shown = await waitForOutcome({
           empty: page.getByRole("status").filter({ hasText: /^No rooms$/ }),
           list,
-        });
+        }, site);
         if (shown === "empty") return { rows: [], end: "list_end" };
         {
-          // A step adds about a page of rows: wait for that many more, up to the limit. A shorter
-          // last page returns once its rows held with no loading sign or request in flight.
-          const pageSize = Math.max(1, await rows.count());
-          let found = await read(Math.min(limit, pageSize));
+          // The first page's size comes from its rows once they have all arrived: a list can show
+          // before its rows finish streaming in, so a count taken now could be one row. Asking for
+          // the limit returns fewer rows once their count held with no loading sign or request in
+          // flight. Each step then adds about a page of rows: wait for that many more, up to the
+          // limit, and a shorter last page returns the same way.
+          let found = await read(limit);
+          const pageSize = Math.max(1, found.rows.length);
           for (let step = 0; found.rows.length < limit; step++) {
             if (step === 20) return { rows: found.rows, end: "step_cap" };
             if ((await more.count()) !== 1 || !(await more.isEnabled())) return { rows: found.rows, end: "list_end" };

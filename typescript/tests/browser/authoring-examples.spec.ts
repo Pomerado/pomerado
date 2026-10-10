@@ -247,6 +247,9 @@ const recordsSite = async (page: Page, origin: string) => {
     }
     if (url.pathname === "/records/record_5")
       return html(`<script>location.replace("/records/archived")</script>`);
+    if (url.pathname === "/records/record_gone")
+      return route.fulfill({ status: 404, contentType: "text/html", body: `<h1>Record not found</h1>` });
+    if (url.pathname === "/records/record_blank") return html(`<main><p>Welcome back</p></main>`);
     const shown = url.pathname === "/records/record_7" ? "record_42" : url.pathname.slice(9);
     return html(`<section role="region" aria-label="Continue to record" data-record-id="${shown}">
         <button onclick="this.closest('section').outerHTML = '<section role=region aria-label=\\'Record details\\' data-record-id=${shown}><h1>Quarterly report</h1></section>'">Continue</button>
@@ -334,6 +337,42 @@ test("detail example opens the caller's record URL unchanged and checks the page
   ])
     expect(failure(await read(offSite))).toMatchObject({ _tag: "InvalidInput" });
   expect(site.opened).toHaveLength(before);
+});
+
+test("detail example reports the site's not-found page for a record URL at once", async ({ page }) => {
+  const origin = "https://records.example.invalid";
+  await recordsSite(page, origin);
+  const started = Date.now();
+  const { result } = await runExample(
+    page,
+    detailFromUrl,
+    { record_url: `${origin}/records/record_gone` },
+    { siteOrigin: origin },
+  );
+  expect(failure(result)).toMatchObject({ _tag: "InvalidInput", message: "The site has no record at this URL" });
+  expect(Date.now() - started).toBeLessThan(3000);
+});
+
+test("detail example fails a record URL whose page shows no answer once the page stops progressing", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The example uses the runtime's 8 s no-progress budget, which a test cannot inject.",
+  });
+  const origin = "https://records.example.invalid";
+  await recordsSite(page, origin);
+  const started = Date.now();
+  const { result } = await runExample(
+    page,
+    detailFromUrl,
+    { record_url: `${origin}/records/record_blank` },
+    { siteOrigin: origin },
+  );
+  expect(failure(result)).toMatchObject({ _tag: "BrowserActionTimeout" });
+  expect(String((failure(result) as { message: string }).message)).toMatch(/^outcome_unknown after /u);
+  // Well before the 30 s cap.
+  expect(Date.now() - started).toBeLessThan(15_000);
 });
 
 // A rooms site whose search the build proved reachable by its results URL, /search?q=. Site
@@ -490,6 +529,42 @@ test("append example ends the list at a step that adds no rows", async ({ page }
     Either.right({ rooms: roomList(2), coverage: "complete" }),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+// A rooms list with padding that streams each page in: ten rows per load, one every 80 ms.
+const streamingRooms = (page: Page, total: number) =>
+  page.setContent(`
+    <ul aria-label="Rooms" style="padding: 20px"></ul><button>Show more</button><output id="clicks">0</output>
+    <script>{
+      let shown = 0;
+      const list = document.querySelector("ul");
+      const next = () => {
+        const until = Math.min(shown + 10, ${total});
+        for (let at = 1; shown < until; at += 1) {
+          const id = (shown += 1);
+          setTimeout(() => list.insertAdjacentHTML("beforeend",
+            '<li data-room-id="room-' + id + '"><span class="name">Room ' + id + '</span></li>'), at * 80);
+        }
+      };
+      document.querySelector("button").onclick = () => { document.querySelector("#clicks").textContent++; next(); };
+      next();
+    }</script>`);
+
+test("append example takes its page size from a first page that streamed in, not from its first rows", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "A first page shorter than the limit counts only once its rows held for the helper's fixed two seconds.",
+  });
+  await streamingRooms(page, 40);
+  expect((await runExample(page, readRooms, { limit: 30 })).result).toEqual(
+    Either.right({
+      rooms: Array.from({ length: 30 }, (_, index) => ({ id: `room-${index + 1}`, name: `Room ${index + 1}` })),
+      coverage: "complete",
+    }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("2");
 });
 
 const siteOrigin = "https://members.example.test";
@@ -696,6 +771,31 @@ test("ARIA listbox example waits for this query's delayed options and reads the 
     Either.right({ code: "B" }),
   );
   await expect(page.locator("#choices")).toHaveAttribute("data-query-at-commit", "airport b");
+  await expect(page.locator("#commits")).toHaveText("1");
+});
+
+test("ARIA listbox example reports a choice the status never shows without waiting out a fixed timeout", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <input role="combobox" aria-label="Airport" aria-expanded="false" aria-controls="choices">
+    <output role="status" aria-label="Selected airport">A</output><output id="commits">0</output>
+    <ul role="listbox" id="choices" style="display:none;min-height:20px"></ul>
+    <script>
+      const control = document.querySelector("input"); const popup = document.querySelector("#choices");
+      control.onclick = () => { control.setAttribute("aria-expanded", "true"); popup.style.display = "block"; };
+      control.oninput = () => setTimeout(() => {
+        popup.innerHTML = '<li role="option" data-key="B">Airport B</li>';
+        popup.dataset.query = control.value;
+      }, 50);
+      popup.onclick = () => { document.querySelector("#commits").textContent++; };
+    </script>`);
+  const started = Date.now();
+  expect(
+    failure((await runExample(page, chooseAirport, { code: "B", query: "airport b" })).result),
+  ).toMatchObject({ _tag: "OperationFailure", message: "not_committed", dispatch: "sent" });
+  // The status stayed the same for the unchanged window after the click, never a 30 s wait.
+  expect(Date.now() - started).toBeLessThan(5000);
   await expect(page.locator("#commits")).toHaveText("1");
 });
 

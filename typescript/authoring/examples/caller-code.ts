@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
+import { defineOperation, waitCode } from "../../src/browser/index.js";
 
 // A code the site sends during the action splits the flow into two calls. The first call stops
 // where the site asks for the code; the script asks the caller for it, and the second call gets
@@ -32,10 +32,16 @@ export default defineOperation(
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
+        ${waitCode}
         const current = new URL(page.url());
         if (!onSite(current)) return false;
-        await page.getByRole("button", { name: "Send code", exact: true }).click({ timeout: ${timeoutDefaults.action} });
-        await page.getByLabel("Verification code", { exact: true }).waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} });
+        // The code field shows once the site sent the code; a page that stops progressing without
+        // it fails in seconds.
+        const send = page.getByRole("button", { name: "Send code", exact: true });
+        await waitForOutcome(
+          { field: page.getByLabel("Verification code", { exact: true }) },
+          { action: () => send.click({ timeout: waitLimits.action }) },
+        );
         return true;
       `,
     });
@@ -48,10 +54,18 @@ export default defineOperation(
     const confirmed = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
-        await page.getByLabel("Verification code", { exact: true }).fill(${JSON.stringify(code)}, { timeout: ${timeoutDefaults.action} });
-        await page.getByRole("button", { name: "Confirm", exact: true }).click({ timeout: ${timeoutDefaults.action} });
+        ${waitCode}
+        await page.getByLabel("Verification code", { exact: true }).fill(${JSON.stringify(code)}, { timeout: waitLimits.action });
+        // The confirm is sent once; a page that shows no confirmation is reported unconfirmed.
+        const confirm = page.getByRole("button", { name: "Confirm", exact: true });
         const done = page.getByRole("status", { name: "Address change confirmed", exact: true });
-        return await done.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} }).then(() => true, () => false);
+        return await waitForOutcome({ done }, { action: () => confirm.click({ timeout: waitLimits.action }) }).then(
+          () => true,
+          (error) => {
+            if (error.name !== "OutcomeWaitFailure") throw error;
+            return false;
+          },
+        );
       `,
     });
     if (!confirmed.success)

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
+import { defineOperation, waitCode } from "../../src/browser/index.js";
 
 const Picked = Schema.Union(
   Schema.Struct({ selected_key: Schema.NonEmptyString }),
@@ -29,28 +29,32 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${waitCode}
         const query = ${JSON.stringify(input.query)};
         const key = ${JSON.stringify(input.key)};
-        await page.getByRole("button", { name: "Choose catalog item", exact: true }).click({ timeout: ${timeoutDefaults.action} });
         // Locators are strict: two matching dialogs, inputs or options throw instead of guessing.
+        // A dialog that never opens fails once the page stops progressing, not after a fixed wait.
         const dialog = page.getByRole("dialog", { name: "Catalog item picker", exact: true });
-        await dialog.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} });
+        const launcher = page.getByRole("button", { name: "Choose catalog item", exact: true });
+        await waitForOutcome({ dialog }, { action: () => launcher.click({ timeout: waitLimits.action }) });
         const search = dialog.getByRole("textbox", { name: "Find catalog item", exact: true });
-        await search.fill(query, { timeout: ${timeoutDefaults.action} });
         // The site replaces the input and marks the dialog with the query its options belong
         // to. Old options can still be visible, so wait for that marker first.
-        await dialog
-          .and(page.locator("[data-query=" + JSON.stringify(query) + "]"))
-          .waitFor({ timeout: ${timeoutDefaults.answerCap} });
-        if ((await search.inputValue({ timeout: ${timeoutDefaults.action} })) !== query) return { failure: "query_mismatch" };
+        await waitForOutcome(
+          { answered: dialog.and(page.locator("[data-query=" + JSON.stringify(query) + "]")) },
+          { action: () => search.fill(query, { timeout: waitLimits.action }) },
+        );
+        if ((await search.inputValue({ timeout: waitLimits.action })) !== query) return { failure: "query_mismatch" };
         const option = dialog.getByRole("option", { name: key, exact: true });
-        await option.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} });
+        await waitForOutcome({ option });
         if ((await option.getAttribute("data-key")) !== key || !(await option.isEnabled()))
           return { failure: "option_identity_mismatch" };
-        await option.click({ timeout: ${timeoutDefaults.action} });
-        // One click only. Missing commitment is reported, never clicked again.
+        await option.click({ timeout: waitLimits.action });
+        // One click only. Missing commitment is reported, never clicked again. The value waits
+        // read text and attributes, not an input's current value, so this polls it for the
+        // no-progress budget.
         const committed = page.getByRole("textbox", { name: "Selected catalog key", exact: true });
-        const until = Date.now() + ${timeoutDefaults.answerCap};
+        const until = Date.now() + waitLimits.answer;
         while (Date.now() < until) {
           if ((await committed.inputValue({ timeout: 1000 })) === key) return { selected_key: key };
           await page.waitForTimeout(100);

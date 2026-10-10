@@ -180,29 +180,28 @@ export const detailFromUrl = defineOperation(
         const detail = page.getByRole("region", { name: "Record details", exact: true });
         const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
         const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
+        // The site's own page for an unknown record.
+        const missing = page.getByRole("heading", { name: "Record not found", exact: true });
         // The site may serve the record under another of its routes; its own record id decides.
-        const classify = async () => {
+        // A page that shows none of these answers and stops progressing throws outcome_unknown,
+        // which the host retries once, in seconds rather than after a fixed wait.
+        const settle = async (outcomes, options) => {
           if (!onSite(new URL(page.url()))) return { state: "target_mismatch" };
-          if ((await detail.count()) === 1)
-            return { state: "detail", id: await detail.getAttribute("data-record-id") };
-          if ((await interstitial.count()) === 1)
-            return { state: "interstitial", id: await interstitial.getAttribute("data-record-id") };
-          return { state: "loading" };
-        };
-        const settle = async () => {
-          const until = Date.now() + waitLimits.answerCap;
-          let seen = await classify();
-          while (seen.state === "loading" && Date.now() < until) {
-            await page.waitForTimeout(100);
-            seen = await classify();
+          let shown;
+          try {
+            shown = await waitForOutcome(outcomes, options);
+          } catch (error) {
+            if (error.name !== "OutcomeWaitFailure" || error.reason !== "outcome_ambiguous") throw error;
+            return { state: "ambiguous" };
           }
-          return seen;
+          if (!onSite(new URL(page.url()))) return { state: "target_mismatch" };
+          if (shown === "missing") return { state: "missing" };
+          return { state: shown, id: await (shown === "detail" ? detail : interstitial).getAttribute("data-record-id") };
         };
-        let seen = await settle();
-        if (seen.state === "interstitial" && seen.id === expected && (await proceed.count()) === 1) {
-          await proceed.click({ timeout: waitLimits.action });
-          seen = await settle();
-        }
+        let seen = await settle({ missing, detail, interstitial });
+        if (seen.state === "interstitial" && seen.id === expected && (await proceed.count()) === 1)
+          seen = await settle({ missing, detail }, { action: () => proceed.click({ timeout: waitLimits.action }) });
+        if (seen.state === "missing") return { refused: "The site has no record at this URL" };
         if (seen.state === "target_mismatch") return { failure: "target_mismatch" };
         if (seen.state !== "detail" && seen.state !== "interstitial") return { failure: "detail_unavailable" };
         if (seen.id !== expected) return { failure: "identity_mismatch" };
@@ -280,7 +279,9 @@ export const searchThenRead = defineOperation(
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
-        const query = ${JSON.stringify(input.query)};
+        const query = ${JSON.stringify(input.query.trim())};
+        // The site's own requests, on every host of its domain, count as progress.
+        const site = siteDomain === null ? {} : { siteDomain };
         const results = page.getByRole("list", { name: "Rooms", exact: true });
         // Every answer the site gives a search, highest priority first.
         const answers = {
@@ -293,7 +294,7 @@ export const searchThenRead = defineOperation(
         // controls run instead.
         const answered = async (options) => {
           try {
-            return await waitForOutcome(answers, options);
+            return await waitForOutcome(answers, { ...site, ...options });
           } catch (error) {
             if (error.name !== "OutcomeWaitFailure") throw error;
             return undefined;
@@ -308,7 +309,7 @@ export const searchThenRead = defineOperation(
           if ((await searchBox.count()) !== 1) return "search_unavailable";
           await searchBox.fill(query, { timeout: waitLimits.action });
           // No fallback after the fallback: a page that shows no answer throws, and the host retries.
-          const shown = await waitForOutcome(answers, { action: () => searchBox.press("Enter", { timeout: waitLimits.action }) });
+          const shown = await waitForOutcome(answers, { ...site, action: () => searchBox.press("Enter", { timeout: waitLimits.action }) });
           return (await shownQuery()) === query ? shown : "query_mismatch";
         };
         await page.goto(${JSON.stringify(resultsUrl.href)}, { waitUntil: "domcontentloaded", timeout: waitLimits.navigation });
@@ -323,6 +324,7 @@ export const searchThenRead = defineOperation(
           count: ${input.limit},
           key: { attribute: "data-room-id" },
           region: results,
+          ...site,
         });
       `,
     });
