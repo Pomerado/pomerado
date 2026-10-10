@@ -32,7 +32,8 @@ export const defineHttpOperation = <
     run: (input: Input) => Effect.flatMap(SiteHttp, (http) => operation.run(input, http)),
   });
 
-const safeMethods = new Set<SiteHttpRequest["method"]>(["GET", "HEAD", "OPTIONS"]);
+/** Methods a read may send again: they change nothing on the site. */
+export const safeMethods = new Set<SiteHttpRequest["method"]>(["GET", "HEAD", "OPTIONS"]);
 const snippetLength = 300;
 
 const headerOf = (response: Pick<SiteHttpResult, "headers">, name: string) =>
@@ -77,7 +78,7 @@ export const requestPastChallenge = (
   });
 
 /** One line that says what came back, for an error the agent can act on. */
-const described = (request: SiteHttpRequest, response: SiteHttpResult) => {
+export const described = (request: SiteHttpRequest, response: SiteHttpResult) => {
   const snippet = textOf(response.body.subarray(0, snippetLength * 4))
     .replace(/\s+/g, " ")
     .slice(0, snippetLength);
@@ -87,7 +88,7 @@ const described = (request: SiteHttpRequest, response: SiteHttpResult) => {
 };
 
 /** The answer's facts, for the agent's result: the site answered, and how. */
-const answer = (
+export const answer = (
   kind: HttpAnswerFailure["class"],
   request: SiteHttpRequest,
   response: SiteHttpResult,
@@ -100,7 +101,7 @@ const answer = (
   bytes: response.body.byteLength,
 });
 
-const unexpected = (message: string, http: HttpAnswerFailure, cause?: unknown) =>
+export const unexpected = (message: string, http: HttpAnswerFailure, cause?: unknown) =>
   new OperationFailure(message, {
     dispatch: "sent",
     http,
