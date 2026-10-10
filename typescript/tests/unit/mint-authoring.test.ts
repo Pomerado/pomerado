@@ -204,6 +204,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["pagination", "1. Validate cursor/query/account scope before browser effects."],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
   ["writes", "A write build changes something real on the caller's account"],
+  ["writes", "Prefer confirming the write from its commit request."],
   ["writes", "- The first read-back that matches confirms the write; stop there."],
   ["writes", "- State from before the write never matches."],
   [
@@ -304,6 +305,30 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   [
     "publication",
     'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may stand in for one value that truly does not parse, with that field\'s description saying so; a record\'s whole text is only an `include` section (core skill, optional sections). - **Clean output.** Every string is clean displayed text: no code, styles, markup, template leftovers, control labels or repeated entries. `finish_build` refuses an example whose output holds code, styles, markup or template leftovers, and gives the publication review the host\'s other output checks as leads. Check each finding against the page and fix a wrong read in source. A check can be wrong: when a flagged value is correct as returned, such as code on a tool that returns code or the page\'s own text that only resembles code, name its path and check with the reason in `finish_build`\'s `outputOverrides`; Guardian checks the reason against the captures. - **Inputs.**',
+  ],
+  // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
+  // most rows to pass and returns what is there after that.
+  ["core", "After applying a filter, prefer waiting up to 15s for results to filter."],
+  // A reload after a choice such as a city can drop the search box's suggestions, so the tool
+  // types into the box again.
+  [
+    "core",
+    "After a step that reloads the page, such as choosing a city, prefer typing into the search box again when its suggestions don't appear.",
+  ],
+  // A preselected option that only shares the caller's data, tracks or signs up for marketing is
+  // turned off on every run, with no input and no question.
+  ["core", "- Turn safety defaults off."],
+  // An obvious refusal settles the caller's run at once; one from the tool's own empty read never
+  // claims to be obvious.
+  [
+    "core",
+    'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
+  ],
+  // A record whose name differs from the caller's only in case is still that record, so a picker's
+  // "Add new" row never creates a near-duplicate of it.
+  [
+    "forms",
+    'Prefer matching an existing record by a case-insensitive exact name, and prefer never picking an "Add new" row when an existing record matches.',
   ],
 ];
 
@@ -626,6 +651,40 @@ it("has a write confirm from its first matching read-back, never from state befo
   ).toContain("// The first read-back that matches confirms the write");
 });
 
+/*
+ * A write whose own commit request came back 2xx or 3xx, with no error in its body or on the page
+ * after it, went through, so the minter confirms it in the commit call instead of opening another
+ * page to prove it. It reads the site back only when that request cannot settle the write.
+ */
+it("has a write confirm from its own commit request, and read back only when that cannot settle it", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does. Wait too for every way the page can answer with `waitForOutcome`, listing the site\'s error or validation message first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return the site\'s own status word for it in the output. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+  );
+  // Every case the request cannot settle keeps a read-back.
+  expect(text("writes")).toContain(
+    "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body shows an error, or can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then read the confirmation it shows (an order, booking or reference number) or the saved state (the orders page, the booking list, the updated profile), match it to the caller's values, return the number or record in the output, and call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from any other request.",
+  );
+  expect(text("writes")).toContain(
+    "Before any further write, run an `act` step that only reads the page or the account. When `stateChangingRequests` shows the failed step's commit request went through, that step may read only the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
+  );
+  expect(text("writes")).not.toContain("a 200 response is not a confirmation");
+  expect(text("forms")).toContain(
+    "Prefer confirming from the commit request the final click sends, checked as the writes skill says, and otherwise by meaningful resource/readback, never from a generic toast alone or another request's 200.",
+  );
+  expect(text("forms")).toContain(
+    "Never call it for a toast alone, a status code without the page's error check, or a missing confirmation",
+  );
+  // The request list carries each request's response status for that check.
+  expect(text("core")).toContain(
+    "Each entry also lists its requests' final response `statuses` in order, and `unanswered` counts any with no answer when the step ended.",
+  );
+  expect(text("core")).toContain(
+    "For a write session, the list shows the commit your step caused and any autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no error after it, is what the writes skill confirms from. A 200 whose body reports an error, as GraphQL can, did not go through.",
+  );
+});
+
 // A write that passed the page's headings to `verified` lost its receipt. With no argument there
 // is nothing to get wrong, so no skill or reference teaches the argument form any more.
 it("teaches every write to call verified() with no argument and declare a read-back", async () => {
@@ -656,17 +715,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["024fda27481620738afa2a5ef4ac528cb24208bdeeafd3dd39d0757ed0b57825", "core"],
-    ["6b3101374f24584018c782be302385ee559178002b177c9348e7d22f0d5bd36c", "search"],
+    ["b6184ec865d1203c4f9bb153591f35b933fe5727e1d98ff05172483e33423443", "core"],
+    ["5f1b939bceee68f83499c8cc5715730dcadebf0b5b2907a7e2f8727940499960", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["4145316cf38994898b0f585b423538eba50f9d8d1cdb17c776912340380ec154", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["74476a5505ce6492c2e631923f1e5632526e7130faa08ef96c9eccfdcfe8508c", "forms"],
-    ["708559d8ec4def8d573c3bd3504494ee27ef62a054af69f3601e59f6a43f9251", "writes"],
+    ["bf93224e727fa574c22d4c3e47f8b88432b234a306990aa1acb50bfdf6d8f9f7", "forms"],
+    ["6c3b0e8152250a208b2350eef8d30492e3ae9a9a9e62cc3f9e31d3339b2135e1", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["7d1941f96fd36ca47595f77251b20f38448070e878c98bad77795c6f2663bc44", "caller-input"],
-    ["d61f8739809f61f08b3c94210b201ea5a636975762702b5d2aa54199ff216dd4", "publication"],
-    ["4c0b524c06329f908c5d3138e739c43ffec6ddb119108b0f7485b6de02af3773", "workspace/AGENTS.md"],
+    ["154f5252ceb4827d56de4e77b08c8d66612f55325f93bf1e0998e9422586d148", "caller-input"],
+    ["73e94781d892bcfe042466ac3a29bb42b3e1d697a73584fb5c05cfe696fcb8a1", "publication"],
+    ["063a16465c8eb4c0d6b577a063481dcd972f990f8569ac85ce0565e03b9d0316", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

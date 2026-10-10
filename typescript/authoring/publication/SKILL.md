@@ -112,10 +112,11 @@ first:
   refuses them for the username or keys they carry, so never block, route around or suppress
   them to satisfy review. Your code, page code it runs included, must never send the caller's
   password, codes or answers off the site: Guardian refuses that.<!-- pomerado:section publication.recorded-requests -->
-- **Consent and privacy.** Never set a consent, marketing, tracking or privacy flag yourself, in
-  a form or a request body: send the value the site set for the user, read at run time, or
-  leave the field out. Dismissing a covering consent banner as the forms skill says, with
-  any of its controls, accepting included, is allowed.
+- **Consent and privacy.** Turn safety defaults off (core skill): an option that shares the
+  caller's data with another company, opts into tracking or signs up for marketing ends off.
+  Never turn one on yourself, in a form or a request body. For a consent flag the site sets for
+  the user in a request body, send the value read at run time or leave the field out. Dismiss a
+  covering consent banner as the forms skill says.
 - **Imports.** Import `effect`, the workspace's `runtime/` and `browser/` modules and your own
   files; do not rely on any other package, such as an HTML parser, being installed.
 - **Host-owned files.** <!-- pomerado:section publication.host-owned:start
