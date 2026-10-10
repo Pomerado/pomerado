@@ -279,6 +279,8 @@ The host decides from its own records, never from your claims:
   page with the cookies and site storage the run started with), maintenance repairs the HTTP
   version.
 - A read whose example itself ran `src/tool-http.mjs` publishes `http` alone.
+- Try the HTTP version while you build, before the final example, so the example still runs
+  last, after every edit, and finish_build's ask is only a backstop.
 - For a read without a passing HTTP test of the current file, finish_build asks once, and
   only while live capture is open: `http_implementation_untested` to try one, or
   `http_implementation_stale` when the file changed since its passing test. Answer it by testing
