@@ -292,6 +292,7 @@
 - The writes skill tells the minter to prefer marking the commit at the step that submits the booking or order. A hold that expires on its own, such as a reserved table or a cart timer, is not the commit, and its step is not marked.
 - Guardian's publication policy says a repair's review prefers denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken, and notes other doubts about unchanged lines without denying, except a privacy or credential finding. It is part of `publicationLiveTestsPolicy`, so a host with its own publication policy that includes it gets the rule too.
 - Guardian's task update policy says the host, not the agent, sets `update_review.effect`: for a write build no change needs to make it a write, and the confirmation need not cover the write. It also says a task update review's empty `trusted_authority.allowedEffects`, like the read-only `allowedEffects` of earlier exploration reviews, says nothing about the build's effect.
+- Guardian's execution policy, beside its sign-in screen rules, and `publicationSafetyDefaultPolicy` say to prefer leaving a site's own "Remember me" or "Keep me signed in" choice at its default on the tool's own sign-in: it keeps the account owner's session, which later runs rely on, it is not a safety default, and neither review denies the host's own sign-in step over it.
 
 ### Fixes
 
