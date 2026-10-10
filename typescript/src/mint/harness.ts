@@ -3029,15 +3029,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }
       });
       /** The checklist for `entrypoint`'s current schemas, with its cursor, or why there is none. */
+      /** Schemas the host read, by entrypoint and source digest, so one source is read once. */
+      const liveTestSchemas = new Map<string, { readonly input: unknown; readonly output: unknown }>();
       const liveTestChecklist = (entrypoint: string) =>
         Effect.gen(function* () {
           const host = dependencies.liveTests;
           if (host === undefined) return { problem: "This host runs no live test batches." };
-          const schemas = yield* Effect.either(host.schemas(entrypoint));
+          const key = `${entrypoint}\n${(yield* stepDigest(entrypoint)) ?? ""}`;
+          const known = liveTestSchemas.get(key);
+          const schemas =
+            known === undefined ? yield* Effect.either(host.schemas(entrypoint)) : Either.right(known);
           if (Either.isLeft(schemas))
             return {
               problem: `The host could not read ${entrypoint}'s input and output schemas offline, so it built no checklist. Make the source import cleanly and declare both schemas, then plan again.`,
             };
+          liveTestSchemas.set(key, schemas.right);
           const { input, output } = schemas.right;
           return {
             checklist: checklistOf(input, output),
@@ -3250,8 +3256,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         Effect.gen(function* () {
           if (dependencies.liveTests === undefined || buildEffect !== "read" || signedIn())
             return undefined;
-          const planned = yield* liveTestChecklist(entrypoint);
           const read = yield* readCasesFile;
+          // A read that planned and ran nothing gets a record that says so, without the
+          // offline schema read the checklist needs.
+          const nothing =
+            Either.isRight(read) &&
+            read.right.cases.length === 0 &&
+            (read.right.skipped ?? []).length === 0 &&
+            liveTestRecords.size === 0;
+          if (nothing)
+            return liveTestsEvidence({
+              checklist: undefined,
+              file: emptyCases,
+              records: liveTestRecords,
+              sourceDigest: yield* stepDigest(entrypoint),
+              nothingPlanned: true,
+            });
+          const planned = yield* liveTestChecklist(entrypoint);
           return liveTestsEvidence({
             checklist: "checklist" in planned ? planned.checklist : undefined,
             file: Either.isRight(read) ? read.right : emptyCases,
@@ -3493,16 +3514,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               )
                 return result;
               testPlanSent = true;
-              const plan = yield* liveTestPlanView(submitted.entrypoint).pipe(
-                Effect.orElseSucceed(() => undefined),
+              // A cheap reminder: the checklist needs the schemas read offline, which the agent
+              // asks for with action plan.
+              const read = yield* readCasesFile;
+              const planned = Either.isRight(read) ? read.right.cases.length : 0;
+              const parsed = yield* Effect.option(
+                Effect.try(() => JSON.parse(result) as Readonly<Record<string, unknown>>),
               );
-              return plan === undefined
+              return Option.isNone(parsed)
                 ? result
                 : JSON.stringify({
-                    ...(JSON.parse(result) as object),
+                    ...parsed.value,
                     testPlan: {
-                      ...plan,
-                      instruction: `Your example passed, so the tool's schemas are settled. Refine ${liveTestCasesPath} against this checklist with real values the site offers, run the cases with live_tests (action run), fix every failing case, then make your last edit, run the cases again and run the example last.`,
+                      plannedCases: planned,
+                      instruction: `Your example passed, so the tool's schemas are settled. Call live_tests with action plan for the checklist, refine ${liveTestCasesPath} with real values the site offers, run the cases with action run and fix every failing case. Then make your last edit, run the cases again and run the example last.`,
                     },
                   });
             }).pipe(

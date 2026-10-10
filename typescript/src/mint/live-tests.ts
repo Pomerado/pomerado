@@ -767,8 +767,23 @@ export const liveTestsEvidence = (options: {
   readonly fileProblem?: string;
   readonly records: ReadonlyMap<string, LiveTestRecord>;
   readonly sourceDigest: string | undefined;
+  /** The minter planned, skipped and ran no case, so the host built no checklist. */
+  readonly nothingPlanned?: boolean;
 }) => {
   const { checklist, file, records, sourceDigest } = options;
+  if (options.nothingPlanned === true)
+    return {
+      record: {
+        kind: "host_live_tests",
+        note: "Written by the host, never by the minter. The minter planned, skipped and ran no live test case, so beyond the example nothing was tested live.",
+        ...(sourceDigest === undefined ? {} : { sourceDigest }),
+        checklist: [],
+        cases: [],
+        counts: { items: {}, cases: {} },
+      },
+      coverage:
+        "Host live tests on the published source: none planned or run; beyond the example, nothing was tested live.",
+    };
   const items = checklist === undefined ? [] : itemViews(checklist, file, records, sourceDigest);
   const cases = file.cases.map((testCase) => ({
     ...caseView(testCase, records.get(testCase.id), sourceDigest),

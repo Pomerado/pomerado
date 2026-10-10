@@ -253,11 +253,9 @@ it("plans a read's tests from its schemas, runs them as one batch and hands publ
   // The paging item reads the string cursor, never the boolean beside it.
   expect(planned["cursor"]).toEqual({ inputField: "cursor", outputField: "next_cursor" });
 
-  // The first passing example's receipt carries the plan, now with the cases the agent wrote.
+  // The first passing example's receipt points the agent back at its plan.
   const receipt = resultOf(f.requests[2], "example");
-  expect(receipt["testPlan"]).toMatchObject({
-    cases: expect.arrayContaining([expect.objectContaining({ id: "repeat-1", status: "not_run" })]),
-  });
+  expect(receipt["testPlan"]).toMatchObject({ plannedCases: 4 });
 
   // One batch, every case, with the next page's cursor fields, at most three at once.
   expect(batches).toHaveLength(1);
