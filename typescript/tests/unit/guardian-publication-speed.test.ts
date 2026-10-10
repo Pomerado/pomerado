@@ -179,11 +179,11 @@ describe("a publication finding Guardian anchors by quote", () => {
 
 describe("the publication review deadline", () => {
   // 5 s, then a 30 s turn in which the provider compacts the conversation, then the verdict turn.
-  // A 100 s verdict makes 105 s of reviewing; a 120 s one makes 125 s, past the 120 s deadline.
+  // A 230 s verdict makes 235 s of reviewing; a 240 s one makes 245 s, past the 240 s deadline.
   it.each([
-    { verdictMs: 100_000, decided: { _tag: "Right", right: { decision: { outcome: "allow" } } } },
+    { verdictMs: 230_000, decided: { _tag: "Right", right: { decision: { outcome: "allow" } } } },
     {
-      verdictMs: 120_000,
+      verdictMs: 240_000,
       decided: { _tag: "Left", left: { code: "Unavailable", reviewPhase: "review_deadline" } },
     },
   ])("does not count the time a compaction takes: $verdictMs ms verdict", async (case_) => {
