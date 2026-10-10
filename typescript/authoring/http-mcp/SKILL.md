@@ -281,14 +281,14 @@ The host decides from its own records, never from your claims:
 - A read whose example itself ran `src/tool-http.mjs` publishes `http` alone.
 - Try the HTTP version while you build, before the final example, so the example still runs
   last, after every edit, and finish_build's ask is only a backstop.
-- For a read without a passing HTTP test of the current file, finish_build asks once, and
-  only while live capture is open: `http_implementation_untested` to try one, or
-  `http_implementation_stale` when the file changed since its passing test. Answer it by testing
-  until the HTTP version passes, or, when it can't port, by calling finish_build again with
-  `httpVersion` naming the signal; the Playwright script then publishes alone. Once a
-  publication took the browser's capture, nobody asks until a live run opens a fresh browser: a
-  stale or untested file then publishes the Playwright script alone. Ship an HTTP version only
-  after it passes a live test, never an untested or failed one beside the Playwright script.
+- For a read without a passing HTTP test of the current file, finish_build asks once:
+  `http_implementation_untested` to try one, or `http_implementation_stale` when the file
+  changed since its passing test. Answer it by testing until the HTTP version passes, or, when
+  it can't port, by calling finish_build again with `httpVersion` naming the signal; the
+  Playwright script then publishes alone. A refused publication does not skip that ask, so a
+  later finish_build still asks about a stale or untested file if it has not asked yet. Ship an
+  HTTP version only after it passes a live test, never an untested or failed one beside the
+  Playwright script.
 - A write's HTTP version is stored, and is `http` first only after a passing recorded
   replay. Runs use it only when the operator turns on write promotion, which is off by
   default. An HTTP write failure goes straight to maintenance, never to a Playwright
