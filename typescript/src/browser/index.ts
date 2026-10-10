@@ -63,6 +63,8 @@ export { SiteHttp, SiteHttpRequest, HttpFailure } from "../runtime/site-http.js"
 export type {
   HttpCapability,
   HttpExchange,
+  HttpRequestRefusal,
+  HttpRequestRule,
   HttpResponseGap,
   HttpTransport,
   SiteHttpResponse,
