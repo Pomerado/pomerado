@@ -226,6 +226,14 @@ it("gives a write build's update review the write effect before its first act st
   expect(updates.reviews[0]?.update.effect).toBe("write");
   expect(updates.reviews[0]?.current).toMatchObject({ revision: 0, effect: "write" });
   expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "write" });
+  // The minter reads the same exception: a confirmed answer can overturn a decision that held a
+  // step to the caller's own request, never one made for safety or a scope limit.
+  const mintUpdate = f.requests[0]?.tools.find((tool) => tool.name === "mint_update");
+  expect(JSON.stringify(mintUpdate ?? null)).toContain(
+    JSON.stringify(
+      "No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision, except that the caller's confirmed answer can overturn one that held a step to their own request, such as a time, a value or a search setting. A caller's answer never overturns a decision made for safety or for a Pomerado scope limit.",
+    ).slice(1, -1),
+  );
 });
 
 it("drops a prerequisite the caller said the site does not offer", async () => {

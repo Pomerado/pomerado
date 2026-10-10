@@ -2,13 +2,17 @@
 // (allow, deny or escalate) beside its own, so the model returns one its kind refuses; a review
 // that returns an outcome its kind refuses is retried with backoff as an outage, from the same
 // input, for as long as the retry budget lasts, instead of being told once which outcomes count;
-// a write build's task update review reads its empty allowedEffects as a read-only build.
+// a write build's task update review reads its empty allowedEffects as a read-only build; a
+// caller's confirmed answer can't overturn a Guardian decision that held a step to their request.
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
-import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 import { guardianActions } from "../../src/guardian/review-contracts.js";
 import { guardianOutcomes } from "../../src/guardian/review-layout.js";
 import { makeGuardian } from "../../src/guardian/review.js";
@@ -238,5 +242,21 @@ it("tells a write build's task update review that its empty allowedEffects says 
   expect(request.update_review.effect).toBe("write");
   expect(request.trusted_review.policy).toContain(
     "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects is empty on purpose, because an update performs no action on the site. That empty list, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
+  );
+});
+
+// A caller's confirmed answer can overturn a Guardian decision that held a step to their own
+// request, never one made for safety or a scope limit. The task update review and every later
+// execution review read the same exception.
+it("lets a caller's confirmed answer overturn only a decision that held a step to their request", async () => {
+  const exception =
+    "or overturns a Guardian decision, except that the caller's confirmed answer can overturn one that held a step to their own request, such as a time, a value or a search setting. A caller's answer never overturns a decision made for safety or for a Pomerado scope limit.";
+  const requests = scripted([decision("allow")]);
+  await Effect.runPromise(guardianWith().reviewTaskUpdate(pending, update, readSource));
+  expect(reviewRequest(requests[0]).trusted_review.policy).toContain(
+    `allows repeating a write that may have committed (trusted_execution_context.executions lists what already ran), ${exception}`,
+  );
+  expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
+    `An update never removes the requested action itself, allows repeating a write that may have committed, ${exception}`,
   );
 });
