@@ -125,6 +125,21 @@ describe("output checks of one string", () => {
     expect(checkOf("Blue\u00AD shirt")).toEqual(["invisible_chars"]);
   });
 
+  it("never reads a JSON value longer than the scanned part as script", () => {
+    const value = JSON.stringify({
+      items: Array.from({ length: 800 }, (_, index) => ({ id: index, name: `Item ${index}`, price: 12 })),
+    });
+    expect(value.length).toBeGreaterThan(16_384);
+    const declared = { type: "object", properties: { value: { type: "string", contentMediaType: "application/json" } } };
+    for (const options of [{}, { outputSchema: declared }])
+      expect(lintOutput({ value }, options).filter((finding) => finding.blocking)).toEqual([]);
+  });
+
+  it("does not read a label followed by the word undefined in a sentence as a leftover", () => {
+    expect(checkOf("Note: undefined behaviour applies")).toEqual([]);
+    expect(checkOf("Colour: undefined; Size: M")).toEqual(["template_residue"]);
+  });
+
   it("keeps a declared code or markup field's findings, never blocking, naming the declared type", () => {
     const outputSchema = {
       type: "object",
@@ -402,11 +417,28 @@ describe("bounded cost", () => {
     ["a long number", `color:${"1".repeat(50_000)}`],
     ["blank space between lines", `a\n${" ".repeat(50_000)}\nb`],
     ["a long run of distinct words", Array.from({ length: 400 }, (_, index) => `w${index}`).join(" ")],
+    ["identifiers joined by dollar signs", "a$".repeat(8_192)],
+    ["identifiers led by dollar signs", "$a".repeat(8_192)],
+    ["a long typeof guard", `typeof ${"a$".repeat(8_192)}`],
   ];
   it.each(pathological)("lints %s in bounded time", (_name, value) => {
     const started = performance.now();
     lintOutput({ value });
-    expect(performance.now() - started).toBeLessThan(1_500);
+    expect(performance.now() - started).toBeLessThan(400);
+  });
+
+  it("bounds the repeated-words check across many values and reports it as partial", () => {
+    const text = (index: number) =>
+      Array.from({ length: 120 }, (_, word) => `r${index}w${word}`).join(" ");
+    const values = Array.from({ length: 5_000 }, (_, index) => ({ about: text(index) }));
+    values[0] = { about: "Customer reviews Customer reviews" };
+    const started = performance.now();
+    const findings = lintOutput({ results: values });
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(findings.find((finding) => finding.check === "duplicate_entries")).toMatchObject({
+      path: "results[].about",
+      partial: true,
+    });
   });
 
   it("stops comparing records at a budget and reports what it found as partial", () => {

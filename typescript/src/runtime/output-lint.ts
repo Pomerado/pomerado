@@ -53,7 +53,7 @@ export interface OutputFinding {
    * `contentMediaType` when that type holds such text on purpose. The reviewer judges both.
    */
   readonly override?: string;
-  /** The check stopped at its work budget, so `count` covers only the records it reached. */
+  /** The check stopped at its work budget, so `count` covers only the values it reached. */
   readonly partial?: true;
 }
 
@@ -86,6 +86,8 @@ const isRecord = (value: unknown): value is Json =>
 const sampleLength = 80;
 /** Sibling comparisons the whole-card check makes in one output, about a tenth of a second. */
 const recordCheckBudget = 400_000;
+/** Word comparisons the repeated-words check makes in one output. */
+const repeatCheckBudget = 2_000_000;
 /** A string in a list's record longer than this is flagged; anywhere else, `longValue`. */
 const longRowValue = 1_000;
 const longValue = 8_000;
@@ -97,12 +99,12 @@ const longValue = 8_000;
  * and values, real HTML tags, and unreplaced placeholders. Specs, prices, policies, citations and
  * nutrition lines, which run long with parentheses and semicolons, hold none of them.
  *
- * Every pattern runs in time linear in its input: each repetition is bounded or can split its
- * input only one way, so no page text makes one backtrack without end. They read at most the
- * first `scannedLength` characters of a value; a longer value is flagged too_long anyway.
+ * Every pattern's work per character is bounded by a constant: each repetition is bounded or can
+ * split its input only one way, so no page text makes one backtrack without end. They read at
+ * most the first `scannedLength` characters of a value; a longer value is flagged too_long anyway.
  */
 const scannedLength = 16_384;
-const identifier = "[A-Za-z_$][\\w$]*";
+const identifier = "[A-Za-z_$][\\w$]{0,63}";
 const scriptPatterns: readonly RegExp[] = [
   /<script\b/iu,
   new RegExp(`\\bfunction\\b\\s*(?:${identifier}\\s*)?\\([^()]{0,300}\\)\\s*\\{`, "u"),
@@ -125,7 +127,7 @@ const scriptPatterns: readonly RegExp[] = [
   ),
   // A call taking an object or array literal: `load({async:true})`, `push([1,"a"])`.
   new RegExp(`\\b${identifier}\\.${identifier}\\(\\s*(?:\\[|\\{\\s*["']?${identifier}["']?\\s*:)`, "u"),
-  /\btypeof\s+[A-Za-z_$][\w$]*\s*[!=]==?\s*["']/u,
+  /\btypeof\s{1,10}[A-Za-z_$][\w$]{0,63}\s{0,10}[!=]==?\s{0,10}["']/u,
   // Embedded structured data, such as JSON-LD, inside a longer string.
   /\{\s*"@(?:context|type|id|graph)"\s*:/u,
   /\{\s*"[^"\n]{1,60}"\s*:\s*(?:"[^"\n]{0,2000}"|-?\d{1,20}(?:\.\d{1,20})?|true|false|null|\{|\[)\s*,\s*"[^"\n]{1,60}"\s*:/u,
@@ -177,7 +179,7 @@ const templateParts: readonly RegExp[] = [
   /\{\{[^{}]{0,200}\}\}/u,
   /\$\{[^{}]{0,200}\}/u,
   // A label whose value never filled in: "Colour: undefined", "Price: $NaN".
-  /(?:^|[\s(,])[\p{L}][\p{L}\p{N} _-]{0,40}:\s{0,10}(?:undefined|[$£€]?NaN)(?:$|[\s,.;)])/u,
+  /(?:^|[\s(,])[\p{L}][\p{L}\p{N} _-]{0,40}:\s{0,10}(?:undefined|[$\u00A3\u20AC]?NaN)\s{0,10}(?:$|[,;)])/u,
 ];
 /**
  * Characters that never carry meaning in text a person reads: zero-width space, word joiner,
@@ -187,8 +189,24 @@ const templateParts: readonly RegExp[] = [
 // eslint-disable-next-line no-control-regex
 const invisible = /[\u200B\u2060\uFEFF\u00AD\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u;
 const trailingEllipsis = /(?:\u2026|\.\.\.)\s{0,10}$/u;
-/** A run of at least two words said twice in a row, such as a heading read from two copies. */
-const repeatedRun = /(?:^|\s)(\S+(?:\s+\S+)+)\s+\1(?=$|\s)/u;
+/**
+ * Whether the text says a run of at least two words twice in a row, such as a heading read from
+ * two copies, and the word comparisons it took. It compares words, not characters, so a value of
+ * W words costs at most W*W/4 comparisons; `budget` stops it early.
+ */
+const repeatedRun = (text: string, budget: number) => {
+  const words = text.split(/\s+/u).filter((word) => word !== "");
+  let spent = 0;
+  for (let length = 2; length * 2 <= words.length; length++) {
+    let matched = 0;
+    for (let at = 0; at + length < words.length; at++) {
+      if (++spent > budget) return { found: false, spent, stopped: true };
+      matched = words[at] === words[at + length] ? matched + 1 : 0;
+      if (matched === length) return { found: true, spent, stopped: false };
+    }
+  }
+  return { found: false, spent, stopped: false };
+};
 /**
  * Media types a field declares to hold code or markup on purpose, and the checks each waives. A
  * waived finding is still reported, never blocking, with the declared type as its override, so
@@ -310,8 +328,10 @@ const schemaResolver = (root: unknown) => {
   };
 };
 
-const looksLikeScript = (text: string) => {
-  if (scriptPatterns.some((pattern) => pattern.test(text)) && !looksLikeJson(text)) return true;
+/** `json` says whether the whole value, not only the part read here, is JSON. */
+const looksLikeScript = (text: string, json: boolean) => {
+  if (json) return false;
+  if (scriptPatterns.some((pattern) => pattern.test(text))) return true;
   // Code without one telling token: statements, a block and keywords, densely punctuated.
   const statements = text.match(/;/gu)?.length ?? 0;
   if (statements < 2 || !/\{[^{}]*\}/u.test(text)) return false;
@@ -417,6 +437,10 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
   // Comparisons the whole-card check may make across the output, so a very large output costs a
   // bounded time; past it, the check reports what it found as partial.
   let recordBudget = recordCheckBudget;
+  // Word comparisons the repeated-words check may make across the output; past it, the check
+  // skips the remaining values and reports what it found as partial.
+  let stringBudget = repeatCheckBudget;
+  let repeatsPartial = false;
 
   const lintString = (text: string, path: string, node: Json | undefined, inRow: boolean) => {
     const mediaType = schema.annotation(node, "contentMediaType");
@@ -433,10 +457,11 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
     const allowedLength =
       typeof maxLength === "number" ? Math.max(maxLength, inRow ? longRowValue : longValue) : undefined;
     const head = text.length > scannedLength ? text.slice(0, scannedLength) : text;
-    if (looksLikeScript(head)) leak("script");
+    const json = looksLikeJson(text);
+    if (looksLikeScript(head, json)) leak("script");
     else if (looksLikeCss(head)) leak("css");
     if (looksLikeMarkup(head)) leak("markup");
-    if (looksLikeJson(text)) leak("json_text");
+    if (json) leak("json_text");
     if (hasTemplateResidue(head)) leak("template_residue");
     if (invisible.test(text)) flag(path, "invisible_chars", text);
     if (/^\s|\s$/u.test(text) || /\n[^\S\n]*\n[^\S\n]*\n/u.test(text)) flag(path, "untrimmed", text);
@@ -452,7 +477,12 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
         (labels.size > 0 && (trailingEllipsis.test(text) || holdsControlLabel(text, labels))))
     )
       flag(path, "collapsed_text", text);
-    if (text.length <= 2_000 && repeatedRun.test(text)) flag(path, "duplicate_entries", text);
+    if (text.length <= 2_000 && stringBudget > 0) {
+      const run = repeatedRun(text, stringBudget);
+      stringBudget -= run.spent;
+      if (run.stopped) repeatsPartial = true;
+      if (run.found) flag(path, "duplicate_entries", text);
+    }
   };
 
   const lintRecords = (records: readonly Json[], path: string, node: Json | undefined) => {
@@ -590,6 +620,7 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
   visit(output, "$", schema.root, false, 0);
   return [...found.values()].map((entry) => ({
     ...entry,
+    ...(repeatsPartial && entry.check === "duplicate_entries" ? { partial: true as const } : {}),
     blocking: entry.override === undefined && blockingOutputChecks.has(entry.check),
   }));
 };

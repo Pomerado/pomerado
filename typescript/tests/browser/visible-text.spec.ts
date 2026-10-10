@@ -300,6 +300,18 @@ test("readRows fails as hidden_only when matched rows show content but none is r
   });
 });
 
+test("readRows fails as hidden_only for rows still fading in, which have a box but show nothing yet", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <ul id="fading"><li class="offer" style="opacity: 0">Room 1</li><li class="offer" style="opacity: 0">Room 2</li></ul>
+    <ul id="invisible"><li class="later" style="visibility: hidden">Room 3</li></ul>`);
+  for (const selector of [".offer", ".later"]) {
+    const { result } = await failureOf(page, `readRows(page.locator("${selector}"), { name: ":scope" })`);
+    expect(result, selector).toMatchObject({ name: "VisibleTextFailure", reason: "hidden_only", rendered: 0 });
+  }
+});
+
 test("a display: contents row that clips overflow reads through its children", async ({ page }) => {
   await page.setContent(`
     <div style="display: grid; grid-template-columns: 1fr 1fr">

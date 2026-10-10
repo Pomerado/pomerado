@@ -56,10 +56,11 @@ import { normalizeText } from "../runtime/text.js";
  * - `not_found`: the locator matched nothing (`matched` 0), or a `required` field had no rendered
  *   match; then `field` names it and `row` is its row's index among the rendered rows.
  * - `hidden_only`: the locator matched only hidden elements (`matched`, `rendered` 0). `readRows`
- *   fails so too when rows matched and none is rendered in the chosen mode while one of them still
- *   shows content, such as rows hidden from screen readers read `as: "accessible"`. Rows hidden
- *   wholly, such as a template row a no-results page keeps, read as `[]`: check the page's empty
- *   state when an empty list needs telling apart from a wrong selector.
+ *   fails so too when rows matched and none is rendered while one of them still has a box, such
+ *   as rows at `opacity: 0` or `visibility: hidden` that are still fading in, or rows hidden from
+ *   screen readers read `as: "accessible"`. Rows with no box at all, such as a template row a
+ *   no-results page keeps `hidden` or `display: none`, read as `[]`: check the page's empty state
+ *   when an empty list needs telling apart from a wrong selector.
  * - `ambiguous`: `visibleText` found several rendered matches (`matched`, `rendered`). Scope the
  *   locator to one, or use `visibleTexts` or `readRows` for a list.
  * - `too_long`: a value is longer than `maxLength` (`length`, `maxLength`, and `field` and `row`
@@ -201,12 +202,12 @@ const visibleTextPage = (elements, arg) => {
   if (arg.fields === undefined)
     return elements.map((element) => (rendered(element, null) ? read(element, arg.lines) : null));
   const rows = elements.filter((element) => rendered(element, null));
-  // No row rendered: an empty list, such as a no-results page that keeps a hidden template row,
-  // unless a matched row still shows content, which means the rows are hidden in this mode.
+  // No row rendered: an empty list when every row is a template with no box, such as a
+  // no-results page's hidden or display: none row. A row that has a box but is hidden another
+  // way, such as a list still fading in from opacity 0 or rows hidden in this mode, is not.
   const showsContent = (element) =>
     [element, ...[...element.querySelectorAll("*")].slice(0, 500)].some((child) =>
-      child.checkVisibility({ visibilityProperty: true, opacityProperty: true })
-        && hasArea(child.getClientRects()));
+      child.checkVisibility() && hasArea(child.getClientRects()));
   if (rows.length === 0 && elements.some(showsContent)) return { hidden: elements.length };
   const end = arg.limit === null ? rows.length : Math.min(rows.length, arg.from + arg.limit);
   const records = [];
