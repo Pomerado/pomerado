@@ -28,6 +28,12 @@ import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
 import placeOrder, { fillStep, placeStep } from "../../authoring/examples/write-session.js";
 import { defineOperation } from "../../src/runtime/operation.js";
+import {
+  admitListCursor,
+  randomListCursorKeys,
+  sealListOutput,
+  type ListCursorScope,
+} from "../../src/runtime/list-cursor.js";
 
 import { runExample, failure, localFiles } from "./authoring-fixture.js";
 
@@ -500,13 +506,36 @@ const appendingRooms = async (page: Page, total: number, ending: "removed" | "st
 };
 const roomList = (count: number) =>
   roomNames.slice(0, count).map((name, index) => ({ id: `room-${index + 1}`, name }));
+// A rooms page as the append example returns it: the list ended, or more with a next position.
+const lastRooms = (rooms: readonly { readonly id: string; readonly name: string }[]) => ({
+  rooms,
+  next_cursor: null,
+  next_cursor_expires_at: null,
+  has_more: false,
+  total_results: null,
+  list_changed: false,
+});
+const moreRooms = (rooms: readonly { readonly id: string; readonly name: string }[]) => ({
+  rooms,
+  next_cursor: expect.stringMatching(/^pcd1\./u),
+  next_cursor_expires_at: null,
+  has_more: true,
+  total_results: null,
+  list_changed: false,
+});
+// A host that signs cursors, for the append example's later pages.
+const roomCursors = (): ListCursorScope => ({
+  keys: randomListCursorKeys(),
+  operation: "list_rooms",
+  now: Date.now(),
+});
 
 test("append example reads each step's filled-in new rows until the control goes", async ({
   page,
 }) => {
   await appendingRooms(page, 4, "removed");
   expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
-    Either.right({ rooms: roomList(4), coverage: "complete" }),
+    Either.right(lastRooms(roomList(4))),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
 });
@@ -518,20 +547,45 @@ test("append example ends at the control going beside a loader the page always s
   });
   await appendingRooms(page, 4, "removed", true);
   expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
-    Either.right({ rooms: roomList(4), coverage: "complete" }),
+    Either.right(lastRooms(roomList(4))),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
 });
 
 test("append example stops at the limit without another step", async ({ page }) => {
   await appendingRooms(page, 4, "removed");
-  expect((await runExample(page, readRooms, { limit: 1 })).result).toEqual(
-    Either.right({ rooms: roomList(1), coverage: "complete" }),
+  expect((await runExample(page, readRooms, { limit: 1 }, { list: {} })).result).toEqual(
+    Either.right(moreRooms(roomList(1))),
   );
   await expect(page.locator("#clicks")).toHaveText("0");
 });
 
-test("append example reports a step that adds no rows while Show more stays as partial, never complete", async ({
+test("append example's page two replays page one's steps and continues after its last room", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Each page's first read is short of its rows until they held for the helper's fixed two seconds.",
+  });
+  const scope = roomCursors();
+  await appendingRooms(page, 4, "removed");
+  const first = await runExample(page, readRooms, { limit: 3 }, { list: {} });
+  expect(first.result).toEqual(Either.right(moreRooms(roomList(3))));
+  const cursor = (sealListOutput(Either.getOrThrow(first.result), { limit: 3 }, scope).output as {
+    readonly next_cursor: string;
+  }).next_cursor;
+  const admitted = admitListCursor({ limit: 3, cursor }, scope);
+  if (!admitted.ok) throw new Error(admitted.message);
+  // A fresh run on a fresh page: the list starts again from its first rooms.
+  await appendingRooms(page, 4, "removed");
+  const second = await runExample(page, readRooms, { limit: 3, cursor }, { list: admitted.list });
+  expect(second.result).toEqual(
+    Either.right({ ...lastRooms([{ id: "room-4", name: "West room" }]) }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example keeps a list whose step adds no rows while Show more stays open, never ended", async ({
   page,
 }) => {
   test.info().annotations.push({
@@ -540,13 +594,10 @@ test("append example reports a step that adds no rows while Show more stays as p
       "A step that adds nothing ends only once the rows held unchanged for the helper's fixed two seconds.",
   });
   await appendingRooms(page, 2, "stuck");
-  expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
-    Either.right({
-      rooms: roomList(2),
-      coverage: "partial",
-      limitation: "Show more added no rooms while the site still offered it",
-    }),
-  );
+  // has_more stays true with a position that continues: a stalled list is never called ended.
+  expect(
+    (await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000, list: {} })).result,
+  ).toEqual(Either.right(moreRooms(roomList(2))));
   await expect(page.locator("#clicks")).toHaveText("1");
 });
 
@@ -603,8 +654,8 @@ for (const whileLoading of ["hidden", "disabled"] as const)
     });
     await slowAppendingRooms(page, 10_000, "timer", whileLoading);
     const { result } = await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 40_000 });
-    // Every room, or the rooms read so far said to be partial: never a short list called complete.
-    expect(result).toEqual(Either.right({ rooms: roomList(4), coverage: "complete" }));
+    // Every room, never a short list said to have no more.
+    expect(result).toEqual(Either.right(lastRooms(roomList(4))));
   });
 
 test("append example waits for a step whose rooms take longer than the request hold", async ({ page }) => {
@@ -614,7 +665,7 @@ test("append example waits for a step whose rooms take longer than the request h
   });
   await slowAppendingRooms(page, 5000);
   expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
-    Either.right({ rooms: roomList(4), coverage: "complete" }),
+    Either.right(lastRooms(roomList(4))),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
 });
@@ -646,11 +697,12 @@ test("append example takes its page size from a first page that streamed in, not
     description: "A first page shorter than the limit counts only once its rows held for the helper's fixed two seconds.",
   });
   await streamingRooms(page, 40);
-  expect((await runExample(page, readRooms, { limit: 30 })).result).toEqual(
-    Either.right({
-      rooms: Array.from({ length: 30 }, (_, index) => ({ id: `room-${index + 1}`, name: `Room ${index + 1}` })),
-      coverage: "complete",
-    }),
+  expect((await runExample(page, readRooms, { limit: 30 }, { list: {} })).result).toEqual(
+    Either.right(
+      moreRooms(
+        Array.from({ length: 30 }, (_, index) => ({ id: `room-${index + 1}`, name: `Room ${index + 1}` })),
+      ),
+    ),
   );
   await expect(page.locator("#clicks")).toHaveText("2");
 });

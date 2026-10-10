@@ -138,9 +138,15 @@ what its inputs need:
   controls"), falling back to the search box once. `references/navigation.ts` shows both.
 - How many results one call returns, and the way to the next page, follow the pagination skill.
 
+## Pages
+
+A search returns one page of results per call and a cursor to the next: read the pagination
+skill before you settle the schema. The window is the first `limit` results in the site's
+order, sponsored ones in place.
+
 ## Describe and test it
 
 The description briefly states the design decisions, limits and interpretations a caller needs,
-such as the site's default location or how many results one call returns. Set every input
+such as the site's default location, how many results one call returns and how the site pages. Set every input
 you expose in at least one live run before publishing, as the testing skill says, and give each
 an `examples` value the site offers for a typical query.

@@ -43,13 +43,23 @@ export const maximumRefusalChoiceLength = 200;
 export interface InputRefusalDetail {
   readonly field?: string;
   readonly available?: readonly string[];
+  /**
+   * The refusal's kind as a short token, lowercase words joined by underscores, such as a
+   * refused cursor's `expired`. Never page text.
+   */
+  readonly kind?: string;
 }
+
+/** A refusal's kind: lowercase words joined by underscores. */
+const refusalKindPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
+const maximumRefusalKindLength = 40;
 
 /** The detail as a host may carry it: a bounded field name and up to the most choices, each bounded. */
 export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
   const field: unknown = Reflect.get(detail, "field");
   const available: unknown = Reflect.get(detail, "available");
+  const kind: unknown = Reflect.get(detail, "kind");
   const choices = Array.isArray(available)
     ? available
         .filter((choice): choice is string => typeof choice === "string" && choice.trim() !== "")
@@ -61,6 +71,11 @@ export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
       ? { field: field.slice(0, maximumRefusalChoiceLength) }
       : {}),
     ...(choices.length > 0 ? { available: choices } : {}),
+    ...(typeof kind === "string" &&
+    kind.length <= maximumRefusalKindLength &&
+    refusalKindPattern.test(kind)
+      ? { kind }
+      : {}),
   };
 };
 
@@ -82,11 +97,13 @@ class InputRejected extends Error {
   readonly _tag = "InvalidInput";
   readonly field?: string;
   readonly available?: readonly string[];
+  readonly kind?: string;
   constructor(message: string, detail?: InputRefusalDetail) {
     super(message.slice(0, 4096));
     const bounded = boundedRefusalDetail(detail);
     if (bounded.field !== undefined) this.field = bounded.field;
     if (bounded.available !== undefined) this.available = bounded.available;
+    if (bounded.kind !== undefined) this.kind = bounded.kind;
   }
 }
 

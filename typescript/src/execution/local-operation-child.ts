@@ -54,8 +54,14 @@ const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
-const refusalOf = (detail: { readonly field?: string; readonly available?: readonly string[] }) =>
-  detail.field === undefined && detail.available === undefined ? {} : { refusal: detail };
+const refusalOf = (detail: {
+  readonly field?: string;
+  readonly available?: readonly string[];
+  readonly kind?: string;
+}) =>
+  detail.field === undefined && detail.available === undefined && detail.kind === undefined
+    ? {}
+    : { refusal: detail };
 /** The longest frame the protocol carries. */
 const maximumFrameLength = 300;
 /**
@@ -258,6 +264,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
       ...(start.offline === true ? { offline: true } : {}),
+      ...(start.list === undefined ? {} : { list: start.list }),
       dialogs: (report) =>
         call({ kind: "dialog", report }).pipe(
           Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
@@ -351,7 +358,11 @@ const executeHttpVersion = (operation: HttpVersion) =>
       capture: () => Effect.void,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
     });
-    return yield* executeOperation(operation, start.input).pipe(
+    return yield* executeOperation(
+      operation,
+      start.input,
+      start.list === undefined ? {} : { list: start.list },
+    ).pipe(
       Effect.mapError((error) => (error instanceof Error ? error : localError(error))),
       Effect.provideService(ExecutionContext, context),
       Effect.provideService(SiteHttp, http),

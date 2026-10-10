@@ -89,7 +89,8 @@ repeated entries or records, and fields that never vary or are always empty. Che
 the page: fix a wrong value at the read in source, never by cleaning the string afterwards; a
 correct value needs no change (publication skill). Set each `include` value the tool offers in at
 least one live run. Refine the cases once the example passes (its receipt carries the plan again),
-and add any case that catches a real risk.
+and add any case that catches a real risk. A tool that returns a list runs page two live
+with the cursor page one returned, and reaches a last page (pagination skill).
 
 Results count only for the source and the case as they ran: an edit makes them stale. Finish in
 this order: make your last edit, run the cases again, run the example last, then call

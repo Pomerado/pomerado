@@ -83,6 +83,9 @@ first:
   the captures. A field that holds code or markup on purpose may instead declare it with
   `contentMediaType`, such as `text/javascript`, `text/css` or `text/html`: its findings then name
   that type and never block, and Guardian checks that the type fits what the field holds.
+- **Lists.** A tool that returns a list the site can run past one page takes `limit` and
+  `cursor` and returns one page with `next_cursor` (pagination skill), or says the site shows the
+  whole list at once.
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the

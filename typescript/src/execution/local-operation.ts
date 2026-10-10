@@ -29,6 +29,7 @@ import type { LocalWorkspace } from "./local-workspace.js";
 import { FileRefused } from "../runtime/files.js";
 import { outputFiles, type RunFiles } from "../runtime/file-transfer.js";
 import { HttpFailure, type HttpTransport } from "../runtime/site-http.js";
+import type { ListHost } from "../runtime/list-page.js";
 
 export interface LocalOperationOptions {
   readonly workspace: LocalWorkspace;
@@ -62,6 +63,12 @@ export interface LocalOperationOptions {
    * `ensureSignedIn` answers that it did not sign in again.
    */
   readonly signIn?: SessionSignInHook;
+  /**
+   * Set when this host signs list cursors: the position the caller's cursor holds, once
+   * `admitListCursor` checked it. Absent, a run refuses any cursor that would continue a runtime
+   * list and returns no next cursor.
+   */
+  readonly list?: ListHost;
   /**
    * The run's files, for the script's `files`. Absent, `files` throws; either way an output naming
    * a `$file` this run did not collect fails the run.
@@ -508,6 +515,7 @@ export const runLocalOperation = (
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),
+        ...(options.list === undefined ? {} : { list: options.list }),
         ...(options.http === undefined || options.mode === "contract"
           ? {}
           : { http: { name: options.http.name, capabilities: options.http.capabilities } }),

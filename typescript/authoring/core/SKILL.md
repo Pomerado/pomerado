@@ -312,6 +312,8 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
 - Return each fact once. Never add a field holding a whole row's or card's text beside the typed
   fields: give a fact they miss its own typed field, or offer the whole text only as the
   `card_text` section below.
+- A list that can run past one page returns one page per call and a cursor to the next, as the
+  pagination skill says.
 
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each
@@ -348,7 +350,7 @@ types or a building with several units for rent, is one result marked as a group
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row of the main list the page
-  shows.
+  shows, up to the call's `limit` (pagination skill).
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.

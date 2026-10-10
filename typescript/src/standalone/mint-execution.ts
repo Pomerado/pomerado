@@ -41,6 +41,8 @@ import { fileReadbackRefusal } from "../mint/file-readback.js";
 import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { stepInput } from "../mint/step-checks.js";
+import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
+import { localListScope, refusedCursor } from "./list-cursors.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
@@ -601,41 +603,60 @@ const authoredExecution = (
                 : { limits: state.session.options.files.limits }),
             })
           : undefined;
+        // A minter's page two runs with the cursor its page one returned, checked as a run's is.
+        const listScope = () =>
+          localListScope(
+            state.session,
+            `mint\0${context.siteOrigin}\0${execution.entrypoint}`,
+            context.siteOrigin,
+          );
+        const admission = admitListCursor(input, listScope());
         const executed = yield* Effect.either(
-          runLocalOperation({
-            workspace,
-            entrypoint: execution.entrypoint,
-            // Only a live step receives a value; offline steps run the handle text as written.
-            sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
-            input,
-            browser: probing(
-              watch === undefined
-                ? browser
-                : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
-            ),
-            siteOrigin: context.siteOrigin,
-            ...(siteDomain(context.siteOrigin) === undefined
-              ? {}
-              : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
-            timeoutMs: execution.timeoutSeconds * 1000,
-            mode: "run",
-            target: live ? "browser" : "pureFiles",
-            dispatchAtFirstCall: true,
-            ask: scriptAsk,
-            declaredQuestions: draftQuestionDeclarations(execution.entrypoint, entrypointSource),
-            decideDialog: keepingAcceptedConfirms(
-              makeDialogDecider(mintAsk, secrets.redact),
-              accepted,
-            ),
-            ...(live
-              ? {
-                  signIn: state.sessionSignIn.hook((failure) => {
-                    signInFailure ??= failure;
-                  }),
-                }
-              : {}),
-            ...(runFiles === undefined ? {} : { files: runFiles }),
-          }),
+          !admission.ok
+            ? Effect.fail(refusedCursor(admission))
+            : runLocalOperation({
+                workspace,
+                entrypoint: execution.entrypoint,
+                // Only a live step receives a value; offline steps run the handle text as written.
+                sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
+                input,
+                list: admission.list,
+                browser: probing(
+                  watch === undefined
+                    ? browser
+                    : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
+                ),
+                siteOrigin: context.siteOrigin,
+                ...(siteDomain(context.siteOrigin) === undefined
+                  ? {}
+                  : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
+                timeoutMs: execution.timeoutSeconds * 1000,
+                mode: "run",
+                target: live ? "browser" : "pureFiles",
+                dispatchAtFirstCall: true,
+                ask: scriptAsk,
+                declaredQuestions: draftQuestionDeclarations(
+                  execution.entrypoint,
+                  entrypointSource,
+                ),
+                decideDialog: keepingAcceptedConfirms(
+                  makeDialogDecider(mintAsk, secrets.redact),
+                  accepted,
+                ),
+                ...(live
+                  ? {
+                      signIn: state.sessionSignIn.hook((failure) => {
+                        signInFailure ??= failure;
+                      }),
+                    }
+                  : {}),
+                ...(runFiles === undefined ? {} : { files: runFiles }),
+              }).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  output: sealListOutput(result.output, input, listScope()).output,
+                })),
+              ),
         );
         if (watch !== undefined && watch.typed().size > 0) {
           start.typedCode();

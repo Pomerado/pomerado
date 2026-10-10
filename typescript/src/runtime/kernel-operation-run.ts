@@ -13,6 +13,7 @@ import {
 import type { WriteDeclaration } from "./operation.js";
 import type { ScriptFailure } from "./operation-failure.js";
 import { ScriptInput } from "./script-input.js";
+import { withListHost } from "./list-host.js";
 
 // How a host runs an operation's script: under the execution context's deadline, capture, events
 // and journal, over the runtime's script run (`runKernelScript`).
@@ -99,7 +100,9 @@ export const executeKernelOperation = <
     const execution = yield* ExecutionContext;
     // Declared first, so every exit reports which commit steps were never reached.
     yield* execution.journal.declareCommits(declaredCommits(operation.write));
-    const input = yield* decodeKernelOperationInput(operation, rawInput);
+    const decoded = yield* decodeKernelOperationInput(operation, rawInput);
+    // A host that signs list cursors puts the checked position beside the input, never in it.
+    const input = browser.list === undefined ? decoded : withListHost(decoded, browser.list);
     if (execution.deadline.remainingMs() <= 0)
       return yield* new DeadlineExceeded({ phase: "execution", dispatch: "not_sent" });
     return yield* Effect.gen(function* () {

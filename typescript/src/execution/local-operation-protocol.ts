@@ -10,6 +10,7 @@ import {
   maximumRefusalChoices,
 } from "../runtime/operation-failure.js";
 import { HttpCapability, HttpResponseGap, SiteHttpRequest } from "../runtime/site-http.js";
+import { ListDraft } from "../runtime/list-page.js";
 
 const HttpTransportName = Schema.Literal("kernel-curl", "page-fetch", "saved-http");
 /** The host transport's answer to a child's `http` request, as `SiteHttpResponse`. */
@@ -31,11 +32,15 @@ const RefusalText = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(maximumRefusalChoiceLength),
 );
-/** A script's refusal: the input it names and the choices the page offers for it. */
+/** A script's refusal: the input it names, the choices the page offers for it and its kind. */
 export const InputRefusal = Schema.Struct({
   field: Schema.optionalWith(RefusalText, { exact: true }),
   available: Schema.optionalWith(
     Schema.Array(RefusalText).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
+    { exact: true },
+  ),
+  kind: Schema.optionalWith(
+    Schema.String.pipe(Schema.pattern(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u), Schema.maxLength(40)),
     { exact: true },
   ),
 });
@@ -70,6 +75,14 @@ export const LocalOperationStart = Schema.Struct({
   dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host signs the page in again when the script's `ensureSignedIn` finds it signed out. */
   signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /**
+   * The host signs list cursors: the position the caller's cursor holds, once the host checked
+   * it, which the run gets beside its input (`withListHost`).
+   */
+  list: Schema.optionalWith(
+    Schema.Struct({ position: Schema.optionalWith(ListDraft, { exact: true }) }),
+    { exact: true },
+  ),
   /** The host places and collects files for the script's `files`. */
   files: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host carries an HTTP version's `SiteHttp` requests over this transport. */

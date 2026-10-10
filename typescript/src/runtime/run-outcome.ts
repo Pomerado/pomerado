@@ -131,6 +131,8 @@ export interface RunEvidence {
   readonly refusal_field?: string | undefined;
   /** Every choice the page offers for the refused input, when the tool read them. */
   readonly refusal_available?: readonly string[] | undefined;
+  /** The refusal's kind as a short token, such as a refused cursor's `expired`. */
+  readonly refusal_kind?: string | undefined;
   /** The login field the website rejected. */
   readonly rejected_field?: string | undefined;
   /** The location the caller supplied that the page did not apply, and what it kept instead. */
@@ -241,6 +243,7 @@ export const runError = (view: RunEvidence): RunFailure => {
         ...(view.refusal_available === undefined || view.refusal_available.length === 0
           ? {}
           : { available: view.refusal_available }),
+        ...(view.refusal_kind === undefined ? {} : { kind: view.refusal_kind }),
       });
     case "location_not_applied":
       // Only a read or an untouched site may run again as is; a write that applied or may have,
