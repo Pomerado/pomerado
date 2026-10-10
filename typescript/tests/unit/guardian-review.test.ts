@@ -661,6 +661,50 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(sentence);
   });
 
+  // Turning off a preselected partner comparison box read as an invented search choice, so an edit
+  // could drop it and leave the box sending the search to another site.
+  it("tells Guardian that turning off a data-sharing, tracking or marketing option is a safety default", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "Leaving an optional field empty or at the page's default is not inventing it. A safety default is not inventing a choice either: turning off a preselected option whose only effect is sharing the caller's data with another company, such as a partner comparison that opens or sends the search to another site, opting into tracking or analytics beyond what the site needs to work, or subscribing the caller to marketing communications, needs no caller input or answer. Keeping such an option on is what needs a reason: when the page evidence shows one on and the source submits without turning it off, deny and name it, unless trusted intent, an answer or submitted_call.input asks to keep it, or the site refuses to submit with it off. A safety default never covers an option that changes what the caller gets, such as which results come back, a seat, a room or a price, or who receives a message the caller asked to send.";
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      expect(policy).toContain(sentence);
+  });
+
+  // A sign-in page's notice that signing in accepts the site's terms read as a separate terms
+  // acceptance that only the caller could authorize.
+  it("tells Guardian that accepting the terms a site requires for the requested action needs no other authority", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "Accepting the terms a site requires to finish the requested action, such as a required \"I agree\" box at checkout or a notice that signing in accepts the site's terms, is part of that action and needs no other authority. Terms the action doesn't require, such as a partner's terms or a marketing consent, are not.";
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      expect(policy).toContain(sentence);
+      expect(policy).not.toContain("lasting account preference or accepts terms");
+    }
+  });
+
   // Guardian reviews an execution's source, never each request it sends.
   it("an execution review carries no destination review", async () => {
     const requests = readThenDecide({

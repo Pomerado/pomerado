@@ -300,6 +300,18 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "publication",
     'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
   ],
+  // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
+  // most rows to pass and returns what is there after that.
+  ["core", "After applying a filter, prefer waiting up to 15s for results to filter."],
+  // A preselected option that only shares the caller's data, tracks or signs up for marketing is
+  // turned off on every run, with no input and no question.
+  ["core", "- Turn safety defaults off."],
+  // An obvious refusal settles the caller's run at once; one from the tool's own empty read never
+  // claims to be obvious.
+  [
+    "core",
+    'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
+  ],
 ];
 
 /*
@@ -651,17 +663,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["38970ebfc1a595a646b0f3825b8ec80da8cd30c903bd39494b7fd8f8d2c62ef1", "core"],
-    ["407cca93896aacbe2453cfb9d0e17d6171d9b321c4ebb909f0cfe0f61b267e5d", "search"],
+    ["0f5ae91a1d093c8d7ea6e32339464e96e4a7a423fed8509de69e9f27a328bd9c", "core"],
+    ["0841a8c299fe27b3342c2f5d87a70b3562c5c50024bf39b5531f0c643afba388", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["74476a5505ce6492c2e631923f1e5632526e7130faa08ef96c9eccfdcfe8508c", "forms"],
-    ["708559d8ec4def8d573c3bd3504494ee27ef62a054af69f3601e59f6a43f9251", "writes"],
+    ["9cad290abf1d43d846cb624a3aaeafa892e0273d8844a41177e1d5c793f20ee2", "forms"],
+    ["733976baf11dd3a53d09529942a7a2256fe71ecd0c67a4447f9883a1446a1b9c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["7d1941f96fd36ca47595f77251b20f38448070e878c98bad77795c6f2663bc44", "caller-input"],
-    ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
-    ["4c0b524c06329f908c5d3138e739c43ffec6ddb119108b0f7485b6de02af3773", "workspace/AGENTS.md"],
+    ["175a47a0822e3b66ee4a43db244754fc1a33f4fd177a78f5e1649e7068d97cd0", "caller-input"],
+    ["4868454cc9110c57d2fdbdc1aa73e9006c053e4163a2c9c6540ca2132a4119f2", "publication"],
+    ["063a16465c8eb4c0d6b577a063481dcd972f990f8569ac85ce0565e03b9d0316", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

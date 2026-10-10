@@ -129,8 +129,9 @@ Wait for observed current-query readiness and the relevant owned option; do not
 label an old result window with the new query generation. A matching old option
 alone does not establish it.
 
-When an overlay such as a cookie or consent banner covers the target, dismiss it with any
-of its controls, including accept.
+When an overlay such as a cookie or consent banner covers the target, dismiss it with its
+control that declines optional cookies, such as Reject all or Necessary only, when the banner
+shows one, and otherwise with any of its controls, accept included.
 
 Type each date-only input and output as the runtime's `CalendarDate`, imported beside
 `formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
@@ -139,7 +140,9 @@ impossible date before the run, in a browser or an HTTP tool alike. It sets no r
 narrow it to the example's date or a guessed window. A rule of the task or the site, such as
 a range that ends before it starts, a past date or a booking limit, is the tool's own check:
 fail as `InvalidInput` with a message naming the field and the rule, before any site action
-when the input alone breaks it, and when the site refuses the date.
+when the input alone breaks it, and when the site refuses the date. Start the message with
+"Caller input error:" when the refusal is obvious, as the core skill says, and count a date as
+past only when it is before yesterday in UTC.
 
 Date ranges, calendar-only pickers, validation messages, uploads, staged forms and
 autosave need site-specific semantic checks. A date field that takes typing goes
