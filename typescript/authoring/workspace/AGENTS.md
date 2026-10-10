@@ -197,10 +197,10 @@ URL the tool built, a URL parameter, a box checked before the site applied it or
 name elsewhere on the page does not show an input applied; read the site's committed state, such
 as the applied chip, the selected control or the results' own state, and compare its text with
 the input, or the option a proper noun matched, normalized for case and whitespace. A location
-the caller supplied that did not apply
-throws `LocationNotApplied` instead (.agents/core/SKILL.md). A detail read also checks
-the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing
-tool: read .agents/search/SKILL.md before you settle its inputs.
+the caller supplied that did not apply throws `LocationNotApplied` instead
+(.agents/core/SKILL.md). A detail read also checks the page's stable identity
+(.agents/core/SKILL.md). Building or repairing a search or listing tool: read
+.agents/search/SKILL.md before you settle its inputs.
 
 **Load large content progressively.** Know a file's size before reading it:<!-- pomerado:section agents.file-lengths --> every `read_source` result gives
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a

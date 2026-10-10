@@ -122,9 +122,9 @@ that asks.
 - The code works for every value the schema accepts. Never let the schema promise what
   the code rejects or ignores, such as a string the code throws on unless it is the example's
   value, or an input the code accepts and then never applies, skips or always reports
-  unsupported or unapplied: wire it to the site's control. Leave an input out only when the
-  site offers no control for it and the tool cannot filter its returned rows by it, and say
-  so in the description.
+  unsupported or unapplied: wire it to the site's control. Leave an input out only
+  when the site offers no control for it and the tool cannot filter its returned
+  rows by it, and say so in the description.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
   never just the example's value. The example's values are one case, never limits.
