@@ -4,7 +4,11 @@ import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { FileField, fileReferenceMaxLength } from "../runtime/files.js";
-import { maximumRefusalChoiceLength, maximumRefusalChoices } from "../runtime/operation-failure.js";
+import {
+  maximumLocationMessageLength,
+  maximumRefusalChoiceLength,
+  maximumRefusalChoices,
+} from "../runtime/operation-failure.js";
 import { HttpCapability, HttpResponseGap, SiteHttpRequest } from "../runtime/site-http.js";
 
 const HttpTransportName = Schema.Literal("kernel-curl", "page-fetch", "saved-http");
@@ -32,6 +36,18 @@ export const InputRefusal = Schema.Struct({
   field: Schema.optionalWith(RefusalText, { exact: true }),
   available: Schema.optionalWith(
     Schema.Array(RefusalText).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
+    { exact: true },
+  ),
+});
+
+/** A script's `LocationNotApplied`: the location it could not apply and what the page kept. */
+export const LocationNotApplied = Schema.Struct({
+  field: RefusalText,
+  requested: RefusalText,
+  applied: Schema.optionalWith(RefusalText, { exact: true }),
+  step: RefusalText,
+  siteMessage: Schema.optionalWith(
+    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(maximumLocationMessageLength)),
     { exact: true },
   ),
 });
@@ -145,6 +161,7 @@ export const LocalOperationMessage = Schema.Union(
       { exact: true },
     ),
     refusal: Schema.optionalWith(InputRefusal, { exact: true }),
+    location: Schema.optionalWith(LocationNotApplied, { exact: true }),
     ...JournalFields,
   }),
 );

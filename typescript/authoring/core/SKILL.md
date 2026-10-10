@@ -81,6 +81,20 @@ pomerado:section core.execute-calls:end -->
   page does not offer the caller's value, the repair makes the code throw with `available`,
   shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
+- Check every rule the input alone breaks before any site action, such as a check-out on or
+  before its check-in, a count below one or a date before yesterday in UTC, and throw
+  `InvalidInput` at once naming the field and the rule.
+- When the page does not apply a location the caller supplied, such as a ZIP code, address or
+  store, after the tool's bounded retries, throw
+  `new errors.LocationNotApplied(message, { field, requested, applied, step, siteMessage })`:
+  `field` the input's name, `requested` the caller's value, `applied` the location the page kept
+  as read back (left out when it shows none), `step` the tool's step that failed, such as
+  `store_save`, and `siteMessage` the page's own error when it showed one. The run then fails
+  and returns nothing for another place. Never report the location as not applied in the output
+  instead, such as `store_applied: false` or a "lookup-only" description, and never let an
+  answer to a question make a supplied location optional. When the site says it does not serve
+  the location, that is the caller's to fix: throw `InvalidInput` with `field` and `available`,
+  the places it offers.
 - After a write, call `verified()` with no argument just before returning, once a call has
   read the result back, either the site's confirmation for this submission or the saved state.
   Return the confirmation number or record in the output. Without it the write stays a
@@ -169,7 +183,8 @@ that asks.
   cart tool alike, and when it does, make it an optional input, such as `zip_code`, or `store`
   when the site offers stores. Set it on every run through the site's
   own location control, take the site's matching suggestion, read the applied location back
-  from the page and return it. Left unset, return the location the page shows and say in the
+  from the page and return it. When it does not apply, throw `LocationNotApplied` (above).
+  Left unset, return the location the page shows and say in the
   description that the site picks it, which can differ from run to run. While building, ask
   the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location,
   store or delivery or pickup mode in the run's own browser is part of the read, never a write,
@@ -294,14 +309,31 @@ that depends on them:
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
    presents the groups, since one choice can change the options of the next. When the value is
-   not among the options the page offers, throw
+   not among the options the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
    `available`, and say in the message that they were left out. Never pick a near match, the page's default or the first option.
+   - An option the page lists but greys out, disables or marks unavailable, such as a booked
+     date, a sold-out size or a full time slot: a read returns it as data, the requested value
+     with `available: false`, the page's own reason when it shows one, and the alternatives the
+     page offers beside it, such as the in-stock sizes, the open times or the valid stays, and
+     the run succeeds. A write throws `InvalidInput` with `field` and `available`, the
+     selectable options. Neither picks another value for the caller.
+   - For an input whose options depend on another, such as a check-out after a check-in or a
+     time after a date, apply the input it depends on first and read `available` from that
+     state, then drop the options the input alone rules out. Never list options read before
+     the input they depend on applied.
+   - A number on a scale the site steps, such as a price range slider or price boxes, is a
+     number, not a choice: never refuse it because no label matches. Set the nearest step the
+     control offers, its end when the value is outside the range, read the applied value back
+     and return it, such as `applied_max_price`, beside the results. The rule above for a value
+     the page does not offer covers choice lists only.
 3. Confirm. Read each choice back from the page's selected state, then wait until the values
    that depend on it have changed or settled; a value read before the page updates belongs to
-   the previous choice.
+   the previous choice. Compare text read back with the caller's value normalized: ignore case,
+   repeated whitespace and typographic punctuation such as curly quotes, never exact
+   case-sensitive equality, since a page may echo a query or name in its own case.
 4. Read. Only then read the values the choices affect. Return the applied choices beside
    them, and each group's offered options as a list, so a caller sees what the values apply to
    and what else they could choose.
@@ -336,7 +368,8 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 `document`.
 Read each output value from the element or structured-data entry that holds the whole value,
 never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or
-the record's own key, using its `innerText`.
+the record's own key, using its `innerText`. Never select by a generated CSS class, a hashed or
+build-numbered name such as `.e-1a2b3c` or `.css-1x2y3z`: it changes on the site's next deploy.
 Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
 text or a page-wide setting such as a currency or language picker: `textContent` also includes
 hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
@@ -371,6 +404,9 @@ naming what was last observed and what was expected. Never swallow a failed wait
 (`try { await wait } catch {}`): either the condition is required, so throw, or it is not, so do
 not wait for it. After extracting, confirm the page did not re-render under you: the same count,
 first record ID and URL as before extraction. If any changed, read again within the deadline.
+Build any check that values stopped changing from stable keys, such as record IDs, names and
+prices, never from text that changes on its own, such as a countdown, a timer, a rotating badge
+or a live viewer count.
 These re-checks only observe: never repeat the click, submission or navigation that caused the
 change.
 After an action that can navigate, wait for the observed destination URL when known,
@@ -385,7 +421,9 @@ selector or repeat the action in a follow-up read.
 After a step whose answer can vary, such as a search, a filter, a date pick or a submit, name
 every way the page can answer: results, an empty or sold-out message, a greyed-out choice
 (`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
-error, a pick-one list. Prefer naming every answer over waiting only for the happy result.
+error, a pick-one list. Opening a record by its identifier or URL can also answer with a
+removed or not-found page: name it, and throw `InvalidInput` with the page's own words, never
+a readiness timeout. Prefer naming every answer over waiting only for the happy result.
 Import `outcomeWaitCode` from the runtime, put it at the top of the call's code, and wait with
 `waitForOutcome({ refused, failed, unavailable, empty, results }, { action })`, one scoped
 locator per answer, each an element only that answer has, such as a results list that holds a
@@ -395,8 +433,10 @@ first, then the empty state, then results. Pass the step itself as `action`, suc
 only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
 re-rendered is not read while a step that leaves the same answer still resolves; a new or
 changed element counts at once. Read results; return an empty list for a listing's empty state;
-throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
-asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an
+throw `InvalidInput` with the site's own words for a refusal; handle a greyed-out choice the
+input asked for as "Configure, then read" says, unavailable data on a read and `InvalidInput`
+with `available` on a write; ask the caller about a pick-one list
+(.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched:
 `outcome_ambiguous` when the winning locator matches more than one element, and
 `outcome_timeout` after its `timeout`, 30 s by default. `references/navigation.ts` waits for a

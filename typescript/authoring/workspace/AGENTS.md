@@ -173,7 +173,9 @@ filters, sort and selected options, and refuse a mismatch: the tool's code fails
 (`OperationFailure`) and never returns results for an input that did not apply. Echoed input, a
 URL the tool built, a URL parameter, a box checked before the site applied it or the option's
 name elsewhere on the page does not show an input applied; read the site's committed state, such
-as the applied chip, the selected control or the results' own state. A detail read also checks
+as the applied chip, the selected control or the results' own state, and compare its text with
+the input normalized for case and whitespace. A location the caller supplied that did not apply
+throws `LocationNotApplied` instead (.agents/core/SKILL.md). A detail read also checks
 the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing
 tool: read .agents/search/SKILL.md before you settle its inputs.
 

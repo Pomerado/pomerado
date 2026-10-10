@@ -27,9 +27,12 @@ conflict, can still need a question, one that names the actual problem.
 
 Work the request already covers proceeds without a question, such as finding the right field
 or choosing among alternatives the request already allows. A supplied value the site does not
-offer, such as an unavailable option, date or quantity, is not such a question: the tool throws
-`InvalidInput` with `field` and `available`, the choices the page offers, as .agents/core/SKILL.md
-says ("Configure, then read"), and never substitutes another value. Asking the
+offer is not such a question either, and never one to ask about, as .agents/core/SKILL.md says
+("Configure, then read"). A value the page does not list at all throws `InvalidInput` with
+`field` and `available`, the choices the page offers. An option the page lists but greys out,
+such as a booked date or a sold-out size, whether or not it says why, is an answer on a read:
+return it unavailable with the alternatives the page offers. A write throws `InvalidInput` with
+`available`. Neither substitutes another value. Asking the
 owner to revise it or stop is the minter's own `request_input` question while it builds, as
 `AGENTS.md` says.
 

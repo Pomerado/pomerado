@@ -125,7 +125,7 @@ export interface RunEvidence {
   readonly failure_reason?: string | undefined;
   /** The run's own judgement that a step may have changed the website. */
   readonly possible_commit?: boolean | undefined;
-  /** The tool's or the site's own words, for a refused input. */
+  /** The tool's or the site's own words, for a refused input or a location the page did not apply. */
   readonly refusal_reason?: string | undefined;
   /** The input a refusal named, when the tool named it. */
   readonly refusal_field?: string | undefined;
@@ -133,6 +133,17 @@ export interface RunEvidence {
   readonly refusal_available?: readonly string[] | undefined;
   /** The login field the website rejected. */
   readonly rejected_field?: string | undefined;
+  /** The location the caller supplied that the page did not apply, and what it kept instead. */
+  readonly location?: RunLocationEvidence | undefined;
+}
+
+/** A location the page did not apply, as a run's record keeps it. */
+export interface RunLocationEvidence {
+  readonly field: string;
+  readonly requested: string;
+  readonly applied?: string | undefined;
+  readonly step: string;
+  readonly site_message?: string | undefined;
 }
 
 /**
@@ -148,6 +159,7 @@ export const runOutcomeCodes = [
   "no_response",
   "credentials_rejected",
   "input_rejected",
+  "location_not_applied",
   "login_identity_conflict",
   "website_sign_in_unavailable",
   "worker_lost",
@@ -162,6 +174,7 @@ export const runOutcomeRetry: { readonly [Code in RunOutcomeCode]: RunRetryClass
   no_response: "new_key",
   credentials_rejected: "fix_input",
   input_rejected: "fix_input",
+  location_not_applied: "same_key",
   login_identity_conflict: "fix_input",
   website_sign_in_unavailable: "same_key",
   worker_lost: "same_key",
@@ -222,6 +235,24 @@ export const runError = (view: RunEvidence): RunFailure => {
         ...(view.refusal_available === undefined || view.refusal_available.length === 0
           ? {}
           : { available: view.refusal_available }),
+      });
+    case "location_not_applied":
+      // A run that may have changed the website keeps that outcome, so nothing repeats it.
+      if (unsettledEffect(view)) break;
+      return failure("location_not_applied", {
+        possible_commit: false,
+        ...(view.refusal_reason === undefined ? {} : { reason: view.refusal_reason }),
+        ...(view.location === undefined
+          ? {}
+          : {
+              field: view.location.field,
+              requested: view.location.requested,
+              ...(view.location.applied === undefined ? {} : { applied: view.location.applied }),
+              step: view.location.step,
+              ...(view.location.site_message === undefined
+                ? {}
+                : { site_message: view.location.site_message }),
+            }),
       });
     case "login_identity_conflict":
       return failure("login_identity_conflict", {});
