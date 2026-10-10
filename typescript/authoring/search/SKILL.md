@@ -40,6 +40,9 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
 - Never set a filter or sort in code, even one the request names: each is an input. When the
   site offers a sort, it is an optional input listing every order the site offers. A page size
   visitors cannot change is the site's; state it in the description.
+- When the site's search has no control for one of the caller's filters, prefer leaving that
+  control at the site's default, filtering the returned rows to the caller's value and saying so
+  in the description.
 
 ## Apply and read back
 
