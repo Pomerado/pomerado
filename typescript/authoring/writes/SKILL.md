@@ -102,8 +102,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   asking only at the step the session accepted it at, so the host refuses to publish
   a composed script that drops one.
 - Mark only the step whose click saves or submits. Opening or filling an unsaved
-  form is not a commit step. Mark every such step, including an autosave, a saved
-  form step and a payment submission whose next screen is unknown. Call
+  form is not a commit step. Mark every such step other than a hold that expires on
+  its own, including an autosave, a saved form step and a payment submission whose
+  next screen is unknown. Call
   `enteringCommit("place-order")` right before the execute call that can send that
   change, and declare the names in order as `write.commits`. Use the same marked
   helper in the session and the composed script. If the call returns an unexpected
