@@ -233,7 +233,7 @@ const locationName =
   /(?:^|_)(?:zip|zipcode|postal|postcode|post_?code|location|address|city|lat|latitude|lng|lon|longitude|geo)(?:$|_)/iu;
 /** Inputs that shape the list itself, not what it holds: never a control to test on its own. */
 const listContractName =
-  /^(?:limit|page_?size|per_?page|max_?results|cursor|page_?token|next_?cursor|include)$/iu;
+  /^(?:limit|page_?size|per_?page|max_?results|cursor|page_?token|next_?cursor)$/iu;
 /** What a list's results usually sit under. */
 const listName = /^(?:results?|items|products|listings?|hits|entries|records|rows|matches|data|list)$/iu;
 const locationText = /\b(?:zip|postal|post code|postcode|location|address|deliver)/iu;
@@ -866,6 +866,7 @@ export const caseView = (
                   record.caseDigest !== caseDigest(testCase)
                     ? "the case changed after it ran"
                     : "the source changed after it ran",
+                ...(record.input === undefined ? {} : { lastInput: record.input }),
               }
             : {}),
           got: record.got,

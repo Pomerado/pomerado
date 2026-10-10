@@ -1291,7 +1291,10 @@ export interface MintHarnessSnapshot {
    * and new workers each restore the other's checkpoint.
    */
   readonly liveTests?: readonly LiveTestRecord[];
-  /** Whether a live test batch was refused because too little of the attempt was left. */
+  /**
+   * Whether the attempt ran out of time for live tests: a batch refused for time, or a case
+   * stopped by a batch deadline the attempt's end set.
+   */
   readonly liveTestsOutOfTime?: boolean;
   /**
    * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and

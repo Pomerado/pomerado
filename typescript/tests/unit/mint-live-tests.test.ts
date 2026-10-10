@@ -446,6 +446,38 @@ it("publishes with the gaps when too little time is left for a batch, and the re
   expect(published.seen[0]?.coverage).toContain("ran out of time");
 });
 
+it("says time ran out only when the attempt's end, not the batch's own cap, stopped a case", async () => {
+  const stopped = { status: "inconclusive" as const, reason: "deadline" as const };
+  const record = async (attemptMs: number) => {
+    const { host, batches } = liveTestHost({ "sort-price": stopped });
+    const published = publications();
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("live_tests", runAll, "run"),
+          call("execute", example, "example"),
+          call("finish_build", finish, "finish"),
+        ][index] ?? prose(),
+      {
+        liveTests: host,
+        deadline: Deadline.after(attemptMs),
+        reviewAndExecute: completedExample,
+        publish: published.publish,
+      },
+      read,
+    );
+    const root = (f.workspace as unknown as { root: string }).root;
+    await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+    await f.run();
+    expect(batches).toHaveLength(1);
+    return published.seen[0]?.liveTests as { outOfTime?: boolean };
+  };
+  // Half an hour left: the batch's own ten-minute cap stopped the case, so testing can go on.
+  expect((await record(30 * 60_000)).outOfTime).toBeUndefined();
+  // Five minutes left: the attempt's end set the batch's deadline.
+  expect((await record(5 * 60_000)).outOfTime).toBe(true);
+});
+
 it("runs nothing when Guardian denies the batch, and says why", async () => {
   const { host, batches } = liveTestHost(
     {},

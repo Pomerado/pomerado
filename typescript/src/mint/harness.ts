@@ -3019,13 +3019,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const liveTestReplaced: LiveTestRecord[] = (recovered?.liveTests ?? []).filter(
         (record) => record.retired === true,
       );
-      /** Whether a batch was refused for time; a case that ended at the deadline also counts. */
-      let liveTestsRefusedForTime = recovered?.liveTestsOutOfTime === true;
-      const liveTestsOutOfTime = () =>
-        liveTestsRefusedForTime ||
-        [...liveTestRecords.values()].some(
-          (record) => record.verdict === "inconclusive" && record.got === "deadline",
-        );
+      /**
+       * Whether the attempt ran out of time for live tests: a batch refused for time, or a case
+       * stopped by a batch deadline the attempt's own end set. A batch's ten-minute cap never
+       * counts, so the size of a batch cannot set it.
+       */
+      let liveTestsOutOfTime = recovered?.liveTestsOutOfTime === true;
       /** Each case's latest screened output, by case id: this attempt's runs only. */
       const liveTestOutputs = new Map<string, unknown>();
       /** Whether a passing example's receipt already carried the test plan. */
@@ -3115,10 +3114,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 : `Write or fix ${liveTestCasesPath} so each open item has passing cases with real values the site offers (or a skipped entry with status not_applicable or declined and the reason), fix the code for each failing case at its frame, then call live_tests with action run. Publication review reads ${liveTestsEvidencePath}, the host's record of these results on the source you publish.`,
           };
         });
-      /** The batch's end: ten minutes at most, and two minutes before the attempt's deadline. */
+      /**
+       * The batch's end: ten minutes at most, and two minutes before the attempt's deadline;
+       * `attemptBound` when the attempt's end, not the cap, set it.
+       */
       const liveTestDeadline = Effect.map(Clock.currentTimeMillis, (now) => {
         const remaining = dependencies.deadline?.remainingMs() ?? Number.POSITIVE_INFINITY;
-        return now + Math.min(10 * 60_000, remaining - 2 * 60_000);
+        const attemptLeft = remaining - 2 * 60_000;
+        return {
+          deadlineAt: now + Math.min(10 * 60_000, attemptLeft),
+          attemptBound: attemptLeft <= 10 * 60_000,
+        };
       });
       const runLiveTests = (request: LiveTestsRequest) =>
         Effect.gen(function* () {
@@ -3172,9 +3178,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               status: "source_unreadable",
               instruction: `The host could not read ${request.entrypoint} and its imports. Nothing was executed.`,
             });
-          const deadlineAt = yield* liveTestDeadline;
+          const { deadlineAt, attemptBound } = yield* liveTestDeadline;
           if (deadlineAt - (yield* Clock.currentTimeMillis) < 60_000) {
-            liveTestsRefusedForTime = true;
+            liveTestsOutOfTime = true;
             return JSON.stringify({
               kind: "host_live_tests",
               status: "no_time",
@@ -3231,7 +3237,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             if (
               previous !== undefined &&
               previous.verdict === "fail" &&
-              previous.caseDigest !== digestOfCase
+              previous.caseDigest !== digestOfCase &&
+              !liveTestReplaced.some(
+                (entry) => entry.id === previous.id && entry.caseDigest === previous.caseDigest,
+              )
             ) {
               liveTestReplaced.push({ ...previous, retired: true });
               liveTestReplaced.splice(0, Math.max(0, liveTestReplaced.length - maximumBatchCases));
@@ -3255,6 +3264,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               expect: testCase.expect,
             });
             verdicts[judged.verdict] = (verdicts[judged.verdict] ?? 0) + 1;
+            if (attemptBound && judged.verdict === "inconclusive" && judged.got === "deadline")
+              liveTestsOutOfTime = true;
           }
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.live_tests", {
@@ -3299,7 +3310,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             (read.right.skipped ?? []).length === 0 &&
             liveTestRecords.size === 0 &&
             liveTestReplaced.length === 0;
-          const outOfTime = liveTestsOutOfTime();
+          const outOfTime = liveTestsOutOfTime;
           if (nothing)
             return liveTestsEvidence({
               checklist: undefined,
@@ -4938,7 +4949,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(liveTestRecords.size === 0 && liveTestReplaced.length === 0
           ? {}
           : { liveTests: [...liveTestReplaced, ...liveTestRecords.values()] }),
-        ...(liveTestsRefusedForTime ? { liveTestsOutOfTime: true } : {}),
+        ...(liveTestsOutOfTime ? { liveTestsOutOfTime: true } : {}),
         ...(reviewer.tracked().length === 0 ? {} : { outcomeWrites: reviewer.tracked() }),
         purposes: [...purposes].map(([executionId, purpose]) => {
           const taskRevision = revisions.get(executionId);

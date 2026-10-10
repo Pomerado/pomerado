@@ -114,7 +114,8 @@ describe("checklistOf", () => {
     const list = items(input, output);
     expect(list).toContain("no_results");
     expect(list).not.toContain("input:limit");
-    expect(list).not.toContain("input:include");
+    // Each value a tool can include is set live.
+    expect(list).toContain("input:include");
     // A number on a scale is not a choice the site offers or withholds.
     expect(list).not.toContain("unoffered_value");
   });
