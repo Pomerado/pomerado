@@ -110,7 +110,7 @@ const escapedPattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\
  */
 const assignmentPattern = (name: string) =>
   new RegExp(
-    `(?:(?:^|[^\\w$.])(?:(?:window|self|globalThis)\\.)?${escapedPattern(name)}|(?:window|self|globalThis)\\[\\s*(["'])${escapedPattern(name)}\\1\\s*\\])\\s*=(?![=>])`,
+    `(?:^|[^\\w$.])(?:(?:(?:window|self|globalThis)\\.)?${escapedPattern(name)}|(?:window|self|globalThis)\\[\\s*(["'])${escapedPattern(name)}\\1\\s*\\])\\s*=(?![=>])`,
     "gu",
   );
 
@@ -187,27 +187,33 @@ const decodedString = (literal: string): string | undefined => {
 
 /**
  * The JSON text a script assigns to `name`: the object or array literal after the `=`, or the
- * string a `JSON.parse("...")` there decodes, for each assignment in document order.
+ * string a `JSON.parse("...")` there decodes, for each assignment in source order. The scan is
+ * linear: matching goes on after each value it read, and stops at a value that never closes, since
+ * nothing after it can close either.
  */
 const assignedValues = (script: string, name: string): string[] => {
   const values: string[] = [];
-  for (const match of script.matchAll(assignmentPattern(name))) {
+  const pattern = assignmentPattern(name);
+  for (let match = pattern.exec(script); match !== null; match = pattern.exec(script)) {
     const after = match.index + match[0].length;
-    const rest = script.slice(after);
+    const rest = script.slice(after, after + 64);
     const start = after + (rest.length - rest.trimStart().length);
-    const parse = /^JSON\.parse\(\s*/u.exec(script.slice(start));
+    const parse = /^JSON\.parse\(\s*/u.exec(script.slice(start, start + 64));
     if (parse !== null) {
       const quoted = start + parse[0].length;
+      if (!/["'`]/u.test(script[quoted] ?? "")) continue;
       const end = stringEnd(script, quoted);
-      const literal = end === undefined ? undefined : script.slice(quoted, end);
-      const decoded =
-        literal === undefined || !/^["'`]/u.test(literal) ? undefined : decodedString(literal);
+      if (end === undefined) break;
+      const decoded = decodedString(script.slice(quoted, end));
       if (decoded !== undefined) values.push(decoded);
+      pattern.lastIndex = end;
       continue;
     }
     if (script[start] !== "{" && script[start] !== "[") continue;
     const value = balancedValue(script, start);
-    if (value !== undefined) values.push(value);
+    if (value === undefined) break;
+    values.push(value);
+    pattern.lastIndex = start + value.length;
   }
   return values;
 };
@@ -231,7 +237,13 @@ const unwrapped = (text: string) => {
 };
 
 const scriptType = (element: Element) =>
-  (element.attribs["type"] ?? "").split(";")[0]?.trim().toLowerCase();
+  (ownAttribute(element, "type") ?? "").split(";")[0]?.trim().toLowerCase();
+
+/** A classic or module script, the kinds that can assign state; never a data or template block. */
+const isJavaScript = (element: Element) => {
+  const type = scriptType(element) ?? "";
+  return type === "" || type === "module" || /^(?:text|application)\/(?:x-)?(?:java|ecma)script$/u.test(type);
+};
 
 /** The raw texts the selector points at, in document order. */
 const candidates = (document: Document, select: EmbeddedJsonSelector) => {
@@ -246,11 +258,18 @@ const candidates = (document: Document, select: EmbeddedJsonSelector) => {
         element.name === "script" && scriptType(element) === `application/${select.type}`,
       document,
     ).map((element) => textContent(element));
+  // The last assignment wins, as it does when the page runs: an empty initialiser filled in later
+  // gives the filled value.
   if ("assignment" in select)
     return findAll(
-      (element) => element.name === "script" && ownAttribute(element, "src") === undefined,
+      (element) =>
+        element.name === "script" &&
+        ownAttribute(element, "src") === undefined &&
+        isJavaScript(element),
       document,
-    ).flatMap((element) => assignedValues(textContent(element), select.assignment));
+    )
+      .flatMap((element) => assignedValues(textContent(element), select.assignment))
+      .reverse();
   const name = select.attribute.toLowerCase();
   return findAll((element) => ownAttribute(element, name) !== undefined, document).map(
     (element) => ownAttribute(element, name) ?? "",

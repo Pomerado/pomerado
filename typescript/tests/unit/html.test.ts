@@ -132,6 +132,28 @@ window.__APP_STATE__.ready = true;</script>
     ).toMatchObject({ left: { reason: "unparsable" } });
   });
 
+  it("scans a script with many unclosed assignments in linear time", () => {
+    for (const repeated of ["__S = {", 'window.__S = ["x']) {
+      const script = `<script>${repeated.repeat(100_000)}</script>`;
+      const started = performance.now();
+      expect(embeddedJson(script, { assignment: "__S" })).toMatchObject({
+        left: { reason: "missing" },
+      });
+      // A quadratic scan takes minutes here; a linear one, well under a second.
+      expect(performance.now() - started).toBeLessThan(5_000);
+    }
+  });
+
+  it("prefers the last assignment that parses, in a script of a JavaScript type", () => {
+    const filled = `<script>window.__S = {}; /* filled below */ window.__S = {"items":[1,2]};</script>
+<script type="text/template">window.__S = {"template":true}</script>
+<script>notwindow["__S"] = {"other":true}</script>`;
+    expect(embeddedJson(filled, { assignment: "__S" })).toEqual(Either.right({ items: [1, 2] }));
+    expect(
+      embeddedJson(`<script type="module">window["__S"] = [3]</script>`, { assignment: "__S" }),
+    ).toEqual(Either.right([3]));
+  });
+
   it("reads only an attribute the element has, never an inherited name", () => {
     const document = parseHtml(`<div data-a="1"></div>`);
     expect(document.selectOne("div")?.attr("constructor")).toBeUndefined();

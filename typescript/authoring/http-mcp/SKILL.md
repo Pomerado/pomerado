@@ -40,8 +40,9 @@ input:
    `captures/routes.json` names an `exampleDocument`. Look for the example's
    IDs and values in embedded state: `<script id=…>` state blocks, `<script
    type="application/json">`, `<script type="application/ld+json">`, JSON in an attribute, and
-   state a script assigns (`window.__STATE__ = {...}`, `self.__DATA = JSON.parse("...")`). Check that the state is filled for this input. An empty search state or
-   a null price means the page fills it later from a request: go on to 2.
+   state a script assigns (`window.__STATE__ = {...}`, `self.__DATA = JSON.parse("...")`).
+   Check that the state is filled for this input. An empty search state or a null price means
+   the page fills it later from a request: go on to 2.
 2. **The page's own data request.** Search `captures/routes.json` and the saved bodies for one of
    the example's IDs (Reading the captures, below). The response that holds it is the request to
    make, GET first. A search provider on another domain counts when the page itself calls it:
@@ -105,8 +106,9 @@ script: it has no `SiteHttp`, and the host refuses it in a `*-http.mjs` file bef
   block. `select` is `{ id }` for a `<script id=…>` block, `{ type: "ld+json" }` or
   `{ type: "json" }` for every script of that type, `{ attribute }` for JSON in an attribute, or
   `{ assignment: "__STATE__" }` for the object or array a script assigns to that global, or the
-  string it passes to `JSON.parse`. When a live curl answer lacks the block, it asks once more
-  over the page's fetch, then fails `parsing` naming the block and the page's title.
+  string it passes to `JSON.parse` (the last assignment that parses, as when the page runs).
+  When a live curl answer lacks the block, it asks once more over the page's fetch, then fails
+  `parsing` naming the block and the page's title.
   `embeddedJson(text, select)` reads a block from text you already have.
 - `parseHtml(text)` gives an inert tree for a page without a state block: `select(css)`,
   `selectOne(css)`, and on each node `text()`, `attr(name)` and `html()`. It runs no script and
