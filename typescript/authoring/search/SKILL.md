@@ -26,10 +26,12 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
   enum lists all of them as the page shows them. When they depend on the query, such as sizes or
   brands, take a string and match it against the choices this search's page shows.
 - Filters and sort are choices: set them as "Configure, then read" in the core skill says, and
-  read the results last. When the page's list of choices does not hold a caller's value, the
-  tool throws `InvalidInput` with `field` and `available`, the choices the group it opened for
-  that value offers on this search's page, only after reading them. A control the tool could not
-  find, open or apply makes it throw `OperationFailure`.
+  read the results last. When the page's list of choices does not hold a caller's value but a
+  broader choice such as "Show all" covers it, choose the broader choice and return the rows the
+  site gives, saying so in the description. Otherwise the tool throws `InvalidInput` with
+  `field` and `available`, the choices the group it opened for that value offers on this
+  search's page, only after reading them. A control the site has but the tool could not find,
+  open or apply makes it throw `OperationFailure`.
 - A price or other numeric range is a number, never a label to match: a slider's labels and
   steps often change with the result set. Set the nearest step inside the caller's bound (down
   for a maximum, up for a minimum), the range's end for a value outside it, read the applied
@@ -43,11 +45,12 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
 
 ## Apply and read back
 
-On every run, set each input through the site's own control, then read it back from the site's
-committed state: the applied-filter chips, the selected sort, an option the site shows selected,
-or the results header. A URL naming the input does not show it applied. When a filter did not
-apply, the tool throws `OperationFailure` naming it, so the run fails and the tool gets repaired;
-it never returns unfiltered results as filtered.
+On every run, set each input the site has a control for through that control, never by filtering
+the returned rows, then read it back from the site's committed state: the applied-filter chips,
+the selected sort, an option the site shows selected, or the results header. A URL naming the
+input does not show it applied. When a filter did not apply, the tool throws `OperationFailure`
+naming it, so the run fails and the tool gets repaired; it never returns unfiltered results as
+filtered.
 An HTTP version reads each input back from the answer instead: the echoed query, sort, filters
 and store or location in its own state.
 
@@ -114,8 +117,8 @@ that. Keep the matches apart from related items, recommendations and sponsored c
 go in their own list or are left out, never mixed into the results, and return each item once. A
 card that stands for a group of variants, such as "6 flavors" or "3 colors", says so in its own
 fields, such as a variant count, and that its link opens one member of the group. Check that the
-page's echo of the query, such as a results heading, matches it normalized, never with exact
-case-sensitive equality. A search
+page's echo of the query, such as a results heading, matches it normalized, or for a proper noun
+fuzzily, never with exact case-sensitive equality. A search
 that applied every input and got the site's no-results message returns an empty list, never an
 error.
 
