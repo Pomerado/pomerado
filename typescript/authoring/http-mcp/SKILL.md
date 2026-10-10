@@ -207,7 +207,7 @@ The host decides from its own records, never from your claims:
   coverage, delete `src/tool-http.mjs` and call finish_build again. The Playwright script
   then publishes alone, and deleting a file you ran is that choice, so the host never asks
   about it. A refused publication does not skip that ask, so a later finish_build still
-  asks about a stale or untested file. Ship
+  asks about a stale or untested file if it has not asked yet. Ship
   an HTTP version only after it passes a live test, never an untested or failed one beside the
   Playwright script.
 - A write's HTTP version is stored, and is `http` first only after a passing recorded

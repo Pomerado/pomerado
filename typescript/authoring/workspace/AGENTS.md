@@ -433,10 +433,10 @@ probes.
 pomerado:section agents.capture:end -->
 
 The host's `executionAvailability` reports attempt-local capacity, never authority.
-`not_published` leaves live execution open on the same browser, still signed in: do not sign
-in again. Only a publication whose capture failed leaves the next live execution a fresh
-browser on a new, empty profile: then read `page.url()` first and sign in again when the build
-signs in. A write build reads back first whether its earlier
+`not_published` leaves live execution open on the same browser, still signed in: read
+`page.url()` first, and prefer not to sign in again. Only a publication whose capture failed
+leaves the next live execution a fresh browser on a new, empty profile: read `page.url()` first
+and sign in again when the build signs in. A write build reads back first whether its earlier
 commit took effect and never submits one that did. `host_unavailable`
 ends live execution: preserve receipts and unresolved effects; do not retry execution or request
 user input to restore the host. An eligible retained receipt may still receive source

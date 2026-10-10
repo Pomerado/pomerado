@@ -255,9 +255,9 @@ publishes with its output recorded as unavailable.
 
 After a `not_published`, live `act` steps are open again while the write session is still
 open (a commit that recorded its confirmation stays done), on the same browser, still signed
-in: do not sign in again. Only after a publication whose capture failed do they run on a
-fresh browser on a new, empty profile: then read `page.url()` first and sign in again when
-the build signs in. Before
+in: read `page.url()` first, and prefer not to sign in again. Only after a publication whose
+capture failed do they run on a fresh browser on a new, empty profile: read `page.url()`
+first and sign in again when the build signs in. Before
 running a commit again, run an `act` step that only reads the site or the account to see
 whether the earlier commit landed, and never resubmit one that did. If no read-back can
 tell, never submit again. Guardian reviews every

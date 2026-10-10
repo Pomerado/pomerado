@@ -3692,7 +3692,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     (error.reason === "http_implementation_stale"
                       ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
                       : "Not published yet: this read has no HTTP implementation that passed a live test, so try one once. Read .agents/http-mcp/SKILL.md, write src/tool-http.mjs from captures/routes.json and the example, and run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Iterate until its output matches the example's, then call finish_build again with the same executionId.") +
-                      " To publish the Playwright version alone instead, delete src/tool-http.mjs, say why in coverage and call finish_build again. The host asks only once, only while live capture is open, and never after you delete a src/tool-http.mjs you ran.",
+                      " To publish the Playwright version alone instead, delete src/tool-http.mjs, say why in coverage and call finish_build again. The host asks only once, and never after you delete a src/tool-http.mjs you ran.",
                   );
                 if (error.reason === "login_url_one_time")
                   return notPublished(
