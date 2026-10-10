@@ -49,6 +49,9 @@ export const publicationFindingCategories = [
   "confirmation",
   // An input narrowed to the example's value, which blocks publication like a source correction.
   "example_value",
+  // A safety default an earlier copy of the source set that the current source drops or weakens,
+  // which blocks publication with reason privacy.
+  "safety_default",
   ...inputFindingCategories,
 ] as const;
 export const publicationReasons = [
