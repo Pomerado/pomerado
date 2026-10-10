@@ -172,6 +172,10 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
   ["core", "- Make one execute call per operation."],
   ["core", "- The code works for every value the schema accepts."],
+  [
+    "core",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a city alone or with its state and country, or a company with or without Ltd. or Inc. Never require an exact match. When more than one option matches, list them for the caller instead of picking one.",
+  ],
   ["core", "Take the site origin from the context's `siteOrigin`."],
   ["core", "The tools and the files you may edit are in `AGENTS.md`."],
   ["core", "Read their bodies only when useful."],
@@ -331,11 +335,11 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "core",
     'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
   ],
-  // A record whose name differs from the caller's only in case is still that record, so a picker's
-  // "Add new" row never creates a near-duplicate of it.
+  // A record whose name differs from the caller's only in case or in a usual form of the same name
+  // is still that record, so a picker's "Add new" row never creates a near-duplicate of it.
   [
     "forms",
-    'Prefer matching an existing record by a case-insensitive exact name, and prefer never picking an "Add new" row when an existing record matches.',
+    'Prefer matching an existing record by a fuzzy match on its name (core skill), and prefer never picking an "Add new" row when an existing record matches.',
   ],
 ];
 
@@ -722,17 +726,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["20c7435ad9ae09356b05a3022332f4b2681c630ddb43fa1980780cd27debad40", "core"],
-    ["fd95501e0f1ef01cd772f5f04d469c1fe6f6feaf71581e6eff4b0c86df55cde3", "search"],
-    ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
+    ["400d66ffa7cc56ed04992b5f5d0448c6ff1eca66559f85dffacc68a807096468", "core"],
+    ["48a6032f7b7c5ea73a9e5e24dde7b5ed56e4b78152cbf1aa7c72a7fc5ad57293", "search"],
+    ["44d7e901c447b4d03ff10c94954d8c5381cf811de647d0474478e7babd453515", "auth"],
     ["9dec1255475d3048d681d566e723d2c63cb71b10eafc4bef4d3522916027aeb2", "testing"],
     ["ef7377693db446a9b7ffde2888c508e9f670b5e850710b7b87274d33ba2e1552", "pagination"],
-    ["6470768cbe2c563e9c8895b6e25f0f5c1507633b6088404b55e72530884fe2a4", "forms"],
-    ["73b98aa818be9fe167a5cc9a6897119dc9779c054bb9dc70b76b20acad194044", "writes"],
+    ["383c75f4ebe9c8c8933b3e6cf1d9fc15033e990a68a88e0f8fab76008d9c41fc", "forms"],
+    ["c3ed43b2b64e83b242d23f928ac495ce5ef092d51e6c41c6d7e94d3109087ab9", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["bcf2c2d8cebae229466169182c4815a2bce91e82fbdd6fd0543b36153ec387f4", "caller-input"],
     ["e6220d6f99f8dbd8c8961dd043e046edb58fd9398ec578f104600a296bd7fed6", "publication"],
-    ["31e9537e2bdfe0b7287ee3bef58feeb7ca77254fd6df488dd1773127f4092f01", "workspace/AGENTS.md"],
+    ["874a1b88e1a1a06222b676086e9297152b976515c9a372df0df51f3198940826", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

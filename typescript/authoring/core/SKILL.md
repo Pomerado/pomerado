@@ -157,6 +157,10 @@ that asks.
   it showed. With one, use it. With several, ask the caller which one with a declared choice
   question whose options are those matches as the site labels them
   (.agents/caller-input/SKILL.md).
+- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
+  match that accepts the usual forms of the same name, such as a city alone or with its
+  state and country, or a company with or without Ltd. or Inc. Never require an exact match.
+  When more than one option matches, list them for the caller instead of picking one.
 - On a write, every choice the session met is an input: each option on the path,
   add-ons and pre-selected defaults included. Make it required when the site requires
   a choice (a fare class) and optional when it does not (a seat). An unset optional input
@@ -383,7 +387,10 @@ that depends on them:
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
-   `available`, and say in the message that they were left out. Never pick a near match, the page's default or the first option.
+   `available`, and say in the message that they were left out. Never pick a near match, the
+   page's default or the first option; the same proper noun in another usual form is not a near
+   match (input schema above). A broader choice that covers the value, such as "Show all", is
+   allowed on a search (search skill).
    - An option the page lists but greys out, disables or marks unavailable, such as a booked
      date, a sold-out size or a full time slot: a read returns it as data, the requested value
      with `available: false`, the page's own reason when it shows one, and the alternatives the
@@ -403,9 +410,10 @@ that depends on them:
 3. Confirm. Read each choice back from the page's selected state, then wait for the values
    that depend on it with `waitForChange`: changed, or confirmed unchanged once the page's
    loading sign came and went; a value read before the page updates belongs to the previous
-   choice. Compare text read back with the caller's value normalized: ignore case, repeated
-   whitespace and typographic punctuation such as curly quotes, never exact case-sensitive
-   equality, since a page may echo a query or name in its own case.
+   choice. Compare text read back with the caller's value normalized, or for a proper noun with
+   the option it matched: ignore case, repeated whitespace and typographic punctuation such as
+   curly quotes, never exact case-sensitive equality, since a page may echo a query or name in
+   its own case.
 4. Read. Only then read the values the choices affect. Return the applied choices beside
    them. Return a group's offered options as a list when the page shows them without extra
    clicks, as a record page shows its variants, or when the caller asks (search skill).
@@ -608,6 +616,9 @@ then check that exactly one element matches; `waitForOutcome` checks it for the 
 returns. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
+
+Never search the open web, such as Google, to find the page a task needs. Make its URL an
+input and ask the caller for it.
 
 For a detail read whose input is the record's page URL, check that it is https on the tool's
 site and open it unchanged. Otherwise reach the record through the site's own search, list or

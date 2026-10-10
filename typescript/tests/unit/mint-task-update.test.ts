@@ -181,6 +181,61 @@ it("turns a read build into a write build once the caller picks the option the m
   expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "write" });
 });
 
+// A write build that confirms a page default before its first act step is still a write build:
+// the host, not the minter, gives the review the build's effect, so the review never reads the
+// update as a read build's.
+it("gives a write build's update review the write effect before its first act step", async () => {
+  const updates = updateHost(["allow"]);
+  const deliveryQuestion = {
+    questions: [
+      {
+        id: "delivery",
+        type: "choice",
+        prompt: "The order form preselects standard delivery. Keep standard delivery?",
+        options: [
+          { id: "standard", label: "Yes, keep standard delivery" },
+          { id: "stop", label: "No, stop" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", deliveryQuestion, "ask"),
+        call(
+          "mint_update",
+          {
+            summary: "Keep the form's standard delivery, as the caller confirmed.",
+            changes: [{ setting: "input", values: { delivery: "standard" } }],
+            confirmedBy: ["delivery"],
+            recommend: "update",
+          },
+          "update",
+        ),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ delivery: "standard" }]) },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, effect: "write" },
+  });
+  expect(updates.reviews).toHaveLength(1);
+  expect(updates.reviews[0]?.update.effect).toBe("write");
+  expect(updates.reviews[0]?.current).toMatchObject({ revision: 0, effect: "write" });
+  expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "write" });
+  // The minter reads the same exception: a confirmed answer can overturn a decision that held a
+  // step to the caller's own request, never one made for safety or a scope limit.
+  const mintUpdate = f.requests[0]?.tools.find((tool) => tool.name === "mint_update");
+  expect(JSON.stringify(mintUpdate ?? null)).toContain(
+    JSON.stringify(
+      "No update removes the requested action itself, allows repeating a write that may have committed, or overturns a Guardian decision, except that the caller's confirmed answer can overturn one that held a step to their own request, such as a time, a value or a search setting. A caller's answer never overturns a decision made for safety or for a Pomerado scope limit.",
+    ).slice(1, -1),
+  );
+});
+
 it("drops a prerequisite the caller said the site does not offer", async () => {
   const updates = updateHost(["allow"]);
   const f = await fixture(
