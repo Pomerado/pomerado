@@ -168,19 +168,19 @@ describe("judgeCase", () => {
       outcome: { status: "invalid_input" as const, field: "size", available: ["s", "m"] },
       durationMs: 1,
     };
-    expect(judgeCase({ expect: "invalid_input" }, refused)).toMatchObject({
+    expect(judgeCase({ expect: "invalid_input" }, refused, undefined)).toMatchObject({
       verdict: "pass",
       refusal: { field: "size", available: ["s", "m"] },
     });
-    expect(judgeCase({ expect: "result" }, refused).verdict).toBe("fail");
+    expect(judgeCase({ expect: "result" }, refused, undefined).verdict).toBe("fail");
     const failed = (errorClass: string) => ({
       id: "case",
       outcome: { status: "failed" as const, errorClass, frame: "src/tool.mjs:40" },
       durationMs: 1,
     });
-    expect(judgeCase({ expect: "error" }, failed("LocationNotApplied")).verdict).toBe("pass");
-    expect(judgeCase({ expect: "error" }, failed("TimeoutError")).verdict).toBe("fail");
-    expect(judgeCase({ expect: "result" }, failed("TimeoutError"))).toMatchObject({
+    expect(judgeCase({ expect: "error" }, failed("LocationNotApplied"), undefined).verdict).toBe("pass");
+    expect(judgeCase({ expect: "error" }, failed("TimeoutError"), undefined).verdict).toBe("fail");
+    expect(judgeCase({ expect: "result" }, failed("TimeoutError"), undefined)).toMatchObject({
       verdict: "fail",
       frame: "src/tool.mjs:40",
     });
@@ -193,11 +193,12 @@ describe("judgeCase", () => {
       followUp: { status: "completed" as const, output: { results: [] } },
       durationMs: 1,
     };
-    expect(judgeCase({ expect: "result" }, paged)).toMatchObject({ verdict: "fail" });
+    expect(judgeCase({ expect: "result" }, paged, { field: "results" })).toMatchObject({ verdict: "fail" });
     expect(
       judgeCase(
         { expect: "result" },
         { id: "case", outcome: { status: "inconclusive", reason: "challenge" }, durationMs: 1 },
+        { field: "results" },
       ).verdict,
     ).toBe("inconclusive");
   });
