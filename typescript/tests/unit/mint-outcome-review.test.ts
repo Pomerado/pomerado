@@ -303,6 +303,87 @@ it("finds a write's confirmation in minter history from before a compaction", as
   for (const offset of cited ?? []) expect(offset).toBeLessThan(compaction ?? 0);
 });
 
+// Fails when the reviewer is not told that a write's own commit request, answered 2xx or 3xx with
+// no error after it, shows the write happened, so it would ask for a readback the write doesn't
+// need. A host that lists state-changing requests records each one's response status.
+it("settles a write done from its own commit request's status in the step's result", async () => {
+  const reviewer = scriptedReviewer((request, index) => {
+    if (index === 0)
+      return respond(functionCall("search_history", { query: "statuses", limit: 5 }, "search"));
+    if (index === 1) {
+      const found = toolOutput(request, "search") as {
+        matches: readonly { offset: number }[];
+      };
+      return respond(
+        functionCall("submit_assessment", {
+          executionId: turnOf(request).unresolvedWrites[0]?.executionId,
+          outcome: "done",
+          explanation:
+            "The save step's own POST on the site's note route returned 201, and the page showed no error after it.",
+          evidence: found.matches.map((match) => `history:${match.offset}`),
+        }),
+      );
+    }
+    return respond(message("Assessed."));
+  });
+  const review = reviewHost(reviewer.provider);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        minter("execute", step("src/save.ts"), "save"),
+        minter("finish_build", publication("save_1")),
+      ][index] ?? respond(message("Published.")),
+    {
+      reviewAndExecute: allowedStep(() =>
+        Effect.succeed({
+          executionId: "save_1",
+          status: "completed",
+          effect: "possible",
+          resultRef: "save_result",
+          observations: {
+            page: "Note saved.",
+            stateChangingRequests: [
+              {
+                method: "POST",
+                origin: "https://notes.example",
+                path: "/notes",
+                resourceType: "fetch",
+                count: 1,
+                statuses: [201],
+                unanswered: 0,
+              },
+            ],
+          },
+        }),
+      ),
+      outcomeReview: review.host,
+    },
+    { effect: "write" },
+  );
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  expect(outcome.writes).toEqual([
+    expect.objectContaining({
+      status: "applied",
+      assessment: expect.objectContaining({ outcome: "done" }),
+    }),
+  ]);
+  // The step's listed status reached the reviewer through the minter's history.
+  expect(review.recorded[0]?.evidence.length).toBeGreaterThan(0);
+  const instructions = String(reviewer.requests[0]?.systemInstructions);
+  expect(instructions).toContain(
+    "or the write's commit request: in the step that clicked the final commit control, a request to the site's own origin on the route the session's commit used, listed in that step's stateChangingRequests with a 2xx or 3xx status, and no error after it in its readable response or on the page.",
+  );
+  // A request the site only queued, or a commit step with no request, settles nothing by itself.
+  expect(instructions).toContain(
+    "A 202 or a response that says the work is queued needs a readback.",
+  );
+  expect(instructions).toContain(
+    "or a commit step with no commit request recorded, which a websocket or GET commit can explain.",
+  );
+});
+
 // Fails when a reviewer outage holds the build or invents an outcome for the write.
 it("leaves a write unresolved through a reviewer outage, and the build publishes", async () => {
   const reviewer = scriptedReviewer(() => {

@@ -593,8 +593,9 @@ as in `references/native-dialog.ts`. Never pre-dismiss the dialog or retry the a
 A live execute result may carry `stateChangingRequests`: every request other than
 GET, HEAD or OPTIONS the page sent since the last execution result, by `method`,
 `origin`, `path` and `resourceType`, with a `count` (`omitted` counts routes past
-the list). Nothing refused them; the list exists so you can catch writes you did not
-intend. Telemetry, analytics and bot-sensor POSTs are normal and need no change.
+the list). Each entry also lists its requests' final response `statuses` in order, and
+`unanswered` counts any with no answer when the step ended. Nothing refused them; the
+list exists so you can catch writes you did not intend. Telemetry, analytics and bot-sensor POSTs are normal and need no change.
 So is an anonymous recent-search, prefill or search-state save the site fires when
 you submit a search.
 
@@ -604,8 +605,9 @@ one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
 again. Setting a read's location, filter, sort or option through the site's control is part of
 the read, not a saved preference (the input schema above). For a write session, the list shows the commit your step caused and any
-autosave: that is the evidence for the `http` version, and any other write is
-unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
+autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no
+error after it, is what the writes skill confirms from. The list is the evidence for the
+`http` version, and any other write is unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
 page evaluation, `page_script` is the site's script (which your click can also
 start), and `parser` is markup such as a form submission.
 

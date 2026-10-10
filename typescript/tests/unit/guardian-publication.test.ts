@@ -435,6 +435,22 @@ describe("the publication policy", () => {
       "The local precheck covered only this build's own caller-supplied values and secret handles; it did not screen for provider credentials or other secrets, so inspect every published file for hard-coded API keys, tokens and passwords. Inspect the published files for hardcoded customer/private data,",
     );
   });
+
+  // A composed write that confirms from its own commit request's response, checked, is
+  // confirming; one that takes any request, any status or an unread error body is not.
+  it("accepts a write confirmed from its own commit request, and refuses a loose check", () => {
+    const policy = guardianPublicationPolicy;
+    expect(policy).toContain(
+      "perform and return the confirmation or read-back it declares, and never resubmit or commit twice. A script that confirms from its commit request is confirming, not missing a read-back: in the same call as the final commit click it waits for the site's response on the route the session's commit used, requires a 2xx or 3xx status and no error in a body it can read, checks the page for an error or validation message, and only then calls verified(). It is a confirmation finding when the script accepts any request or any status, takes a 200 from an endpoint that can report errors in its body without checking that body, or skips the page's error check.",
+    );
+    // A request the site only queued keeps its read-back.
+    expect(policy).toContain(
+      "A 202 or a response that says the work is queued confirms nothing without a read-back.",
+    );
+    expect(policy).toContain(
+      "'unverifiable' is valid only if the session evidence shows the site offered no commit response the script can check, no confirmation and no read-back.",
+    );
+  });
 });
 
 const message = (value: unknown): ModelResponse["output"][number] => ({
