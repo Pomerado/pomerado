@@ -4,6 +4,7 @@ import {
   outputCheckMeaning,
   type OutputFinding,
   type OutputOverride,
+  type ReviewedOutputFinding,
 } from "../runtime/output-lint.js";
 
 /**
@@ -17,6 +18,8 @@ import {
 export const outputNotesPath = "publication/output-notes.json";
 
 export interface OutputNotes {
+  /** Every finding, with the minter's reason where an override names it. */
+  readonly findings: readonly ReviewedOutputFinding[];
   /** Findings that still refuse publication: blocking, with no override. */
   readonly blocking: readonly OutputFinding[];
   /** Whether any finding or override exists, so the notes file is worth the reviewer's read. */
@@ -42,6 +45,7 @@ export const outputNotes = (input: {
   });
   const applied = applyOutputOverrides(findings, input.overrides);
   return {
+    findings: applied.findings,
     blocking: applied.blocking,
     any: findings.length > 0 || (input.overrides?.length ?? 0) > 0,
     text: JSON.stringify(
