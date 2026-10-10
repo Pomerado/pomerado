@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
 import { Either, Schema } from "effect";
+import { outcomeWaitCode } from "../../src/browser/outcome-wait.js";
 import { waitCode } from "../../src/browser/wait.js";
 import { probeCallCode } from "../../src/runtime/host-execute.js";
 import { defineOperation } from "../../src/runtime/operation.js";
@@ -91,12 +92,13 @@ test("a quiet page that shows none of the answers fails as outcome_unknown long 
 test("a page showing a loading sign keeps the wait alive past the no-progress window", async ({
   page,
 }) => {
+  // A generic sign counts until it has held for the no-progress window, and the window then runs.
   await page.setContent(`
     <section id="answer"><div aria-busy="true">Searching</div></section>
     <script>
       setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 900);
     </script>`);
-  const answer = await outcome(page, "noProgressMs: 300, timeout: 3000");
+  const answer = await outcome(page, "noProgressMs: 700, timeout: 3000");
   expect(answer.shown).toBe("results");
   expect(answer.report?.[0]?.summary).toMatch(/^waitForOutcome: "results" showed after \d+ ms .*progress seen: loading sign /u);
 });
@@ -201,7 +203,8 @@ test("a page still progressing at the cap fails as outcome_timeout and says what
   page,
 }) => {
   await page.setContent(`<section id="answer"><div aria-busy="true">Searching</div></section>`);
-  const answer = await outcome(page, "noProgressMs: 300, timeout: 800");
+  // The site's own sign, named, counts for as long as it shows.
+  const answer = await outcome(page, `noProgressMs: 300, timeout: 800, loading: page.locator('[aria-busy="true"]')`);
   expect(answer.reason).toBe("outcome_timeout");
   expect(answer.message).toMatch(
     /^outcome_timeout after 800 ms: failed 0 visible of 0, empty 0 visible of 0, results 0 visible of 0; progress seen: loading sign \d\.\d s–\d\.\d s/u,
@@ -459,4 +462,202 @@ test("a before that is not the values object of the same fields is refused at on
     `await waitForChange({ total: page.locator("#total") }, { before: ["$240"], noProgressMs: 300 });`,
   );
   expect(answer.error).toMatch(/^waitForChange's before must be the values object/u);
+});
+
+// Decorative signs: a rating bar (a determinate progress bar), a quantity input whose class names
+// a spinner, and a layout element whose class names one. None of them is the page loading.
+const decorations = `<div role="progressbar" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100" aria-label="Rating"></div><input type="number" class="qty-spinner" aria-label="Quantity" value="1"><span class="spinner-frame">&#9733;</span>`;
+
+test("rows whose cards carry rating bars and spinner-named controls return promptly when fewer than asked", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <ol id="results"></ol>
+    <script>
+      setTimeout(() => {
+        for (let i = 1; i <= 3; i += 1)
+          document.querySelector("#results").insertAdjacentHTML("beforeend",
+            '<li data-id="room-' + i + '"><h3>Room ' + i + '</h3><span class="price">$' + (100 + i) + '</span>' + ${JSON.stringify(decorations)} + '</li>');
+      }, 50);
+    </script>`);
+  const answer = await call(
+    page,
+    `const started = Date.now();
+    const { rows } = await waitForRows(page.locator("#results > li"), { price: ".price" }, {
+      count: 5, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 2500,
+    });
+    return { keys: rows.map((row) => row.key), ms: Date.now() - started };`,
+  );
+  expect(answer.error).toBeUndefined();
+  const result = answer.result as { keys: string[]; ms: number };
+  expect(result.keys).toEqual(["room-1", "room-2", "room-3"]);
+  expect(result.ms).toBeLessThan(1500);
+});
+
+test("a page whose only signs are decorative fails as outcome_unknown at the no-progress limit", async ({
+  page,
+}) => {
+  await page.setContent(`<section id="answer"><h1>Something else entirely</h1>${decorations}</section>`);
+  const answer = await outcome(page, "noProgressMs: 300, timeout: 2000");
+  expect(answer.reason).toBe("outcome_unknown");
+  expect(answer.ms).toBeLessThan(1500);
+});
+
+test("a dependent value confirmed unchanged beside a decorative sign returns without waiting out the cap", async ({
+  page,
+}) => {
+  await quotePage(page, "$240", null);
+  await page.locator("body").evaluate((body, html) => body.insertAdjacentHTML("beforeend", html), decorations);
+  const answer = await call(
+    page,
+    `await page.locator("#guests").selectOption("3", { timeout: 1000 });
+    return await waitForChange({ total: page.locator("#total") }, {
+      before: { total: "$240" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 2500,
+    });`,
+  );
+  expect(answer.result).toEqual({ values: { total: "$240" }, changed: false });
+});
+
+test("a loading sign that appears after the action keeps the wait alive past the no-progress window", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <button type="button">Search</button><section id="answer"></section>
+    <script>
+      document.querySelector("button").onclick = () => {
+        document.querySelector("#answer").innerHTML = '<div class="results-skeleton" style="height: 40px"></div>';
+        setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 700);
+      };
+    </script>`);
+  const answer = await outcome(
+    page,
+    `noProgressMs: 300, unchangedMs: 1000, timeout: 3000, action: () => page.getByRole("button", { name: "Search" }).click()`,
+  );
+  expect(answer, JSON.stringify(answer)).toMatchObject({ shown: "results" });
+});
+
+test("code pasting outcomeWaitCode beside its own wait helpers still runs", async ({ page }) => {
+  await page.setContent(rooms.replace("<ul", `<section id="answer"><ul`) + "</section>");
+  const answer = await call(
+    page,
+    `const waitSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const waitForRows = async () => "mine";
+    const waitLimits = {};
+    await waitSleep(1);
+    return [await waitForOutcome({ results: page.getByRole("list", { name: "Rooms" }) }), await waitForRows()];`,
+    outcomeWaitCode,
+  );
+  expect(answer).toEqual({ result: ["results", "mine"] });
+});
+
+test("a search sent to the same API path as earlier requests is still the site's request in flight", async ({
+  page,
+}) => {
+  await site(
+    page,
+    `<button type="button">Search</button><section id="answer"></section>
+    <script>
+      const ask = (operation) => fetch("/graphql", { method: "POST", body: JSON.stringify({ operation }) });
+      document.querySelector("button").onclick = async () => {
+        await Promise.all([ask("Session"), ask("Flags")]);
+        const response = await ask("SearchRooms");
+        document.querySelector("#answer").innerHTML = (await response.json()).html;
+      };
+    </script>`,
+    async (path) => {
+      if (path !== "/graphql") return { body: "{}" };
+      return { body: JSON.stringify({ html: rooms }) };
+    },
+  );
+  // Only the search is slow.
+  await page.route(`${origin}/graphql`, async (route) => {
+    const slow = String(route.request().postData()).includes("SearchRooms");
+    if (slow) await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ html: rooms }) });
+  });
+  const answer = await outcome(
+    page,
+    `noProgressMs: 500, timeout: 3000, siteDomain: "example.test", action: () => page.getByRole("button", { name: "Search" }).click()`,
+  );
+  expect(answer.shown).toBe("results");
+});
+
+test("a request that stays open does not hold a short list back", async ({ page }) => {
+  await site(
+    page,
+    `<ol id="results"><li data-id="room-1"><h3>Room 1</h3></li></ol>
+    <script>setTimeout(() => fetch("/events/wait"), 20);</script>`,
+    async (path) => {
+      if (path === "/events/wait") await new Promise((resolve) => setTimeout(resolve, 5000));
+      return { body: "{}" };
+    },
+  );
+  const answer = await call(
+    page,
+    `const started = Date.now();
+    const { rows } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
+      count: 5, key: { attribute: "data-id" }, siteDomain: "example.test", noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 2500,
+    });
+    return { keys: rows.map((row) => row.key), ms: Date.now() - started };`,
+  );
+  expect(answer.error).toBeUndefined();
+  expect((answer.result as { ms: number }).ms).toBeLessThan(1500);
+});
+
+test("without siteDomain, a host under a shared suffix such as co.uk is not taken for the site", async ({
+  page,
+}) => {
+  const shop = "https://shop.example.co.uk";
+  await page.route("https://*.co.uk/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === shop && url.pathname === "/") {
+      await route.fulfill({ contentType: "text/html", body: `<section id="answer"><p>Welcome</p></section>` });
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.fulfill({ body: "" }).catch(() => undefined);
+  });
+  await page.goto(`${shop}/`);
+  const signs = async (host: string) => {
+    const answer = await call(
+      page,
+      `try {
+        await waitForOutcome({ results: page.getByRole("list") }, {
+          noProgressMs: 300, timeout: 3000,
+          action: () => page.evaluate(() => { fetch("https://${host}/slow", { mode: "no-cors" }); }),
+        });
+      } catch (error) {
+        return { reason: error.reason, signs: Object.keys(error.progress.signs) };
+      }`,
+    );
+    return answer.result as { reason: string; signs: string[] };
+  };
+  // Another site under the same public suffix is not the site's own request.
+  expect(await signs("tracker.co.uk")).toEqual({ reason: "outcome_unknown", signs: [] });
+  // The site's own API host is.
+  expect(await signs("api.example.co.uk")).toEqual({ reason: "outcome_unknown", signs: ["site request"] });
+});
+
+test("a row's field is read from its visible match, and a field only hidden is said to be hidden", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <ol id="results">
+      <li data-id="room-1"><h3>Room 1</h3><span class="price" style="display:none">$1</span><span class="price">$101</span><span class="badge" hidden>New</span></li>
+    </ol>`);
+  const found = await call(
+    page,
+    `const { rows } = await waitForRows(page.locator("#results > li"), { price: ".price" }, {
+      count: 1, key: { attribute: "data-id" }, noProgressMs: 300, stableMs: 100,
+    });
+    return rows;`,
+  );
+  expect(found.result).toEqual([{ key: "room-1", price: "$101" }]);
+  const hidden = await call(
+    page,
+    `await waitForRows(page.locator("#results > li"), { badge: ".badge" }, {
+      count: 1, key: { attribute: "data-id" }, noProgressMs: 300, stableMs: 100,
+    });`,
+  );
+  expect(hidden.error).toMatch(/: 1 identified rows of 1, needed 1; badge hidden in row 1; /u);
 });

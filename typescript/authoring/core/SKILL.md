@@ -427,8 +427,8 @@ After a step whose answer can vary, such as a search, a filter, a date pick or a
 every way the page can answer: results, an empty or sold-out message, a greyed-out choice
 (`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
 error, a pick-one list. Prefer naming every answer over waiting only for the happy result.
-Import `waitCode` from the runtime (`outcomeWaitCode` is the same string), paste it once at the
-top of the call's code, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
+Import `waitCode` from the runtime (`outcomeWaitCode` declares `waitForOutcome` alone, for code
+written before; paste one, never both), paste it once at the top of the call's code, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
 results }, { action, loading, region })`, one scoped locator per answer, each an element only
 that answer has, such as a results list that holds a
 row. The first listed wins when several show, so list a refusal, error or greyed-out choice
@@ -436,8 +436,11 @@ first, then the empty state, then results. Pass the step itself as `action`, suc
 `() => apply.click()`: the wait runs it once, and an answer the page already showed before it counts
 only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
 re-rendered is not read while a step that leaves the same answer still resolves; a new or
-changed element counts at once. Pass the site's own loading sign as `loading` and the part of
-the page the answer appears in as `region`, so their changes count as progress. Read results;
+changed element counts at once. Pass the site's own loading sign as `loading`, the part of the
+page the answer appears in as `region`, and the context's `siteDomain`, so the sign counts for as
+long as it shows, changes in that part count as progress, and so do the site's own requests on
+every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
+while it is new, so a decoration never holds a wait. Read results;
 return an empty list for a listing's empty state;
 throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
 asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an
@@ -446,18 +449,18 @@ signs it saw and when progress stopped: `outcome_ambiguous` when the winning loc
 than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
-handled: never raise a timeout for it. `references/navigation.ts` waits for a search's answer and
+handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
 a record's page this way.
 The same code declares the waits for the values you return. `waitForRows(rows, fields, { count,
 key })` returns `{ rows, more }`: the first `count` rows that have a `key`, each field filled in
-and reading the same twice. It skips a row without a key, and returns fewer rows once their count
-holds; no rows is never its answer, so decide an empty list with `waitForOutcome` first.
+and reading the same twice. It reads each field from its first visible match, skips a row without
+a key, and returns fewer rows once their count holds; no rows is never its answer, so decide an empty list with `waitForOutcome` first.
 `waitForValues(fields)` returns `{ values }` for a record, a quote or a form's state.
 `waitForChange(fields, { before, action, loading })` returns `{ values, changed }` after a choice:
 changed, or the same with no progress sign for `unchangedMs`. They throw a `ValueWaitFailure`:
 `values_loading` when a value is still loading as progress stops, `change_unknown` when the
-fields are missing, `values_timeout` at the cap. The host's one timeout retry of a read covers
-`outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` and `change_unknown`,
+fields are missing, `values_timeout` at the cap. A host may retry a read once after
+`outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` or `change_unknown`,
 so let them throw. `waitReport()` returns a one-line summary of how each wait in the call ended.
 A field is a Playwright locator, or `{ locator, attribute, optional, all }`, where `all` reads
 every visible match as a list. After a search or a filter, use `waitForChange` on the rows you

@@ -43,13 +43,18 @@ export interface WaitRecord {
  * and fails once it has shown none for `noProgressMs`. Progress is any of:
  *
  * - the author's `loading` locator showing (for as long as it shows);
- * - a generic loading sign showing (`aria-busy`, a progress bar, a skeleton, shimmer or spinner
- *   class), within `region` when one is named, or going away; after an action, signs already
- *   showing before it in the same number are the old page's and do not count;
+ * - a generic loading sign, within `region` when one is named, coming, going, or new: a busy
+ *   region or an indeterminate progress bar counts while it shows until it has held for
+ *   `noProgressMs`; a skeleton, shimmer, spinner or loader class, never on a form control, counts
+ *   for `unchangedMs` after it appears. Determinate bars (ratings, steps, meters) never count, and
+ *   signs showing before the action in the same number, or class hints already there at the first
+ *   look, are the page's own decoration;
  * - DOM changes inside the author's `region` (never the whole page: carousels and ads never stop);
- * - one of the site's own `document`, `xhr` or `fetch` requests in flight, started under 10 s ago;
- *   beacons, images, fonts, media and long-polls never count, and a request repeating the same
- *   method and path a third time is a poll and is ignored;
+ * - one of the site's own `document`, `xhr` or `fetch` requests in flight, started under 10 s ago
+ *   (the site is `siteDomain`, else a conservative guess from the page's host); beacons, images,
+ *   fonts and media never count, a request repeated with the same method, URL and body (numbers
+ *   aside) at a steady interval is a poll and is ignored, and a request open over 4 s no longer
+ *   makes the page busy, since long-polls and streams stay open;
  * - the page's URL changing, or the page being replaced;
  * - the wait's own reads changing: an outcome's matches, rows or values filling or changing.
  *
@@ -72,9 +77,35 @@ const waitSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const waitSeconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1) + " s";
 const waitContextLost = (error) =>
   /Execution context was destroyed|Frame was detached/.test(String(error?.message));
-const waitGenericLoading =
-  '[aria-busy="true"], [role="progressbar"], [class*="skeleton" i], [class*="shimmer" i], [class*="spinner" i]';
+// Generic loading signs. A busy region or an indeterminate progress bar says the page is loading;
+// a determinate bar (one with a value) is a rating, a step or a meter. A class that names a
+// skeleton, shimmer, spinner or loader is only a hint, and never on a form control.
+const waitLoadingSigns = '[aria-busy="true"], [role="progressbar"]:not([aria-valuenow], [aria-valuetext])';
+const waitLoadingClasses =
+  ':is([class*="skeleton" i], [class*="shimmer" i], [class*="spinner" i], [class*="loader" i]):not(input, select, textarea, button, option, [role="progressbar"])';
+// A request counts as progress for up to 10 s, and keeps the page busy for up to 4 s (or the
+// no-progress window when shorter): a long-poll or a stream stays open with nothing to come.
 const waitInflightMs = 10000;
+const waitBusyRequestMs = 4000;
+// The site's registrable domain, when the code gave none: the last two labels of the page's host,
+// or three under a country's shared second level (example.co.uk, never co.uk). Pass the context's
+// siteDomain, which the host computed with the public suffix list, to be exact.
+const waitSiteDomain = (host) => {
+  const labels = host.split(".");
+  if (labels.length <= 2 || /^\d+$/.test(labels.at(-1))) return host;
+  const shared = labels.at(-1).length === 2 &&
+    /^(?:ac|co|com|edu|gen|go|gob|gov|gv|in|ind|info|int|lg|ltd|me|mil|ne|net|nhs|nic|nom|or|org|plc|sch|web)$/.test(labels.at(-2));
+  return labels.slice(shared ? -3 : -2).join(".");
+};
+// What makes two requests the same one again: method, path, query and body, with every number
+// (counters, timestamps, cache busters) read as the same.
+const waitRequestKey = (request) => {
+  const url = new URL(request.url());
+  const body = String(request.postData() ?? "").slice(0, 4096).replace(/\d+/g, "#");
+  let hash = 2166136261;
+  for (let i = 0; i < body.length; i += 1) hash = Math.imul(hash ^ body.charCodeAt(i), 16777619);
+  return request.method() + " " + url.origin + url.pathname + url.search.replace(/\d+/g, "#") + " " + (hash >>> 0).toString(36);
+};
 const waitProgress = (options = {}) => {
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   const key = "pomerado.waitProgress." + Date.now() + "." + Math.random();
@@ -89,26 +120,38 @@ const waitProgress = (options = {}) => {
   const sameSite = (url) => {
     try {
       const host = new URL(url).hostname;
-      const domain = options.siteDomain ?? new URL(page.url()).hostname.split(".").slice(-2).join(".");
+      const domain = options.siteDomain ?? waitSiteDomain(new URL(page.url()).hostname);
       return domain !== "" && (host === domain || host.endsWith("." + domain));
     } catch {
       return false;
     }
   };
+  // The site's requests in flight, by request: when each started and what makes it the same again.
   const pending = new Map();
-  const repeats = new Map();
+  const starts = new Map();
+  const polls = new Set();
   let ignoredRepeats = 0;
   const onRequest = (request) => {
     if (!["document", "xhr", "fetch"].includes(request.resourceType()) || !sameSite(request.url())) return;
-    const url = new URL(request.url());
-    const path = request.method() + " " + url.origin + url.pathname;
-    const seen = (repeats.get(path) ?? 0) + 1;
-    repeats.set(path, seen);
-    if (seen > 2) {
+    const key = waitRequestKey(request);
+    const now = Date.now();
+    // A poll repeats the same request at a steady interval: from its third start, once two
+    // intervals of at least 50 ms agree within half, it is ignored with every copy in flight.
+    // Requests to one path that differ, such as an API's different queries, never are.
+    const times = [...(starts.get(key) ?? []), now].slice(-3);
+    starts.set(key, times);
+    if (!polls.has(key) && times.length === 3) {
+      const [first, second] = [times[1] - times[0], times[2] - times[1]];
+      if (Math.min(first, second) >= 50 && Math.abs(first - second) <= Math.max(first, second) / 2) {
+        polls.add(key);
+        for (const [other, entry] of pending) if (entry.key === key) pending.delete(other);
+      }
+    }
+    if (polls.has(key)) {
       ignoredRepeats += 1;
       return;
     }
-    pending.set(request, Date.now());
+    pending.set(request, { at: now, key });
     mark("site request");
   };
   const onDone = (request) => {
@@ -118,10 +161,22 @@ const waitProgress = (options = {}) => {
   page.on("requestfinished", onDone);
   page.on("requestfailed", onDone);
   let url = page.url();
-  // Generic signs: how many showed before the action, and whether any show now that did not.
-  let genericBefore;
-  let genericCount = 0;
-  let genericShows = false;
+  // Generic signs, each kind with its count before the action (or, for class hints, at the first
+  // look), its count at the last look and when that last changed. A sign counts while it shows
+  // more than before, until its count has held for its hold time: the no-progress window for a
+  // busy region or bar, unchangedMs for a class hint. A sign that stays is part of the page.
+  const generic = {
+    signs: { selector: waitLoadingSigns, holdMs: noProgressMs, before: undefined, count: 0, changedAt: started, shows: false },
+    classes: {
+      selector: waitLoadingClasses,
+      holdMs: options.unchangedMs ?? waitLimits.unchanged,
+      before: undefined,
+      count: 0,
+      changedAt: started,
+      shows: false,
+      firstLook: true,
+    },
+  };
   let loadingShows = false;
   let region = { count: 0, targets: 0 };
   const scope = options.region ?? page;
@@ -143,7 +198,7 @@ const waitProgress = (options = {}) => {
       url = page.url();
       note("URL change");
     }
-    for (const at of pending.values())
+    for (const { at } of pending.values())
       if (now - at < waitInflightMs) {
         note("site request");
         break;
@@ -151,15 +206,22 @@ const waitProgress = (options = {}) => {
     try {
       loadingShows = options.loading !== undefined && (await options.loading.filter({ visible: true }).count()) > 0;
       if (loadingShows) note("loading sign");
-      // A generic sign counts while it shows, and when it goes. One already showing before the
-      // action, in the same number, is the page from before it, such as a decorative one.
-      const count = await scope.locator(waitGenericLoading).filter({ visible: true }).count();
-      if (baseline) genericBefore = count;
-      else {
-        genericShows = count > 0 && count !== genericBefore;
-        if (genericShows || count !== genericCount) note("loading sign");
+      // A generic sign counts when it comes or goes, and while it is new: see generic above.
+      for (const sign of Object.values(generic)) {
+        const count = await scope.locator(sign.selector).filter({ visible: true }).count();
+        if (baseline || (sign.firstLook && sign.before === undefined)) {
+          sign.before = count;
+          sign.changedAt = now;
+        } else {
+          if (count !== sign.count) {
+            sign.changedAt = now;
+            note("loading sign");
+          }
+          sign.shows = count > (sign.before ?? 0) && now - sign.changedAt < sign.holdMs;
+          if (sign.shows) note("loading sign");
+        }
+        sign.count = count;
       }
-      genericCount = count;
       if (options.region !== undefined) {
         const seen = await options.region.evaluateAll((elements, key) => {
           const state = (globalThis[Symbol.for(key)] ??= { count: 0, targets: new Set() });
@@ -205,7 +267,9 @@ const waitProgress = (options = {}) => {
     // A loading sign showing or a site request in flight, at the last look.
     busy: () => {
       const now = Date.now();
-      return loadingShows || genericShows || [...pending.values()].some((at) => now - at < waitInflightMs);
+      const busyRequestMs = Math.min(noProgressMs, waitBusyRequestMs);
+      return loadingShows || generic.signs.shows || generic.classes.shows ||
+        [...pending.values()].some(({ at }) => now - at < busyRequestMs);
     },
     diagnostics: () => ({
       signs: Object.fromEntries(Object.entries(signs).map(([kind, sign]) => [kind, { ...sign }])),
@@ -300,8 +364,8 @@ const waitForOutcome = async (outcomes, options = {}) => {
       summary: "waitForOutcome: " + summary + "; " + progress.describe(),
     });
   let begun = Date.now();
+  let key;
   try {
-    let key;
     if (options.action !== undefined) {
       key = "pomerado.outcomeWait." + Date.now() + "." + Math.random();
       for (const locator of Object.values(outcomes)) await outcomeWaitNote(locator, key);
@@ -356,7 +420,7 @@ const waitForOutcome = async (outcomes, options = {}) => {
         const seen = last ?? (await look().catch(() => undefined)) ?? {};
         const failure = outcomeWaitFailure(
           "outcome_timeout",
-          " after " + timeout + " ms: " + outcomeWaitSeen(seen) + "; " + progress.describe(),
+          " after " + Math.round(timeout) + " ms: " + outcomeWaitSeen(seen) + "; " + progress.describe(),
           seen,
           { progress: progress.diagnostics() },
         );
@@ -373,7 +437,7 @@ const waitForOutcome = async (outcomes, options = {}) => {
         const seen = last ?? {};
         const failure = outcomeWaitFailure(
           "outcome_unknown",
-          " after " + (Date.now() - begun) + " ms, " + noProgressMs + " ms without progress, no outcome showing: " +
+          " after " + (Date.now() - begun) + " ms, " + Math.round(noProgressMs) + " ms without progress, no outcome showing: " +
             outcomeWaitSeen(seen) + "; " + progress.describe(),
           seen,
           { progress: progress.diagnostics() },
@@ -386,6 +450,12 @@ const waitForOutcome = async (outcomes, options = {}) => {
       previous = decision;
     }
   } finally {
+    if (key !== undefined)
+      await page
+        .evaluate((key) => {
+          delete globalThis[Symbol.for(key)];
+        }, key)
+        .catch(() => undefined);
     await progress.stop();
   }
 };
@@ -424,10 +494,21 @@ const waitReadInPage = (elements, spec) => {
   };
   if (spec.mode === "rows")
     return elements.map((row) => {
-      const at = (field) => (field.selector ? row.querySelector(field.selector) : row);
+      // A row's field is its first visible match, such as the price a responsive card shows
+      // beside a hidden copy. Read text whose matches are all hidden is hidden, not loading: the
+      // selector names the wrong copy, or the site shows it only on another layout.
+      const at = (field) => {
+        if (!field.selector) return row;
+        const matches = [...row.querySelectorAll(field.selector)];
+        return matches.find(visible) ?? (field.attribute || matches.length === 0 ? matches[0] : "hidden");
+      };
+      const take = (field, identity) => {
+        const element = at(field);
+        return element === "hidden" ? { state: "hidden" } : read(element, field, row, identity);
+      };
       const fields = {};
-      for (const [name, field] of Object.entries(spec.fields)) fields[name] = read(at(field), field, row, false);
-      return { key: read(at(spec.key), spec.key, row, true), fields };
+      for (const [name, field] of Object.entries(spec.fields)) fields[name] = take(field, false);
+      return { key: take(spec.key, true), fields };
     });
   const field = spec.field;
   const candidates = field.attribute ? elements : elements.filter(visible);
@@ -528,7 +609,7 @@ const valueWaitLoop = async (wait, options, evaluate, timeoutDefault) => {
         const problems = state?.problems ?? "the page was being replaced";
         const failure = valueWaitFailure(
           "values_timeout",
-          " after " + timeout + " ms: " + problems + "; " + progress.describe(),
+          " after " + Math.round(timeout) + " ms: " + problems + "; " + progress.describe(),
           { progress: progress.diagnostics() },
         );
         finish({ reason: "values_timeout" }, failure.message);
@@ -541,7 +622,7 @@ const valueWaitLoop = async (wait, options, evaluate, timeoutDefault) => {
         const reason = state?.reason ?? "values_loading";
         const failure = valueWaitFailure(
           reason,
-          " after " + (now - begun) + " ms, " + noProgressMs + " ms without progress: " +
+          " after " + (now - begun) + " ms, " + Math.round(noProgressMs) + " ms without progress: " +
             (state?.problems ?? "nothing read") + "; " + progress.describe(),
           { progress: progress.diagnostics() },
         );
@@ -571,17 +652,21 @@ const waitForRows = async (rows, fields, options = {}) => {
     const identified = read.filter((row) => row.key.state === "filled");
     const taken = identified.slice(0, count);
     const loading = {};
+    const hidden = {};
     const missing = {};
     let filledCount = 0;
     taken.forEach((row, index) => {
       for (const [name, value] of Object.entries(row.fields)) {
         if (value.state === "filled") filledCount += 1;
         else if (value.state === "loading") (loading[name] ??= []).push(index + 1);
-        else if (!spec.fields[name].optional) (missing[name] ??= []).push(index + 1);
+        else if (spec.fields[name].optional) continue;
+        else if (value.state === "hidden") (hidden[name] ??= []).push(index + 1);
+        else (missing[name] ??= []).push(index + 1);
       }
     });
     const problems = [
       ...Object.entries(loading).map(([name, list]) => name + " still loading" + valueWaitRows(list)),
+      ...Object.entries(hidden).map(([name, list]) => name + " hidden" + valueWaitRows(list)),
       ...Object.entries(missing).map(([name, list]) => name + " missing" + valueWaitRows(list)),
     ];
     const complete = problems.length === 0;
@@ -698,12 +783,14 @@ const waitForChange = async (fields, options = {}) => {
  * string, then wait with your verified Playwright locators. It declares four waits that share one
  * set of limits (`waitLimits`, from `timeoutDefaults`) and one progress budget, and `waitReport()`.
  *
- * Every wait returns as soon as its condition holds, so a ready page costs nothing. While it waits
- * it watches the page's progress: a loading sign showing (`loading`, or a generic `aria-busy`,
- * progress bar, skeleton, shimmer or spinner, within `region` when named), DOM changes inside the
- * `region` you name, one of the site's own document or API requests in flight (beacons, long-polls
- * and repeating polls excluded; pass `siteDomain` to say which hosts are the site's), the URL
- * changing, and the wait's own reads filling or changing. It keeps waiting while progress
+ * Every wait returns as soon as its condition holds: a ready page costs one confirming look, and
+ * the value waits `settle` (0.5 s) between their two looks. While it waits it watches the page's
+ * progress: the site's own loading sign passed as `loading`, for as long as it shows; a generic
+ * sign (a busy region, an indeterminate progress bar, a skeleton, shimmer, spinner or loader class,
+ * within `region` when named) only while it is new, so decorations never hold a wait; DOM changes
+ * inside the `region` you name; one of the site's own document or API requests in flight (beacons,
+ * polls and long-open requests aside; pass the context's `siteDomain` to say which hosts are the
+ * site's); the URL changing; and the wait's own reads filling or changing. It keeps waiting while progress
  * continues, up to `timeout`, and fails once nothing has progressed for `noProgressMs` (default
  * `answer`, 8 s). A failure is an `Error` with a `reason`, and a message that names the reason, what
  * each outcome or field showed (counts and states, never page text), which progress signs it saw
@@ -736,8 +823,9 @@ const waitForChange = async (fields, options = {}) => {
  * rows have every field filled and read the same on two looks `stableMs` apart (default `settle`,
  * 0.5 s), and returns `{ rows: [{ key, ...fields }], more }`. `rows` is a locator for every row;
  * `key` and each field are a CSS selector inside the row, or `{ selector, attribute, optional,
- * placeholder }` (no selector reads the row itself). A row without a key is a placeholder slot and
- * is skipped. When fewer identified rows than `count` exist, it returns them once their count and
+ * placeholder }` (no selector reads the row itself), read from its first visible match; a needed
+ * text field whose matches are all hidden is reported `hidden`. A row without a key is a
+ * placeholder slot and is skipped. When fewer identified rows than `count` exist, it returns them once their count and
  * values held for `unchangedMs` with no loading sign or request in flight; no identified row at all
  * is never an answer, so decide an empty list with `waitForOutcome` first. Options also take
  * `action` (run once first, such as a "load more" click), `loading`, `region`, `siteDomain`,
@@ -760,3 +848,16 @@ const waitForChange = async (fields, options = {}) => {
  * `ValueWaitFailure`.
  */
 export const waitCode = `${progressCode}${outcomeCode}${valueCode}`;
+
+/**
+ * `waitForOutcome` alone, for code written against the first release of it: it declares only the
+ * names that release declared (`waitForOutcome`, `outcomeWaitFailure`, `outcomeWaitNote`,
+ * `outcomeWaitChanged` and `outcomeWaitObserve`), keeping every other helper inside, so code that
+ * pastes it beside helpers of its own still parses. New code pastes `waitCode` instead; never both.
+ */
+export const outcomeOnlyWaitCode = `
+const { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObserve, waitForOutcome } = (() => {
+${progressCode}${outcomeCode}
+return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObserve, waitForOutcome };
+})();
+`;
