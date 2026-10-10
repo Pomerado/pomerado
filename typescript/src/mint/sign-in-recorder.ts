@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema, type Scope } from "effect";
-import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
+import { lostTyping, maySend, typingRefusal } from "../destinations/autofill-refusal.js";
 import type {
   AutofillInspection,
   AutofillScreens,
@@ -92,6 +92,8 @@ const filledNotices = {
 const stepNotice = (report: AutofillStepReport) => {
   if (report.outcome === "refused")
     return `The host typed and clicked nothing (${report.reason}), so nothing reached the site and no sign-in was spent. Correct the step from the page's evidence, ${recovery}.`;
+  if (lostTyping(report))
+    return "The host lost the answer of the call that typed a field, so that field may hold its value. The host never clicked the submit. It never retries a fill by itself. Explore read-only to see the page, then continue with the next signInStep.";
   if (report.outcome === "uncertain")
     return `The host lost the fill call's answer: the fields and the submit may have reached the site. It never retries a fill by itself. Explore read-only to see the page, then continue with the next signInStep, ${recovery}.`;
   return filledNotices[report.submit];

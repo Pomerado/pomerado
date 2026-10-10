@@ -372,6 +372,62 @@ it("lets the agent sign in again when the browser refuses a command before the v
   }
 });
 
+/** The standalone recorder's step on a password screen whose page answers each call in turn. */
+const stepThrough = (
+  calls: readonly Effect.Effect<unknown, Error>[],
+  keyboard: CredentialKeyboard,
+) => {
+  const pending = [...calls];
+  return Effect.runPromise(
+    recorderOn(
+      {
+        targetId: "primary",
+        execute: () => pending.shift() ?? Effect.fail(new Error("The page has no more calls")),
+      },
+      keyboard,
+    ).step(
+      { fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+      undefined,
+      Effect.void,
+    ),
+  );
+};
+
+// The call that carries the value lost its answer, so the field may hold it. The host clicks the
+// submit only after every field, so it never clicked it.
+it("tells the agent a lost typing answer may have left the value in the field, never submitted", async () => {
+  const devtools = fakeDevtoolsKeyboard({ page: 1 }, (command) =>
+    command.method === "Runtime.callFunctionOn"
+      ? new CdpCommandRefused(command.method, command.params)
+      : undefined,
+  );
+  const { report, result } = await stepThrough(
+    [Effect.succeed(inspected), Effect.succeed(focusAnswers.focused)],
+    devtools.keyboard,
+  );
+  expect(report).toMatchObject({ outcome: "uncertain", typed: true });
+  expect(result["nextStep"]).toBe(
+    "The host lost the answer of the call that typed a field, so that field may hold its value. The host never clicked the submit. It never retries a fill by itself. Explore read-only to see the page, then continue with the next signInStep.",
+  );
+});
+
+// A submit's call may have clicked before its answer was lost, so the agent still hears that the
+// fields and the submit may have reached the site.
+it("tells the agent a lost submit answer may have sent the fields and the submit", async () => {
+  const { report, result } = await stepThrough(
+    [
+      Effect.succeed(inspected),
+      Effect.succeed(focusAnswers.focused),
+      Effect.fail(new Error("The page clicked, but its reply was lost")),
+    ],
+    { insertText: () => Effect.succeed("inserted" as const) },
+  );
+  expect(report).toMatchObject({ outcome: "uncertain", typed: true });
+  expect(result["nextStep"]).toBe(
+    "The host lost the fill call's answer: the fields and the submit may have reached the site. It never retries a fill by itself. Explore read-only to see the page, then continue with the next signInStep, then inspect read-only and correct the sign-in steps from the page's evidence.",
+  );
+});
+
 // A refusal whose sign-in cleanup the host could not confirm may have left the site signed in:
 // the cleanup's own advice wins, and the agent is never told to sign in again.
 it("keeps an unconfirmed cleanup's advice when the host also refused a field", async () => {

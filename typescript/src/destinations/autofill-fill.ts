@@ -12,6 +12,7 @@ import {
   FoundIn,
   judgedOrigins,
   locatedRefusal,
+  lostTypingPhase,
   namedAfterTyping,
   refused,
   targetEvidence,
@@ -182,18 +183,24 @@ const valueFreeLabels = (error: Error, values: readonly string[]) => {
  * A failed focus can refuse before typing. A date or submit can already have changed the site
  * even when it was the first call, so a lost reply stays uncertain. A date's call held the date,
  * and a typing call its value (`held`, the step's values), so their failures keep finite facts
- * only.
+ * only. A typing call's failure has the phase `lostTypingPhase`: the host clicks the submit only
+ * after every field.
  */
 const failedCall = (
   progress: FillProgress,
   error: Error,
-  call: { readonly held?: readonly string[]; readonly mayMutate: boolean },
+  call: {
+    readonly held?: readonly string[];
+    readonly mayMutate: boolean;
+    readonly typing?: true;
+  },
 ): AutofillStepReport => {
   const detail =
     call.held === undefined
       ? failureDetail("autofill_step_failed", { operation: "autofill.fill", error })
       : failureDetail("autofill_step_failed", {
           operation: "autofill.fill",
+          ...(call.typing === true ? { phase: lostTypingPhase } : {}),
           context: { errorName: error.name, ...valueFreeLabels(error, call.held) },
         });
   return progress.typed || call.mayMutate
@@ -466,7 +473,11 @@ const afterFieldCall = (
         ),
       );
       if (typing._tag === "Left")
-        return failedCall(progress, typing.left, { held: input.values, mayMutate: true });
+        return failedCall(progress, typing.left, {
+          held: input.values,
+          mayMutate: true,
+          typing: true,
+        });
       if (typing.right === "inserted") {
         progress.typed = true;
         progress.statuses.push("filled");

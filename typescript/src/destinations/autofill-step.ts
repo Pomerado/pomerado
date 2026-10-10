@@ -321,7 +321,8 @@ export type AutofillStepReport =
       readonly typed?: true;
       /**
        * Host diagnostics only; finite facts alone when the failed call held a value, a date's or a
-       * typing call's.
+       * typing call's. A typing call's has the phase `typing` (`lostTyping`): the host never
+       * clicked the submit.
        */
       readonly failureDetail: FailureDetail;
     };
