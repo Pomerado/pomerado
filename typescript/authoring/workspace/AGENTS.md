@@ -232,7 +232,7 @@ only when the request's purpose clearly depends on its value (an unset optional 
 page's default; it is still a tool input). A control with exactly one possible value (a select or radio group with a single option),
 or one the input or an earlier answer already settles, is no choice: never ask about it. An
 add-on toggle, a pre-selected checkbox or a lone saved payment method is still a yes-or-no choice
-to ask about. Read the path's options with read-only exploration where you can and settle them before
+to ask about. A safety default (core skill) is neither: never ask about it, and the script turns it off. Read the path's options with read-only exploration where you can and settle them before
 the first act step where possible; a question during the session waits in place. Take a site default only for a choice that is not a
 credential, not a write and easy to reverse, and list it in `finish_build` `assumptions`. A full
 new login goes through execute purpose `authenticate`: an SMS, email or authenticator code that
