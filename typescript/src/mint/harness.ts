@@ -95,19 +95,17 @@ import { contentDigest } from "./step-checks.js";
 import {
   caseDigest,
   caseView,
-  checklistOf,
   cursorPairOf,
   decodeCasesFile,
-  itemViews,
   judgeCase,
   liveTestCasesPath,
   liveTestsEvidence,
   liveTestsEvidencePath,
   liveTestsEvidenceProblem,
+  LiveTestOutputChecks,
   maximumBatchCases,
   outputExcerpt,
   primaryListOf,
-  type ChecklistItem,
   type LiveTestCasesFile,
   type LiveTestRecord,
 } from "./live-tests.js";
@@ -122,6 +120,7 @@ import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
 import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
 import { outputChecksRefusal } from "./output-notes.js";
+import { lintOutput } from "../runtime/output-lint.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -3047,10 +3046,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return Either.left(`${liveTestCasesPath} could not be read.`);
         }
       });
-      /** The checklist for `entrypoint`'s current schemas, with its cursor, or why there is none. */
       /** Schemas the host read, by entrypoint and source digest, so one source is read once. */
       const liveTestSchemas = new Map<string, { readonly input: unknown; readonly output: unknown }>();
-      const liveTestChecklist = (entrypoint: string) =>
+      /**
+       * What judging and paging a batch read from `entrypoint`'s current schemas: the cursor pair
+       * and where a list read's results sit, or why the host could not read them.
+       */
+      const liveTestShape = (entrypoint: string) =>
         Effect.gen(function* () {
           const host = dependencies.liveTests;
           if (host === undefined) return { problem: "This host runs no live test batches." };
@@ -3060,60 +3062,55 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             known === undefined ? yield* Effect.either(host.schemas(entrypoint)) : Either.right(known);
           if (Either.isLeft(schemas))
             return {
-              problem: `The host could not read ${entrypoint}'s input and output schemas offline, so it built no checklist. Make the source import cleanly and declare both schemas, then plan again.`,
+              problem: `The host could not read ${entrypoint}'s input and output schemas offline, so it judged each result as a single record and can run no next page. Make the source import cleanly and declare both schemas, then run the cases again.`,
             };
           liveTestSchemas.set(key, schemas.right);
           const { input, output } = schemas.right;
           return {
-            checklist: checklistOf(input, output),
             cursor: cursorPairOf(input, output),
             list: primaryListOf(input, output),
+            outputSchema: output,
           };
         });
       const emptyCases: LiveTestCasesFile = { cases: [] };
-      /** What the agent reads about its tests: the checklist, its cases and their results. */
+      /** What the agent reads about its tests: its cases and their results. */
       const liveTestPlanView = (
         entrypoint: string,
         options: { readonly show?: readonly string[]; readonly ran?: readonly string[] } = {},
       ) =>
         Effect.gen(function* () {
-          const planned = yield* liveTestChecklist(entrypoint);
           const read = yield* readCasesFile;
           const file = Either.isRight(read) ? read.right : emptyCases;
           const digest = yield* stepDigest(entrypoint);
-          const checklist: readonly ChecklistItem[] | undefined =
-            "checklist" in planned ? planned.checklist : undefined;
-          const items =
-            checklist === undefined ? [] : itemViews(checklist, file, liveTestRecords, digest);
           const cases = file.cases.map((testCase) => ({
             ...caseView(testCase, liveTestRecords.get(testCase.id), digest),
             ...(options.show?.includes(testCase.id) && liveTestOutputs.has(testCase.id)
               ? { output: liveTestOutputs.get(testCase.id) }
               : {}),
           }));
-          const open = items.filter(
-            (item) =>
-              item.status !== "covered" &&
-              item.status !== "not_applicable" &&
-              item.status !== "declined",
-          );
+          const shown =
+            options.ran === undefined
+              ? cases
+              : cases.filter((testCase) => options.ran?.includes(testCase.id));
           return {
             kind: "host_live_tests",
             entrypoint,
-            ...("problem" in planned ? { checklistProblem: planned.problem } : {}),
             ...(Either.isLeft(read) ? { casesFileProblem: read.left } : {}),
-            ...(planned.cursor === undefined ? {} : { cursor: planned.cursor }),
-            checklist: items,
-            cases:
-              options.ran === undefined
-                ? cases
-                : cases.filter((testCase) => options.ran?.includes(testCase.id)),
+            cases: shown,
             ...(options.ran === undefined ? {} : { otherCases: file.cases.length - options.ran.length }),
-            openItems: open.map((item) => item.item),
+            ...(shown.some((testCase) => "outputChecks" in testCase)
+              ? {
+                  outputChecksInstruction:
+                    "The host checked every value each case returned, as it checks the example's. Check each finding against the page. Fix a wrong value at the read in source: read rendered text with visibleText, visibleTexts or readRows, expand collapsed text before reading it and read it back, and scope rows to the main list; never clean a string afterwards. A value that is correct as it is needs no change. A case's findings never refuse publication by themselves, but a blocking one (script, css, markup, template_residue) in the example's output refuses finish_build until fixed or overridden.",
+                }
+              : {}),
+            ...(file.notTested === undefined ? {} : { notTested: file.notTested }),
             instruction:
-              open.length === 0 && cases.every((testCase) => testCase.status === "pass")
-                ? "Every checklist item is covered or skipped with a reason. Check what the outputs mean (filters applied to every item, the order, the applied location), then make your last edit, run the cases again, run the example last and call finish_build."
-                : `Write or fix ${liveTestCasesPath} so each open item has passing cases with real values the site offers (or a skipped entry with status not_applicable or declined and the reason), fix the code for each failing case at its frame, then call live_tests with action run. Publication review reads ${liveTestsEvidencePath}, the host's record of these results on the source you publish.`,
+              cases.length === 0
+                ? `Design the cases in ${liveTestCasesPath} from what you saw on the site, as the testing skill says: different real values unlike the example's, smart combinations, edge cases and one rerun of the example's input. Then call live_tests with action run.`
+                : cases.every((testCase) => testCase.status === "pass")
+                  ? "Every case passes on the current source. Check what the outputs mean (filters applied to every item, the order, the applied location), add a case for anything the tool claims that no case tests yet, then make your last edit, run the cases again, run the example last and call finish_build."
+                  : `Fix the code for each failing case at its frame, run the stale and not-run cases with action run, and add a case for anything the tool claims that no case tests yet. Publication review reads ${liveTestsEvidencePath}, the host's record of these results on the source you publish, against what the tool claims.`,
           };
         });
       /**
@@ -3161,11 +3158,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               status: "batch_size",
               instruction:
                 selected.length === 0
-                  ? `${liveTestCasesPath} has no cases to run. Plan them first (action plan). Nothing was executed.`
+                  ? `${liveTestCasesPath} has no cases to run. Design them there first, as the testing skill says. Nothing was executed.`
                   : `A batch runs at most ${maximumBatchCases} cases; name the ones to run in cases. Nothing was executed.`,
             });
-          const planned = yield* liveTestChecklist(request.entrypoint);
-          const cursor = planned.cursor;
+          const shape = yield* liveTestShape(request.entrypoint);
+          const cursor = "cursor" in shape ? shape.cursor : undefined;
           if (selected.some((testCase) => testCase.next_page === true) && cursor === undefined)
             return JSON.stringify({
               kind: "host_live_tests",
@@ -3218,7 +3215,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           for (const run of result.cases) {
             const testCase = selected.find((entry) => entry.id === run.id);
             if (testCase === undefined) continue;
-            const judged = judgeCase(testCase, run, "list" in planned ? planned.list : undefined);
+            const judged = judgeCase(testCase, run, "list" in shape ? shape.list : undefined);
             const screened =
               judged.output === undefined
                 ? undefined
@@ -3234,17 +3231,46 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     Effect.orElseSucceed(() => "[message withheld]"),
                   );
             const excerpt = outputExcerpt(screened);
+            // The same output check an example gets, on the output the verdict judged; a sample
+            // is a value from it, so it is screened like the output.
+            const findings =
+              judged.output === undefined
+                ? []
+                : lintOutput(judged.output, {
+                    ...("outputSchema" in shape ? { outputSchema: shape.outputSchema } : {}),
+                    samples: true,
+                  });
+            const outputChecks =
+              findings.length === 0
+                ? undefined
+                : yield* dependencies.projection.json(findings).pipe(
+                    Effect.flatMap((value) =>
+                      Schema.decodeUnknown(LiveTestOutputChecks)(value),
+                    ),
+                    Effect.orElseSucceed(() =>
+                      findings.map(({ sample: _sample, ...finding }) => finding),
+                    ),
+                  );
             const digestOfCase = caseDigest(testCase);
             const previous = liveTestRecords.get(run.id);
+            // A failure the run replaces stays in the record: the case changed after it, or it
+            // did not fail again on the same source and case, which shows it is flaky.
+            const flaky =
+              previous?.caseDigest === digestOfCase &&
+              previous.sourceDigest === sourceDigest &&
+              judged.verdict !== "fail";
             if (
               previous !== undefined &&
               previous.verdict === "fail" &&
-              previous.caseDigest !== digestOfCase &&
+              (previous.caseDigest !== digestOfCase || flaky) &&
               !liveTestReplaced.some(
-                (entry) => entry.id === previous.id && entry.caseDigest === previous.caseDigest,
+                (entry) =>
+                  entry.id === previous.id &&
+                  entry.caseDigest === previous.caseDigest &&
+                  entry.sourceDigest === previous.sourceDigest,
               )
             ) {
-              liveTestReplaced.push({ ...previous, retired: true });
+              liveTestReplaced.push({ ...previous, retired: true, ...(flaky ? { flaky: true } : {}) });
               liveTestReplaced.splice(0, Math.max(0, liveTestReplaced.length - maximumBatchCases));
             }
             liveTestRecords.set(run.id, {
@@ -3259,11 +3285,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(judged.frame === undefined ? {} : { frame: judged.frame }),
               ...(judged.refusal === undefined ? {} : { refusal: judged.refusal }),
               ...(excerpt === undefined ? {} : { excerpt }),
+              ...(outputChecks === undefined ? {} : { outputChecks }),
               durationMs: Math.max(0, Math.round(run.durationMs)),
               ...(run.lane === undefined ? {} : { lane: run.lane }),
               input: testCase.input,
-              covers: testCase.covers,
+              purpose: testCase.purpose,
               expect: testCase.expect,
+              ...(testCase.next_page === true ? { nextPage: true } : {}),
             });
             verdicts[judged.verdict] = (verdicts[judged.verdict] ?? 0) + 1;
             if (attemptBound && judged.verdict === "inconclusive" && judged.got === "deadline")
@@ -3293,6 +3321,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   notice:
                     "The source changed while the batch ran, so these results describe other code. Run the cases again.",
                 }),
+            ...("problem" in shape ? { schemaProblem: shape.problem } : {}),
             ...(yield* liveTestPlanView(request.entrypoint, {
               ran: selected.map((testCase) => testCase.id),
             })),
@@ -3304,33 +3333,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           if (dependencies.liveTests === undefined || buildEffect !== "read" || signedIn())
             return undefined;
           const read = yield* readCasesFile;
-          // A read that planned and ran nothing gets a record that says so, without the
-          // offline schema read the checklist needs.
-          const nothing =
-            Either.isRight(read) &&
-            read.right.cases.length === 0 &&
-            (read.right.skipped ?? []).length === 0 &&
-            liveTestRecords.size === 0 &&
-            liveTestReplaced.length === 0;
-          const outOfTime = liveTestsOutOfTime;
-          if (nothing)
-            return liveTestsEvidence({
-              checklist: undefined,
-              file: emptyCases,
-              records: liveTestRecords,
-              sourceDigest: yield* stepDigest(entrypoint),
-              nothingPlanned: true,
-              outOfTime,
-            });
-          const planned = yield* liveTestChecklist(entrypoint);
           return liveTestsEvidence({
-            checklist: "checklist" in planned ? planned.checklist : undefined,
             file: Either.isRight(read) ? read.right : emptyCases,
             ...(Either.isLeft(read) ? { fileProblem: read.left } : {}),
             records: liveTestRecords,
             replaced: liveTestReplaced,
             sourceDigest: yield* stepDigest(entrypoint),
-            outOfTime,
+            outOfTime: liveTestsOutOfTime,
           });
         }).pipe(
           // A record the host could not build says so, rather than vanishing from the review.
@@ -3567,8 +3576,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               );
               yield* observeExecution(submitted, evidence, allowed, evidence.status);
               const result = yield* executionResult(evidence, submitted.purpose);
-              // The first passing example settles the schemas: its receipt carries the test plan,
-              // so the agent refines its cases against the checklist.
+              // The first passing example settles the schemas: its receipt reminds the agent to
+              // design and run its cases.
               if (
                 submitted.purpose !== "example" ||
                 evidence.status !== "completed" ||
@@ -3577,8 +3586,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               )
                 return result;
               testPlanSent = true;
-              // A cheap reminder: the checklist needs the schemas read offline, which the agent
-              // asks for with action plan.
               const read = yield* readCasesFile;
               const planned = Either.isRight(read) ? read.right.cases.length : 0;
               const parsed = yield* Effect.option(
@@ -3590,7 +3597,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     ...parsed.value,
                     testPlan: {
                       plannedCases: planned,
-                      instruction: `Your example passed, so the tool's schemas are settled. Call live_tests with action plan for the checklist, refine ${liveTestCasesPath} with real values the site offers, run the cases with action run and fix every failing case. Then make your last edit, run the cases again and run the example last.`,
+                      instruction: `Your example passed, so the tool's schemas are settled. Design the cases in ${liveTestCasesPath} as the testing skill says, from what you saw on the site: different real values unlike the example's (another record, retailer or store the site lists), smart combinations, edge cases and one rerun of the example's input. Run them with live_tests action run and fix every failing case. Then make your last edit, run the cases again and run the example last.`,
                     },
                   });
             }).pipe(
@@ -4762,7 +4769,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
             }),
-        // A read's planned live tests: the checklist, the cases and their results, and batches
+        // A read's live tests: the cases the agent designed and their results, and batches
         // run in parallel browsers after one Guardian review. It holds the execution permit, since
         // a batch uses the build's own browser too.
         ...(dependencies.liveTests === undefined || questionOnly

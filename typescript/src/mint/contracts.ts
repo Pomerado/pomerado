@@ -564,15 +564,15 @@ export type ExecutionRequest = typeof ExecutionRequest.Type;
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
 
 /**
- * What a host provides for a read's live tests. The minting agent plans cases in
- * `test/cases.json`, from a checklist the harness derives from the tool's schemas, and runs them
- * in batches. Live test cases never count toward a signed-in read's four agent-chosen tests: a
- * batch runs only on a read that has not signed in.
+ * What a host provides for a read's live tests. The minting agent designs cases in
+ * `test/cases.json` from what it saw on the site, and runs them in batches. Live test cases never
+ * count toward a signed-in read's four agent-chosen tests: a batch runs only on a read that has
+ * not signed in.
  */
 export interface LiveTestHost {
   /**
    * The current source's declared input and output JSON Schemas for `entrypoint`, read offline
-   * without running the operation.
+   * without running the operation: the harness reads a list's cursor and results from them.
    */
   readonly schemas: (
     entrypoint: string,
@@ -619,9 +619,8 @@ export type LiveTestBatchResult =
   | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
 
 /**
- * The live_tests tool: `plan` shows the checklist the host derived from the tool's schemas, the
- * cases in `test/cases.json` and each case's latest result (with full outputs for the cases
- * named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result
+ * (with full outputs for the cases named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, at most `maxWorkers` at once on separate fresh browsers.
  */
 export const LiveTestsRequest = Schema.Struct({

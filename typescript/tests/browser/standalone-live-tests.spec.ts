@@ -15,7 +15,7 @@ import {
 } from "./guardian-context-fixture.js";
 import { executions, mint } from "./standalone-mint-fixture.js";
 
-// The local host runs a read's planned live tests one at a time on its one browser, after one
+// The local host runs a read's live test cases one at a time on its one browser, after one
 // Guardian review of the batch: each case starts on a page reset like the example's, a failure
 // names the line that threw, and the publication review reads the host's record of the cases.
 
@@ -36,10 +36,10 @@ const brokenLine = searchTool.split("\n").findIndex((line) => line.includes("nev
 
 const cases = {
   cases: [
-    { id: "first", covers: ["repeat_example"], input: { query: "lamp" }, expect: "result" },
-    { id: "second", covers: ["repeat_example"], input: { query: "lamp" }, expect: "result" },
-    { id: "nothing", covers: ["input:query"], input: { query: "zzqx" }, expect: "empty" },
-    { id: "broken", covers: ["input:query"], input: { query: "broken" }, expect: "result" },
+    { id: "first", purpose: "The example's input again.", input: { query: "lamp" }, expect: "result" },
+    { id: "second", purpose: "The example's input from a reset page.", input: { query: "lamp" }, expect: "result" },
+    { id: "nothing", purpose: "A query with no results.", input: { query: "zzqx" }, expect: "empty" },
+    { id: "broken", purpose: "A query the tool fails on.", input: { query: "broken" }, expect: "result" },
   ],
 };
 
@@ -174,7 +174,7 @@ test("runs a list case's page two from the cursor its page one returned, checked
               cases: [
                 {
                   id: "page-2",
-                  covers: ["next_page"],
+                  purpose: "Page two through the cursor page one returned.",
                   input: { query: "rows", limit: 2 },
                   expect: "result",
                   next_page: true,
@@ -235,7 +235,7 @@ test("refuses a case whose cursor the host never signed before the case touches 
               cases: [
                 {
                   id: "forged",
-                  covers: ["input:query"],
+                  purpose: "A cursor the host never signed.",
                   input: { query: "rows", cursor: forged },
                   expect: "result",
                 },
