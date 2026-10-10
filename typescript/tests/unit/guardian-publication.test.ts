@@ -4,7 +4,10 @@ import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
-import { guardianPublicationPolicy } from "../../src/guardian/publication.js";
+import {
+  guardianPublicationPolicy,
+  publicationSafetyDefaultPolicy,
+} from "../../src/guardian/publication.js";
 import {
   makeGuardian,
   ReviewFailure,
@@ -405,7 +408,7 @@ describe("a publication decision", () => {
 describe("the publication policy", () => {
   it("is the core text, naming the files the host writes", () => {
     const policy = guardianPublicationPolicy;
-    expect(policy.split("\n")).toHaveLength(15);
+    expect(policy.split("\n")).toHaveLength(16);
     expect(
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
     ).toBe(true);
@@ -416,6 +419,15 @@ describe("the publication policy", () => {
       "never ask for a source correction or another run for it. When such a file shows a problem the minter's source causes, the finding keeps its ordinary reason and the rationale names the source to change.",
     );
     expect(policy).not.toContain("  ");
+  });
+
+  // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,
+  // and the box is never an input of the tool.
+  it("keeps a safety default the source sets, and never asks for it as an input", () => {
+    expect(guardianPublicationPolicy).toContain(`\n${publicationSafetyDefaultPolicy}\n`);
+    expect(guardianPublicationPolicy).toContain(
+      "must be an input of the tool (required when the site requires a choice, optional otherwise), except a safety default, which is never an input.",
+    );
   });
 
   // The local host's precheck screens only the build's own caller-supplied values and secret
@@ -656,6 +668,7 @@ describe("the OpenAI publication reviewer", () => {
     { reason: "unsupported_claim", category: "unsupported_claim" },
     { reason: "input_feedback", category: "account_specific_enum" },
     { reason: "source_correction", category: "example_value" },
+    { reason: "privacy", category: "safety_default" },
   ])(
     "accepts a $reason decision with a $category finding through the reviewer output schema",
     async ({ reason, category }) => {

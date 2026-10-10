@@ -301,6 +301,30 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "publication",
     'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
   ],
+  // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
+  // most rows to pass and returns what is there after that.
+  ["core", "After applying a filter, prefer waiting up to 15s for results to filter."],
+  // A reload after a choice such as a city can drop the search box's suggestions, so the tool
+  // types into the box again.
+  [
+    "core",
+    "After a step that reloads the page, such as choosing a city, prefer typing into the search box again when its suggestions don't appear.",
+  ],
+  // A preselected option that only shares the caller's data, tracks or signs up for marketing is
+  // turned off on every run, with no input and no question.
+  ["core", "- Turn safety defaults off."],
+  // An obvious refusal settles the caller's run at once; one from the tool's own empty read never
+  // claims to be obvious.
+  [
+    "core",
+    'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
+  ],
+  // A record whose name differs from the caller's only in case is still that record, so a picker's
+  // "Add new" row never creates a near-duplicate of it.
+  [
+    "forms",
+    'Prefer matching an existing record by a case-insensitive exact name, and prefer never picking an "Add new" row when an existing record matches.',
+  ],
 ];
 
 /*
@@ -686,17 +710,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["b1a4a9cbe75a22d6211172fa5e87b8b5060885890469d3f374c42fc3bc92d733", "core"],
-    ["407cca93896aacbe2453cfb9d0e17d6171d9b321c4ebb909f0cfe0f61b267e5d", "search"],
+    ["048e8e3a0701b57e70391f0e2fb6ab942e33d0193941d3b59fa4ef6faaeb0e81", "core"],
+    ["0841a8c299fe27b3342c2f5d87a70b3562c5c50024bf39b5531f0c643afba388", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["5d2340e9708765c50da86f7d736a96965020d1f78d6bc4b27173d1a7054ba0ad", "forms"],
-    ["43065a869c44b11b1e897f4226df836d2dd076998e430ac5a7223371f2acd1bf", "writes"],
+    ["bf93224e727fa574c22d4c3e47f8b88432b234a306990aa1acb50bfdf6d8f9f7", "forms"],
+    ["6c3b0e8152250a208b2350eef8d30492e3ae9a9a9e62cc3f9e31d3339b2135e1", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["7d1941f96fd36ca47595f77251b20f38448070e878c98bad77795c6f2663bc44", "caller-input"],
-    ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
-    ["4c0b524c06329f908c5d3138e739c43ffec6ddb119108b0f7485b6de02af3773", "workspace/AGENTS.md"],
+    ["154f5252ceb4827d56de4e77b08c8d66612f55325f93bf1e0998e9422586d148", "caller-input"],
+    ["4868454cc9110c57d2fdbdc1aa73e9006c053e4163a2c9c6540ca2132a4119f2", "publication"],
+    ["063a16465c8eb4c0d6b577a063481dcd972f990f8569ac85ce0565e03b9d0316", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

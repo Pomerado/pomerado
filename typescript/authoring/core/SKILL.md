@@ -71,7 +71,13 @@ pomerado:section core.execute-calls:end -->
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
   or a party size over its limit, throw `new errors.InvalidInput(message)` saying why. When the
-  value is not among choices the page lists, throw
+  refusal is obvious, start the message with "Caller input error:" so the caller gets it at
+  once. It is obvious when the input alone breaks a rule of the task, checked before any site
+  action, such as a departure date before yesterday in UTC, a return before its departure or a
+  count below one. It is also obvious when the page itself refuses the value in its own words,
+  which the message quotes. Never use that start when the tool's own read found nothing, such
+  as an empty suggestion list, a slider or list that hadn't loaded, or a day the page disables
+  without saying why. When the value is not among choices the page lists, throw
   `new errors.InvalidInput(message, { field, available })` instead, as "Configure, then read"
   below says. `errors` exists only in the script, never in a call's `code`, so when the page
   shows the refusal, return a marker such as `{ refused: "why", field, available }` from the
@@ -162,6 +168,20 @@ that asks.
   Record such a field as an optional input whether or not you ask about it, since callers of
   the tool can set it. Ask about one only as `AGENTS.md` ("Try hard, then ask") allows; left
   unset, it keeps the page's default.
+- Turn safety defaults off. A preselected option whose only effect is to share the caller's
+  data with another company, such as a partner comparison that opens the search on another
+  site, to opt into tracking beyond what the site needs, or to sign the caller up for marketing
+  email, is never an input and never a question. The tool turns it off on every run before the
+  submit it affects, and reads back that it is off. When the site won't submit with it off,
+  leave it on and say so in the description. Name the ones the tool turns off in the
+  description in general words, such as "turns off partner comparisons". A repair keeps each
+  one the registered source turns off.
+- Find these boxes where you fill the form, unlabeled ones included. List every checkbox,
+  switch and toggle in and near the form by role and by `input[type=checkbox]`, never only by
+  label, with its checked state, its nearest text, its group's heading and the alt text or
+  title of any logo beside it. A preselected box whose group names another company or shows its
+  logo is a partner box. After a probe's first submit, check whether a new tab opened or the
+  page left the site. If one did, a box you missed sent it there.
 - Find the inputs that change the result yourself; the request will not list them all. A
   location is the common one: a ZIP or postal code, city, address or store often changes
   results, prices and availability, such as a store's stock or the appointments a city's
@@ -403,6 +423,10 @@ asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md).
 search's answer and a record's page this way.
 After a search or a filter, prefer waiting for the site's own sign that this load finished, such
 as a spinner that showed and went, or a result count that updated, before reading results.
+After applying a filter, prefer waiting up to 15s for results to filter. Return when the
+majority of results pass the filter.
+After a step that reloads the page, such as choosing a city, prefer typing into the search box
+again when its suggestions don't appear.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because
