@@ -1,7 +1,8 @@
 // Failure modes covered: a question or task update review is asked for the execution outcomes
 // (allow, deny or escalate) beside its own, so the model returns one its kind refuses; a review
 // that returns an outcome its kind refuses is retried with backoff as an outage, from the same
-// input, for as long as the retry budget lasts, instead of being told once which outcomes count.
+// input, for as long as the retry budget lasts, instead of being told once which outcomes count;
+// a write build's task update review reads its empty allowedEffects as a read-only build.
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
@@ -213,4 +214,29 @@ it.each([
         expect(policy).not.toMatch(new RegExp(`\\b${outcome}\\b`));
     }
   }
+});
+
+// A write build confirming a page default before its first act step: the host gives the review
+// the build's effect and an empty allowedEffects, and the policy says the empty list, like the
+// read-only effects of earlier exploration reviews, says nothing about the build's effect.
+it("tells a write build's task update review that its empty allowedEffects says nothing of its effect", async () => {
+  const requests = scripted([decision("allow")]);
+  const reviewed = await Effect.runPromise(
+    guardianWith().reviewTaskUpdate(
+      { ...pending, allowedEffects: [] },
+      { ...update, effect: "write" },
+      readSource,
+    ),
+  );
+  expect(reviewed.decision).toMatchObject({ outcome: "allow" });
+  const request = reviewRequest(requests[0]) as unknown as {
+    trusted_review: { policy: string };
+    trusted_authority: { allowedEffects: readonly string[] };
+    update_review: { effect: string };
+  };
+  expect(request.trusted_authority.allowedEffects).toEqual([]);
+  expect(request.update_review.effect).toBe("write");
+  expect(request.trusted_review.policy).toContain(
+    "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects is empty on purpose, because an update performs no action on the site. That empty list, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
+  );
 });

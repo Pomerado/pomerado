@@ -181,6 +181,53 @@ it("turns a read build into a write build once the caller picks the option the m
   expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "write" });
 });
 
+// A write build that confirms a page default before its first act step is still a write build:
+// the host, not the minter, gives the review the build's effect, so the review never reads the
+// update as a read build's.
+it("gives a write build's update review the write effect before its first act step", async () => {
+  const updates = updateHost(["allow"]);
+  const deliveryQuestion = {
+    questions: [
+      {
+        id: "delivery",
+        type: "choice",
+        prompt: "The order form preselects standard delivery. Keep standard delivery?",
+        options: [
+          { id: "standard", label: "Yes, keep standard delivery" },
+          { id: "stop", label: "No, stop" },
+        ],
+      },
+    ],
+  };
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", deliveryQuestion, "ask"),
+        call(
+          "mint_update",
+          {
+            summary: "Keep the form's standard delivery, as the caller confirmed.",
+            changes: [{ setting: "input", values: { delivery: "standard" } }],
+            confirmedBy: ["delivery"],
+            recommend: "update",
+          },
+          "update",
+        ),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ delivery: "standard" }]) },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, effect: "write" },
+  });
+  expect(updates.reviews).toHaveLength(1);
+  expect(updates.reviews[0]?.update.effect).toBe("write");
+  expect(updates.reviews[0]?.current).toMatchObject({ revision: 0, effect: "write" });
+  expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "write" });
+});
+
 it("drops a prerequisite the caller said the site does not offer", async () => {
   const updates = updateHost(["allow"]);
   const f = await fixture(

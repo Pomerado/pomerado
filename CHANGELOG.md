@@ -291,6 +291,7 @@
 - The core skill tells the minter never to search the open web for the page a task needs, but to make its URL an input and ask the caller for it.
 - The writes skill tells the minter to prefer marking the commit at the step that submits the booking or order. A hold that expires on its own, such as a reserved table or a cart timer, is not the commit.
 - Guardian's publication policy says a repair's review prefers denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken, and notes other doubts about unchanged lines without denying. It is part of `publicationLiveTestsPolicy`, so a host with its own publication policy that includes it gets the rule too.
+- Guardian's task update policy says the host, not the agent, sets `update_review.effect`: for a write build no change needs to make it a write, and the confirmation need not cover the write. It also says a task update review's empty `trusted_authority.allowedEffects`, like the read-only `allowedEffects` of earlier exploration reviews, says nothing about the build's effect.
 
 ### Fixes
 
