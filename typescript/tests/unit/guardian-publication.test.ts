@@ -6,6 +6,7 @@ import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import {
   guardianPublicationPolicy,
+  publicationDecisionPolicy,
   publicationSafetyDefaultPolicy,
 } from "../../src/guardian/publication.js";
 import {
@@ -647,6 +648,60 @@ describe("the OpenAI publication reviewer", () => {
       });
     },
   );
+
+  // A host can require a site name and summary on a site's first publication, even for a tool
+  // that never opens the site, such as a parser that only transforms its input. That naming files
+  // the tool under the site and is no claim that the tool uses it; a description that promises
+  // site behavior the source lacks is still an unsupported claim.
+  it("tells the review that host-required site naming is no claim the tool uses the site", async () => {
+    const offline = new Map([
+      [
+        "operation/src/tool.mjs",
+        "export const parse = (text) => ({ lines: text.split(/\\n/u) });",
+      ],
+      [
+        "publication/definition.json",
+        JSON.stringify({
+          name: "parse_receipt_text",
+          description: "Split pasted receipt text into lines",
+          site: {
+            name: "Example Store",
+            summary: "An online store that sells synthetic household goods.",
+          },
+          inputSchema: { type: "object", properties: { text: { type: "string" } } },
+        }),
+      ],
+    ]);
+    const requests = scripted(() => [message(allow)]);
+    await Effect.runPromise(
+      makeGuardian(
+        makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+      ).review(
+        {
+          ...pending,
+          publication: {
+            files: [...offline].map(([path, source]) => ({
+              path,
+              byteLength: Buffer.byteLength(source),
+              published: true,
+              current: true,
+              owner: path.startsWith("publication/") ? ("host" as const) : ("minter" as const),
+            })),
+          },
+        },
+        sourcesOf(offline),
+      ),
+    );
+    const naming =
+      "is no unsupported_claim for its site naming alone. The tool's own name, description or a declared variant that promises site behavior the source lacks still is.";
+    // A host with its own publication policy composes the same decision policy.
+    expect(publicationDecisionPolicy).toContain(naming);
+    const policy = policyOf(requests[0]);
+    expect(policy).toContain(naming);
+    expect(policy).toContain(
+      "unsupported_claim with an in-manifest unsupported_claim finding at the overclaiming definition text when the name, description or a declared variant promises what the source does not do,",
+    );
+  });
 
   it("keeps a host's own turn limit for a publication review", async () => {
     const requests = scripted((index) => [read(pending.entrypoint, 0, `read_${index}`)]);
