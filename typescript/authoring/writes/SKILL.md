@@ -134,10 +134,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   further `act` steps are refused.
 - Read the site's own proof instead only when the commit request can't confirm the write:
   no such request went out; it failed, got no answer or returned an error status; its body
-  can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch
-  call; the page shows an error; the commit went over a websocket or a GET link; or a later
-  stage the site can still refuse, such as sending what an earlier click saved, sent no
-  request of its own. Then read the confirmation it shows (an order, booking
+  shows an error, or can't be read on an endpoint that reports errors with a 200, such as
+  GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET
+  link; or a later stage the site can still refuse, such as sending what an earlier click
+  saved, sent no request of its own. Then read the confirmation it shows (an order, booking
   or reference number) or the saved state (the orders page, the booking list, the updated
   profile), match it to the caller's values, return the number or record in the output, and
   call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from

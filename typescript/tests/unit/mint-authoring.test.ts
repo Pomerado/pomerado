@@ -635,7 +635,7 @@ it("has a write confirm from its own commit request, and read back only when tha
   );
   // Every case the request cannot settle keeps a read-back.
   expect(text("writes")).toContain(
-    "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then read the confirmation it shows (an order, booking or reference number) or the saved state (the orders page, the booking list, the updated profile), match it to the caller's values, return the number or record in the output, and call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from any other request.",
+    "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body shows an error, or can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then read the confirmation it shows (an order, booking or reference number) or the saved state (the orders page, the booking list, the updated profile), match it to the caller's values, return the number or record in the output, and call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from any other request.",
   );
   expect(text("writes")).toContain(
     "Before any further write, run an `act` step that only reads the page or the account. When `stateChangingRequests` shows the failed step's commit request went through, that step may read only the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
@@ -692,7 +692,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["5d2340e9708765c50da86f7d736a96965020d1f78d6bc4b27173d1a7054ba0ad", "forms"],
-    ["b357625dcb63949113813ebede672f224f32d1b98b4ab9a4109ef1cbacc8868c", "writes"],
+    ["43065a869c44b11b1e897f4226df836d2dd076998e430ac5a7223371f2acd1bf", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["7d1941f96fd36ca47595f77251b20f38448070e878c98bad77795c6f2663bc44", "caller-input"],
     ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
