@@ -11,7 +11,10 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
   flight the caller just chose, the delivery slots for the cart the run just filled, or
   which of the account's saved travelers or addresses to use;
 - which of several site entries the caller's value matches equally, such as a restaurant
-  with several locations or a city with several airports, with those entries as the options;
+  with several locations or a city with several airports, with those entries as the options.
+  That is ambiguous, as are a near-miss name the site offers alternatives for and a day the
+  site greys out without saying why, which may be sold out: prefer not starting a refusal of
+  any of them with "Caller input error:" (core skill);
 - a code the site sends to confirm a protected action after sign-in, such as a confirmation code
   by text or email. A code that is part of signing in is the host's: a `code` field of the
   `authenticate` step, never a question;
