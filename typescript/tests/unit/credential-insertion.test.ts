@@ -163,6 +163,50 @@ for (const { refused, insertion } of [
     expect(JSON.stringify(report)).not.toContain(password);
   });
 
+// A host's binding world that fails leaves the field unresolved before the value was sent.
+it("refuses the field as typed nothing (binding_unresolved) when the host's binding world fails", async () => {
+  const devtools = fakeDevtoolsKeyboard({ page: 1 }, undefined, {
+    bindingWorld: () => Effect.fail(new Error("The frame's private world is unavailable")),
+  });
+  const report = await fillThrough(devtools.keyboard);
+  expect(report).toMatchObject({
+    outcome: "refused",
+    reason: "credential_target_refused",
+    target: 0,
+    failureDetail: { context: { check: "typing_refused", insertion: "binding_unresolved" } },
+  });
+  expect(report).not.toHaveProperty("typed");
+  expect(methods(devtools.sent)).toEqual(["page DOM.getDocument"]);
+});
+
+// A document the host cannot walk may hold the field, so the host types into none.
+for (const { name, document } of [
+  { name: "a node it cannot decode", document: { root: { backendNodeId: "1" } } },
+  {
+    name: "a frame without its id",
+    document: { root: { backendNodeId: 1, contentDocument: { backendNodeId: 2 } } },
+  },
+  {
+    name: "more than 50,000 nodes",
+    document: {
+      root: {
+        backendNodeId: 1,
+        children: Array.from({ length: 50_000 }, (_, index) => ({ backendNodeId: 2 + index })),
+      },
+    },
+  },
+])
+  it(`refuses the field as typed nothing (binding_unresolved) when a document has ${name}`, async () => {
+    const devtools = fakeDevtoolsKeyboard({ page: 1 }, undefined, { document });
+    const report = await fillThrough(devtools.keyboard);
+    expect(report).toMatchObject({
+      outcome: "refused",
+      failureDetail: { context: { check: "typing_refused", insertion: "binding_unresolved" } },
+    });
+    expect(report).not.toHaveProperty("typed");
+    expect(methods(devtools.sent)).toEqual(["page DOM.getDocument"]);
+  });
+
 // The call that carries the value may have typed it before its answer was lost, so the fill
 // stays uncertain: refused by the browser, or answered outside the finite set.
 for (const { name, devtools } of [
@@ -177,7 +221,7 @@ for (const { name, devtools } of [
   },
   {
     name: "that call answers outside the finite set",
-    devtools: () => fakeDevtoolsKeyboard({ page: 1 }, undefined, "unexpected"),
+    devtools: () => fakeDevtoolsKeyboard({ page: 1 }, undefined, { insertion: "unexpected" }),
   },
 ])
   it(`stays uncertain when ${name}`, async () => {

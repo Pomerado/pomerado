@@ -1,7 +1,9 @@
 import { Effect } from "effect";
 import {
+  type CredentialBindingWorld,
   type CredentialKeyboard,
   makeCredentialKeyboard,
+  type PrivateCredentialCdp,
 } from "../../src/destinations/credential-keyboard.js";
 
 /** A browser's refusal of one DevTools command, as a host's transport reports it. */
@@ -29,16 +31,21 @@ export interface SentCommand {
  * The host's credential keyboard over a fake private DevTools socket. `marked` names each session
  * of the tab, in order, with how many fields in its document carry the binding's marker. `refuse`
  * returns the error the browser answers a command with, or undefined to answer it as Chromium
- * would; the insertion answers `inserted`, or `insertion`. `sent` lists every command.
+ * would. Each session answers its document read with `document` when given, the insertion answers
+ * `inserted` or `insertion`, and `bindingWorld` is the host's. `sent` lists every command.
  */
 export const fakeDevtoolsKeyboard = (
   marked: Readonly<Record<string, number>>,
   refuse: (command: SentCommand) => Error | undefined = () => undefined,
-  insertion: unknown = "inserted",
+  options: {
+    readonly insertion?: unknown;
+    readonly document?: unknown;
+    readonly bindingWorld?: CredentialBindingWorld;
+  } = {},
 ) => {
   const sent: SentCommand[] = [];
   let bindingKey = "";
-  const native = makeCredentialKeyboard({
+  const cdp: PrivateCredentialCdp = {
     sessions: () => Object.keys(marked),
     send: (method, params, sessionId) => {
       const command = { method, sessionId, params };
@@ -47,6 +54,7 @@ export const fakeDevtoolsKeyboard = (
       if (refusal !== undefined) return Promise.reject(refusal);
       switch (method) {
         case "DOM.getDocument":
+          if (options.document !== undefined) return Promise.resolve(options.document);
           return Promise.resolve({
             root: {
               backendNodeId: 1,
@@ -59,12 +67,13 @@ export const fakeDevtoolsKeyboard = (
         case "DOM.resolveNode":
           return Promise.resolve({ object: { objectId: "field" } });
         case "Runtime.callFunctionOn":
-          return Promise.resolve({ result: { value: insertion } });
+          return Promise.resolve({ result: { value: options.insertion ?? "inserted" } });
         default:
           return Promise.resolve({});
       }
     },
-  });
+  };
+  const native = makeCredentialKeyboard(cdp, undefined, options.bindingWorld);
   const keyboard: CredentialKeyboard = {
     insertText: (target, text) =>
       Effect.suspend(() => {
