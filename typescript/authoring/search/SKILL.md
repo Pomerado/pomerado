@@ -117,8 +117,8 @@ that. Keep the matches apart from related items, recommendations and sponsored c
 go in their own list or are left out, never mixed into the results, and return each item once. A
 card that stands for a group of variants, such as "6 flavors" or "3 colors", says so in its own
 fields, such as a variant count, and that its link opens one member of the group. Check that the
-page's echo of the query, such as a results heading, matches it normalized, never with exact
-case-sensitive equality. A search
+page's echo of the query, such as a results heading, matches it normalized, or for a proper noun
+fuzzily, never with exact case-sensitive equality. A search
 that applied every input and got the site's no-results message returns an empty list, never an
 error.
 
