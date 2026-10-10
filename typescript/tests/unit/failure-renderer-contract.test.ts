@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyRun,
   runOutcomeCodes,
   type FailureRenderer,
   type RunOutcome,
@@ -29,6 +30,25 @@ describe("the local failure renderer", () => {
       expect(localFailureRenderer.render(outcome).remediation).toMatch(
         /read the site back before any retry/iu,
       );
+  });
+
+  it("never tells a write the website confirmed to run again, whatever ended it after", () => {
+    for (const failure_reason of ["no_response", "invalid_input", "credentials_rejected"]) {
+      const outcome = classifyRun({
+        status: "completed",
+        effect: "verified",
+        output: "failed",
+        tool_effect: "write",
+        failure_reason,
+      });
+      expect(outcome).toMatchObject({ writeStatus: "applied", possibleCommit: true });
+      if (outcome === undefined) continue;
+      const { remediation } = localFailureRenderer.render(outcome);
+      expect(remediation).toBe(
+        "The website confirmed the action, so running the tool again would repeat it. Read the site back before any retry.",
+      );
+      expect(remediation).not.toMatch(/run (?:it|the tool) again|correct the/iu);
+    }
   });
 
   // `possibleCommit` follows the code and `writeStatus` the evidence, so a code that carries no
