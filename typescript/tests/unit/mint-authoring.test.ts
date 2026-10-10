@@ -312,6 +312,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "core",
     'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
   ],
+  // A record whose name differs from the caller's only in case is still that record, so a picker's
+  // "Add new" row never creates a near-duplicate of it.
+  [
+    "forms",
+    'Prefer matching an existing record by a case-insensitive exact name, and prefer never picking an "Add new" row when an existing record matches.',
+  ],
 ];
 
 /*
@@ -668,7 +674,7 @@ it("renders the pinned standalone authoring", async () => {
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["9cad290abf1d43d846cb624a3aaeafa892e0273d8844a41177e1d5c793f20ee2", "forms"],
+    ["085c9fa237bf2c1faed1f46aee594b4b76c71d3bdb5466ab97cf4fee7b5df7cc", "forms"],
     ["733976baf11dd3a53d09529942a7a2256fe71ecd0c67a4447f9883a1446a1b9c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["175a47a0822e3b66ee4a43db244754fc1a33f4fd177a78f5e1649e7068d97cd0", "caller-input"],
