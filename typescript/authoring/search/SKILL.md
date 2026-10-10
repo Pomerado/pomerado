@@ -19,8 +19,10 @@ filters", "More" or "Show all" button (core skill, the input schema). Make every
 control that narrows or orders the results an optional input wired to its control, even one the
 request never names; leave out only controls that change neither which results come back nor
 their order, such as a layout or language switch. A safety default (core skill) is not an input
-either, and the tool turns it off. This survey is build work. The published tool does not repeat
-it: on each run it opens only the groups the caller's inputs use (see "Apply and read back").
+either, and the tool turns it off. Nor is a filter, sort or location the request, the caller or
+the owner declined: it is never an input for any caller (core skill). This survey is build
+work. The published tool does not repeat it: on each run it opens only the groups the caller's
+inputs use (see "Apply and read back").
 
 - Take each input's choices from the site. When it offers the same choices for every query, the
   enum lists all of them as the page shows them. When they depend on the query, such as sizes or
@@ -39,9 +41,10 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
 - A filter group the page disables for this result set, such as a price filter when only one
   result shows, is part of the answer: check that a group is enabled before opening it, never
   wait on a disabled one, and return the results with that filter reported as not offered.
-- Never set a filter or sort in code, even one the request names: each is an input. When the
-  site offers a sort, it is an optional input listing every order the site offers. A page size
-  visitors cannot change is the site's; state it in the description.
+- Never set a filter or sort in code, even one the request names: each is an input, and a
+  declined one (above) is neither set nor an input. When the site offers a sort, it is an
+  optional input listing every order the site offers. A page size visitors cannot change is the
+  site's; state it in the description.
 
 ## Apply and read back
 

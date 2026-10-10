@@ -96,9 +96,9 @@ pomerado:section core.execute-calls:end -->
   `new errors.LocationNotApplied(message, { field, requested, applied, step, siteMessage })`:
   `field` the input's name, `requested` the caller's value, `applied` the location the page kept
   as read back (left out when it shows none), `step` the tool's step that failed, such as
-  `store_save`, and `siteMessage` the page's own error when it showed one. The run then fails
+  `set_location`, and `siteMessage` the page's own error when it showed one. The run then fails
   and returns nothing for another place. Never report the location as not applied in the output
-  instead, such as `store_applied: false` or a "lookup-only" description, and never let an
+  instead, such as a `zip_applied: false` flag or a "lookup-only" description, and never let an
   answer to a question make a supplied location optional. When the site says it does not serve
   the location, that is the caller's to fix: throw `InvalidInput` with `field` and `available`,
   the places it offers.
@@ -181,8 +181,9 @@ that asks.
   purpose calls for, not only the ones the request names: record every control the flow
   offers that narrows, orders or configures what the tool returns as an optional input wired
   to its control, such as cabin class (economy or first) on a flight search, even when the
-  request never mentions it. Open collapsed groups, drawers and "more" links before you
-  decide what the page offers: a collapsed group is not an absent one. Leave out controls
+  request never mentions it, except a choice that was declined (below). Open collapsed
+  groups, drawers and "more" links before you decide what the page offers: a collapsed group
+  is not an absent one. Leave out controls
   unrelated to the purpose, such as a language switch or a newsletter opt-in on a search.
   Record such a field as an optional input whether or not you ask about it, since callers of
   the tool can set it. Ask about one only as `AGENTS.md` ("Try hard, then ask") allows; left
@@ -211,8 +212,10 @@ that asks.
   from the page and return it. When it does not apply, throw `LocationNotApplied` (above).
   Left unset, return the location the page shows and say in the
   description that the site picks it, which can differ from run to run. While building, ask
-  the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location,
-  store or delivery or pickup mode in the run's own browser is part of the read, never a write,
+  the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Skipping that
+  question only leaves the example without a location, and the input stays; saying the tool
+  should use no location declines it (below). Setting a location, store or delivery or pickup
+  mode in the run's own browser is part of the read, never a write,
   even through a Save button: the run's browser is fresh and discarded, so nothing is saved,
   and a tool that never signs in has no account to change. Saving a guest address signed out
   is part of the read too when it only sets the location; a step that also enters a name,
@@ -221,7 +224,7 @@ that asks.
 - A choice the request, the caller or the owner declined, or a step they said not to take (no
   location, no store, skip a filter, don't sign in), is not part of the tool for any caller:
   never offer it as an input, never set it in the example or a test, and never put it in
-  `exampleInput`. Note it as `declined` in `test/cases.json` (testing skill) and in coverage.
+  `exampleInput`. Note it in coverage.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The

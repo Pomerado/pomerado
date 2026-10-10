@@ -63,9 +63,9 @@ the source files, never captures.
   a read's example, or on each write act step that needs it (the first act step that passes it
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input.
-- `live_tests` plans and runs a read's live tests when the host offers it: the checklist it
-  derives from your schemas, your cases in `test/cases.json` and every result, run in parallel
-  batches on fresh browsers. Plan them as soon as you know the page and its inputs, and read
+- `live_tests` runs a read's live tests when the host offers it: the cases you design in
+  `test/cases.json` from what you saw on the site, and every result, run in parallel batches on
+  fresh browsers. Design them as soon as you know the page and its inputs, and read
   .agents/testing/SKILL.md first.
 - `retain_capture`, `finish_build` and `request_input` are described below and in their
   tool descriptions.
@@ -165,14 +165,16 @@ than the controls, such as a record page at `/items/<id>` instead of crawling a 
 Either way, read the page's identity back from the page and fail if it does not match.
 
 When the controls flow lands on a URL the site produced, and two runs with different inputs show
-which parts of it carry which input, such as the query, dates, guests or party size, sort, page
-or a record's own identifier route, the tool may open that URL with the caller's values in those
+which parts of it carry which input, such as the query, dates, guests or party size, sort or a
+record's own identifier route, the tool may open that URL with the caller's values in those
 parts, built with `URLSearchParams` for a query part or `encodeURIComponent` for a path part and
 every other part copied as the site wrote it, once the build checked that it gives the same answer as the controls. At run time it reads every input
 back from the page, and when the landing is not an answer it named or a read-back differs, it
 runs the controls flow once instead, in a named function such as `throughControls`
 (`references/navigation.ts`). Never guess a parameter, never iterate on URL variants, and take an
-opaque filter code only from a link the page produced in this run. A POST form, a URL that
+opaque filter code only from a link the page produced in this run. A page number or offset is
+not such a part: the tool reaches a later page by the site's own link, which the cursor keeps,
+never by editing a number into the URL it opens (pagination skill). A POST form, a URL that
 carries a per-session token, a value that needs a typeahead pick to resolve, a location or store
 the site keeps in cookies, and every step on a write's path go through the controls.
 
@@ -447,8 +449,9 @@ fenced, regardless of the read flag. An authentication submission with an unknow
 always fenced.
 
 Testing a read is your job, never the caller's (.agents/testing/SKILL.md). A read signed out
-plans its tests at the start, from the checklist `live_tests` derives from its schemas, refines
-them once the example passes, and runs as many as it needs, in parallel batches. A signed-in read
+designs its own cases at the start, from what it saw on the site: different real values unlike
+the example's, smart combinations and edge cases. It refines them once the example passes, and
+runs as many as it needs, in parallel batches. A signed-in read
 runs up to four live tests with an input you choose (`testInput`), spent on the riskiest controls.
 Finish in this order: your last edit, the cases again, then the example last, before
 `finish_build`. Report skipped, unsupported or missing bodies honestly.
