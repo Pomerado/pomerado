@@ -156,6 +156,13 @@ describe("a sealed cursor", () => {
   });
 });
 
+it("keeps the host's channel out of anything that walks a run's input", () => {
+  const value = withListHost({ check_in: "2026-03-01" }, {});
+  expect(new URLSearchParams(value).toString()).toBe("check_in=2026-03-01");
+  expect(JSON.stringify(value)).toBe('{"check_in":"2026-03-01"}');
+  expect(startList(value, { mechanism: "pages" }).signed).toBe(true);
+});
+
 describe("a tool that pages with its own cursor", () => {
   // A tool built before the runtime's cursors keeps its own continuation, which the host passes
   // through untouched, and a runtime draft sent in as a cursor is refused.

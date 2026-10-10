@@ -18,11 +18,17 @@ export interface ListHost {
  */
 const listHostKey = Symbol.for("pomerado.list.host");
 
-/** The run's input with the host's checked list position beside it; for a host's runtime only. */
-export const withListHost = <Input>(input: Input, host: ListHost): Input =>
-  typeof input === "object" && input !== null && !Array.isArray(input)
-    ? ({ ...input, [listHostKey]: host } as Input)
-    : input;
+/**
+ * The run's input with the host's checked list position beside it; for a host's runtime only.
+ * The key is not enumerable, so code that walks the input's own keys, such as
+ * `new URLSearchParams(input)`, never sees it.
+ */
+export const withListHost = <Input>(input: Input, host: ListHost): Input => {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+  const hosted = { ...input };
+  Object.defineProperty(hosted, listHostKey, { value: host, enumerable: false });
+  return hosted;
+};
 
 /** The host channel a run's input carries, when its host signs cursors. */
 export const listHostOf = (input: unknown): ListHost | undefined => {
