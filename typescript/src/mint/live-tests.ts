@@ -2,15 +2,15 @@ import { createHash } from "node:crypto";
 import { Clock, Effect, Either, Schema } from "effect";
 
 /**
- * Live tests of a read: the cases the minting agent plans in `test/cases.json`, the checklist the
- * host derives from the tool's input and output schemas, each case's verdict, and the record the
- * publication review reads. Pure, except `runLiveTestCase`, which a host calls once per case.
+ * Live tests of a read: the cases the minting agent designs in `test/cases.json`, each case's
+ * verdict, and the record the publication review reads. Pure, except `runLiveTestCase`, which a
+ * host calls once per case.
  *
- * The agent writes the cases with real values the site offers and labels each with the checklist
- * items it covers. The host runs a batch after one Guardian review, each case on a fresh page,
- * in parallel browsers where the host has them, and the agent sees every result. Nothing here
- * blocks publication: the publication review reads the record and judges what is missing,
- * failing or stale.
+ * The agent designs the cases from what it saw on the site, with real values the site offers,
+ * and says what each one establishes. The host runs a batch after one Guardian review, each case
+ * on a fresh page, in parallel browsers where the host has them, and the agent sees every result.
+ * Nothing here blocks publication: the publication review reads the record and judges the cases
+ * against what the tool claims.
  */
 
 /** Where the agent writes its cases. */
@@ -19,44 +19,36 @@ export const liveTestCasesPath = "test/cases.json";
 export const liveTestsEvidencePath = "publication/tests.json";
 /** The most cases one batch runs: a payload bound, not a limit on testing. */
 export const maximumBatchCases = 50;
-/** How many passing repeat cases the example's input needs. */
-export const repeatRuns = 3;
 
 type Json = Readonly<Record<string, unknown>>;
 type Input = Readonly<Record<string, unknown>>;
 
 const CaseId = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u));
-const ItemId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(120));
-const Reason = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(600));
+const Text = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(600));
 
 /** What a case expects the tool to do. */
 export const LiveTestExpectation = Schema.Literal("result", "empty", "invalid_input", "error");
 export type LiveTestExpectation = typeof LiveTestExpectation.Type;
 
-/** One case the agent planned. */
+/** One case the agent designed. */
 export const LiveTestCase = Schema.Struct({
   id: CaseId,
-  /** The checklist items this case covers, such as `input:sort` or `repeat_example`. */
-  covers: Schema.Array(ItemId).pipe(Schema.maxItems(20)),
+  /** What the case establishes, such as "a second store whose results page has no pickup column". */
+  purpose: Text,
   input: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
   expect: LiveTestExpectation,
   /** Run page 1, then the next page through the cursor page 1 returned. */
   next_page: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  note: Schema.optionalWith(Schema.String.pipe(Schema.maxLength(600)), { exact: true }),
 });
 export type LiveTestCase = typeof LiveTestCase.Type;
 
-/** A checklist item the agent did not test, with why. */
-export const LiveTestSkip = Schema.Struct({
-  item: ItemId,
-  status: Schema.Literal("not_applicable", "declined"),
-  reason: Reason,
-});
-export type LiveTestSkip = typeof LiveTestSkip.Type;
+/** Something the tool claims that the agent chose not to test, and why. */
+export const LiveTestNotTested = Schema.Struct({ what: Text, reason: Text });
+export type LiveTestNotTested = typeof LiveTestNotTested.Type;
 
 export const LiveTestCasesFile = Schema.Struct({
   cases: Schema.Array(LiveTestCase).pipe(Schema.maxItems(200)),
-  skipped: Schema.optionalWith(Schema.Array(LiveTestSkip).pipe(Schema.maxItems(100)), {
+  notTested: Schema.optionalWith(Schema.Array(LiveTestNotTested).pipe(Schema.maxItems(100)), {
     exact: true,
   }),
 });
@@ -83,25 +75,12 @@ export const decodeCasesFile = (
 };
 
 // ---------------------------------------------------------------------------------------------
-// The checklist, from the tool's schemas.
+// What the runner and the verdicts read from the tool's schemas: its cursor and its list.
 
 /** The input field that takes a cursor and the output field that returns it. */
 export interface CursorPair {
   readonly inputField: string;
   readonly outputField: string;
-}
-
-/** One thing the cases must cover, or say why not. */
-export interface ChecklistItem {
-  readonly item: string;
-  /** What a case covering it does. */
-  readonly hint: string;
-  /** How many passing cases it needs. */
-  readonly needs: number;
-  /** The cases must expect this; any expectation when absent. */
-  readonly expect?: LiveTestExpectation;
-  /** A case covering it sets this input field. */
-  readonly field?: string;
 }
 
 const isRecord = (value: unknown): value is Json =>
@@ -130,14 +109,6 @@ const branchesOf = (schema: Json, root: Json): readonly Json[] => {
     .filter((branch) => branch["type"] !== "null");
 };
 
-/** A branch that admits exactly the values it lists. */
-const membersOf = (branch: Json): readonly unknown[] | undefined =>
-  Array.isArray(branch["enum"])
-    ? branch["enum"]
-    : "const" in branch
-      ? [branch["const"]]
-      : undefined;
-
 const typeOf = (branch: Json) => {
   const type = branch["type"];
   return typeof type === "string"
@@ -151,8 +122,6 @@ interface Field {
   readonly name: string;
   readonly required: boolean;
   readonly types: readonly string[];
-  readonly members: readonly unknown[] | undefined;
-  readonly text: string;
   /** An array whose items are objects, or not described. */
   readonly listOfRecords: boolean;
 }
@@ -184,16 +153,10 @@ const objectFields = (raw: unknown): readonly Field[] => {
   return Object.entries(properties).map(([name, property]) => {
     const field = resolved(property, root);
     const branches = branchesOf(field, root);
-    const memberLists = branches.map(membersOf);
-    const text = [field["title"], field["description"]]
-      .filter((part) => typeof part === "string")
-      .join(" ");
     return {
       name,
       required: required.has(name),
       types: branches.map((branch) => typeOf(branch) ?? "any"),
-      members: memberLists.every((list) => list !== undefined) ? memberLists.flat() : undefined,
-      text,
       listOfRecords: branches.some((branch) => holdsRecords(branch, root)),
     };
   });
@@ -227,30 +190,19 @@ export const cursorPairOf = (inputSchema: unknown, outputSchema: unknown): Curso
 const freeTextName = /^(?:q|query|search|search_?term|keywords?|terms?|text)$/iu;
 const recordName =
   /(?:^|_)(?:url|link|href|id|sku|slug|asin|listing|product|item|record|code|handle)(?:$|_)/iu;
+/** An input that picks where to shop, such as `store_id`, never a record. */
 const selectorName =
   /(?:^|_)(?:retailer|store|seller|merchant|vendor|marketplace|market|region|shop|warehouse|branch)(?:$|_)/iu;
-const locationName =
-  /(?:^|_)(?:zip|zipcode|postal|postcode|post_?code|location|address|city|lat|latitude|lng|lon|longitude|geo)(?:$|_)/iu;
-/** Inputs that shape the list itself, not what it holds: never a control to test on its own. */
-const listContractName =
-  /^(?:limit|page_?size|per_?page|max_?results|cursor|page_?token|next_?cursor)$/iu;
 /** What a list's results usually sit under. */
 const listName = /^(?:results?|items|products|listings?|hits|entries|records|rows|matches|data|list)$/iu;
-const locationText = /\b(?:zip|postal|post code|postcode|location|address|deliver)/iu;
-/** Words split from a name such as `zipCode` or `store_id`. */
+/** Words split from a name such as `productUrl` or `store_id`. */
 const words = (name: string) => name.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase();
 
+/** An input that names one record, such as a product URL, so its read is a details read. */
 const isRecordInput = (field: Field) =>
   recordName.test(words(field.name)) &&
   !selectorName.test(words(field.name)) &&
   !freeTextName.test(field.name);
-const isLocationInput = (field: Field) =>
-  locationName.test(words(field.name)) || locationText.test(field.text);
-/** The inputs a case sets to test the tool, without the list's own paging and size fields. */
-const controlsOf = (inputSchema: unknown, cursor: CursorPair | undefined) =>
-  objectFields(inputSchema).filter(
-    (field) => field.name !== cursor?.inputField && !listContractName.test(field.name),
-  );
 
 /** Where a list read's results sit: `field` of the output, or the output itself when absent. */
 export interface PrimaryList {
@@ -283,125 +235,6 @@ export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): Prim
   if (details) return undefined;
   if (named !== undefined) return { field: named.name };
   return arrays.length === 1 && arrays[0] !== undefined ? { field: arrays[0].name } : undefined;
-};
-
-/** An input whose values are choices the site offers or withholds: a size, store, option or date. */
-const isChoice = (field: Field) =>
-  !field.types.includes("boolean") &&
-  !freeTextName.test(field.name) &&
-  !isRecordInput(field) &&
-  !isLocationInput(field) &&
-  ((field.members !== undefined && field.members.length > 0) ||
-    selectorName.test(words(field.name)) ||
-    (field.types.length > 0 && field.types.every((type) => type === "string")));
-
-const fieldHint = (field: Field) => {
-  if (field.types.includes("boolean"))
-    return `Set ${field.name} to its non-default side, and read back that the page applied it.`;
-  const members = field.members;
-  if (members !== undefined && members.length > 0)
-    return members.length <= 6
-      ? `Run each of ${field.name}'s ${members.length} values, and read back that the page applied it.`
-      : `Run three of ${field.name}'s values spread across its list, and read back that the page applied each.`;
-  return `Set ${field.name} to a value the site offers that differs from the example's, and read back that the page applied it.`;
-};
-
-const fieldNeeds = (field: Field) => {
-  const members = field.members;
-  if (field.types.includes("boolean") || members === undefined || members.length === 0) return 1;
-  return Math.min(members.length, members.length <= 6 ? 6 : 3);
-};
-
-/**
- * The checklist for a read with these schemas. Item ids are stable: `repeat_example`,
- * `input:<field>`, `all_inputs`, `combination`, `unoffered_value`, `no_results`, `next_page`,
- * `other_record`, `other_value:<field>`, `location_applied` and `location_impossible`.
- */
-export const checklistOf = (inputSchema: unknown, outputSchema: unknown): readonly ChecklistItem[] => {
-  const cursor = cursorPairOf(inputSchema, outputSchema);
-  const controls = controlsOf(inputSchema, cursor);
-  const optional = controls.filter((field) => !field.required);
-  const list = primaryListOf(inputSchema, outputSchema);
-  const items: ChecklistItem[] = [
-    {
-      item: "repeat_example",
-      hint: `Run the example's input ${repeatRuns} times or more, each from a fresh browser. A run that fails or needs a retry is missing a wait: fix the wait, not the retry.`,
-      needs: repeatRuns,
-      expect: "result",
-    },
-  ];
-  for (const field of controls)
-    items.push({
-      item: `input:${field.name}`,
-      hint: fieldHint(field),
-      needs: fieldNeeds(field),
-      field: field.name,
-    });
-  if (optional.length >= 2)
-    items.push({
-      item: "all_inputs",
-      hint: "Set every optional input in one case, to catch controls that undo or hide each other.",
-      needs: 1,
-      expect: "result",
-    });
-  if (optional.length >= 3)
-    items.push({
-      item: "combination",
-      hint: "Pair two or more controls that share a panel, a drawer or a page reload, other than the all-inputs case.",
-      needs: 1,
-    });
-  if (controls.some(isChoice))
-    items.push({
-      item: "unoffered_value",
-      hint: "Send a value the site does not list at all for a choice (a size, store, option or date it lacks). The tool must refuse with InvalidInput listing the page's choices, never pick another value. An option the page lists but greys out, such as a sold-out size, is offered: a read returns it as unavailable data.",
-      needs: 1,
-      expect: "invalid_input",
-    });
-  if (list !== undefined)
-    items.push({
-      item: "no_results",
-      hint: "A query or filter set the site has no results for. The tool returns an empty list, never a throw.",
-      needs: 1,
-      expect: "empty",
-    });
-  if (cursor !== undefined)
-    items.push({
-      item: "next_page",
-      hint: `Run a case with next_page true: the host runs page 1, then page 2 through ${cursor.outputField}. Page 2 must hold different results.`,
-      needs: 1,
-      expect: "result",
-    });
-  if (controls.some(isRecordInput))
-    items.push({
-      item: "other_record",
-      hint: "Read two or more other records, picked from a listing you opened, whose pages differ from the example's: other options, a single option, a grouped or multi-item page, sold out or unavailable, another layout or type.",
-      needs: 2,
-      expect: "result",
-    });
-  for (const field of controls.filter((entry) => selectorName.test(words(entry.name))))
-    items.push({
-      item: `other_value:${field.name}`,
-      hint: `Run a second ${field.name} the site offers, unlike the example's, end to end: its pages may be laid out or worded differently.`,
-      needs: 1,
-      expect: "result",
-      field: field.name,
-    });
-  if (controls.some(isLocationInput))
-    items.push(
-      {
-        item: "location_applied",
-        hint: "Run another location and read back from the page that it applied.",
-        needs: 1,
-        expect: "result",
-      },
-      {
-        item: "location_impossible",
-        hint: "Run a location the site cannot apply. The tool must fail loudly, never return results for another place.",
-        needs: 1,
-        expect: "error",
-      },
-    );
-  return items;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -658,19 +491,12 @@ const canonical = (value: unknown): string =>
   );
 
 /**
- * A digest of what a case asks for and what it claims to cover, so an edited or relabelled case's
- * earlier result is stale.
+ * A digest of what a case runs and expects, so an edited case's earlier result is stale. Its
+ * purpose is a description: rewording it leaves the result standing.
  */
 export const caseDigest = (testCase: LiveTestCase) =>
   createHash("sha256")
-    .update(
-      canonical([
-        testCase.input,
-        testCase.expect,
-        testCase.next_page === true,
-        [...testCase.covers].sort(),
-      ]),
-    )
+    .update(canonical([testCase.input, testCase.expect, testCase.next_page === true]))
     .digest("hex")
     .slice(0, 16);
 
@@ -693,7 +519,7 @@ export interface LiveTestRecord {
   readonly lane?: number;
   /** The case as it ran, so a result outlives the case's removal or edit. */
   readonly input?: Input;
-  readonly covers?: readonly string[];
+  readonly purpose?: string;
   readonly expect?: LiveTestExpectation;
   /** A failing result the minter replaced by changing the case; kept for the publication review. */
   readonly retired?: true;
@@ -722,7 +548,7 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
   input: Schema.optionalWith(Schema.Record({ key: Schema.String, value: Schema.Unknown }), {
     exact: true,
   }),
-  covers: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+  purpose: Schema.optionalWith(Schema.String, { exact: true }),
   expect: Schema.optionalWith(LiveTestExpectation, { exact: true }),
   retired: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
@@ -760,89 +586,6 @@ export const caseStatus = (
   return record.verdict;
 };
 
-export type ItemStatus =
-  | "covered"
-  | "failing"
-  | "stale"
-  | "not_run"
-  | "inconclusive"
-  | "missing"
-  | "not_applicable"
-  | "declined";
-
-export interface ItemView {
-  readonly item: string;
-  readonly status: ItemStatus;
-  readonly hint: string;
-  readonly needs: number;
-  readonly passing: number;
-  readonly cases: readonly string[];
-  readonly reason?: string;
-  /** Cases that claim this item but do not fit it. */
-  readonly mismatched?: readonly { readonly id: string; readonly why: string }[];
-}
-
-/** Why a case cannot cover an item, if it cannot. */
-const mismatch = (item: ChecklistItem, testCase: LiveTestCase): string | undefined => {
-  if (item.expect !== undefined && testCase.expect !== item.expect)
-    return `${item.item} cases expect ${item.expect}`;
-  if (item.field !== undefined && testCase.input[item.field] === undefined)
-    return `the case does not set ${item.field}`;
-  if (item.item === "next_page" && testCase.next_page !== true)
-    return "the case does not set next_page";
-  return undefined;
-};
-
-/** Each checklist item's status from the cases, their results and the current source. */
-export const itemViews = (
-  checklist: readonly ChecklistItem[],
-  file: LiveTestCasesFile,
-  records: ReadonlyMap<string, LiveTestRecord>,
-  sourceDigest: string | undefined,
-): readonly ItemView[] =>
-  checklist.map((item) => {
-    const skip = file.skipped?.find((entry) => entry.item === item.item);
-    const claiming = file.cases.filter((testCase) => testCase.covers.includes(item.item));
-    const mismatched = claiming.flatMap((testCase) => {
-      const why = mismatch(item, testCase);
-      return why === undefined ? [] : [{ id: testCase.id, why }];
-    });
-    const fitting = claiming.filter((testCase) => mismatch(item, testCase) === undefined);
-    const statuses = fitting.map((testCase) =>
-      caseStatus(testCase, records.get(testCase.id), sourceDigest),
-    );
-    const passing = statuses.filter((status) => status === "pass").length;
-    const base = {
-      item: item.item,
-      hint: item.hint,
-      needs: item.needs,
-      passing,
-      cases: claiming.map((testCase) => testCase.id),
-      ...(mismatched.length === 0 ? {} : { mismatched }),
-    };
-    const status: ItemStatus =
-      passing >= item.needs
-        ? "covered"
-        : statuses.includes("fail")
-          ? "failing"
-          : skip !== undefined && fitting.length === 0
-            ? skip.status
-            : statuses.includes("stale")
-              ? "stale"
-              : statuses.includes("inconclusive")
-                ? "inconclusive"
-                : statuses.includes("not_run")
-                  ? "not_run"
-                  : "missing";
-    return {
-      ...base,
-      status,
-      ...(skip !== undefined && (status === "not_applicable" || status === "declined")
-        ? { reason: skip.reason }
-        : {}),
-    };
-  });
-
 /** One case as the agent and the publication review read it. */
 export const caseView = (
   testCase: LiveTestCase,
@@ -852,7 +595,7 @@ export const caseView = (
   const status = caseStatus(testCase, record, sourceDigest);
   return {
     id: testCase.id,
-    covers: testCase.covers,
+    purpose: testCase.purpose,
     expect: testCase.expect,
     ...(testCase.next_page === true ? { next_page: true } : {}),
     status,
@@ -882,12 +625,6 @@ export const caseView = (
   };
 };
 
-const tally = (statuses: readonly string[]) => {
-  const counts: Record<string, number> = {};
-  for (const status of statuses) counts[status] = (counts[status] ?? 0) + 1;
-  return counts;
-};
-
 /**
  * Results the cases file no longer shows: a case the minter deleted, with its last result, and
  * a failing result the minter replaced by changing the case.
@@ -915,7 +652,7 @@ const retiredViews = (
   ].map(([record, because]) => ({
     id: record.id,
     retiredBecause: because,
-    ...(record.covers === undefined ? {} : { covers: record.covers }),
+    ...(record.purpose === undefined ? {} : { purpose: record.purpose }),
     ...(record.expect === undefined ? {} : { expect: record.expect }),
     ...(record.input === undefined ? {} : { input: record.input }),
     lastVerdict: record.verdict,
@@ -931,86 +668,75 @@ const retiredViews = (
 const outOfTimeNote =
   "The attempt ran out of time for live tests: a batch was refused for time, or a case ended at the deadline.";
 
+/** Case counts in a fixed order: pass, fail and inconclusive always, stale and not_run when any. */
+const countsOf = (statuses: readonly CaseStatus[]) => {
+  const count = (status: CaseStatus) => statuses.filter((entry) => entry === status).length;
+  return {
+    pass: count("pass"),
+    fail: count("fail"),
+    inconclusive: count("inconclusive"),
+    ...(count("stale") === 0 ? {} : { stale: count("stale") }),
+    ...(count("not_run") === 0 ? {} : { not_run: count("not_run") }),
+  };
+};
+
 /**
  * The host's record of a read's live tests on the source it publishes, for the publication
- * review (`publication/tests.json`), and the line it adds to coverage. Undefined checklist means
- * the host could not read the tool's schemas.
+ * review (`publication/tests.json`), and the line it adds to coverage.
  */
 export const liveTestsEvidence = (options: {
-  readonly checklist: readonly ChecklistItem[] | undefined;
   readonly file: LiveTestCasesFile;
   readonly fileProblem?: string;
   readonly records: ReadonlyMap<string, LiveTestRecord>;
   /** Failing results the minter replaced by changing their case. */
   readonly replaced?: readonly LiveTestRecord[];
   readonly sourceDigest: string | undefined;
-  /** The minter planned, skipped and ran no case, so the host built no checklist. */
-  readonly nothingPlanned?: boolean;
   /** The attempt ran out of time for live tests. */
   readonly outOfTime?: boolean;
 }) => {
-  const { checklist, file, records, sourceDigest } = options;
+  const { file, records, sourceDigest } = options;
   const outOfTime = options.outOfTime === true;
-  if (options.nothingPlanned === true)
-    return {
-      record: {
-        kind: "host_live_tests",
-        note: "Written by the host, never by the minter. The minter planned, skipped and ran no live test case, so beyond the example nothing was tested live.",
-        ...(sourceDigest === undefined ? {} : { sourceDigest }),
-        ...(outOfTime ? { outOfTime: true } : {}),
-        checklist: [],
-        cases: [],
-        retired: [],
-        counts: { items: {}, cases: {} },
-      },
-      coverage: `Host live tests on the published source: none planned or run; beyond the example, nothing was tested live.${
-        outOfTime ? ` ${outOfTimeNote}` : ""
-      }`,
-    };
-  const items = checklist === undefined ? [] : itemViews(checklist, file, records, sourceDigest);
   const cases = file.cases.map((testCase) => ({
     ...caseView(testCase, records.get(testCase.id), sourceDigest),
     input: testCase.input,
-    ...(testCase.note === undefined ? {} : { note: testCase.note }),
   }));
+  const notTested = file.notTested ?? [];
   const retired = retiredViews(file, records, options.replaced ?? [], sourceDigest);
+  const nothing =
+    options.fileProblem === undefined &&
+    cases.length === 0 &&
+    notTested.length === 0 &&
+    retired.length === 0;
+  const counts = countsOf(cases.map((testCase) => testCase.status));
   const retiredFailures = retired.filter((entry) => entry.lastVerdict === "fail").length;
-  const itemCounts = tally(items.map((item) => item.status));
-  const caseCounts = tally(cases.map((testCase) => testCase.status));
-  const gaps = items.filter(
-    (item) => item.status !== "covered" && item.status !== "not_applicable",
-  );
-  const summary = `Host live tests on the published source: ${cases.length} case${cases.length === 1 ? "" : "s"} (${
-    Object.entries(caseCounts)
-      .map(([status, count]) => `${count} ${status}`)
-      .join(", ") || "none run"
-  }); checklist ${items.length - gaps.length} of ${items.length} items covered or not applicable${
-    gaps.length === 0
-      ? "."
-      : `; open: ${gaps
-          .slice(0, 12)
-          .map((item) => `${item.item} (${item.status})`)
-          .join(", ")}${gaps.length > 12 ? ", …" : ""}.`
-  }${
-    retired.length === 0
-      ? ""
-      : ` ${retired.length} retired case${retired.length === 1 ? "" : "s"} (${retiredFailures} last failed).`
-  }${outOfTime ? ` ${outOfTimeNote}` : ""}${options.fileProblem === undefined ? "" : ` ${options.fileProblem}`}${
-    checklist === undefined ? " The host could not read the tool's schemas, so it built no checklist." : ""
-  }`;
+  const summary = nothing
+    ? "Host live tests on the published source: none designed or run; beyond the example, nothing was tested live."
+    : `Host live tests on the published source: ${cases.length} case${cases.length === 1 ? "" : "s"} (${Object.entries(
+        counts,
+      )
+        .map(([status, count]) => `${count} ${status}`)
+        .join(", ")}).${
+        retired.length === 0
+          ? ""
+          : ` ${retired.length} retired case${retired.length === 1 ? "" : "s"} (${retiredFailures} last failed).`
+      }`;
   return {
     record: {
       kind: "host_live_tests",
-      note: "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch. status is against the source being published: stale means the source or the case changed after the case ran. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
+      note: nothing
+        ? "Written by the host, never by the minter. The minter designed and ran no live test case, so beyond the example nothing was tested live."
+        : "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch; purpose is the minter's account of what the case establishes. status is against the source being published: stale means the source or the case changed after the case ran. notTested lists what the minter chose not to test, and why. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
       ...(sourceDigest === undefined ? {} : { sourceDigest }),
       ...(outOfTime ? { outOfTime: true } : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),
-      checklist: items,
       cases,
+      notTested,
       retired,
-      counts: { items: itemCounts, cases: caseCounts },
+      counts,
     },
-    coverage: summary,
+    coverage: `${summary}${outOfTime ? ` ${outOfTimeNote}` : ""}${
+      options.fileProblem === undefined ? "" : ` ${options.fileProblem}`
+    }`,
   };
 };
 
@@ -1020,10 +746,9 @@ export const liveTestsEvidenceProblem = (problem: string) => ({
     kind: "host_live_tests",
     note: "Written by the host, never by the minter.",
     problem,
-    checklist: [],
     cases: [],
+    notTested: [],
     retired: [],
-    counts: { items: {}, cases: {} },
   },
   coverage: `Host live tests on the published source: the host could not build its record (${problem}).`,
 });

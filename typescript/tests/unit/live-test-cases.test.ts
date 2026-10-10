@@ -1,23 +1,21 @@
 import { Either } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  checklistOf,
   cursorPairOf,
   decodeCasesFile,
   judgeCase,
   primaryListOf,
 } from "../../src/mint/live-tests.js";
 
-// The checklist and the verdicts are pure and full of edge cases: schema shapes the host must
-// read right, so a correct tool never gets a checklist item it cannot have.
+// What the runner reads from a tool's schemas, and the verdicts, are pure and full of edge cases:
+// schema shapes the host must read right, so a correct tool is judged by its real results list.
 
 const object = (
   properties: Record<string, unknown>,
   required: readonly string[] = [],
 ): Record<string, unknown> => ({ type: "object", properties, required });
-const items = (input: unknown, output: unknown) => checklistOf(input, output).map((item) => item.item);
 
-describe("checklistOf", () => {
+describe("cursorPairOf", () => {
   it("reads a string cursor beside a boolean has_next_page, never the boolean", () => {
     const output = object({
       results: { type: "array" },
@@ -28,55 +26,16 @@ describe("checklistOf", () => {
       "query",
     ]);
     expect(cursorPairOf(input, output)).toEqual({ inputField: "cursor", outputField: "next_cursor" });
-    expect(items(input, output)).toContain("next_page");
-    // The cursor is paging, not a control to test on its own.
-    expect(items(input, output)).not.toContain("input:cursor");
   });
 
-  it("plans no next page when only a boolean says there is one", () => {
+  it("finds no cursor when only a boolean says there is a next page", () => {
     const output = object({ results: { type: "array" }, has_next_page: { type: "boolean" } });
     const input = object({ query: { type: "string" }, page_token: { type: "boolean" } });
     expect(cursorPairOf(input, output)).toBeUndefined();
-    expect(items(input, output)).not.toContain("next_page");
   });
+});
 
-  it("asks for each value of a short list, three of a long one and a switch's other side", () => {
-    const checklist = checklistOf(
-      object({
-        sort: { enum: ["relevance", "price_low", "price_high"] },
-        size: { enum: ["xs", "s", "m", "l", "xl", "xxl", "3xl", "4xl"] },
-        in_stock: { type: "boolean" },
-      }),
-      object({ results: { type: "array" } }),
-    );
-    const needs = Object.fromEntries(checklist.map((item) => [item.item, item.needs]));
-    expect(needs).toMatchObject({ "input:sort": 3, "input:size": 3, "input:in_stock": 1 });
-    expect(needs).toMatchObject({ all_inputs: 1, combination: 1, unoffered_value: 1, no_results: 1 });
-  });
-
-  it("plans other records for a details read and a second store, with both location items", () => {
-    const list = items(
-      object(
-        {
-          product_url: { type: "string" },
-          store: { type: "string" },
-          zipCode: { type: "string" },
-        },
-        ["product_url"],
-      ),
-      object({ title: { type: "string" }, price: { type: "number" } }),
-    );
-    expect(list).toEqual(
-      expect.arrayContaining([
-        "other_record",
-        "other_value:store",
-        "location_applied",
-        "location_impossible",
-      ]),
-    );
-    expect(list).not.toContain("no_results");
-  });
-
+describe("primaryListOf", () => {
   it("reads a details record with image and variant lists as a details read", () => {
     const input = object({ url: { type: "string" }, size: { type: "string" } }, ["url"]);
     const output = object({
@@ -86,24 +45,11 @@ describe("checklistOf", () => {
       variants: { type: "array", items: object({ name: { type: "string" } }) },
     });
     expect(primaryListOf(input, output)).toBeUndefined();
-    const list = items(input, output);
-    expect(list).toContain("other_record");
-    expect(list).not.toContain("no_results");
-    // A record's address is not a choice the site offers or withholds.
-    expect(list).toContain("unoffered_value");
-    expect(items(object({ url: { type: "string" } }, ["url"]), output)).not.toContain(
-      "unoffered_value",
-    );
   });
 
-  it("finds the results list of a search beside other arrays, and leaves list controls out", () => {
+  it("finds the results list of a search beside other arrays", () => {
     const input = object(
-      {
-        query: { type: "string" },
-        limit: { type: "integer" },
-        include: { type: "array", items: { enum: ["reviews", "offers"] } },
-        max_price: { type: "number" },
-      },
+      { query: { type: "string" }, limit: { type: "integer" }, store_id: { type: "string" } },
       ["query"],
     );
     const output = object({
@@ -111,29 +57,6 @@ describe("checklistOf", () => {
       results: { type: "array", items: object({ title: { type: "string" } }) },
     });
     expect(primaryListOf(input, output)).toEqual({ field: "results" });
-    const list = items(input, output);
-    expect(list).toContain("no_results");
-    expect(list).not.toContain("input:limit");
-    // Each value a tool can include is set live.
-    expect(list).toContain("input:include");
-    // A number on a scale is not a choice the site offers or withholds.
-    expect(list).not.toContain("unoffered_value");
-  });
-
-  it("finds a location by its description and resolves local references", () => {
-    const input = {
-      $defs: { Where: { type: "string", description: "Postal code to deliver to" } },
-      ...object({ query: { type: "string" }, where: { $ref: "#/$defs/Where" } }, ["query"]),
-    };
-    expect(items(input, object({ results: { type: "array" } }))).toEqual(
-      expect.arrayContaining(["location_applied", "location_impossible"]),
-    );
-  });
-
-  it("always asks for the example repeated from fresh browsers", () => {
-    expect(checklistOf(undefined, undefined)).toEqual([
-      expect.objectContaining({ item: "repeat_example", needs: 3, expect: "result" }),
-    ]);
   });
 });
 
@@ -206,12 +129,23 @@ describe("judgeCase", () => {
 });
 
 describe("decodeCasesFile", () => {
-  it("refuses a duplicate case id and a case with no expectation", () => {
-    const one = { id: "a", covers: [], input: {}, expect: "result" };
+  it("refuses a duplicate case id, a case with no expectation and one with no purpose", () => {
+    const one = { id: "a", purpose: "The example again.", input: {}, expect: "result" };
     expect(Either.isLeft(decodeCasesFile(JSON.stringify({ cases: [one, one] })))).toBe(true);
-    expect(
-      Either.isLeft(decodeCasesFile(JSON.stringify({ cases: [{ id: "a", covers: [], input: {} }] }))),
-    ).toBe(true);
+    const { expect: _expect, ...unexpecting } = one;
+    expect(Either.isLeft(decodeCasesFile(JSON.stringify({ cases: [unexpecting] })))).toBe(true);
+    const { purpose: _purpose, ...unexplained } = one;
+    expect(Either.isLeft(decodeCasesFile(JSON.stringify({ cases: [unexplained] })))).toBe(true);
     expect(decodeCasesFile(undefined)).toEqual(Either.right({ cases: [] }));
+  });
+
+  it("keeps what the agent chose not to test, with why", () => {
+    const notTested = [{ what: "A location the site cannot apply", reason: "No location control." }];
+    expect(decodeCasesFile(JSON.stringify({ cases: [], notTested }))).toEqual(
+      Either.right({ cases: [], notTested }),
+    );
+    expect(
+      Either.isLeft(decodeCasesFile(JSON.stringify({ cases: [], notTested: [{ what: "Sort" }] }))),
+    ).toBe(true);
   });
 });

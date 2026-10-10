@@ -4,11 +4,12 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
-import type {
-  LiveTestBatch,
-  LiveTestBatchResult,
-  LiveTestHost,
-  MintDependencies,
+import {
+  MintFailure,
+  type LiveTestBatch,
+  type LiveTestBatchResult,
+  type LiveTestHost,
+  type MintDependencies,
 } from "../../src/mint/contracts.js";
 import type { LiveTestOutcome } from "../../src/mint/live-tests.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
@@ -16,9 +17,9 @@ import { Deadline } from "../../src/runtime/deadline.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
-// A read signed out plans its live tests from a checklist the host derives from the tool's
-// schemas, runs them as batches and reads every result; publication review gets the host's
-// own record of them. These drive the minter's live_tests tool through scripted model turns.
+// A read signed out designs its own live test cases, runs them as batches and reads every result;
+// publication review gets the host's own record of them. These drive the minter's live_tests tool
+// through scripted model turns.
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -111,25 +112,23 @@ const schemas = {
 
 const cases = {
   cases: [
-    { id: "repeat-1", covers: ["repeat_example"], input: { query: "lamp" }, expect: "result" },
+    { id: "repeat-1", purpose: "The example on a fresh browser.", input: { query: "lamp" }, expect: "result" },
     {
       id: "sort-price",
-      covers: ["input:sort"],
+      purpose: "Sorting by price reorders the results.",
       input: { query: "lamp", sort: "price_low" },
       expect: "result",
     },
-    { id: "nothing", covers: ["no_results"], input: { query: "zzqx" }, expect: "empty" },
+    { id: "nothing", purpose: "A query with no results.", input: { query: "zzqx" }, expect: "empty" },
     {
       id: "page-2",
-      covers: ["next_page"],
+      purpose: "Page two through the cursor page one returned.",
       input: { query: "lamp" },
       expect: "result",
       next_page: true,
     },
   ],
-  skipped: [
-    { item: "unoffered_value", status: "not_applicable", reason: "Every sort is offered." },
-  ],
+  notTested: [{ what: "A sort the site does not offer", reason: "Every sort is offered." }],
 };
 
 /** A host that runs each case through `outcomes`, recording each batch it was asked to run. */
@@ -198,7 +197,7 @@ const completedExample: MintDependencies["reviewAndExecute"] = (_input, beforeDi
     }),
   );
 
-it("plans a read's tests from its schemas, runs them as one batch and hands publication the host's record", async () => {
+it("runs the cases a read designed as one batch and hands publication the host's record", async () => {
   const { host, batches } = liveTestHost({
     "sort-price": {
       status: "failed",
@@ -234,30 +233,19 @@ it("plans a read's tests from its schemas, runs them as one batch and hands publ
   await writeWorkspace(root, { "src/tool.ts": toolSource });
   const outcome = await f.run();
 
+  // Before any case exists, the plan sends the agent to design its own; the host builds no
+  // checklist from the schemas.
   const planned = resultOf(f.requests[1], "plan");
-  const items = (planned["checklist"] as { item: string; status: string }[]).map(
-    (entry) => entry.item,
-  );
-  expect(items).toEqual(
-    expect.arrayContaining([
-      "repeat_example",
-      "input:query",
-      "input:sort",
-      "input:in_stock",
-      "all_inputs",
-      "unoffered_value",
-      "no_results",
-      "next_page",
-    ]),
-  );
-  // The paging item reads the string cursor, never the boolean beside it.
-  expect(planned["cursor"]).toEqual({ inputField: "cursor", outputField: "next_cursor" });
+  expect(planned["cases"]).toEqual([]);
+  expect(planned).not.toHaveProperty("checklist");
+  expect(String(planned["instruction"])).toContain("testing skill");
 
-  // The first passing example's receipt points the agent back at its plan.
+  // The first passing example's receipt reminds the agent of its cases.
   const receipt = resultOf(f.requests[2], "example");
   expect(receipt["testPlan"]).toMatchObject({ plannedCases: 4 });
 
-  // One batch, every case, with the next page's cursor fields, at most three at once.
+  // One batch, every case, with the next page's cursor fields (the string cursor, never the
+  // boolean beside it), at most three at once.
   expect(batches).toHaveLength(1);
   expect(batches[0]?.workers).toBe(3);
   expect(batches[0]?.cases.map((testCase) => testCase.id)).toEqual([
@@ -276,7 +264,7 @@ it("plans a read's tests from its schemas, runs them as one batch and hands publ
   expect(ran["status"]).toBe("ran");
   expect(ran["cases"]).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ id: "repeat-1", status: "pass" }),
+      expect.objectContaining({ id: "repeat-1", purpose: "The example on a fresh browser.", status: "pass" }),
       expect.objectContaining({ id: "nothing", status: "pass", got: "empty" }),
       expect.objectContaining({
         id: "sort-price",
@@ -290,28 +278,24 @@ it("plans a read's tests from its schemas, runs them as one batch and hands publ
   // A failing case never refuses publication by itself: the review reads the host's record.
   expect(outcome.build).toBe("published");
   expect(published.seen).toHaveLength(1);
+  // The record lists each case with its purpose, input and verdict, and what was not tested.
   const record = published.seen[0]?.liveTests as {
-    checklist: { item: string; status: string; reason?: string }[];
     cases: { id: string; status: string; input: unknown }[];
+    notTested: unknown;
   };
-  expect(record.checklist).toEqual(
+  expect(record).not.toHaveProperty("checklist");
+  expect(record.cases).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ item: "input:sort", status: "failing" }),
-      expect.objectContaining({ item: "no_results", status: "covered" }),
-      expect.objectContaining({ item: "repeat_example", status: "missing" }),
       expect.objectContaining({
-        item: "unoffered_value",
-        status: "not_applicable",
-        reason: "Every sort is offered.",
+        id: "sort-price",
+        purpose: "Sorting by price reorders the results.",
+        status: "fail",
+        input: { query: "lamp", sort: "price_low" },
       }),
     ]),
   );
-  expect(record.cases).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ id: "sort-price", status: "fail", input: { query: "lamp", sort: "price_low" } }),
-    ]),
-  );
-  expect(published.seen[0]?.coverage).toContain("Host live tests on the published source");
+  expect(record.notTested).toEqual(cases.notTested);
+  expect(published.seen[0]?.coverage).toContain("4 cases (3 pass, 1 fail, 0 inconclusive)");
 });
 
 it("marks results stale in the publication record when the source changed after they ran", async () => {
@@ -350,6 +334,27 @@ it("marks results stale in the publication record when the source changed after 
     "stale",
     "stale",
   ]);
+});
+
+it("tells the agent when the host could not read the schemas its verdicts and next pages need", async () => {
+  const { host, batches } = liveTestHost({});
+  const unreadable: LiveTestHost = {
+    ...host,
+    schemas: () => Effect.fail(new MintFailure({ code: "Unavailable" })),
+  };
+  const f = await fixture(
+    (_request, index) => [call("live_tests", runAll, "run")][index] ?? prose(),
+    { liveTests: unreadable, deadline: Deadline.after(30 * 60_000) },
+    read,
+  );
+  const root = (f.workspace as unknown as { root: string }).root;
+  const single = { cases: cases.cases.filter((testCase) => testCase.next_page !== true) };
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(single) });
+  await f.run();
+  expect(batches).toHaveLength(1);
+  const ran = resultOf(f.requests[1], "run");
+  expect(ran["status"]).toBe("ran");
+  expect(String(ran["schemaProblem"])).toContain("could not read src/tool.ts's input and output schemas");
 });
 
 it("keeps a failing case in the publication record after the minter deletes or changes it", async () => {

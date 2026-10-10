@@ -217,7 +217,7 @@ that asks.
 - A choice the request, the caller or the owner declined, or a step they said not to take (no
   location, no store, skip a filter, don't sign in), is not part of the tool for any caller:
   never offer it as an input, never set it in the example or a test, and never put it in
-  `exampleInput`. Note it as `declined` in `test/cases.json` (testing skill) and in coverage.
+  `exampleInput`. Note it in coverage.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The
