@@ -21,9 +21,10 @@ const call = (name: string, args: unknown, callId = name): ModelResponse => ({
     { type: "function_call", name, callId, arguments: JSON.stringify(args), status: "completed" },
   ],
 });
-// Left unanswered, the question ends the synthetic attempt as no_response.
-const requestInput = call("request_input", {
-  questions: [{ id: "report", type: "text", prompt: "Which report?" }],
+// The minter ends the synthetic attempt blocked, which stops the model at once.
+const reportBlocked = call("report_blocked", {
+  reason: "site_lacks_capability",
+  explanation: "The synthetic site offers nothing to read.",
   intent: "End the synthetic attempt.",
 });
 
@@ -57,7 +58,7 @@ it("hands the agent's reason to the host and returns what the host did", async (
           requests.push(request);
           return requests.length === 1
             ? call("request_browser_recovery", { intent: reason }, "recover")
-            : requestInput;
+            : reportBlocked;
         },
         getStreamedResponse: () => {
           throw new Error("Unused stream");
@@ -71,8 +72,6 @@ it("hands the agent's reason to the host and returns what the host did", async (
     authorizeResidual: Effect.fail(new MintFailure({ code: "ReconciliationRequired" })),
     reviewAndExecute: () => Effect.die("A recovery request must not execute"),
     publish: () => Effect.die("A recovery request must not publish"),
-    askInput: () =>
-      Effect.fail(new MintFailure({ code: "Unavailable", noResponse: { possibleCommit: false } })),
     requestBrowserRecovery: (rationale) =>
       Effect.sync(() => {
         reasons.push(rationale);

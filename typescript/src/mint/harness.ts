@@ -509,7 +509,21 @@ const scriptQuestionInstruction: Readonly<
     "The host could not accept the script's question as asked, so nobody was asked. Check its declaration and options, then execute again.",
   unavailable:
     "The host could not review or deliver the script's question, so nobody was asked; nothing is wrong with the question. You may execute again once; if it fails the same way, end the attempt and say the question could not be asked.",
+  unanswered:
+    "The caller was asked the script's question and gave no answer before it expired, so the script's ask failed. Decide how to go on without it: run the example again with an input that does not need the answer, narrow the tool, or end the build with report_blocked (reason policy when only the caller's answer would let it go on). No answer is never consent: it authorizes no write. Verify the site's current state before any further write. After two questions have gone unanswered, the next one left unanswered ends the build.",
 };
+
+/** What the minter reads when its own question expired unanswered. */
+const noAnswerInstruction =
+  "No answer was given before the question expired. Decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason policy when only the caller's answer would let it go on). No answer is never consent: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
+
+/**
+ * How many unanswered questions go back to the minter in one build, the minter's own and its
+ * scripts' together. A question's wait pauses the build's active time, so a minter that kept asking
+ * an absent caller would hold its browser and login for as long as the job may live; the next
+ * unanswered question ends the build as no_response instead.
+ */
+const noAnswerHandBackLimit = 2;
 
 const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic | undefined => {
   try {
@@ -983,6 +997,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error.execution !== undefined;
       /** Guardian denied or escalated an execution, or denied a publication, in this attempt. */
       let guardianRefused = recovered?.guardianRefused === true;
+      /** Unanswered questions handed back to the minter in this build, up to the limit. */
+      let noAnswerHandBacks = recovered?.noAnswerHandBacks ?? 0;
       let destinationEvidenceRefusals = recovered?.destinationEvidenceRefusals ?? 0;
       let inputFeedbackRounds = recovered?.inputFeedbackRounds ?? 0;
       /** The last input-feedback review found a tool already public, which never falls back. */
@@ -1327,7 +1343,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction: `The caller answered. Continue in this attempt with these answers; verify the current page before acting on them, and before any further write.${handles ? " A secret answer is a handle such as {{secret.s1}}, never the value, which you never see. Write the handle exactly as given, as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of a kernel.browsers.playwright.execute call in explore, test or act source; the host fills in the value when it runs that source live, and masks it in what comes back. It refuses a handle anywhere else, such as in a variable, a concatenation, a transform, a return value or a navigation. Offline targets get the handle text unchanged. An example and published source never hold a handle: a value the finished tool needs at run time is a declared secret question it asks with ask." : ""}`,
           });
         });
-      const visible = (evidence: ExecutionEvidence) =>
+      /** `handedBack`: the execution's unanswered script question went back to the minter. */
+      const visible = (evidence: ExecutionEvidence, handedBack = false) =>
         Effect.gen(function* () {
           const siteAccess = siteAccessDiagnostic(evidence);
           const withheld = safeExecutionEvidence(evidence).withheldConfirmation;
@@ -1368,6 +1385,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ),
                 )
               : yield* screenMintText(dependencies, evidence.observations);
+          // A script question left unanswered goes back to the agent, which decides how to go on.
+          const scriptQuestion =
+            evidence.scriptQuestion === undefined && handedBack
+              ? { outcome: "unanswered" as const }
+              : evidence.scriptQuestion;
           return JSON.stringify({
             ...receipt,
             ...(withheld === undefined ? {} : { instruction: withheldConfirmationInstruction }),
@@ -1380,15 +1402,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   },
                 }),
             siteAccess,
-            ...(evidence.scriptQuestion === undefined
+            ...(scriptQuestion === undefined
               ? {}
               : {
                   scriptQuestion: {
-                    ...evidence.scriptQuestion,
-                    ...("rationale" in evidence.scriptQuestion
-                      ? { rationale: yield* screenRationale(evidence.scriptQuestion.rationale) }
+                    ...scriptQuestion,
+                    ...("rationale" in scriptQuestion
+                      ? { rationale: yield* screenRationale(scriptQuestion.rationale) }
                       : {}),
-                    instruction: scriptQuestionInstruction[evidence.scriptQuestion.outcome],
+                    instruction: scriptQuestionInstruction[scriptQuestion.outcome],
                   },
                 }),
             repeatableRead,
@@ -1425,16 +1447,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           record(evidence, purpose);
-          const receipt = yield* visible(evidence);
+          const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
+          if (handedBack) yield* questionHandedBack;
+          const receipt = yield* visible(evidence, handedBack);
           if (evidence.terminalFailure === "ChallengeFailure" && !stopUnavailableHost())
             terminal ??= {
               build: "incomplete",
               summary:
                 "The live operation reported a challenge failure. No build was published. Recorded effects and receipts are preserved.",
             };
-          // The owner never answered the example's question: the build ends as no_response
-          // instead of handing the minter a failed example.
-          if (evidence.noResponse !== undefined && !stopUnavailableHost()) {
+          // The owner never answered the example's question. The minter decides how to go on,
+          // with the execution's `scriptQuestion` saying so, unless the question could gate a
+          // write repair's write, the tool runs signed in, or the build already handed back its
+          // limit: then the build ends as no_response.
+          if (evidence.noResponse !== undefined && !handedBack && !stopUnavailableHost()) {
             noResponse ??= evidence.noResponse;
             terminal ??= {
               build: "incomplete",
@@ -1773,7 +1799,51 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           };
         return undefined;
       };
-      /** The build's owner left a question unanswered: the build ends as no_response. */
+      /**
+       * Whether an unanswered question goes back to the minter as no answer, which then decides
+       * how the build goes on. Not when the question decides what the build may do: the
+       * read-or-write and capability questions, any question in a write repair, which could gate
+       * its write, and any in a build of a tool that runs signed in, which acts as the account's
+       * owner. Nor once the build handed back `noAnswerHandBackLimit`
+       * questions.
+       */
+      const handsBackNoAnswer = () =>
+        request.effect !== "ask" &&
+        dependencies.capabilityQuestion === undefined &&
+        !(request.mode === "maintenance" && buildEffect === "write") &&
+        dependencies.websiteCredentialsAvailable !== true &&
+        noAnswerHandBacks < noAnswerHandBackLimit;
+      /** Counts a question handed back and records it. */
+      const questionHandedBack = Effect.sync(() => {
+        noAnswerHandBacks += 1;
+      }).pipe(
+        Effect.zipRight(
+          reportBestEffort(
+            dependencies.diagnostics?.emit("mint.question_handed_back", {}) ?? Effect.void,
+            {
+              component: "mint",
+              operation: "diagnostics.emit",
+              phase: "mint.question_handed_back",
+              correlation: dependencies.reportCorrelation ?? "process",
+            },
+          ),
+        ),
+      );
+      /**
+       * The minter's question went unanswered and the build goes on. It stays unanswered: no
+       * `mint_update` can cite it, and no review reads an answer from it.
+       */
+      const noAnswer = () =>
+        questionHandedBack.pipe(
+          Effect.as(
+            JSON.stringify({
+              status: "no_answer",
+              userInputRequired: false,
+              instruction: noAnswerInstruction,
+            }),
+          ),
+        );
+      /** The build's owner left a question that decides what it may do unanswered: it ends. */
       const unanswered = (error: MintFailure, step: string) =>
         Effect.sync(() => {
           noResponse ??= {
@@ -2660,7 +2730,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
         // A policy block stands on a refusal on record: Guardian's deny or escalation, or the
         // owner's no to a confirm question, unless the host's own guidance names the ending. The
-        // minter's reading of its own instructions is none.
+        // minter's reading of its own instructions is none. A question handed back unanswered
+        // also lets the minter stop: no answer is no consent, so it may end the build safely
+        // instead of going on past what it asked.
         const ownerRefused = [...answeredQuestions.values()].some(
           ({ answer }) => typeof answer === "object" && "confirmed" in answer && !answer.confirmed,
         );
@@ -2668,6 +2740,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           reason === "policy" &&
           !guardianRefused &&
           !ownerRefused &&
+          noAnswerHandBacks === 0 &&
           dependencies.policyBlockAllowed?.(screenedExplanation) !== true
         )
           return refused(
@@ -4433,7 +4506,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             }).pipe(
               Effect.catchIf(
                 (error) => error.noResponse !== undefined,
-                (error) => unanswered(error, "asking a question"),
+                (error) =>
+                  handsBackNoAnswer() ? noAnswer() : unanswered(error, "asking a question"),
               ),
               // error-reporting-allow: typed-recovery an invalid request is the model's to correct, told as its result
               Effect.catchIf(
@@ -5030,6 +5104,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(invalidOutcomes === 0 ? {} : { invalidOutcomes }),
         ...(blockedReviewUnavailable ? { blockedReviewUnavailable: true as const } : {}),
         ...(guardianRefused ? { guardianRefused: true as const } : {}),
+        ...(noAnswerHandBacks === 0 ? {} : { noAnswerHandBacks }),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,

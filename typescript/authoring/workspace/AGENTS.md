@@ -236,6 +236,15 @@ continues, when:
 5. a supplied value is incompatible with what the site offers: ask to revise it or stop, as
    the key rules say.
 
+When nobody answers before the question expires, `request_input` returns `no_answer`. Decide
+how to go on without it: continue with a sensible default and list it in `finish_build`
+`assumptions`, narrow the tool so it does not need the answer, or end with `report_blocked`,
+reason `policy`, when only the caller's answer would let the build go on. No answer is never
+consent: it authorizes no write, sign-in or change of task, and `confirmedBy` never names it. Ask
+again only when the answer is essential: after two questions have gone unanswered, the next one
+left unanswered ends the build.
+A build of a tool that runs signed in is not told no answer: its unanswered question ends the build.
+
 The caller may answer every choice and multi_choice in their own words: their own text instead
 of an option, or a note beside the options they pick. The host always allows it, so never add an
 "other" option. Their words are their answer: follow them, and ask again if they leave the choice

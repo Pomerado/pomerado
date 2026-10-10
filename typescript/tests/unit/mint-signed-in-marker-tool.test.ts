@@ -21,9 +21,10 @@ const call = (name: string, args: unknown, callId = name): ModelResponse => ({
     { type: "function_call", name, callId, arguments: JSON.stringify(args), status: "completed" },
   ],
 });
-// Left unanswered, the question ends the synthetic attempt as no_response.
-const requestInput = call("request_input", {
-  questions: [{ id: "report", type: "text", prompt: "Which report?" }],
+// The minter ends the synthetic attempt blocked, which stops the model at once.
+const reportBlocked = call("report_blocked", {
+  reason: "site_lacks_capability",
+  explanation: "The synthetic site offers nothing to read.",
   intent: "End the synthetic attempt.",
 });
 
@@ -65,7 +66,7 @@ const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
                 { ...marker, intent: "Test the account menu as the signed-in marker." },
                 "marker",
               )
-            : requestInput;
+            : reportBlocked;
         },
         getStreamedResponse: () => {
           throw new Error("Unused stream");
@@ -79,8 +80,6 @@ const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
     authorizeResidual: Effect.fail(new MintFailure({ code: "ReconciliationRequired" })),
     reviewAndExecute: () => Effect.die("A marker check must not execute"),
     publish: () => Effect.die("A marker check must not publish"),
-    askInput: () =>
-      Effect.fail(new MintFailure({ code: "Unavailable", noResponse: { possibleCommit: false } })),
     ...host,
   };
   await Effect.runPromise(

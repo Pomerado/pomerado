@@ -134,12 +134,15 @@ A read build's example run, or a write build's `act` step, asks the build's owne
 through the same request, and the answer comes back to the running script. Guardian
 reviews each question first. When it asks for a rewording, nobody is asked, the `ask`
 fails and the execution's result carries `scriptQuestion` with Guardian's rationale:
-change the declared question as it says and execute again. If the
-owner does not answer in time, the build ends as `no_response`; there is nothing to
-retry, and a write step after one that sent something is reported as a possible
-change. Do not turn an account-specific choice into a published input to work around
-a question; a value the caller can type, such as a member number, is a free-form input
-instead.
+change the declared question as it says and execute again. If the owner does not answer
+in time, the result carries `scriptQuestion` `unanswered` and the build goes on: decide
+how to continue without the answer, as when your own `request_input` returns
+`no_answer`. A write step that sent something before its question is reported as a
+possible change; verify the site's current state before any further write. In a write
+repair, or a build of a tool that runs signed in, an unanswered question still ends
+the build as `no_response`. Do not turn an
+account-specific choice into a published input to work around a question; a value the
+caller can type, such as a member number, is a free-form input instead.
 
 `references/caller-choice.ts` books a seat on the caller's chosen flight: it asks for a
 seat and a saved traveler once the flight's seat map is shown, then books once and calls

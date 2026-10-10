@@ -87,7 +87,8 @@ export const makeMintHarnessFixture = <W extends SandboxSession & { close: () =>
       claimExample: Effect.void,
       authorizeResidual: Effect.fail(new MintFailure({ code: "ReconciliationRequired" })),
       publish: () => Effect.succeed({ publicationRef: "published-revision", diagnostics: [] }),
-      // The caller never answers unless a test says otherwise, so a question ends the build.
+      // The caller never answers unless a test says otherwise: the minter hears no_answer, and a
+      // question that decides what the build may do, or any in a write repair, ends it.
       askInput: () => Effect.fail(unanswered()),
       ...overrides,
     };
@@ -215,7 +216,7 @@ export const makeMintContinuationFixture = <
           published++;
           return { publicationRef: "published_revision", diagnostics: [] };
         }),
-      // Unanswered unless a test answers: the build then ends as no_response.
+      // Unanswered unless a test answers: the minter hears no_answer and goes on.
       askInput: (input) =>
         Effect.sync(() => {
           asked.push(input);
