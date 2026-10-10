@@ -578,7 +578,9 @@ export interface LiveTestHost {
    * the build's browser or, at most `batch.workers` at once, on separate fresh browsers opened
    * like it, never in tabs of one browser. `runLiveTestCase` runs a case and its next page. A
    * case a host problem, a challenge or the deadline stopped is `inconclusive`; a case not run by
-   * `batch.deadlineAt` (epoch milliseconds) is `inconclusive` with reason `deadline`.
+   * `batch.deadlineAt` (epoch milliseconds) is `inconclusive` with reason `deadline`. A host may
+   * record the batch as one history entry marked `agent_chosen_batch`, as the local host does;
+   * none is required.
    */
   readonly run: (batch: LiveTestBatch) => Effect.Effect<LiveTestBatchResult, MintFailure>;
   /** The most browsers this host runs a batch on at once, the build's own included. */
