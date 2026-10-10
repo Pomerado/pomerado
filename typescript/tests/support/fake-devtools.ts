@@ -31,15 +31,15 @@ export interface SentCommand {
  * The host's credential keyboard over a fake private DevTools socket. `marked` names each session
  * of the tab, in order, with how many fields in its document carry the binding's marker. `refuse`
  * returns the error the browser answers a command with, or undefined to answer it as Chromium
- * would. Each session answers its document read with `document` when given, the insertion answers
- * `inserted` or `insertion`, and `bindingWorld` is the host's. `sent` lists every command.
+ * would. A session in `documents` answers its document read with that document, the insertion
+ * answers `inserted` or `insertion`, and `bindingWorld` is the host's. `sent` lists every command.
  */
 export const fakeDevtoolsKeyboard = (
   marked: Readonly<Record<string, number>>,
   refuse: (command: SentCommand) => Error | undefined = () => undefined,
   options: {
     readonly insertion?: unknown;
-    readonly document?: unknown;
+    readonly documents?: Readonly<Record<string, unknown>>;
     readonly bindingWorld?: CredentialBindingWorld;
   } = {},
 ) => {
@@ -54,7 +54,8 @@ export const fakeDevtoolsKeyboard = (
       if (refusal !== undefined) return Promise.reject(refusal);
       switch (method) {
         case "DOM.getDocument":
-          if (options.document !== undefined) return Promise.resolve(options.document);
+          if (options.documents?.[sessionId] !== undefined)
+            return Promise.resolve(options.documents[sessionId]);
           return Promise.resolve({
             root: {
               backendNodeId: 1,

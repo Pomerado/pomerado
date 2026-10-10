@@ -13,11 +13,11 @@ interface CredentialTarget {
 
 /** Why native insertion inserted nothing, as one finite cause: never the binding key, a selector or a value. */
 export const InsertionRefusal = Schema.Literal(
-  /** No node carries the binding's marker in the target's sessions the host could read. */
+  /** No node carries the binding's marker in the target's sessions the host could read and walk. */
   "binding_not_found",
   /** More than one node carries it, in one session or across sessions. */
   "binding_ambiguous",
-  /** The host could not walk a document, find the binding's world or resolve the marked node. */
+  /** The host could not find the binding's world or resolve the marked node in it. */
   "binding_unresolved",
   /** The marked node holds no binding in the private world: page code copied the marker. */
   "binding_not_in_world",
@@ -180,10 +180,11 @@ const resultOf = (value: unknown) => {
 
 /**
  * The one field the target's binding marks, resolved in its world, or why not, sending no value.
- * A session whose document the browser refuses to read, such as a third-party frame's, is skipped:
- * when it held the field, the binding is not found, and a marker copied elsewhere holds no binding
- * in the private world. A document the host cannot walk, a binding world that fails and a node the
- * browser refuses to resolve leave the binding unresolved. So nothing before the insertion fails.
+ * A session whose document the browser refuses to read, or the host cannot walk, such as a large
+ * third-party frame's, is skipped: when it held the field, the binding is not found, and a marker
+ * copied elsewhere holds no binding in the private world. A binding world that fails and a node
+ * the browser refuses to resolve leave the binding unresolved. So nothing before the insertion
+ * fails.
  */
 const findBinding = (
   cdp: PrivateCredentialCdp,
@@ -201,7 +202,7 @@ const findBinding = (
       const walked = yield* Effect.either(
         Effect.try(() => findMarkedNode(read.right, target.bindingKey)),
       );
-      if (walked._tag === "Left") return "binding_unresolved" as const;
+      if (walked._tag === "Left") continue;
       const node = walked.right;
       if (node === undefined) continue;
       if (node === "binding_ambiguous" || found !== undefined) return "binding_ambiguous" as const;

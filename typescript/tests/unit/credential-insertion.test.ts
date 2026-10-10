@@ -179,8 +179,8 @@ it("refuses the field as typed nothing (binding_unresolved) when the host's bind
   expect(methods(devtools.sent)).toEqual(["page DOM.getDocument"]);
 });
 
-// A document the host cannot walk may hold the field, so the host types into none.
-for (const { name, document } of [
+/** Documents the host cannot walk: an undecodable node, a frame without its id, too many nodes. */
+const unwalkable = [
   { name: "a node it cannot decode", document: { root: { backendNodeId: "1" } } },
   {
     name: "a frame without its id",
@@ -195,17 +195,43 @@ for (const { name, document } of [
       },
     },
   },
-])
-  it(`refuses the field as typed nothing (binding_unresolved) when a document has ${name}`, async () => {
-    const devtools = fakeDevtoolsKeyboard({ page: 1 }, undefined, { document });
+];
+
+// A third-party frame's document the host cannot walk is skipped like one it cannot read, so the
+// host still types the page's own field.
+for (const { name, document } of unwalkable)
+  it(`types into the page's field when a third-party frame's document has ${name}`, async () => {
+    const devtools = fakeDevtoolsKeyboard({ page: 1, "third-party-frame": 0 }, undefined, {
+      documents: { "third-party-frame": document },
+    });
     const report = await fillThrough(devtools.keyboard);
     expect(report).toMatchObject({
-      outcome: "refused",
-      failureDetail: { context: { check: "typing_refused", insertion: "binding_unresolved" } },
+      outcome: "filled",
+      fields: [{ slot: "password", status: "filled" }],
+      submit: "none",
     });
-    expect(report).not.toHaveProperty("typed");
-    expect(methods(devtools.sent)).toEqual(["page DOM.getDocument"]);
+    expect(methods(devtools.sent)).toContain("page Runtime.callFunctionOn");
   });
+
+// When the only document that could hold the field cannot be walked, the binding is not found, and
+// the host types nothing.
+it("refuses the field as typed nothing (binding_not_found) when no walkable document holds it", async () => {
+  const devtools = fakeDevtoolsKeyboard({ page: 0, "third-party-frame": 1 }, undefined, {
+    documents: { "third-party-frame": unwalkable[0]?.document },
+  });
+  const report = await fillThrough(devtools.keyboard);
+  expect(report).toMatchObject({
+    outcome: "refused",
+    reason: "credential_target_refused",
+    target: 0,
+    failureDetail: { context: { check: "typing_refused", insertion: "binding_not_found" } },
+  });
+  expect(report).not.toHaveProperty("typed");
+  expect(methods(devtools.sent)).toEqual([
+    "page DOM.getDocument",
+    "third-party-frame DOM.getDocument",
+  ]);
+});
 
 // The call that carries the value may have typed it before its answer was lost, so the fill
 // stays uncertain: refused by the browser, or answered outside the finite set.
