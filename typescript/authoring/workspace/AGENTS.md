@@ -189,9 +189,10 @@ HTTP version (`src/tool-http.mjs`), which may build its requests from the caller
 **Read back every input before returning.** Read the page's own display of each input the
 site shows, such as the date picker, selected time, party size, passengers, cabin, applied
 filters, sort and selected options, and refuse a mismatch: the tool's code fails the run
-(`OperationFailure`) and never returns results for an input that did not apply. Two cases return
-results with what applied instead: a number on a scale the site steps returns its applied bound,
-and a filter group the page disables for the results is reported as not offered
+(`OperationFailure`) and never returns results for an input that did not apply. Three cases
+return results with what applied instead: a number on a scale the site steps returns its applied
+bound, a filter group the page disables for the results is reported as not offered, and a value
+the page's choices do not hold returns the rows of a broader choice that covers it
 (.agents/search/SKILL.md). Echoed input, a
 URL the tool built, a URL parameter, a box checked before the site applied it or the option's
 name elsewhere on the page does not show an input applied; read the site's committed state, such
@@ -293,9 +294,12 @@ product, such as moving from `https://app.example.io` to `https://app.example.cl
 or another product's workflow, such as booking on a different service after asking to list
 opening hours; the build then ends blocked and the caller gets your recommendation. A changed
 site origin alone decides neither. `reword` is feedback: revise and continue. No update removes
-the requested action itself or the rule against repeating a write that may have committed, adds
-a capability the site lacks, or waives a Guardian decision. A write the session already confirmed
-is done: compose and publish from its evidence, never run it again.
+the requested action itself or the rule against repeating a write that may have committed, adds a
+capability the site lacks, or waives a Guardian decision, except that the caller's confirmed
+answer can overturn one that held a step to their own request, such as a time, a value or a
+search setting. A caller's answer never overturns a decision made for safety or for a Pomerado
+scope limit. A write the session already confirmed is done: compose and publish from its
+evidence, never run it again.
 
 ## Authentication
 
