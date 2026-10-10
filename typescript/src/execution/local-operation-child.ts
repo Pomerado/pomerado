@@ -400,6 +400,13 @@ await Effect.runPromise(
           "Local execution requires an operation from defineOperation as the module's default export",
         ),
       );
+    // A `*-http.mjs` file runs with `SiteHttp` only, so a Kernel script there never runs.
+    if (start.entrypoint.endsWith("-http.mjs") && !isHttpVersion(operation))
+      return yield* Effect.fail(
+        new Error(
+          "A *-http.mjs file must export an HTTP version: defineHttpOperation({ ...contract, run: (input, http) => Effect.gen(...) }), or defineOperation's object form with run returning an Effect. The two-argument defineOperation(contract, async (context) => ...) is a Kernel script, which has no SiteHttp; keep it in src/tool.mjs.",
+        ),
+      );
     const schemas = {
       inputSchema: contractJsonSchema(operation.input),
       outputSchema: contractJsonSchema(operation.output),

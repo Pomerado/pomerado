@@ -547,6 +547,7 @@ const authoredExecution = (
       {
         purpose: execution.purpose,
         target: execution.target,
+        entrypoint: execution.entrypoint,
         ...(mark === "agent_chosen" ? { input: mark } : {}),
       },
       Effect.gen(function* () {

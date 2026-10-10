@@ -3254,6 +3254,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
               );
+              if (proposed.httpVersion !== undefined && buildEffect === "write") {
+                const reason = "http_version_on_write";
+                pendingDecision = hostRefusalDecision(reason, undefined, true);
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    "httpVersion is only for a read published without an HTTP version. A write's HTTP version is tested offline against its session's recorded exchanges. Call finish_build again without httpVersion.",
+                  executionContext: yield* executionContext(),
+                });
+              }
               yield* Effect.try({
                 try: () => relativeSourcePath(proposed.entrypoint),
                 catch: (error) =>
@@ -3392,6 +3406,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const readBackUnavailable = withheld
                 ? yield* screenMintText(dependencies, proposed.readBackUnavailable ?? "")
                 : undefined;
+              const httpVersion =
+                proposed.httpVersion === undefined
+                  ? undefined
+                  : {
+                      ...proposed.httpVersion,
+                      note: yield* screenMintText(dependencies, proposed.httpVersion.note),
+                    };
               const publication = yield* dependencies
                 .publish(
                   {
@@ -3400,6 +3421,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     metadata: proposed.metadata,
                     coverage,
                     ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
+                    ...(httpVersion === undefined ? {} : { httpVersion }),
                   },
                   evidence,
                 )
@@ -3691,8 +3713,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     {},
                     (error.reason === "http_implementation_stale"
                       ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
-                      : "Not published yet: this read has no HTTP implementation that passed a live test, so try one once. Read .agents/http-mcp/SKILL.md, write src/tool-http.mjs from captures/routes.json and the example, and run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Iterate until its output matches the example's, then call finish_build again with the same executionId.") +
-                      " To publish the Playwright version alone instead, delete src/tool-http.mjs, say why in coverage and call finish_build again. The host asks only once, only while live capture is open, and never after you delete a src/tool-http.mjs you ran.",
+                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; there is no limit on these tests, and a request refused before sending never counts. Then call finish_build again with the same executionId.") +
+                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host asks only once, only while live capture is open.",
                   );
                 if (error.reason === "login_url_one_time")
                   return notPublished(

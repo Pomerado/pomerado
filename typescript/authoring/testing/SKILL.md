@@ -37,7 +37,8 @@ succeeds ends live execution. If a test shows the schema must widen, widen it in
 publication reads the schemas from current source, and only a changed flow needs a fresh
 example (publication skill). Check `testInput` against the
 schema yourself first: a failed test of `src/tool-http.mjs` marks the HTTP version's
-latest live test failed, and it is dropped. The example uses the caller's input, or your `exampleInput` when that input is empty, and offline tests always use the caller's input.
+latest live test failed until a later one passes; fix it and test again (http-mcp skill), as
+often as it takes, since HTTP tests have no cap. The example uses the caller's input, or your `exampleInput` when that input is empty, and offline tests always use the caller's input.
 
 Test every control you expose before publishing. The example and your live tests together set
 each optional input at least once. Spend your four live tests on the riskiest controls: one

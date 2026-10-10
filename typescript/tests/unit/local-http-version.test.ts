@@ -106,6 +106,34 @@ it("runs the HTTP version reference as the workspace holds it", async () => {
   expect(site.sent.map((request) => new URL(request.url).host)).toEqual(["api.shop.example"]);
 }, 30_000);
 
+it("fails the HTTP version reference as invalid input, with the site's choices, when the site refuses a value", async () => {
+  const reference = await readFile("typescript/authoring/examples/http-version.ts", "utf8");
+  const site = jsonSite({
+    error: {
+      param: "order",
+      message: "Unknown sort order: cheapest",
+      allowed: ["relevance", "price_low_high", "newest"],
+    },
+  });
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: stripTypeScriptTypes(reference, { mode: "transform" }).replaceAll(
+      '"../../src/',
+      '"../../',
+    ),
+    input: { query: "lamp", sort: "cheapest" },
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Left",
+    left: {
+      tag: "InvalidInput",
+      refusal: { field: "sort", available: ["relevance", "price_low_high", "newest"] },
+    },
+  });
+  expect(result._tag === "Left" ? result.left.message : "").toContain("Unknown sort order");
+}, 30_000);
+
 it("fails an HTTP version with the failure its host's transport reported", async () => {
   const transport: HttpTransport = {
     name: "saved-http",
@@ -148,6 +176,22 @@ export default packaged.defineOperation(
 );`,
   });
   expect(result).toMatchObject({ _tag: "Right", right: { output: { same: true } } });
+}, 30_000);
+
+it("refuses a Kernel script in an HTTP version's file before it runs", async () => {
+  const site = jsonSite({});
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: `import { Schema } from "effect";
+import { defineOperation } from "pomerado/runtime";
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => ({}));`,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Left",
+    left: { message: expect.stringContaining("defineHttpOperation") },
+  });
+  expect(site.sent).toHaveLength(0);
 }, 30_000);
 
 it("refuses an import of the package's internal modules", async () => {
@@ -224,4 +268,98 @@ it("fails a page over the response limit as too large, after sending it", async 
     left: { tag: "HttpFailure", code: "response_too_large" },
   });
   expect(site.sent).toHaveLength(1);
+}, 30_000);
+
+/**
+ * A site whose server-rendered page holds its state only when the page's own fetch asks for it,
+ * recording each request.
+ */
+const statefulPageSite = (options: { readonly direct: string; readonly page: string }) => {
+  const sent: SiteHttpRequest[] = [];
+  const transport: HttpTransport = {
+    name: "kernel-curl",
+    capabilities: ["session-cookies", "page-environment"],
+    send: (request) => {
+      sent.push(request);
+      const fromPage = request.requires?.includes("page-environment") === true;
+      return Promise.resolve({
+        status: 200,
+        headers: { "content-type": ["text/html"] },
+        body: new TextEncoder().encode(fromPage ? options.page : options.direct),
+        transport: fromPage ? "page-fetch" : "kernel-curl",
+        gaps: [],
+      });
+    },
+  };
+  return { transport, sent };
+};
+
+const pageShell = `<html><head><title>Lamp search</title></head><body><main></main></body></html>`;
+const pageWithState = `<html><head><title>Lamp search</title>
+<script id="search-state" type="application/json">{"total":2}</script></head>
+<body><ul><li><a href="/p/1">Brass   lamp</a></li><li><a href="/p/2">Paper &amp; lamp</a></li></ul></body></html>`;
+
+const htmlVersion = `import { Effect, Schema } from "effect";
+import { defineHttpOperation, parseHtml, readEmbeddedJson, readText } from "pomerado/runtime";
+export default defineHttpOperation({
+  name: "search_lamps",
+  input: Schema.Struct({}),
+  output: Schema.Struct({
+    total: Schema.Number,
+    links: Schema.Array(Schema.Struct({ name: Schema.String, href: Schema.String })),
+  }),
+  run: (_input, http) =>
+    Effect.gen(function* () {
+      const request = { url: "/search?q=lamp", method: "GET" };
+      const state = yield* readEmbeddedJson(
+        http,
+        request,
+        { id: "search-state" },
+        Schema.Struct({ total: Schema.Number }),
+      );
+      const { text } = yield* readText(http, { ...request, requires: ["page-environment"] });
+      const links = parseHtml(text)
+        .select("li a[href]")
+        .map((link) => ({ name: link.text(), href: link.attr("href") ?? "" }));
+      return { total: state.total, links };
+    }),
+});`;
+
+it("reads a page's embedded state over the page's fetch when curl's answer lacks it", async () => {
+  const site = statefulPageSite({ direct: pageShell, page: pageWithState });
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: htmlVersion,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Right",
+    right: {
+      output: {
+        total: 2,
+        links: [
+          { name: "Brass lamp", href: "/p/1" },
+          { name: "Paper & lamp", href: "/p/2" },
+        ],
+      },
+    },
+  });
+  expect(site.sent.slice(0, 2).map((request) => request.requires ?? [])).toEqual([
+    [],
+    ["page-environment"],
+  ]);
+}, 30_000);
+
+it("fails naming the missing block and the page's title when neither answer has it", async () => {
+  const site = statefulPageSite({ direct: pageShell, page: pageShell });
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: htmlVersion,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({ _tag: "Left", left: { tag: "OperationFailure" } });
+  const message = result._tag === "Left" ? result.left.message : "";
+  expect(message).toContain('<script id="search-state">');
+  expect(message).toContain('"Lamp search"');
+  expect(site.sent).toHaveLength(2);
 }, 30_000);

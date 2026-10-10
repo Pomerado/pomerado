@@ -17,8 +17,12 @@ interface Refusal {
 }
 const refused = (reason: string): Refusal => ({ supported: false, reason });
 
-/** Live read tests an attempt may run on an input the agent chose. */
+/**
+ * Live read tests an attempt may run on an input the agent chose. An HTTP version's tests
+ * (`*-http.mjs`) have no cap and never count toward it: they are iterated until they match.
+ */
 const maximumAgentTestInputs = 4;
+const isHttpVersion = (entrypoint: string | undefined) => entrypoint?.endsWith("-http.mjs") === true;
 /** Why an agent-chosen test input that is not JSON text never runs. */
 export const testInputNotJson =
   "testInput must be the tool's input as JSON text. Nothing was executed.";
@@ -27,13 +31,17 @@ const JsonText = Schema.parseJson();
 /**
  * Preflight's refusal of a step's `testInput`, if any. Only a read's live test may run an input
  * the agent chose, at most four per attempt, counted from the history's `agent_chosen` marks; a
- * test Guardian denied never ran and left none.
+ * test Guardian denied never ran and left none. An HTTP version's tests are neither capped nor
+ * counted, when the history names each step's entrypoint.
  */
 export const preflightTestInput = (
   submitted: ExecutionRequest,
   scope: {
     readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly executionHistory: readonly { readonly input?: "agent_chosen" }[];
+    readonly executionHistory: readonly {
+      readonly input?: "agent_chosen";
+      readonly entrypoint?: string;
+    }[];
   },
 ): Refusal | undefined => {
   if (submitted.testInput === undefined) return undefined;
@@ -47,7 +55,10 @@ export const preflightTestInput = (
     );
   if (Option.isNone(Schema.decodeUnknownOption(JsonText)(submitted.testInput)))
     return refused(testInputNotJson);
-  const chosen = scope.executionHistory.filter((entry) => entry.input === "agent_chosen").length;
+  if (isHttpVersion(submitted.entrypoint)) return undefined;
+  const chosen = scope.executionHistory.filter(
+    (entry) => entry.input === "agent_chosen" && !isHttpVersion(entry.entrypoint),
+  ).length;
   return chosen >= maximumAgentTestInputs
     ? refused(
         `This attempt already ran ${maximumAgentTestInputs} live tests with an input you chose, the most it allows. Run a live test with the caller's input (omit testInput) or publish. Nothing was executed.`,

@@ -711,9 +711,9 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["048e8e3a0701b57e70391f0e2fb6ab942e33d0193941d3b59fa4ef6faaeb0e81", "core"],
-    ["0841a8c299fe27b3342c2f5d87a70b3562c5c50024bf39b5531f0c643afba388", "search"],
+    ["ac102891ffcac02c93a09d950f67fe98832dc4b97a5b6d60d21f632ef26ee7a1", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
-    ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
+    ["dfa075374a8c8550c433a7b02314c55628396702bd3b7c6b503d42f56c88da54", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["bf93224e727fa574c22d4c3e47f8b88432b234a306990aa1acb50bfdf6d8f9f7", "forms"],
     ["6c3b0e8152250a208b2350eef8d30492e3ae9a9a9e62cc3f9e31d3339b2135e1", "writes"],

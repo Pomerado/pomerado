@@ -79,6 +79,13 @@ export {
   requestPastChallenge,
 } from "../runtime/http-operation.js";
 export {
+  EmbeddedJsonFailure,
+  embeddedJson,
+  parseHtml,
+  readEmbeddedJson,
+} from "../runtime/html.js";
+export type { EmbeddedJsonSelector, HtmlDocument, HtmlNode } from "../runtime/html.js";
+export {
   OfflineFixtureUnavailable,
   SavedCaptureEvidence,
   SavedHttpFixtures,

@@ -46,6 +46,21 @@ describe("preflightTestInput", () => {
     expect(preflightTestInput(request(), scope(ran(4)))).toBeUndefined();
   });
 
+  it("never caps the HTTP version's live tests, nor counts them toward the cap", () => {
+    const httpTest = (input: unknown) => ({ ...agentTest(input), entrypoint: "src/tool-http.mjs" });
+    const scope = (history: readonly { readonly input?: "agent_chosen"; readonly entrypoint?: string }[]) => ({
+      buildEffect: "read" as const,
+      executionHistory: history,
+    });
+    const playwright = Array.from({ length: 4 }, () => ({ ...chosen, entrypoint: "src/tool.mjs" }));
+    const http = Array.from({ length: 6 }, () => ({ ...chosen, entrypoint: "src/tool-http.mjs" }));
+    // A fifth agent-chosen test runs on the HTTP version after four on the Playwright version.
+    expect(preflightTestInput(httpTest({ amountMinor: 12 }), scope(playwright))).toBeUndefined();
+    expect(preflightTestInput(httpTest({ amountMinor: 45 }), scope([...playwright, ...http]))).toBeUndefined();
+    // HTTP tests leave the Playwright version's four untouched.
+    expect(preflightTestInput(agentTest({ amountMinor: 78 }), scope(http))).toBeUndefined();
+  });
+
   it("counts an agent-chosen input the operation rejected, and not a test Guardian denied", () => {
     // A rejected run is in the history with its mark; a denied test never ran and left none.
     const rejected = [{ ...chosen }, {}];

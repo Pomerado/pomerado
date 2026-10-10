@@ -791,6 +791,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.2.0",
+    "css-select": "7.0.0",
+    "domhandler": "6.0.1",
+    "domutils": "4.0.2",
+    "htmlparser2": "12.0.0",
     "openai": "7.23.0",
     "oxc-parser": "0.152.0",
     "playwright": "1.63.0",

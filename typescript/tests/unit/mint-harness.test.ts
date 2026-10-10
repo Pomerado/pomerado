@@ -16,6 +16,7 @@ import type {
   ExecutionEvidence,
   MintTurn,
   PublicationDecision,
+  PublicationRequest,
 } from "../../src/mint/contracts.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
@@ -5247,4 +5248,106 @@ describe("host entry page notice", () => {
     await f.run();
     expect(modelInput(input)).not.toHaveProperty("hostEntryNavigation");
   });
+});
+
+// A read whose HTTP version can't port answers the host's ask with a structured reason, so the
+// host publishes it once with the signal on record instead of a stub written to be deleted.
+it("hands the host a read's structured reason for having no HTTP version", async () => {
+  const candidates: PublicationRequest[] = [];
+  const answers: unknown[] = [];
+  const httpVersion = {
+    outcome: "ruled_out",
+    signal: "streaming_response",
+    requestId: "req-17",
+    note: "Results arrive only as server-sent events on the search stream.",
+  } as const;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        answers.push(JSON.parse(yield* turn.actions.finish({ ...publication, httpVersion })));
+      }),
+    {
+      publish: (candidate) =>
+        Effect.suspend(() => {
+          candidates.push(candidate);
+          return candidate.httpVersion === undefined
+            ? Effect.fail(
+                new MintFailure({
+                  code: "PublicationUnavailable",
+                  reason: "http_implementation_untested",
+                }),
+              )
+            : Effect.succeed({ publicationRef: "published", diagnostics: [] });
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(answers).toMatchObject([
+    { status: "not_published", reason: "http_implementation_untested" },
+    { status: "published" },
+  ]);
+  expect(candidates.map((candidate) => candidate.httpVersion)).toEqual([undefined, httpVersion]);
+  expect(outcome.build).toBe("published");
+});
+
+it("refuses an HTTP version reason without a known signal before publication", async () => {
+  let published = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        expect(
+          yield* Effect.either(
+            turn.actions.finish({
+              ...publication,
+              httpVersion: { outcome: "ruled_out", signal: "too_hard", note: "x" },
+            }),
+          ),
+        ).toMatchObject({ _tag: "Left", left: { code: "InvalidRequest" } });
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publish: () =>
+        Effect.sync(() => {
+          published++;
+          return { publicationRef: "published", diagnostics: [] };
+        }),
+    },
+  );
+  await f.run();
+  expect(published).toBe(1);
+});
+
+it("refuses an HTTP version reason on a write build before publication", async () => {
+  let published = 0;
+  const answers: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        answers.push(
+          JSON.parse(
+            yield* turn.actions.finish({
+              ...publication,
+              httpVersion: {
+                outcome: "ruled_out",
+                signal: "streaming_response",
+                note: "Results arrive only as server-sent events.",
+              },
+            }),
+          ),
+        );
+      }),
+    {
+      publish: () =>
+        Effect.sync(() => {
+          published++;
+          return { publicationRef: "published", diagnostics: [] };
+        }),
+    },
+  );
+  await f.run({ ...request, effect: "write" });
+  expect(answers).toMatchObject([{ status: "not_published", reason: "http_version_on_write" }]);
+  expect(published).toBe(0);
 });
