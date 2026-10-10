@@ -245,7 +245,9 @@ choice the input leaves open is asked, or kept at the page's default where the p
 allows, and is an input of the tool either way. No request or answer authorizes made-up values:
 words such as synthetic, sample or test data settle no value or choice. A caller that wants
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
-step that types or submits a value none of those supplied, naming the field.
+step that types or submits a value none of those supplied, naming the field. Signed out,
+picking one of the page's own options for state a read needs, such as a pickup mode that opens
+the store picker, is part of the read.
 
 **Change the task with `mint_update`.** An answer changes nothing by itself. When the caller
 confirms a change to the task, call `mint_update` with it: changed input values, dates or
