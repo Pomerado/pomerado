@@ -13,6 +13,7 @@ import type { CaptureUnavailable, EventUnavailable } from "./errors.js";
 import type { WebsiteAuthenticationFailed } from "./authentication.js";
 import type { ScriptQuestionDeclarations } from "./script-input.js";
 import type { KernelOperation, KernelOperationContext } from "./kernel-operation.js";
+import { withListHost, type ListHost } from "./list-host.js";
 
 /**
  * How a write operation proves its effect: it reads the confirmation the site shows, or reads back
@@ -147,6 +148,8 @@ export const contractJsonSchema = <A, I, R>(schema: Schema.Schema<A, I, R>) =>
 export const executeOperation = <Input, EncodedInput, Output, EncodedOutput, Error, Services>(
   operation: Operation<Input, EncodedInput, Output, EncodedOutput, Error, Services>,
   rawInput: unknown,
+  /** `list`: set by a host that signs list cursors, as `withListHost` takes it. */
+  options: { readonly list?: ListHost } = {},
 ): Effect.Effect<
   Output,
   | Error
@@ -195,7 +198,8 @@ export const executeOperation = <Input, EncodedInput, Output, EncodedOutput, Err
               ),
             }
           : context.journal;
-      const output = yield* Effect.suspend(() => operation.run(input)).pipe(
+      const runInput = options.list === undefined ? input : withListHost(input, options.list);
+      const output = yield* Effect.suspend(() => operation.run(runInput)).pipe(
         Effect.provideService(ExecutionContext, { ...context, journal }),
       );
       const validated = yield* Schema.validate(operation.output)(output).pipe(

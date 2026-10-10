@@ -12,16 +12,18 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
   which of the account's saved travelers or addresses to use;
 - which of several site entries the caller's value matches equally, such as a restaurant
   with several locations or a city with several airports, with those entries as the options.
-  That is ambiguous, as are a near-miss name the site offers alternatives for and a day the
-  site greys out without saying why, which may be sold out: prefer not starting a refusal of
-  any of them with "Caller input error:" (core skill);
+  That is ambiguous, as is a near-miss name the site offers alternatives for: prefer not
+  starting a refusal of either with "Caller input error:" (core skill). A day or option the
+  page greys out, with or without a reason, is not ambiguous and never a question: it follows
+  "Configure, then read" below;
 - a code the site sends to confirm a protected action after sign-in, such as a confirmation code
   by text or email. A code that is part of signing in is the host's: a `code` field of the
   `authenticate` step, never a question;
 - a fact only the caller has that the site now asks for.
 
 Never ask for a value the request, the input or an earlier answer already supplied, a private
-one included: use that value. In the tool, take it from its input, or a private one, such as
+one included: use that value. Never undo an answer that declined something by doing it anyway
+or by offering it as an input (core skill). In the tool, take it from its input, or a private one, such as
 part of an identity number, through a declared `secret` question, never a plain-text field.
 When question review finds a question redundant, remove the ask and use the supplied value; a
 reworded question still asks for it again. A placeholder that stands in for a redacted value,
@@ -30,9 +32,12 @@ conflict, can still need a question, one that names the actual problem.
 
 Work the request already covers proceeds without a question, such as finding the right field
 or choosing among alternatives the request already allows. A supplied value the site does not
-offer, such as an unavailable option, date or quantity, is not such a question: the tool throws
-`InvalidInput` with `field` and `available`, the choices the page offers, as .agents/core/SKILL.md
-says ("Configure, then read"), and never substitutes another value. Asking the
+offer is not such a question either, and never one to ask about, as .agents/core/SKILL.md says
+("Configure, then read"). A value the page does not list at all throws `InvalidInput` with
+`field` and `available`, the choices the page offers. An option the page lists but greys out,
+such as a booked date or a sold-out size, whether or not it says why, is an answer on a read:
+return it unavailable with the alternatives the page offers. A write throws `InvalidInput` with
+`available`. Neither substitutes another value. Asking the
 owner to revise it or stop is the minter's own `request_input` question while it builds, as
 `AGENTS.md` says.
 

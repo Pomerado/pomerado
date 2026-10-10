@@ -13,6 +13,7 @@ import { localStartHooks, startPage } from "../runtime/start-state.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PomeradoRequest } from "./contracts.js";
 import { makeRunSignIn } from "./session-sign-in.js";
+import { admitArtifactCursor, sealArtifactOutput } from "./list-cursors.js";
 import type { StandaloneSession } from "./session.js";
 import { requestSite } from "./request-context.js";
 import { beforeOperationFailure, returnedRun, runOutcomeFailure } from "./run-report.js";
@@ -34,6 +35,9 @@ export const runOperation = (
   Effect.gen(function* () {
     const { options, browser, ask, secrets } = session;
     const { siteOrigin } = yield* requestSite(session, request);
+    // A cursor this host did not sign for this tool and these inputs, or one past its hour, ends
+    // the run here, before the sign-in or any page load.
+    const list = yield* admitArtifactCursor(session, artifact, siteOrigin, request);
     const workspace = yield* createLocalWorkspace();
     yield* seedLocalRuntime(workspace);
     const sources = artifact.files.map(({ path, content }) => [path, content] as const);
@@ -74,6 +78,7 @@ export const runOperation = (
       entrypoint: artifact.entrypoint,
       sources,
       input: request.input ?? {},
+      list,
       browser,
       siteOrigin,
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
@@ -99,5 +104,8 @@ export const runOperation = (
       ...(signIn === undefined ? {} : { signIn: signIn.hook() }),
       files,
     }).pipe(Effect.mapError(runOutcomeFailure(request.effect, "operation")));
-    return yield* returnedRun(request.effect, result);
+    return yield* returnedRun(
+      request.effect,
+      sealArtifactOutput(session, artifact, siteOrigin, request, result),
+    );
   }).pipe(Effect.mapError(beforeOperationFailure(request.effect)));

@@ -1,82 +1,146 @@
 ---
 name: http-mcp
-description: Build the http implementation beside the playwright script from the routes the Playwright flow recorded, test it, and know what the host publishes and runs first.
+description: Build a read's faster HTTP version: find where the page gets its data, request it the same way, parse it and test it until it matches. Read right after the first Playwright example passes.
 ---
 
-# Two implementations: playwright and http
+# The HTTP version of a read
 
-Every mint publishes the Playwright script, `src/tool.mjs`, and, when its route ports, an
-HTTP implementation, `src/tool-http.mjs`, of the same operation. Build them in that order:
+`src/tool-http.mjs` answers the same contract as `src/tool.mjs` without driving the page, so runs
+are faster. Most sites that render server-side, or call a JSON API from the page, port, bot-protected
+ones included: requests ride the browser's own cookies, TLS fingerprint and proxy. A write's HTTP
+version is built from its act session's requests and tested offline only (Test it, below).
 
-1. Run the Playwright flow first: a read explores and runs its example, and a write
-   performs its act session (the writes skill). Clicking through the real site is how
-   you learn which requests make the operation work.
-2. Read `captures/routes.json` (`reference/captures.md` in the workspace has the details).
-   The host rewrites it after every capture publication. It is valid JSON: a header line,
-   then one route per line in time order, one per recorded exchange across exploration,
-   tests, the example or act session and HTTP relay runs, labelled with the execution that
-   first recorded it. The header has `version: 2`, `complete`, `routeCount` and counts by
-   label, resource type, status class and site versus other sites. `complete` is false
-   while the sessions in `deferredSessions` wait for a later publication. Each route holds
-   names, states and references, never a value: its order, time and duration, label,
-   session and request ID, channel, method, origin, path, `query` and `requestHeaders`
-   names, status, content type, resource type, owner, document scope and frame. Its
-   `requestBody` and `responseBody` are `{state, reason, path, bytes, sourceBytes}`, with
-   no inline text. `capture` names the session's `network.ndjson`, and
-   `record: {offset, length}` points at the exchange's line there, which holds its exact
-   URL and header values. Search the index with `rg` or `jq` in an offline command, then
-   read a body file or record with `read_source` and an offset and limit; `retain_capture`
-   a body you need that wasn't saved. Use each route's method to avoid unintended writes:
-   only GET, HEAD and OPTIONS are safe to replay without working out what they change.
-3. Work out the data requests, their order and what each call must obtain fresh:
-   session cookies, CSRF values, nonces, IDs from earlier responses or the page.
-   Temporal proximity to a click is a lead, not proof of causality. When the data isn't
-   in the page's HTML, search the captures for one of the example's IDs (a product ID, an
-   order number): the response that holds it is the request to call.
-4. Before you write a new HTTP version, check that the data request can work without the
-   page's script. Stay with the Playwright version, writing, probing and testing no HTTP
-   version, when the captures show any of these:
-   - **A per-request GraphQL hash or page-made ID.** A persisted query's hash or `doc_id`
-     (`extensions.persistedQuery.sha256Hash`) changes between captured calls of the same
-     operation, or the server refused it without its query text (`PersistedQueryNotFound`).
-     A hash the page sends unchanged is a constant the HTTP version can send too. Or an ID
-     the call needs is made by page script at request time: it differs between calls and
-     no saved response holds it in any form. A random value such as a request UUID, the
-     caller's input, a value from the page URL and a script constant don't count, and a
-     body capture didn't save is unknown, not proof.
-   - **A bot-walled API.** In the browser that ran the example or act session, the page's
-     own calls to that route were still answered with a vendor challenge (Bot challenges,
-     below), with no later success. A challenge before a browser swap doesn't count, and a
-     site's own 403 or 429 is its answer, not a wall.
-   - **A session token the tool can't get.** `captures/session-tokens.json` shows a header
-     the page sent on that call, such as an `authorization` bearer, whose value no cookie,
-     page or response the HTTP version can request holds, for example one the page keeps
-     in local storage after sign-in. Capture masks tokens the site's JSON responses issue,
-     such as `access_token`, so a masked credential field in a response the HTTP version
-     can request is a source; not finding the value proves nothing alone.
+## Request rules (check every request)
 
-   Say in coverage which signal ruled the route out, and publish the Playwright version
-   alone (What publishes and runs). A read's first `finish_build` still asks once
-   (`http_implementation_untested`); call it again. A route this tool's HTTP version
-   already ran successfully ports: in maintenance, repair it (below).
+- `url`: absolute `https://`, or a site path starting with `/`; no `#fragment`, no
+  user:password.
+- `method` in capitals. GET and HEAD carry no `body`, not even `""`.
+- `headers`: string values with plain names. Never copy HTTP/2 pseudo-headers (`:authority`,
+  `:path`), `cookie` or `content-length` from a capture.
+- Leave out `maxResponseBytes` unless you need a lower limit than the 8 MiB default; a limit
+  alone is enough.
+- Import only `effect`, `pomerado/runtime` (or `../../runtime/index.js`) and your own files
+  under `src/`. Parse pages with `readEmbeddedJson`, `embeddedJson` and `parseHtml` from
+  `pomerado/runtime`; no other package exists. They read state blocks, JSON attributes, state a
+  script assigns and markup, so never hand-write a regex parser for any of them.
+  `src/tool.mjs` and `src/tool-http.mjs` may share a parser module there.
+- A request refused before sending fails `request_refused` (code `invalid_request` or
+  `unsupported_capability`, dispatch `not_sent`), and its message says "refused by the request
+  check, nothing was sent" with the rule it broke and how to fix it. Nothing reached the site:
+  fix it and run again; it never counts against you.
 
-5. Write `src/tool-http.mjs` in the object form, never as a Kernel script. Start from
-   `references/http-version.ts`: `defineHttpOperation({ ...contract, run: (input, http) =>
-   Effect.gen(...) })`, or `defineOperation({ ...contract, run: (input) =>
-   Effect.gen(function* () { const http = yield* SiteHttp; ... }) })`, both from
-   `../../runtime/index.js`. Reuse the Playwright version's contract, so both versions
-   share it: `import tool from "./tool.mjs"` and pass `name: tool.name, input: tool.input,
-   output: tool.output`. The two-argument `defineOperation(contract, async (context) =>
-   ...)` is a Kernel script: it has no `SiteHttp`, and the host refuses it in a
-   `*-http.mjs` file before it runs, saying how to write it instead.
-   `readJson(http, request, schema)` answers the decoded value, and `readText(http, request)`
-   answers `{ text, response }`, so destructure it for an HTML or text body:
-   `const { text } = yield* readText(http, request)`.
-6. Test it, as below. A read gets one live test; a write iterates offline until it works.
+## 1. Find where the data comes from (about a minute)
 
-Preserve semantics: method, query and body roles, redirects, account, ordering and
-response meaning. Compare IDs, filters, units, freshness, coverage and empty or error
-cases with the Playwright result.
+Right after the first Playwright example passes, find the request that holds the example's
+data. Try these in order and stop at the first that holds every output field for the example's
+input:
+
+1. **The page's own document.** `readText` the page your example ended on, such as its results
+   or detail page, in a `*-http.mjs` probe (`explore/document-http.mjs`), or its saved copy when
+   `captures/routes.json` names an `exampleDocument`. Look for the example's
+   IDs and values in embedded state: `<script id=…>` state blocks, `<script
+   type="application/json">`, `<script type="application/ld+json">`, JSON in an attribute, and
+   state a script assigns (`window.__STATE__ = {...}`, `self.__DATA = JSON.parse("...")`).
+   Check that the state is filled for this input. An empty search state or a null price means
+   the page fills it later from a request: go on to 2.
+2. **The page's own data request.** Search `captures/routes.json` and the saved bodies for one of
+   the example's IDs (Reading the captures, below). The response that holds it is the request to
+   make, GET first. A search provider on another domain counts when the page itself calls it:
+   read its public client key from the page's config at run time (URLs, below).
+3. **A POST query the page sends.** Send the same body shape and persisted query ID, and the
+   page's non-credential headers (names in the route's `requestHeaders`, values in its
+   `network.ndjson` line). Read CSRF values and keys from the page, a cookie or an earlier
+   response at run time (Tokens, below). Use `requires: ["page-environment"]` when the page's own
+   fetch sends it.
+4. **Rule it out** only for a signal under "When it can't port", after trying 1. Pass
+   `httpVersion: { outcome: "ruled_out", signal, requestId, note }` to `finish_build`.
+
+Prefer embedded JSON to markup, and one request to several. Temporal proximity to a click is a
+lead, not proof that a request made the data.
+
+**Location, store and dates.** Set them the way the page's own request does: a URL parameter, a
+cookie the page's location call sets, or the same POST. Read the applied value back from the
+answer. If the tool must apply a location or store and the HTTP version can't, don't use HTTP:
+rule it out with `location_not_applicable`. Results that differ from the example only because
+they used another location are a failed test, not a difference to note.
+
+## When it can't port
+
+- **`per_request_hash_or_page_id`:** a persisted query hash or `doc_id` that changes between
+  captured calls or was refused without its text (`PersistedQueryNotFound`), or an ID page script
+  makes at request time that no saved response holds. A hash the page sends unchanged is a
+  constant you can send. A random value such as a request UUID, the caller's input, a value from
+  the page URL and a script constant don't count, and a body capture didn't save is unknown, not
+  proof.
+- **`bot_wall_on_page_fetch`:** a vendor challenge on both curl and the page's fetch. A challenge
+  on curl alone is a reason to try the page's fetch, not to stop.
+- **`unobtainable_session_token`:** a header value no cookie, page or response the HTTP version
+  can request holds, such as a bearer the page keeps in local storage after sign-in. Capture
+  masks tokens the site's JSON responses issue, so a masked credential field in a response the
+  HTTP version can request is a source.
+- **`streaming_response`:** the data arrives only as server-sent events or a socket.
+- **`location_not_applicable`:** above.
+- **`site_refused_on_both_transports`:** a 401, 403 or 419 on curl and on the page's fetch that
+  the captures can't explain.
+
+`requestId` is the capture route the signal rests on, and `note` says what showed it. Don't write
+or run a stub to make the point. If a `src/tool-http.mjs` you wrote and tested meets one of these
+signals, delete it and give `httpVersion`: every file in `src/` publishes, and a failed HTTP
+version never ships. A route this tool's HTTP version already ran successfully
+ports: in maintenance, repair it (below).
+
+## 2. Write it
+
+Start from `references/http-version.ts`. Write `src/tool-http.mjs` in the object form, never as a
+Kernel script: `defineHttpOperation({ ...contract, run: (input, http) => Effect.gen(...) })`, or
+`defineOperation({ ...contract, run: (input) => Effect.gen(function* () { const http = yield*
+SiteHttp; ... }) })`. Reuse the Playwright version's contract, so both versions share it:
+`import tool from "./tool.mjs"` and pass `name: tool.name, input: tool.input, output:
+tool.output`. The two-argument `defineOperation(contract, async (context) => ...)` is a Kernel
+script: it has no `SiteHttp`, and the host refuses it in a `*-http.mjs` file before it runs.
+
+- `readJson(http, request, schema)` answers the decoded value.
+- `readText(http, request)` answers `{ text, response }`: `const { text } = yield*
+  readText(http, request)`.
+- `readEmbeddedJson(http, request, select, schema)` reads a page and decodes one embedded state
+  block. `select` is `{ id }` for a `<script id=…>` block, `{ type: "ld+json" }` or
+  `{ type: "json" }` for every script of that type, `{ attribute }` for JSON in an attribute, or
+  `{ assignment: "__STATE__" }` for the object or array a script assigns to that global, or the
+  string it passes to `JSON.parse` (the last assignment that parses, as when the page runs).
+  When a live curl answer lacks the block, it asks once more over the page's fetch, then fails
+  `parsing` naming the block and the page's title.
+  `embeddedJson(text, select)` reads a block from text you already have.
+- `parseHtml(text)` gives an inert tree for a page without a state block: `select(css)`,
+  `selectOne(css)`, and on each node `text()`, `attr(name)` and `html()`. It runs no script and
+  makes no request.
+
+Check the answer is for this input: echoed query, sort, filters and location, and the record's
+own ID against the one requested. Those checks are the HTTP version's read-back of each input.
+When the site refuses a caller's value (an unknown place, a past date, an option it doesn't
+offer), fail with `new operationErrors.InvalidInput(message, { field, available })` (from
+`pomerado/runtime`), quoting the site's words, naming the tool's input field and listing every
+choice the site offers. Fail loudly on any other shape you didn't expect.
+
+Preserve semantics: method, query and body roles, redirects, account, ordering and response
+meaning.
+
+## Reading the captures
+
+`captures/routes.json` (`reference/captures.md` in the workspace has the details) is one JSON
+document laid out as a header, then one route per line in time order: one per recorded exchange
+across exploration, tests, the example or act session and HTTP relay runs, labelled with the
+execution that first recorded it. The host rewrites it after every capture publication. The header
+has `version: 2`, `complete`, `routeCount` and counts by label, resource type, status class and
+site versus other sites. `complete` is false while the sessions in `deferredSessions` wait for a
+later publication. Each route holds names, states and references, never a value: its order, time
+and duration, label, session and request ID, channel, method, origin, path, `query` and
+`requestHeaders` names, status, content type, resource type, owner, document scope and frame. Its
+`requestBody` and `responseBody` are `{state, reason, path, bytes, sourceBytes}`, with no inline
+text. `capture` names the session's `network.ndjson`, and `record: {offset, length}` points at the
+exchange's line there, which holds its exact URL and header values. Search the index with `rg` or
+`jq` in an offline command, then read a body file or record with `read_source` and an offset and
+limit; `retain_capture` a body you need that wasn't saved. Only GET, HEAD and OPTIONS are safe to
+replay without working out what they change.
 
 ## URLs
 
@@ -111,10 +175,9 @@ request:
   is on another origin. Use it for a request that needs
   page JavaScript context or the page origin, and for a bot challenge curl can't pass.
 
-When curl fails before sending, or on a safe read, the mint's relay repeats that request
-once through the page's fetch and records which transport worked. Runs use the transport
-your test used and never switch after a failure; a request that declares
-`page-environment` goes to the page's fetch at run time too. The Kernel script,
+A host's relay may repeat a request once through the page's fetch after curl fails or meets a
+challenge, and the execution records which transport answered. Don't rely on it: a request that
+needs the page declares `page-environment`, which goes to the page's fetch at run time too. The Kernel script,
 `src/tool.mjs`, does its site HTTP inside a call with `page.evaluate(() => fetch(...))`,
 never `page.request` or a Node-side fetch. Native HTTP without a browser is parked.
 
@@ -128,8 +191,8 @@ back. `requestPastChallenge` does the retry alone, and `isBotChallenge` tells yo
 host found a challenge in a response. The host recognizes challenge pages; a host that
 recognizes none reads every answer as the site's, so a site's own 403 or 429 is its answer.
 For a challenge it misses, send the request with `requires: ["page-environment"]` yourself.
-Because the retry is in your code, runs do the same. If the page's fetch is challenged too, say so in coverage; the Playwright version then
-publishes alone.
+Because the retry is in your code, runs do the same. If the page's fetch is challenged too, rule
+the HTTP version out with `bot_wall_on_page_fetch`; the Playwright version then publishes alone.
 pomerado:section http-mcp.challenges:end -->
 
 The relay refuses nothing it carries. The host records every request, and Guardian's
@@ -150,15 +213,31 @@ refuses literal tokens.
 
 ## Test it
 
-- **Read:** `execute` purpose `test`, target `liveBrowser`, entrypoint `src/tool-http.mjs`.
-  A live test starts like the example: the site origin page, with the session saved right after
-  sign-in for a signed-in read, or with exploration cookies and storage cleared for an
-  anonymous one. So it cannot pass on state exploration left. The host records the
+- **Read:** `execute` purpose `test`, target `liveBrowser`, entrypoint `src/tool-http.mjs`, from
+  the same starting state as the example. Test after each fix, as often as it takes; there is no
+  budget for HTTP tests. A live test starts like the example: the site origin page, with the
+  session saved right after sign-in for a signed-in read, or with exploration cookies and storage
+  cleared for an anonymous one, so it cannot pass on state exploration left. The host records the
   result as the HTTP version's live evidence: transport, duration and output schemas.
-  Compare its output with the example's IDs, counts and fields. If that one test fails, do
-  not test again: say why in coverage, delete `src/tool-http.mjs` and publish the Playwright
-  version alone. Get the parsing right offline first, against the recorded exchanges, so the
-  one live test counts.
+  - Refused before sending (`request_refused`), a module that fails to load, or a review denial:
+    nothing reached the site. Fix it and test again.
+  - The site answered and your code failed (`parsing`, `output_contract`, an identity check): read
+    the answer it got and fix the parser against it offline, then test again. The failure quotes
+    the answer's start; `result.cause.http.body.path` names the whole saved answer when the host
+    keeps it, and `retain_capture` saves a body you need. Keep and read failed bodies; never guess
+    at a fix.
+  - `transport`: the relay, proxy or provider failed, not your request. Test again; if it repeats,
+    ask for a browser recovery for new egress.
+  - A challenge, a block page, or a 401/403/419/429 on curl: send that request with
+    `requires: ["page-environment"]`. `readText` retries over the page's fetch by itself only for
+    a challenge the host recognizes, never for a status or a block page it doesn't.
+    A wall on one execution method is a reason to try another, not to stop. Stop only for a
+    signal under "When it can't port".
+  - Compare with the example: same records, IDs, fields and units. Differences in order, ranking,
+    time or personalisation are notes for coverage, not a reason to delete a version that answers
+    the input. A field the example has and yours lacks is a bug to fix. A location, store, filter
+    or other input that wasn't applied fails the test; if the HTTP version can't apply it, don't
+    use HTTP (`location_not_applicable`).
 - **Read why it failed:** a failed execution's `result.cause.class` says where the failure
   came from. `transport`: the relay, proxy or provider could not complete the request, so the
   site's answer never came back; `cause.http` has the request, `transport`, `durationMs`, the
@@ -171,8 +250,8 @@ refuses literal tokens.
   a relay timeout on the transport is `transport`. `parsing` with `code: "invalid_response"`
   means the provider's envelope did not decode, not the site's body. `destination_status`
   with `code: "response_too_large"` and a 2xx status means the site answered normally with a
-  body over the limit: lower what you fetch or raise `maxResponseBytes`, don't treat it as
-  an error page.
+  body over the limit: fetch less (a narrower page or API call), or drop a `maxResponseBytes`
+  you set below the 8 MiB default; don't treat it as an error page.
   `readText` and `readJson` classify the site's answers; an error you throw yourself has no
   cause unless it keeps the `HttpFailure` as its `cause`.
 - **Write:** the real write is the act session, which runs the Playwright version; the
@@ -200,29 +279,30 @@ The host decides from its own records, never from your claims:
   page with the cookies and site storage the run started with), maintenance repairs the HTTP
   version.
 - A read whose example itself ran `src/tool-http.mjs` publishes `http` alone.
+- Try the HTTP version while you build, before the final example, so the example still runs
+  last, after every edit, and finish_build's ask is only a backstop.
 - For a read without a passing HTTP test of the current file, finish_build asks once:
-  `http_implementation_untested` to try one, or
-  `http_implementation_stale` when the file changed since its passing test. If an HTTP
-  version is impossible, for example because page code signs every request, say why in
-  coverage, delete `src/tool-http.mjs` and call finish_build again. The Playwright script
-  then publishes alone, and deleting a file you ran is that choice, so the host never asks
-  about it. A refused publication does not skip that ask, so a later finish_build still
-  asks about a stale or untested file if it has not asked yet. Ship
-  an HTTP version only after it passes a live test, never an untested or failed one beside the
+  `http_implementation_untested` to try one, or `http_implementation_stale` when the file
+  changed since its passing test. Answer it by testing until the HTTP version passes, or, when
+  it can't port, by calling finish_build again with `httpVersion` naming the signal; the
+  Playwright script then publishes alone. A refused publication does not skip that ask, so a
+  later finish_build still asks about a stale or untested file if it has not asked yet. Ship an
+  HTTP version only after it passes a live test, never an untested or failed one beside the
   Playwright script.
 - A write's HTTP version is stored, and is `http` first only after a passing recorded
   replay. Runs use it only when the operator turns on write promotion, which is off by
   default. An HTTP write failure goes straight to maintenance, never to a Playwright
   retry.
 
-In maintenance, failure code `HttpImplementationFailed` means the HTTP version failed in a
-run; for a read, its Playwright fallback may already have answered the caller. Read the
-original attempt's relay capture and repair `src/tool-http.mjs`. For a read, test it live
-again. When the original failure is a bot challenge on a read published with no Playwright
-version, don't repair the HTTP version: write the Playwright version, delete
-`src/tool-http.mjs` and publish the Playwright version alone.
-For a write, never run it live: replay the original attempt's capture offline
-(target `savedHTTP`).
+In maintenance of a read whose HTTP version served runs, repair `src/tool-http.mjs` with the rest
+of the tool and test it live again, whatever broke. Failure code `HttpImplementationFailed` means
+the HTTP version failed in a run; its Playwright fallback may already have answered the caller.
+Read the original attempt's HTTP answer (its relay capture, or the saved head and tail the
+observations name) before you change it. Drop it only for a signal under "When it can't port",
+named in `httpVersion`. A site refusal of the caller's value is `InvalidInput`, never a reason to
+drop it. A bot challenge is a reason to try the page's fetch; a read published with no Playwright
+version also gets one as its fallback. For a write, never run it live: replay the original
+attempt's capture offline (target `savedHTTP`).
 Failure code `HttpSignInTemplateFailed` means the run's explicit direct sign-in request failed.
 Read its original failure evidence and repair that request without sending unchanged credentials again. The host won't send
 the unchanged `src/website-auth-http.json`; correct it against the login page (see the auth
@@ -238,10 +318,8 @@ site code to interpret. Curl responses expose no final URL or redirect chain; th
 fetch gives `finalUrl`, and its visible headers exclude Set-Cookie even though the browser
 updates its cookie jar. Streaming and binary
 uploads are not supported. The default timeout is 60 seconds through the finite body,
-bounded by the execution deadline. Response bodies use an 8 MiB ceiling; declare
-`buffered-response-v1` in `requires` to select that versioned contract and optionally a
-lower `maxResponseBytes`. Larger bodies fail as `response_too_large` without a partial
-body. Cancellation cannot prove an in-flight website effect was undone.
+bounded by the execution deadline. Response bodies use an 8 MiB ceiling; `maxResponseBytes`
+alone sets a lower one. Larger bodies fail as `response_too_large` without a partial body. Cancellation cannot prove an in-flight website effect was undone.
 
 Do not assume an API-looking URL returns JSON when opened with `page.goto`: document
 navigation can negotiate HTML. For a demonstrated JSON endpoint, send

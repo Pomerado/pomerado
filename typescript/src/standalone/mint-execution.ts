@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  controlLabelsFromAriaSnapshot,
+  lintOutput,
+  outputChecksNotice,
+} from "../runtime/output-lint.js";
 import { Effect, Either } from "effect";
 import {
   runLocalOperation,
@@ -36,10 +41,14 @@ import { fileReadbackRefusal } from "../mint/file-readback.js";
 import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { stepInput } from "../mint/step-checks.js";
+import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
+import { mintListScope, refusedCursor } from "./list-cursors.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
+import { probeCallCode } from "../runtime/host-execute.js";
+import type { BrowserExecute } from "../runtime/browser-execution.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { SignInStepResult } from "../mint/sign-in-recorder.js";
@@ -431,6 +440,22 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
     const { runs } = state;
     const { projection } = state.session;
 
+    // A live step's output is checked against the page it left: a value holding one of its
+    // controls' labels was read collapsed.
+    const capture =
+      execution.target === "liveBrowser" ? state.context.observedCapture : undefined;
+    const controlLabels =
+      capture === undefined ? undefined : controlLabelsFromAriaSnapshot(capture);
+    const outputChecks =
+      result.output === undefined
+        ? undefined
+        : outputChecksNotice(
+            lintOutput(result.output, {
+              outputSchema: result.schemas.output,
+              ...(controlLabels === undefined ? {} : { controlLabels }),
+              samples: true,
+            }),
+          );
     const evidence: ExecutionEvidence = {
       executionId: id,
       status: "completed",
@@ -443,6 +468,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
         stderr: result.stderr,
         inputSchema: result.schemas.input,
         outputSchema: result.schemas.output,
+        ...(outputChecks === undefined ? {} : { outputChecks }),
       }),
       review: reviewFeedback(reviewed),
     };
@@ -452,6 +478,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       input,
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
+      ...(controlLabels === undefined ? {} : { controlLabels }),
       purpose: execution.purpose,
       journal: result,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),
@@ -523,6 +550,15 @@ const authoredExecution = (
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
     const signInOrigins = state.signInOrigins.all();
+    // An exploration probe's own calls act with the action budget as their default timeout.
+    const probing = (scriptBrowser: { readonly sessionId: string; readonly executeResponse: BrowserExecute }) =>
+      execution.purpose === "explore" && live
+        ? {
+            sessionId: scriptBrowser.sessionId,
+            executeResponse: ((code, timeoutSec) =>
+              scriptBrowser.executeResponse(probeCallCode(code), timeoutSec)) satisfies BrowserExecute,
+          }
+        : scriptBrowser;
     const watch =
       codes.length === 0
         ? undefined
@@ -547,6 +583,7 @@ const authoredExecution = (
       {
         purpose: execution.purpose,
         target: execution.target,
+        entrypoint: execution.entrypoint,
         ...(mark === "agent_chosen" ? { input: mark } : {}),
       },
       Effect.gen(function* () {
@@ -566,40 +603,56 @@ const authoredExecution = (
                 : { limits: state.session.options.files.limits }),
             })
           : undefined;
+        // A minter's page two runs with the cursor its page one returned, checked as a run's is.
+        const listScope = () =>
+          mintListScope(state.session, context.siteOrigin, execution.entrypoint);
+        const admission = admitListCursor(input, listScope());
         const executed = yield* Effect.either(
-          runLocalOperation({
-            workspace,
-            entrypoint: execution.entrypoint,
-            // Only a live step receives a value; offline steps run the handle text as written.
-            sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
-            input,
-            browser:
-              watch === undefined
-                ? browser
-                : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
-            siteOrigin: context.siteOrigin,
-            ...(siteDomain(context.siteOrigin) === undefined
-              ? {}
-              : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
-            timeoutMs: execution.timeoutSeconds * 1000,
-            mode: "run",
-            target: live ? "browser" : "pureFiles",
-            dispatchAtFirstCall: true,
-            ask: scriptAsk,
-            declaredQuestions: draftQuestionDeclarations(execution.entrypoint, entrypointSource),
-            decideDialog: keepingAcceptedConfirms(
-              makeDialogDecider(mintAsk, secrets.redact),
-              accepted,
-            ),
-            ...(live
-              ? {
-                  signIn: state.sessionSignIn.hook((failure) => {
-                    signInFailure ??= failure;
-                  }),
-                }
-              : {}),
-            ...(runFiles === undefined ? {} : { files: runFiles }),
-          }),
+          !admission.ok
+            ? Effect.fail(refusedCursor(admission))
+            : runLocalOperation({
+                workspace,
+                entrypoint: execution.entrypoint,
+                // Only a live step receives a value; offline steps run the handle text as written.
+                sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
+                input,
+                list: admission.list,
+                browser: probing(
+                  watch === undefined
+                    ? browser
+                    : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
+                ),
+                siteOrigin: context.siteOrigin,
+                ...(siteDomain(context.siteOrigin) === undefined
+                  ? {}
+                  : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
+                timeoutMs: execution.timeoutSeconds * 1000,
+                mode: "run",
+                target: live ? "browser" : "pureFiles",
+                dispatchAtFirstCall: true,
+                ask: scriptAsk,
+                declaredQuestions: draftQuestionDeclarations(
+                  execution.entrypoint,
+                  entrypointSource,
+                ),
+                decideDialog: keepingAcceptedConfirms(
+                  makeDialogDecider(mintAsk, secrets.redact),
+                  accepted,
+                ),
+                ...(live
+                  ? {
+                      signIn: state.sessionSignIn.hook((failure) => {
+                        signInFailure ??= failure;
+                      }),
+                    }
+                  : {}),
+                ...(runFiles === undefined ? {} : { files: runFiles }),
+              }).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  output: sealListOutput(result.output, input, listScope()).output,
+                })),
+              ),
         );
         if (watch !== undefined && watch.typed().size > 0) {
           start.typedCode();

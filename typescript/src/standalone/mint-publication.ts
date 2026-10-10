@@ -15,12 +15,14 @@ import {
   type ExampleOutputSource,
 } from "../mint/publication-review.js";
 import { contractExtractionNote } from "../mint/review-context.js";
+import { outputNotes, outputNotesPath } from "../mint/output-notes.js";
 import { oneTimeLoginUrlParameters, refuseCredentialParts } from "../mint/login-url.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
 import { holdsFileHandle } from "../mint/file-handles.js";
 import { fileReadback } from "../mint/file-readback.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
+import { liveTestsEvidencePath } from "../mint/live-tests.js";
 import { checkWriteSession } from "../mint/write-session.js";
 import type { MintState } from "./mint-state.js";
 import { SignInOrigin } from "./contracts.js";
@@ -162,7 +164,7 @@ export const screenedSignIn = <E>(
 
 export const mintPublication =
   (state: MintState): MintDependencies["publish"] =>
-  (publication, evidence) =>
+  (publication, evidence, hostEvidence) =>
     Effect.gen(function* () {
       const { runs, workspace, context, writeSession } = state;
       const { secrets, browser } = state.session;
@@ -289,6 +291,26 @@ export const mintPublication =
               intentDerivedInput: writeSession.input,
             }
           : yield* Effect.gen(function* () {
+              const notes = outputNotes({
+                output: sample.output,
+                outputSchema: result.schemas.output,
+                ...(sample.controlLabels === undefined
+                  ? {}
+                  : { controlLabels: sample.controlLabels }),
+                ...(publication.outputOverrides === undefined
+                  ? {}
+                  : { overrides: publication.outputOverrides }),
+              });
+              if (notes.blocking.length > 0)
+                return yield* new MintFailure({
+                  code: "PublicationUnavailable",
+                  reason: "output_checks_blocked",
+                  outputFindings: notes.blocking.map(({ path, check, count }) => ({
+                    path,
+                    check,
+                    count,
+                  })),
+                });
               const baseline = savedOperationFiles(new Map(sample.sources), sample.entrypoint);
               const output = yield* outputEvidence(state, sample, {
                 executionId: evidence.executionId,
@@ -302,7 +324,18 @@ export const mintPublication =
                   completed: evidence.status === "completed",
                   schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
                 }),
-                files: new Map([[exampleOutputPath, output.text]]),
+                files: new Map([
+                  [exampleOutputPath, output.text],
+                  ...(notes.any ? [[outputNotesPath, notes.text] as const] : []),
+                  ...(hostEvidence?.liveTests === undefined
+                    ? []
+                    : [
+                        [
+                          liveTestsEvidencePath,
+                          JSON.stringify(hostEvidence.liveTests, null, 2),
+                        ] as const,
+                      ]),
+                ]),
                 baseline,
                 intentDerivedInput: sample.intentDerivedInput,
               };

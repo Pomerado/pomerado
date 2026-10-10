@@ -76,8 +76,9 @@ pomerado:section core.execute-calls:end -->
   action, such as a departure date before yesterday in UTC, a return before its departure or a
   count below one. It is also obvious when the page itself refuses the value in its own words,
   which the message quotes. Never use that start when the tool's own read found nothing, such
-  as an empty suggestion list, a slider or list that hadn't loaded, or a day the page disables
-  without saying why. When the value is not among choices the page lists, throw
+  as an empty suggestion list, a slider or list that hadn't loaded, or a day a write finds
+  disabled without the page saying why; a read returns such a day unavailable, as "Configure,
+  then read" says. When the value is not among choices the page lists, throw
   `new errors.InvalidInput(message, { field, available })` instead, as "Configure, then read"
   below says. `errors` exists only in the script, never in a call's `code`, so when the page
   shows the refusal, return a marker such as `{ refused: "why", field, available }` from the
@@ -87,6 +88,20 @@ pomerado:section core.execute-calls:end -->
   page does not offer the caller's value, the repair makes the code throw with `available`,
   shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
+- Check every rule the input alone breaks before any site action, such as a check-out on or
+  before its check-in, a count below one or a date before yesterday in UTC, and throw
+  `InvalidInput` at once, starting "Caller input error:" and naming the field and the rule.
+- When the page does not apply a location the caller supplied, such as a ZIP code, address or
+  store, after the tool's bounded retries, throw
+  `new errors.LocationNotApplied(message, { field, requested, applied, step, siteMessage })`:
+  `field` the input's name, `requested` the caller's value, `applied` the location the page kept
+  as read back (left out when it shows none), `step` the tool's step that failed, such as
+  `store_save`, and `siteMessage` the page's own error when it showed one. The run then fails
+  and returns nothing for another place. Never report the location as not applied in the output
+  instead, such as `store_applied: false` or a "lookup-only" description, and never let an
+  answer to a question make a supplied location optional. When the site says it does not serve
+  the location, that is the caller's to fix: throw `InvalidInput` with `field` and `available`,
+  the places it offers.
 - After a write, call `verified()` with no argument just before returning, once a call has
   read the result back, either the site's confirmation for this submission or the saved state.
   Return the confirmation number or record in the output. Without it the write stays a
@@ -189,7 +204,8 @@ that asks.
   cart tool alike, and when it does, make it an optional input, such as `zip_code`, or `store`
   when the site offers stores. Set it on every run through the site's
   own location control, take the site's matching suggestion, read the applied location back
-  from the page and return it. Left unset, return the location the page shows and say in the
+  from the page and return it. When it does not apply, throw `LocationNotApplied` (above).
+  Left unset, return the location the page shows and say in the
   description that the site picks it, which can differ from run to run. While building, ask
   the owner for one (`AGENTS.md`, "Try hard, then ask"); they may skip it. Setting a location,
   store or delivery or pickup mode in the run's own browser is part of the read, never a write,
@@ -198,6 +214,10 @@ that asks.
   is part of the read too when it only sets the location; a step that also enters a name,
   email or phone number is a write that needs the caller's confirmation. In a signed-in tool, use the site's per-visit location control and
   never save an address, default store or preference to the account.
+- A choice the request, the caller or the owner declined, or a step they said not to take (no
+  location, no store, skip a filter, don't sign in), is not part of the tool for any caller:
+  never offer it as an input, never set it in the example or a test, and never put it in
+  `exampleInput`. Note it as `declined` in `test/cases.json` (testing skill) and in coverage.
 - When the caller input is empty (`{}`), write the tool's input from the request and the
   owner's answers, with dates normalized (10/4 is the next October 4, as `2026-10-04`), and
   pass it as `exampleInput`: on a read's example, or on each write act step that needs it. The
@@ -286,10 +306,51 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
+- Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
+  back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
+  cut short.
+- Return each fact once. Never add a field holding a whole row's or card's text beside the typed
+  fields: give a fact they miss its own typed field, or offer the whole text only as the
+  `card_text` section below.
+- A list that can run past one page returns one page per call and a cursor to the next, as the
+  pagination skill says.
+
+**Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
+are large and repeated on every record: the filters, facets and sorts the site offers, each
+record's full displayed text, related or recommended records, options that show only on a hover
+or a click, a panel each record opens. Leave each such section out of the default output and
+offer it through one optional input, `include`: an array of the section names this tool can add,
+empty by default (`{ "type": "array", "uniqueItems": true, "items": { "enum": [...] } }`), whose
+description says what each name adds and what it costs.
+- Decide by cost, not by bytes: a short list that takes a click to open on every run is a
+  section; a fact each record already shows is a field.
+- Use the standard names where they fit: `filters` (the filter groups, facets and sorts the site
+  offers for these inputs), `card_text` (each record's full displayed text), `related` (the
+  site's related or recommended records) and `variants` (each record's options). Name any other
+  section for what it holds, in lowercase with underscores.
+- Examples across kinds of sites: a shop's search offers `filters` and `card_text`; a fare search
+  its `filters` and each fare's `fare_rules`, which open in a panel; a rentals or real-estate
+  listing its `nearby` listings; a documentation search each hit's `full_section`, beyond its
+  title and snippet; an orders list each order's `items`, when they show only after opening it.
+- A section's output field is optional in the schema and absent unless asked for, never
+  null-filled, and its description starts "Only with `include: ["name"]`".
+- Without its name, the tool does none of a section's work: it opens no filter group, hovers on
+  nothing and opens no panel. What the caller set is always read back whatever `include` says,
+  such as the filters it applied, returned as `applied_filters`.
+
+**Results, related records and groups.** A list holds only the records the site returned for the
+inputs. Scope the row locator to the main list, and leave out related, recommended, recently
+viewed and "others also" sections; with `include: ["related"]` return them in their own `related`
+list of the same row shape, never mixed into the results and never counted toward a limit. A
+sponsored or promoted row inside the main list stays where it is, marked as such. A card that
+stands for a group, such as one product in several flavours or sizes, a hotel with several room
+types or a building with several units for rent, is one result marked as a group (for example
+`kind: "group"`), with the options or count the card shows, never presented as one of its members.
 
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
-  itinerary as one text blob or summary, and keep every result row the page shows.
+  itinerary as one text blob or summary, and keep every result row of the main list the page
+  shows, up to the call's `limit` (pagination skill).
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
@@ -308,23 +369,43 @@ record's options or variants, a plan or tier, dates, a party size or quantity, u
 location or store. A search's filters and sort are such choices too. Before reading any value
 that depends on them:
 
-1. Discover. Read every choice group the page offers and each group's options exactly as
-   shown, including which are unavailable, opening collapsed groups and menus as above. A group
+1. Discover. While building, read every choice group the page offers and each group's options
+   exactly as shown, including which are unavailable, opening collapsed groups and menus as
+   above. On a run, open and read only the groups the caller's inputs use. A group
    with one option, or a disabled control showing one value, is a
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
    presents the groups, since one choice can change the options of the next. When the value is
-   not among the options the page offers, throw
+   not among the options the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
    `available`, and say in the message that they were left out. Never pick a near match, the page's default or the first option.
-3. Confirm. Read each choice back from the page's selected state, then wait until the values
-   that depend on it have changed or settled; a value read before the page updates belongs to
-   the previous choice.
+   - An option the page lists but greys out, disables or marks unavailable, such as a booked
+     date, a sold-out size or a full time slot: a read returns it as data, the requested value
+     with `available: false`, the page's own reason when it shows one, and the alternatives the
+     page offers beside it, such as the in-stock sizes, the open times or the valid stays, and
+     the run succeeds. A write throws `InvalidInput` with `field` and `available`, the
+     selectable options. Neither picks another value for the caller.
+   - For an input whose options depend on another, such as a check-out after a check-in or a
+     time after a date, apply the input it depends on first and read `available` from that
+     state, then drop the options the input alone rules out. Never list options read before
+     the input they depend on applied.
+   - A number on a scale the site steps, such as a price range slider or price boxes, is a
+     number, not a choice: never refuse it because no label matches. Set the nearest step inside
+     the caller's bound, down for a maximum and up for a minimum, so a maximum of 47 on steps of
+     10 applies 40, never 50; use the control's end when the value is outside its range. Read the
+     applied value back and return it, such as `applied_max_price`, beside the results. The rule above for a value
+     the page does not offer covers choice lists only.
+3. Confirm. Read each choice back from the page's selected state, then wait for the values
+   that depend on it with `waitForChange`: changed, or confirmed unchanged once the page's
+   loading sign came and went; a value read before the page updates belongs to the previous
+   choice. Compare text read back with the caller's value normalized: ignore case, repeated
+   whitespace and typographic punctuation such as curly quotes, never exact case-sensitive
+   equality, since a page may echo a query or name in its own case.
 4. Read. Only then read the values the choices affect. Return the applied choices beside
-   them, and each group's offered options as a list, so a caller sees what the values apply to
-   and what else they could choose.
+   them. Return a group's offered options as a list when the page shows them without extra
+   clicks, as a record page shows its variants, or when the caller asks (search skill).
 
 An optional choice the caller leaves unset keeps the page's default: read it back and return
 it as applied. A control you could not find, open or read throws `OperationFailure`, never
@@ -356,13 +437,27 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 `document`.
 Read each output value from the element or structured-data entry that holds the whole value,
 never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or
-the record's own key, using its `innerText`.
+the record's own key, with `visibleText`, `visibleTexts` or `readRows` (paste `visibleTextCode`
+from `pomerado/runtime` at the top of the call's code). They return only the text a person sees
+on the rendered page, with whitespace normalized and invisible characters removed, and fail
+instead of returning hidden text; `as: "accessible"` reads what a screen reader reads instead.
+`textContent` always includes hidden text, scripts and styles, and so does `innerText` of an
+element that is not rendered, such as a hidden duplicate of the block you meant. `readRows`
+reads a window of rows in one call, each field relative to its row. Never select by a generated
+CSS class, a hashed or build-numbered name such as `.e-1a2b3c` or `.css-1x2y3z`: it changes on
+the site's next deploy.
 Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
-text or a page-wide setting such as a currency or language picker: `textContent` also includes
-hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
-embedded data separately when it is relevant to the requested operation.
-Default budgets: action, readiness and navigation 30 s. Give every Playwright
-wait in the code an explicit `timeout`, and keep `timeout_sec` within `remainingMs()`.
+text or a page-wide setting such as a currency or language picker: a heading, label or
+placeholder is not the value beside it. Read embedded data separately when it is relevant to
+the requested operation.
+Budgets: navigation 30 s for the document to commit; a click, fill or other action 5 s, taken
+only on an element a wait has shown ready. After a navigation commits or an action returns, the
+page gets 8 s without progress to show one of the answers you named, and up to 30 s while it
+keeps progressing: a loading sign showing, the part of the page you named changing, the site's own
+request in flight, the URL changing, or the values you read filling in. Values the site fills in
+after its answer get up to 15 s. The runtime's waits (`waitCode`, below) apply these budgets. Give
+every other Playwright call in the code an explicit `timeout`, and keep `timeout_sec` within
+`remainingMs()`.
 Child waits cannot extend the outer deadline. Explicitly name observation conditions.
 `domcontentloaded` is document readiness, not readiness of the requested page or
 control. Initial navigation can land on a temporary verification page before the
@@ -373,24 +468,40 @@ expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
 challenge. Wait for a unique operation control or page state before testing absence
 or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
-(below) when the page can answer more than one way, or a bounded polling loop;
+(below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
+`waitForChange` (below) for the values you return, or a bounded polling loop;
 `count()` and `isVisible()` only observe the current instant. A ready page should
 pass immediately; do not add a fixed sleep. Share one bounded navigation deadline across navigation
 and first-page readiness, as in `references/navigation.ts`. Readiness polling
 only observes: do not repeat `goto`, reload, login, submission or another action
 inside it. Preserve site/path and account guards while waiting.
-Wait for the values you will read, not for their containers. A list or record is ready when
-every element you will read has its text or value, loading placeholders (skeletons, spinners,
-`aria-busy`, empty cards) are gone, and the count has stopped changing. A page with an outcome
-is ready only when it shows that outcome: results, or the site's own empty message. Before
-acting on a control, wait until overlays and loading indicators covering it are gone and its
-section is expanded. After an action that navigates or re-renders, wait for the committed state
+Wait for the values you will return, not for their containers or the rest of the page. A record
+is ready when each value you return is filled in and reads the same on two looks
+(`waitForValues`). A list is ready when the rows you return, the first `limit` from the page's
+position (pagination skill), have their identifier and the values the request needs, filled in
+and reading the same twice (`waitForRows`); keeping every result row means every row up to that
+page size. A slot that is present but empty, a skeleton, `aria-busy` or reading "Loading…" is
+still loading, never absent; a slot with no identifier is not a result. A value still loading
+when the page stops progressing fails the run, optional or not: null is only for a field this
+record's markup lacks altogether, as the build saw on records without it, never for a slow one.
+Never wait for rows you won't return, for the whole list to stop changing, or for the page's
+`load` event. Read image links from attributes (`src`, `srcset`) without scrolling. A page with
+an outcome is ready only when it shows that outcome: results, or the site's own empty message.
+Before acting on a control, wait until loading overlays covering it are gone and its section is
+expanded. A panel or dialog you opened does not go away by waiting: close it with its own
+control or Escape and check it closed. A click Playwright keeps reporting as intercepted by the
+same element is a page state, not slowness. After an action that navigates or re-renders, wait
+for the committed state
 (URL, selected value or header) before checking identity or reading. Use bounded retrying
 waits: re-check the condition until it holds or the budget ends, then throw `OperationFailure`
 naming what was last observed and what was expected. Never swallow a failed wait and continue
 (`try { await wait } catch {}`): either the condition is required, so throw, or it is not, so do
-not wait for it. After extracting, confirm the page did not re-render under you: the same count,
-first record ID and URL as before extraction. If any changed, read again within the deadline.
+not wait for it. After extracting, confirm the page did not re-render under you: the same IDs
+for the rows you returned, the same values for the fields you returned, and the same URL as
+before extraction. If any changed, read again within the deadline.
+Build any check that values stopped changing from stable keys, such as record IDs, names and
+prices, never from text that changes on its own, such as a countdown, a timer, a rotating badge
+or a live viewer count.
 These re-checks only observe: never repeat the click, submission or navigation that caused the
 change.
 After an action that can navigate, wait for the observed destination URL when known,
@@ -399,32 +510,60 @@ readiness wait and extraction in the same Kernel execute call when possible. If 
 reports “Execution context was destroyed,” the action may already have succeeded.
 Reacquire page/frame locators, wait for readiness and retry only the read within the
 original deadline. Never repeat the click or submission as part of that recovery.
-Use observed conditions, without fixed sleeps or whole-page network-idle waits.
+Use observed conditions, without fixed sleeps, whole-page network-idle waits or the `load` event.
 For an unknown destination, inspect after the document transition; do not invent a
 selector or repeat the action in a follow-up read.
 After a step whose answer can vary, such as a search, a filter, a date pick or a submit, name
 every way the page can answer: results, an empty or sold-out message, a greyed-out choice
 (`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
-error, a pick-one list. Prefer naming every answer over waiting only for the happy result.
-Import `outcomeWaitCode` from the runtime, put it at the top of the call's code, and wait with
-`waitForOutcome({ refused, failed, unavailable, empty, results }, { action })`, one scoped
-locator per answer, each an element only that answer has, such as a results list that holds a
+error, a pick-one list. Opening a record by its identifier or URL can also answer with a
+removed or not-found page: name it, and throw `InvalidInput` with the page's own words, never
+a readiness timeout. Prefer naming every answer over waiting only for the happy result.
+Import `waitCode` from the runtime (`outcomeWaitCode` declares `waitForOutcome` alone, for code
+written before; paste one, never both), paste it once at the top of the call's code, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
+results }, { action, loading, region })`, one scoped locator per answer, each an element only
+that answer has, such as a results list that holds a
 row. The first listed wins when several show, so list a refusal, error or greyed-out choice
 first, then the empty state, then results. Pass the step itself as `action`, such as
 `() => apply.click()`: the wait runs it once, and an answer the page already showed before it counts
 only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
 re-rendered is not read while a step that leaves the same answer still resolves; a new or
-changed element counts at once. Read results; return an empty list for a listing's empty state;
-throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
-asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an
-`Error` named `OutcomeWaitFailure` whose message says what each outcome matched:
-`outcome_ambiguous` when the winning locator matches more than one element, and
-`outcome_timeout` after its `timeout`, 30 s by default. `references/navigation.ts` waits for a
-search's answer and a record's page this way.
-After a search or a filter, prefer waiting for the site's own sign that this load finished, such
-as a spinner that showed and went, or a result count that updated, before reading results.
-After applying a filter, prefer waiting up to 15s for results to filter. Return when the
-majority of results pass the filter.
+changed element counts at once. Pass the site's own loading sign as `loading`, the part of the
+page the answer appears in as `region`, and the context's `siteDomain`, so the sign counts for as
+long as it shows, changes in that part count as progress, and so do the site's own requests on
+every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
+while it is new, so a decoration holds a wait for at most the no-progress window; `waitForRows`
+also waits while one shows beside its rows, never inside one, and for the requests its `action`
+started. Without an `action`, a list beside a loader that never leaves costs about one
+no-progress window. A request already in flight when a wait starts is not seen: on a page still
+loading its list, name its loading sign as `loading`. Read results;
+return an empty list for a listing's empty state;
+throw `InvalidInput` with the site's own words for a refusal; handle a greyed-out choice the
+input asked for as "Configure, then read" says, unavailable data on a read and `InvalidInput`
+with `available` on a write; ask the caller about a pick-one list
+(.agents/caller-input/SKILL.md). It throws an
+`Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
+signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
+than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
+while showing none of the answers; and `outcome_timeout` when it is still progressing at
+`timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
+handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
+a record's page this way.
+The same code declares the waits for the values you return. `waitForRows(rows, fields, { count,
+key })` returns `{ rows, more }`: the first `count` rows that have a `key`, each field filled in
+and reading the same twice. It reads each field from its first visible match, skips a row without
+a key, and returns fewer rows once their count holds; no rows is never its answer, so decide an empty list with `waitForOutcome` first.
+`waitForValues(fields)` returns `{ values }` for a record, a quote or a form's state.
+`waitForChange(fields, { before, action, loading })` returns `{ values, changed }` after a choice:
+changed, or the same with no progress sign for `unchangedMs`. They throw a `ValueWaitFailure`:
+`values_loading` when a value is still loading as progress stops, `change_unknown` when the
+fields are missing, `values_timeout` at the cap. A host may retry a read once after
+`outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` or `change_unknown`,
+so let them throw. `waitReport()` returns a one-line summary of how each wait in the call ended.
+A field is a Playwright locator, or `{ locator, attribute, optional, all }`, where `all` reads
+every visible match as a list. After a search or a filter, use `waitForChange` on the rows you
+return, such as `{ ids: { locator: rowIds, all: true } }`, with the site's own loading sign as
+`loading` when it has one.
 After a step that reloads the page, such as choosing a city, prefer typing into the search box
 again when its suggestions don't appear.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
@@ -591,7 +730,10 @@ checkpoint to repeatedly returning whole-page text and all controls. If a probe
 reports a missing choice, compare its post-action checkpoint before concluding
 the site does not support it. Listing a filter panel's or option group's controls is a
 focused observation. Return explicit partial coverage when an observation is bounded; never
-describe a truncated list as complete.
+describe a truncated list as complete. In a probe, count a locator before acting on it and give
+each action `timeout: 5000`, the default the host also gives probe actions; take names from a
+scoped `ariaSnapshot()`, not visible text. A probe that waits out a long timeout for a missing
+element learns nothing a count would not. Return `waitReport()` from a probe that waits.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code

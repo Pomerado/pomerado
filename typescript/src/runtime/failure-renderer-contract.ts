@@ -21,6 +21,7 @@ const failureReasons = [
   "no_response",
   "credentials_rejected",
   "invalid_input",
+  "location_not_applied",
   "login_identity_conflict",
   "login_check_unavailable",
   "worker_lost",
@@ -48,6 +49,7 @@ export const classifiedOutcomes = (): readonly RunOutcome[] => {
                 possible_commit,
                 refusal_reason: "The date must be in the future.",
                 rejected_field: "password",
+                location: { field: "zip", requested: "00001", step: "store_save" },
               };
               const outcome = classifyRun(evidence);
               if (outcome !== undefined) outcomes.set(JSON.stringify(outcome), outcome);

@@ -99,6 +99,7 @@ export const returnedRun = (declared: DeclaredEffect, result: LocalOperationOutp
 const operationReasons: Readonly<Record<string, string>> = {
   NoResponse: "no_response",
   InvalidInput: "invalid_input",
+  LocationNotApplied: "location_not_applied",
   CredentialsRejected: "credentials_rejected",
 };
 
@@ -155,6 +156,29 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
     ...(reason === "invalid_input" && error.refusal?.available !== undefined
       ? { refusal_available: error.refusal.available }
       : {}),
+    ...(reason === "invalid_input" && error.refusal?.kind !== undefined
+      ? { refusal_kind: error.refusal.kind }
+      : {}),
+    ...(reason === "location_not_applied" ? locationEvidence(error) : {}),
+  };
+};
+
+/** A location the script could not apply: its own words and what the page kept instead. */
+const locationEvidence = (error: LocalOperationFailure) => {
+  const location = error.location;
+  return {
+    ...(error.message === "" ? {} : { refusal_reason: error.message }),
+    ...(location === undefined
+      ? {}
+      : {
+          location: {
+            field: location.field,
+            requested: location.requested,
+            ...(location.applied === undefined ? {} : { applied: location.applied }),
+            step: location.step,
+            ...(location.siteMessage === undefined ? {} : { site_message: location.siteMessage }),
+          },
+        }),
   };
 };
 

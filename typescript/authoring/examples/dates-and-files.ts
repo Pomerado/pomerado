@@ -1,5 +1,12 @@
 import { Schema } from "effect";
-import { CalendarDate, defineOperation, FileInput, FileOutput } from "../../src/browser/index.js";
+import {
+  CalendarDate,
+  defineOperation,
+  FileInput,
+  FileOutput,
+  timeoutDefaults,
+  waitCode,
+} from "../../src/browser/index.js";
 
 // An observed calendar popup: month panels carry data-month (YYYY-MM) and days carry the full
 // data-date, so day text alone never identifies a cell. Other sites need their own evidence.
@@ -19,27 +26,32 @@ export const pickTravelDate = defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${waitCode}
         const date = ${JSON.stringify(input.date)};
         const field = page.getByRole("textbox", { name: "Travel date", exact: true });
-        await field.click({ timeout: 30000 });
+        // A popup that never opens fails once the page stops progressing.
         const popup = page.getByRole("dialog", { name: "Choose date", exact: true });
-        await popup.waitFor({ state: "visible", timeout: 30000 });
-        // Advance month by month, at most 24 times, checking the shown month after each click.
-        for (let step = 0; ; step++) {
-          const months = await popup.locator("[data-month]").evaluateAll((panels) =>
-            panels.map((panel) => panel.getAttribute("data-month")),
-          );
-          if (months.includes(date.slice(0, 7))) break;
+        await waitForOutcome({ popup }, { action: () => field.click({ timeout: waitLimits.action }) });
+        // The months the popup shows, as its panels name them.
+        const shownMonths = { months: { locator: popup.locator("[data-month]"), attribute: "data-month", all: true } };
+        let months = await popup.locator("[data-month]").evaluateAll((panels) =>
+          panels.map((panel) => panel.getAttribute("data-month")),
+        );
+        // Advance month by month, at most 24 times. After each click, wait for the shown months
+        // to change from what they were; months that stay the same mean the click did nothing.
+        for (let step = 0; !months.includes(date.slice(0, 7)); step++) {
           if (step === 24 || months.length === 0) return { failure: "month_unavailable" };
           const back = date.slice(0, 7) < months[0];
-          await popup.getByRole("button", { name: back ? "Previous month" : "Next month", exact: true }).click({ timeout: 30000 });
-          await popup.locator("[data-month=" + JSON.stringify(months[0]) + "]").waitFor({ state: "detached", timeout: 30000 });
+          const control = popup.getByRole("button", { name: back ? "Previous month" : "Next month", exact: true });
+          const moved = await waitForChange(shownMonths, { before: { months }, action: () => control.click({ timeout: waitLimits.action }) });
+          if (!moved.changed) return { failure: "month_unavailable" };
+          months = moved.values.months;
         }
         const day = popup.locator("[data-month=" + JSON.stringify(date.slice(0, 7)) + "] [data-date=" + JSON.stringify(date) + "]");
         if ((await day.count()) !== 1) return { failure: "day_ambiguous" };
         if (!(await day.isEnabled()) || (await day.getAttribute("aria-disabled")) === "true")
           return { failure: "day_disabled" };
-        await day.click({ timeout: 30000 });
+        await day.click({ timeout: waitLimits.action });
         // A field or URL alone does not prove the date; read the committed ISO value back.
         return (await field.inputValue()) === date ? { date } : { failure: "not_committed" };
       `,
@@ -111,7 +123,7 @@ export const downloadStatement = defineOperation(
     const statement = await files.collect(async () => {
       const answer = await kernel.browsers.playwright.execute(sessionId, {
         timeout_sec: 30,
-        code: `await page.getByRole("link", { name: "Download statement", exact: true }).click({ timeout: 30000 });`,
+        code: `await page.getByRole("link", { name: "Download statement", exact: true }).click({ timeout: ${timeoutDefaults.action} });`,
       });
       if (!answer.success)
         throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });

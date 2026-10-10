@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
 
 const Entry = Schema.Struct({
   origin: Schema.String.annotations({ description: "Origin of the member login page" }),
@@ -32,7 +32,7 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
-        const until = Date.now() + 30000;
+        const until = Date.now() + ${timeoutDefaults.navigation};
         const remaining = () => Math.max(1, until - Date.now());
         // On the site: any https host on the host's site domain, else the site origin alone.
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};

@@ -4,6 +4,7 @@ const runnerErrorCodes = [
   "CredentialsRejected",
   "SourceLoadFailed",
   "InvalidInput",
+  "LocationNotApplied",
   "InvalidOutput",
   "BrowserFailure",
   "DeadlineExceeded",

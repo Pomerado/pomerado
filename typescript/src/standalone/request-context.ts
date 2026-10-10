@@ -198,6 +198,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let observedUrl: string | undefined;
     let inputSchema: unknown;
     const executions: ExecutionEntry[] = [];
+    /** Each settled step's entrypoint, for the live-test count; Guardian's history omits it. */
+    const entrypoints = new Map<string, string>();
     const stepResults = makeStepResults();
     const answeredQuestions = new Map<string, AnsweredQuestion>();
     /** Handles of codes the agent asked for during this attempt's unverified sign-in. */
@@ -343,11 +345,13 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     type HistoryStep = {
       readonly purpose: string;
       readonly target: string;
-      readonly input?: "agent_chosen";
+      readonly entrypoint?: string;
+      readonly input?: "agent_chosen" | "agent_chosen_batch";
     };
     /** A step's settled history entry; its result is the next reviews' step result. */
     const settled = (step: HistoryStep, evidence: ExecutionEvidence): ExecutionEntry => {
       stepResults.record(evidence.executionId, evidence.observations);
+      if (step.entrypoint !== undefined) entrypoints.set(evidence.executionId, step.entrypoint);
       return {
         executionId: evidence.executionId,
         attempt: "current",
@@ -556,6 +560,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         observed = undefined;
         observedUrl = undefined;
       },
+      /** The accessibility snapshot of the page the last live step left, redacted, if taken. */
+      get observedCapture() {
+        return observed?.capture.text;
+      },
       /** The address of the page the last live step left, as the browser reported it. */
       get observedUrl() {
         return observedUrl;
@@ -565,6 +573,12 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         return signedIn();
       },
       executions: () => executions,
+      /** The settled history with each step's entrypoint, for the live-test count. */
+      testHistory: () =>
+        executions.map((entry) => {
+          const entrypoint = entrypoints.get(entry.executionId);
+          return entrypoint === undefined ? entry : { ...entry, entrypoint };
+        }),
       repeatableRead: host.repeatableRead,
       get buildEffect() {
         return buildEffect;

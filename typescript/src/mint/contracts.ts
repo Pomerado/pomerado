@@ -7,9 +7,15 @@ import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
 import type { InputIssue } from "../runtime/errors.js";
+import { outputChecks, type OutputFinding } from "../runtime/output-lint.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
+import {
+  LiveTestRecord,
+  type LiveTestBatchCase,
+  type LiveTestCaseRun,
+} from "./live-tests.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
   OriginalPolicyFailureCode,
@@ -166,6 +172,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly confirmActionIds?: readonly string[];
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
+  /** For `output_checks_blocked`, each blocking finding by path, check and count; never a value. */
+  readonly outputFindings?: readonly Pick<OutputFinding, "path" | "check" | "count">[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
   readonly destinationEvidenceGap?:
     | "no_route_evidence"
@@ -347,7 +355,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
     | "capture_not_saved"
     /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
-    | "output_obligation_weakened";
+    | "output_obligation_weakened"
+    /**
+     * The example's output holds code, styles, markup or template leftovers the minter did not
+     * override with a reason; `outputFindings` names each path and check.
+     */
+    | "output_checks_blocked";
   /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
   readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
@@ -532,7 +545,7 @@ export const ExecutionRequest = Schema.Struct({
   testInput: Schema.optional(
     Schema.String.pipe(Schema.minLength(2), Schema.maxLength(16_384)).annotations({
       description:
-        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. At most 2 per attempt. Omit it to run the caller's input.",
+        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. The host may limit how many run per attempt: a signed-in read runs at most 4. Where the host offers live_tests, a read signed out has no limit and runs its planned cases in batches with it. Omit it to run the caller's input.",
     }),
   ),
   /** Only on authenticate, and only where the host offers autofill sign-in. */
@@ -549,6 +562,79 @@ export const ExecutionRequest = Schema.Struct({
 export type ExecutionRequest = typeof ExecutionRequest.Type;
 /** The execute tool's input where the host offers no autofill sign-in: no `signInStep`. */
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
+
+/**
+ * What a host provides for a read's live tests. The minting agent plans cases in
+ * `test/cases.json`, from a checklist the harness derives from the tool's schemas, and runs them
+ * in batches. Live test cases never count toward a signed-in read's four agent-chosen tests: a
+ * batch runs only on a read that has not signed in.
+ */
+export interface LiveTestHost {
+  /**
+   * The current source's declared input and output JSON Schemas for `entrypoint`, read offline
+   * without running the operation.
+   */
+  readonly schemas: (
+    entrypoint: string,
+  ) => Effect.Effect<{ readonly input: unknown; readonly output: unknown }, MintFailure>;
+  /**
+   * Runs one batch on the workspace's current source, whose digest is `batch.sourceDigest`. It
+   * MUST first have Guardian review the whole batch once, as a live test of a read whose
+   * `currentExecution.input` is `agent_chosen_batch` and whose submitted input lists every case's
+   * input, and run nothing unless Guardian allows it. Then it runs each case like an example:
+   * a fresh script process on a page reset to the site's origin with the site's data cleared, in
+   * the build's browser or, at most `batch.workers` at once, on separate fresh browsers opened
+   * like it, never in tabs of one browser. `runLiveTestCase` runs a case and its next page. A
+   * case a host problem, a challenge or the deadline stopped is `inconclusive`; a case not run by
+   * `batch.deadlineAt` (epoch milliseconds) is `inconclusive` with reason `deadline`. A host may
+   * record the batch as one history entry marked `agent_chosen_batch`, as the local host does;
+   * none is required.
+   */
+  readonly run: (batch: LiveTestBatch) => Effect.Effect<LiveTestBatchResult, MintFailure>;
+  /** The most browsers this host runs a batch on at once, the build's own included. */
+  readonly maxWorkers: number;
+}
+
+/** One batch of a read's live test cases. */
+export interface LiveTestBatch {
+  readonly entrypoint: string;
+  readonly sourceDigest: string;
+  readonly cases: readonly LiveTestBatchCase[];
+  /** How many cases may run at once, each on its own browser; 1 to the host's `maxWorkers`. */
+  readonly workers: number;
+  /** When the batch must end, in epoch milliseconds. */
+  readonly deadlineAt: number;
+}
+
+export type LiveTestBatchResult =
+  | {
+      readonly status: "ran";
+      readonly reviewId?: string;
+      readonly cases: readonly LiveTestCaseRun[];
+      /** How many browsers the cases ran on. */
+      readonly lanes: number;
+      /** Browsers the host closed after a challenge; their cases moved to the build's browser. */
+      readonly challengeStops?: number;
+    }
+  | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
+
+/**
+ * The live_tests tool: `plan` shows the checklist the host derived from the tool's schemas, the
+ * cases in `test/cases.json` and each case's latest result (with full outputs for the cases
+ * named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * after one Guardian review, at most `maxWorkers` at once on separate fresh browsers.
+ */
+export const LiveTestsRequest = Schema.Struct({
+  action: Schema.Literal("plan", "run"),
+  entrypoint: Schema.String,
+  cases: Schema.NullOr(
+    Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))).pipe(
+      Schema.maxItems(50),
+    ),
+  ),
+  maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
+});
+export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 
 export const CaptureRequest = Schema.Struct({
   kind: Schema.Literal("full", "response"),
@@ -707,6 +793,38 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   ),
 });
 
+/**
+ * Why a read's HTTP version can't port, as the http-mcp skill's "When it can't port" names it.
+ */
+export const HttpVersionSignal = Schema.Literal(
+  "per_request_hash_or_page_id",
+  "bot_wall_on_page_fetch",
+  "unobtainable_session_token",
+  "streaming_response",
+  "location_not_applicable",
+  "site_refused_on_both_transports",
+);
+export type HttpVersionSignal = typeof HttpVersionSignal.Type;
+
+/**
+ * The minter's decision not to publish an HTTP version of a read: the signal, the captured request
+ * it rests on, and a short note. It answers the host's ask for an HTTP version; the host records it
+ * beside its own evidence and decides publication from its own records.
+ */
+export const HttpVersionDecision = Schema.Struct({
+  outcome: Schema.Literal("ruled_out"),
+  signal: HttpVersionSignal,
+  requestId: Schema.optional(
+    Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_.:-]{1,100}$/)).annotations({
+      description: "The captures/routes.json requestId of the request the signal rests on",
+    }),
+  ),
+  note: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
+    description: "What showed the signal, in one or two sentences",
+  }),
+});
+export type HttpVersionDecision = typeof HttpVersionDecision.Type;
+
 export const PublicationRequest = Schema.Struct({
   entrypoint: Schema.String,
   executionId: Schema.String,
@@ -740,6 +858,16 @@ export const PublicationRequest = Schema.Struct({
     }),
   ),
   /**
+   * A read with no HTTP version: why it can't port. Give it instead of writing, running and
+   * deleting a version that can't work.
+   */
+  httpVersion: Schema.optional(
+    HttpVersionDecision.annotations({
+      description:
+        "Only for a read published without src/tool-http.mjs: the signal from the http-mcp skill's \"When it can't port\" that rules an HTTP version out, the captured requestId it rests on, and a short note",
+    }),
+  ),
+  /**
    * Site defaults the build took instead of asking: only non-credential, non-write, reversible
    * choices. The host keeps each one that passes privacy screening unchanged.
    */
@@ -750,6 +878,27 @@ export const PublicationRequest = Schema.Struct({
         choice: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(120)),
       }),
     ).pipe(Schema.maxItems(8)),
+  ),
+  /**
+   * Output check findings the minter says are wrong about a correct value, each with why: the
+   * tool's intended output, such as code, or page text that only resembles code. A blocking one no
+   * longer refuses publication, and the publication review checks every override and its reason.
+   */
+  outputOverrides: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(300)).annotations({
+          description: "The finding's field path exactly as the host reported it",
+        }),
+        check: Schema.Literal(...outputChecks).annotations({
+          description: "The finding's check exactly as the host reported it",
+        }),
+        reason: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
+          description:
+            "Why the value is correct as returned: the tool's intended output, such as code on a tool that returns code, or the page's own displayed text that only resembles code",
+        }),
+      }),
+    ).pipe(Schema.maxItems(16)),
   ),
 });
 export type PublicationRequest = typeof PublicationRequest.Type;
@@ -765,6 +914,16 @@ export const blockedExplanationLimit = 500;
 export const BuildBlocked = Schema.Struct({
   reason: Schema.Literal("site_lacks_capability", "policy"),
   explanation: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(blockedExplanationLimit)),
+});
+/**
+ * What the minter sends `report_blocked`: a blocked ending's reason, or `host_unavailable` when the
+ * host has ended live execution and what the build still needs, such as a fresh example a review
+ * asked for, cannot run without it. That one ends the attempt as the host's failure, never as a
+ * block: nothing about the task is impossible, so the caller never reads it as one.
+ */
+export const BlockedReport = Schema.Struct({
+  reason: Schema.Literal("site_lacks_capability", "policy", "host_unavailable"),
+  explanation: BuildBlocked.fields.explanation,
 });
 /**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
@@ -1076,6 +1235,8 @@ export interface MintActions {
   readonly requestBrowserRecovery?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Tests a signed-in marker; reports the check unavailable where the host has none. */
   readonly checkSignedInMarker?: (input: unknown) => Effect.Effect<string, MintFailure>;
+  /** A read's planned live tests (`LiveTestsRequest`); absent where the host runs none. */
+  readonly liveTests?: (input: unknown) => Effect.Effect<string, MintFailure>;
 }
 
 /**
@@ -1206,6 +1367,16 @@ export interface ExampleJournal {
 
 export interface MintHarnessSnapshot {
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * Each live test case's latest result, so a takeover keeps them. Optional, so a rollout's old
+   * and new workers each restore the other's checkpoint.
+   */
+  readonly liveTests?: readonly LiveTestRecord[];
+  /**
+   * Whether the attempt ran out of time for live tests: a batch refused for time, or a case
+   * stopped by a batch deadline the attempt's end set.
+   */
+  readonly liveTestsOutOfTime?: boolean;
   /**
    * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and
    * source digests, so a takeover tracks them, and refuses their repeats, even when the
@@ -1371,6 +1542,8 @@ const HarnessTerminal = Schema.Struct({
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
+  liveTests: Schema.optionalWith(Schema.Array(LiveTestRecord), { exact: true }),
+  liveTestsOutOfTime: Schema.optionalWith(Schema.Boolean, { exact: true }),
   outcomeWrites: Schema.optionalWith(Schema.Array(OutcomeWrite), { exact: true }),
   purposes: Schema.Array(
     Schema.Struct({
@@ -1718,6 +1891,11 @@ export interface MintDependencies {
   readonly checkSignedInMarker?: (
     marker: SignedInMarkerCheckRequest,
   ) => Effect.Effect<SignedInMarkerCheck, MintFailure>;
+  /**
+   * Runs a read's planned live tests in batches (`LiveTestHost`). Absent, the minter is offered
+   * no live_tests tool and tests one input at a time with execute.
+   */
+  readonly liveTests?: LiveTestHost;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   readonly projection: MintProjection;
@@ -1762,6 +1940,12 @@ export interface MintDependencies {
   readonly publish: (
     request: PublicationRequest,
     evidence: ExecutionEvidence,
+    /**
+     * Host evidence for the publication review. `liveTests` is the harness's record of a read's
+     * live tests on the source it publishes: the host gives it to the review as the host-owned,
+     * unpublished file `publication/tests.json`. Never a reason to refuse publication by itself.
+     */
+    hostEvidence?: { readonly liveTests?: object },
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;

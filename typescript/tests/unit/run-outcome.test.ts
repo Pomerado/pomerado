@@ -291,3 +291,46 @@ describe("run outcomes", () => {
     );
   });
 });
+
+describe("a location the page did not apply", () => {
+  const location = { field: "zip", requested: "00001", step: "store_save" };
+  const failed = (evidence: Partial<RunEvidence>): RunEvidence => ({
+    status: "completed",
+    effect: "not_started",
+    output: "failed",
+    tool_effect: "read",
+    failure_reason: "location_not_applied",
+    location,
+    ...evidence,
+  });
+
+  it.each([
+    { name: "a read", evidence: {} },
+    { name: "a write that sent nothing", evidence: { tool_effect: "write", effect: "rejected" } },
+  ] as const)("may run again with the same request for $name", ({ evidence }) => {
+    expect(classifyRun(failed(evidence))).toMatchObject({
+      code: "location_not_applied",
+      retry: "same_key",
+      possibleCommit: false,
+    });
+  });
+
+  it.each([
+    {
+      name: "a confirmed write",
+      evidence: { tool_effect: "write", effect: "verified" },
+      code: "execution_failed",
+    },
+    { name: "a run that judged a step may have committed", evidence: { possible_commit: true } },
+    {
+      name: "a write that may have dispatched",
+      evidence: { tool_effect: "write", effect: "may_have_dispatched" },
+      code: "outcome_unknown",
+    },
+  ] as const)("never offers $name a same-request retry", ({ evidence, ...expected }) => {
+    const outcome = classifyRun(failed(evidence));
+    expect(outcome?.code).not.toBe("location_not_applied");
+    expect(outcome?.retry).not.toBe("same_key");
+    if ("code" in expected) expect(outcome?.code).toBe(expected.code);
+  });
+});

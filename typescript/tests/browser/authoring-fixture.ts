@@ -11,6 +11,7 @@ import type {
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import type { FileChannel } from "../../src/runtime/files.js";
+import type { ListHost } from "../../src/runtime/list-host.js";
 import { makeRunFiles } from "../../src/runtime/file-transfer.js";
 import { makeLocalFileHook } from "../../src/execution/local-files.js";
 import { makeLocalDownloads } from "../../src/execution/local-downloads.js";
@@ -65,6 +66,8 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
     readonly deadlineMs?: number;
     readonly dialogs?: DialogDecider;
     readonly files?: FileChannel;
+    /** The list position a host checked, as a host that signs cursors passes it. */
+    readonly list?: ListHost;
   } = {},
 ) => {
   const calls: string[] = [];
@@ -91,6 +94,7 @@ export const runExample = async <Input, EncodedInput, Output, EncodedOutput>(
           ...(domain === undefined ? {} : { siteDomain: domain }),
           ...(options.dialogs === undefined ? {} : { dialogs: options.dialogs }),
           ...(options.files === undefined ? {} : { files: options.files }),
+          ...(options.list === undefined ? {} : { list: options.list }),
         }).pipe(
           Effect.provideService(ExecutionContext, {
             deadline: Deadline.after(options.deadlineMs ?? 10_000),

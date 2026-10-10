@@ -9,7 +9,10 @@ import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
-import type { InputRefusalDetail } from "../runtime/operation-failure.js";
+import type {
+  InputRefusalDetail,
+  LocationNotAppliedDetail,
+} from "../runtime/operation-failure.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { asksAsDeclared } from "./declared-questions.js";
 import {
@@ -26,6 +29,7 @@ import type { LocalWorkspace } from "./local-workspace.js";
 import { FileRefused } from "../runtime/files.js";
 import { outputFiles, type RunFiles } from "../runtime/file-transfer.js";
 import { HttpFailure, type HttpTransport } from "../runtime/site-http.js";
+import type { ListHost } from "../runtime/list-page.js";
 
 export interface LocalOperationOptions {
   readonly workspace: LocalWorkspace;
@@ -60,6 +64,12 @@ export interface LocalOperationOptions {
    */
   readonly signIn?: SessionSignInHook;
   /**
+   * Set when this host signs list cursors: the position the caller's cursor holds, once
+   * `admitListCursor` checked it. Absent, a run refuses any cursor that would continue a runtime
+   * list and returns no next cursor.
+   */
+  readonly list?: ListHost;
+  /**
    * The run's files, for the script's `files`. Absent, `files` throws; either way an output naming
    * a `$file` this run did not collect fails the run.
    */
@@ -87,6 +97,10 @@ export class LocalOperationFailure extends Error {
   readonly sessionLoss?: "session_not_kept";
   /** The input a script's `InvalidInput` named and the choices the page offers for it. */
   readonly refusal?: InputRefusalDetail;
+  /** The location a script's `LocationNotApplied` named and what the page kept instead. */
+  readonly location?: LocationNotAppliedDetail;
+  /** The authored source line that threw, such as `src/tool.mjs:12`, when the child named one. */
+  readonly frame?: string;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -98,12 +112,16 @@ export class LocalOperationFailure extends Error {
       readonly reported?: boolean;
       readonly sessionLoss?: "session_not_kept";
       readonly refusal?: InputRefusalDetail;
+      readonly location?: LocationNotAppliedDetail;
+      readonly frame?: string;
     } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
     if (options.refusal !== undefined) this.refusal = options.refusal;
+    if (options.location !== undefined) this.location = options.location;
+    if (options.frame !== undefined) this.frame = options.frame;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -288,6 +306,8 @@ const handleTerminalMessage = (
           {
             ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
             ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+            ...(message.location === undefined ? {} : { location: message.location }),
+            ...(message.frame === undefined ? {} : { frame: message.frame }),
           },
         ),
       ),
@@ -495,6 +515,7 @@ export const runLocalOperation = (
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),
+        ...(options.list === undefined ? {} : { list: options.list }),
         ...(options.http === undefined || options.mode === "contract"
           ? {}
           : { http: { name: options.http.name, capabilities: options.http.capabilities } }),

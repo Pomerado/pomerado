@@ -432,7 +432,7 @@ async ({ ask }) => ({ note: await ask("note") }));`,
   }
 });
 
-test("a read build runs four live tests on inputs it chose and its example on the input it read", async () => {
+test("a read build signed out runs five live tests on inputs it chose and its example on the input it read", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
@@ -477,8 +477,9 @@ test("a read build runs four live tests on inputs it chose and its example on th
     expect(toolResult(last, "test_2")).toMatchObject({ status: "completed" });
     expect(toolResult(last, "test_3")).toMatchObject({ status: "completed" });
     expect(toolResult(last, "test_4")).toMatchObject({ status: "completed" });
+    // A read signed out has no limit on live tests on inputs it chose.
+    expect(toolResult(last, "test_5")).toMatchObject({ status: "completed" });
     for (const [id, reason] of [
-      ["test_5", "already ran 4 live tests with an input you chose"],
       ["not_json", "testInput must be the tool's input as JSON text"],
       ["example_test", "testInput is only for a read's live test"],
     ] as const) {
@@ -492,6 +493,7 @@ test("a read build runs four live tests on inputs it chose and its example on th
       "agent_chosen",
       "agent_chosen",
       "agent_chosen",
+      "agent_chosen",
       "intent_derived",
     ]);
     const example = reviewed.at(-1);
@@ -499,6 +501,7 @@ test("a read build runs four live tests on inputs it chose and its example on th
       '{"venue":"Venue X"}',
     );
     expect(historyOf(example).map((entry) => entry["input"])).toEqual([
+      "agent_chosen",
       "agent_chosen",
       "agent_chosen",
       "agent_chosen",

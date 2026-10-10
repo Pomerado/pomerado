@@ -36,7 +36,8 @@ const catalog = [
   },
   {
     name: "pagination",
-    description: "Warm state and fresh reconstruction for scoped read cursors",
+    description:
+      "Read before settling the schema of any tool that returns a list: page size, the cursor, numbered pages, next links, load more, infinite scroll, the site's own list API, changed lists and when to stop",
     references: ["pagination.ts"],
   },
   {

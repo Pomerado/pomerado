@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serialize } from "node:v8";
@@ -44,7 +44,9 @@ const { ExecutionContext, makeEffectJournal } = await import("../runtime/context
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
-const { boundedRefusalDetail } = await import("../runtime/operation-failure.js");
+const { boundedLocationDetail, boundedRefusalDetail } = await import(
+  "../runtime/operation-failure.js"
+);
 const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
 const { makeScriptInput, ScriptInput, ScriptInputFailure } =
   await import("../runtime/script-input.js");
@@ -52,8 +54,40 @@ const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
-const refusalOf = (detail: { readonly field?: string; readonly available?: readonly string[] }) =>
-  detail.field === undefined && detail.available === undefined ? {} : { refusal: detail };
+const refusalOf = (detail: {
+  readonly field?: string;
+  readonly available?: readonly string[];
+  readonly kind?: string;
+}) =>
+  detail.field === undefined && detail.available === undefined && detail.kind === undefined
+    ? {}
+    : { refusal: detail };
+/** The longest frame the protocol carries. */
+const maximumFrameLength = 300;
+/**
+ * The first frame of an error's stack, or its causes', in the authored source this child staged
+ * (under src/, explore/, test/ or scratch/), as `path:line` relative to the staging directory.
+ * Undefined when none is found or the stack cannot be read.
+ */
+const authoredFrame = (error: unknown): string | undefined => {
+  try {
+    const root = pathToFileURL(`${realpathSync(process.cwd())}/`).href;
+    for (let cause = error, depth = 0; cause instanceof Error && depth < 4; depth++) {
+      for (const line of (cause.stack ?? "").split("\n").slice(1)) {
+        const match = /(file:\/\/[^\s)]+?):(\d+):\d+\)?\s*$/u.exec(line);
+        const url = match?.[1];
+        if (url === undefined || !url.startsWith(root)) continue;
+        const path = decodeURIComponent(url.slice(root.length));
+        if (/^(?:src|explore|test|scratch)\//u.test(path))
+          return `${path}:${match?.[2] ?? ""}`.slice(-maximumFrameLength);
+      }
+      cause = cause.cause;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -230,6 +264,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
       ...(start.offline === true ? { offline: true } : {}),
+      ...(start.list === undefined ? {} : { list: start.list }),
       dialogs: (report) =>
         call({ kind: "dialog", report }).pipe(
           Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
@@ -323,7 +358,11 @@ const executeHttpVersion = (operation: HttpVersion) =>
       capture: () => Effect.void,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
     });
-    return yield* executeOperation(operation, start.input).pipe(
+    return yield* executeOperation(
+      operation,
+      start.input,
+      start.list === undefined ? {} : { list: start.list },
+    ).pipe(
       Effect.mapError((error) => (error instanceof Error ? error : localError(error))),
       Effect.provideService(ExecutionContext, context),
       Effect.provideService(SiteHttp, http),
@@ -400,6 +439,13 @@ await Effect.runPromise(
           "Local execution requires an operation from defineOperation as the module's default export",
         ),
       );
+    // A `*-http.mjs` file runs with `SiteHttp` only, so a Kernel script there never runs.
+    if (start.entrypoint.endsWith("-http.mjs") && !isHttpVersion(operation))
+      return yield* Effect.fail(
+        new Error(
+          "A *-http.mjs file must export an HTTP version: defineHttpOperation({ ...contract, run: (input, http) => Effect.gen(...) }), or defineOperation's object form with run returning an Effect. The two-argument defineOperation(contract, async (context) => ...) is a Kernel script, which has no SiteHttp; keep it in src/tool.mjs.",
+        ),
+      );
     const schemas = {
       inputSchema: contractJsonSchema(operation.input),
       outputSchema: contractJsonSchema(operation.output),
@@ -422,8 +468,9 @@ await Effect.runPromise(
   }).pipe(
     Effect.catchAll((error) =>
       journalState.pipe(
-        Effect.flatMap((metadata) =>
-          send({
+        Effect.flatMap((metadata) => {
+          const frame = authoredFrame(error);
+          return send({
             kind: "error",
             error: error.message || error.name,
             ...metadata,
@@ -431,6 +478,7 @@ await Effect.runPromise(
             ...("sessionLoss" in error && error.sessionLoss === "session_not_kept"
               ? { sessionLoss: "session_not_kept" }
               : {}),
+            ...(frame === undefined ? {} : { frame }),
             ...(error instanceof InvalidInput && error.issues !== undefined
               ? { inputIssues: error.issues }
               : {}),
@@ -438,13 +486,19 @@ await Effect.runPromise(
             ...("_tag" in error && error._tag === "InvalidInput"
               ? refusalOf(boundedRefusalDetail(error))
               : {}),
+            // A location the script could not apply, with what the page kept instead.
+            ...(() => {
+              if (!("_tag" in error) || error._tag !== "LocationNotApplied") return {};
+              const location = boundedLocationDetail(Reflect.get(error, "location"));
+              return location === undefined ? {} : { location };
+            })(),
             ...("code" in error && typeof error.code === "string"
               ? { code: error.code }
               : "_tag" in error && typeof error._tag === "string"
                 ? { code: error._tag }
                 : {}),
-          }),
-        ),
+          });
+        }),
       ),
     ),
   ),
