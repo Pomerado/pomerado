@@ -56,8 +56,9 @@ hard, then ask") says: each add-on, pre-selected paid option and saved payment y
 and any other option only when the request's purpose clearly depends on it. An unasked
 optional field keeps the page's default and is still an optional input of the script. Ask
 only about options the site actually shows. Never keep, clear, accept or decline an add-on,
-pre-selected paid option or saved payment unasked. Credentials never go through a question; the host's
-protected form owns them.
+pre-selected paid option or saved payment unasked. A safety default (core skill) is
+neither: never ask about it, and the script turns it off. Credentials never go through a
+question; the host's protected form owns them.
 
 During the session:
 
@@ -218,7 +219,8 @@ pre-selected defaults included: required when the site requires a choice, option
 otherwise. The script sets each option from its input. An unset optional input leaves the
 page's default, as in a read. The exception is an add-on, a pre-selected paid option or
 a saved payment: each must be explicit, so the script never keeps, clears, accepts or
-declines one the input leaves open, and fails before the commit instead. An
+declines one the input leaves open, and fails before the commit instead. A safety default
+(core skill) is neither: never ask about it, and the script turns it off. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
 public schema (core's input schema rules).
