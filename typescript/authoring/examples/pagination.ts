@@ -110,8 +110,9 @@ ${readPageCode}`);
 
     const selected = selectRows(list, rowsRead(), keyOf);
     const results = selected.rows.slice(0, list.limit);
-    // Where the rows after these start: on the same site page when it holds more, else the
-    // site's own link to the page after it.
+    // Where the rows after these start: the site page that holds the last returned row, so the
+    // next call finds that row again and reads on from it. Naming the page after it instead would
+    // skip a row that moves back across the boundary when a row above it goes away.
     const last = results.at(-1);
     const lastIndex =
       last === undefined
@@ -128,13 +129,12 @@ ${readPageCode}`);
           ? sitePage.rows.length
           : sitePage.rows.findIndex((row) => keyOf(row) === keyOf(last)) + 1;
     const next: ListPosition | null =
-      sitePage === undefined
+      sitePage === undefined || (offset >= sitePage.rows.length && sitePage.next === null)
         ? null
-        : offset < sitePage.rows.length
-          ? { page: pageNumber, offset, href: sitePage.url }
-          : sitePage.next === null
-            ? null
-            : { page: pageNumber + 1, offset: 0, href: sitePage.next };
+        : last === undefined && sitePage.next !== null
+          ? // Nothing new on the pages read: start the next call at the page after them.
+            { page: pageNumber + 1, offset: 0, href: sitePage.next }
+          : { page: pageNumber, offset, href: sitePage.url };
     return {
       results,
       ...finishList(list, {

@@ -37,7 +37,7 @@ export const runOperation = (
     const { siteOrigin } = yield* requestSite(session, request);
     // A cursor this host did not sign for this tool and these inputs, or one past its hour, ends
     // the run here, before the sign-in or any page load.
-    const admitted = yield* admitArtifactCursor(session, artifact, siteOrigin, request);
+    const list = yield* admitArtifactCursor(session, artifact, siteOrigin, request);
     const workspace = yield* createLocalWorkspace();
     yield* seedLocalRuntime(workspace);
     const sources = artifact.files.map(({ path, content }) => [path, content] as const);
@@ -77,7 +77,8 @@ export const runOperation = (
       workspace,
       entrypoint: artifact.entrypoint,
       sources,
-      input: admitted,
+      input: request.input ?? {},
+      list,
       browser,
       siteOrigin,
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),

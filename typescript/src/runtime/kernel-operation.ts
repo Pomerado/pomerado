@@ -19,6 +19,7 @@ import type { KernelExecuteClient } from "./kernel-execute-client.js";
 import { inspectSignInRejection } from "./sign-in-rejection.js";
 import { FileField, FileRefused, type FileChannel, type ScriptFiles } from "./files.js";
 import type { SignInRejectionMarker } from "./sign-in-rejection.js";
+import type { ListHost } from "./list-host.js";
 import {
   CredentialsRejected,
   OperationFailure,
@@ -269,6 +270,12 @@ interface ScriptBrowser {
   readonly scriptError?: (error: unknown, dispatch: Dispatch) => OperationFailure;
   /** The host's file service for this run, bound only when the host moves files. */
   readonly files?: FileChannel;
+  /**
+   * Set by a host that signs list cursors: the position the caller's cursor holds, once the host
+   * checked it, which the script gets beside its input (`withListHost`). Absent, the script
+   * refuses any cursor that would continue a runtime list.
+   */
+  readonly list?: ListHost;
 }
 
 /** The default wait for a download to finish after its trigger. */

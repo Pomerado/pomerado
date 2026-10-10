@@ -236,6 +236,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
       ...(start.offline === true ? { offline: true } : {}),
+      ...(start.list === undefined ? {} : { list: start.list }),
       dialogs: (report) =>
         call({ kind: "dialog", report }).pipe(
           Effect.flatMap((value) => Schema.decodeUnknown(DialogChoice)(value)),
@@ -329,7 +330,11 @@ const executeHttpVersion = (operation: HttpVersion) =>
       capture: () => Effect.void,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
     });
-    return yield* executeOperation(operation, start.input).pipe(
+    return yield* executeOperation(
+      operation,
+      start.input,
+      start.list === undefined ? {} : { list: start.list },
+    ).pipe(
       Effect.mapError((error) => (error instanceof Error ? error : localError(error))),
       Effect.provideService(ExecutionContext, context),
       Effect.provideService(SiteHttp, http),

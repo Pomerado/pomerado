@@ -15,7 +15,8 @@ not.
 
 Spread `listInputFields` into the input schema's fields and `listOutputFields` into the output
 schema's: `limit` (1 to 50, default 20) and `cursor`; `next_cursor`, `next_cursor_expires_at`,
-`has_more`, `total_results` and `list_changed`. Never rename them or write your own. Return rows
+`has_more`, `total_results`, `list_changed` and, when a list with more has no cursor,
+`next_cursor_unavailable`. Never rename them or write your own. Return rows
 in the site's order; rows the site promotes stay in place, count toward `limit` and carry their
 mark as a boolean. `total_results` is the site's own exact count, null when it shows none or an
 approximate one. The description says: "Returns up to `limit` results per call (default 20).
@@ -25,13 +26,14 @@ to it for the results that follow," and names how the site pages and its page si
 ## The cursor
 
 The host signs every cursor and checks it before the next run starts: a cursor that is altered,
-expired, from another tool or for other inputs never reaches your code. Call
-`startList(input, { mechanism })` before any browser work; it gives you `limit` and the position
-to continue from, and refuses a cursor from before the tool paged another way. Build the output
-with `selectRows` and `finishList`. Never write, sign or parse a cursor yourself, and never put
-page text, a secret or an account's value into a position; row keys are hashed for you. A row's
-key is its stable ID; when the site shows a promoted copy of a row it also lists, give the copy
-its own key, such as `sponsored:` and the ID, so both stay.
+expired, from another tool, for other inputs or for another account never reaches your code.
+Call `startList(input, { mechanism })` before any browser work; it gives you `limit` and the
+position the host checked, and refuses a cursor from before the tool paged another way. Build
+the output with `selectRows` and `finishList`. Never write, sign or parse a cursor yourself, and
+never put page text, a secret or an account's value into a position; row keys are hashed for
+you. A cursor's position is readable by whoever holds it, so it holds only the site's own link,
+token or scope. A row's key is its stable ID; when the site shows a promoted copy of a row it
+also lists, give the copy its own key, such as `sponsored:` and the ID, so both stay.
 
 ## Find how the site pages
 
@@ -43,10 +45,12 @@ the next rows. Pick the first that fits, and name it as the mechanism:
   parameter. Open the results page, then call the endpoint inside the page with the site's own
   token or offset as the position's `token` or `offset`. Keep the visible mechanism as the
   fallback when the endpoint refuses or changes.
-- `pages` or `next_link`: keep the site's own link to the next page, exactly as this run read
-  it, as the position's `href`. The host accepts only a link on the tool's site. Open it, then
-  read back the query, filters, sort and page number. If that fails, run the search and follow
-  the site's page links or Next. Never edit a page number or offset into a URL yourself.
+- `pages` or `next_link`: keep the site's own link to the page that holds the last row you
+  return, exactly as this run read it, as the position's `href`, with that row's `offset`. The
+  host accepts only a link on the tool's site. Open it, then read back that the page is still on
+  the site and shows the query, filters, sort and page number, and read on through Next from
+  there. If that fails, run the search and follow the site's page links or Next. Never edit a
+  page number or offset into a URL yourself.
 - `append` or `scroll`: repeat the one action, a "Load more" click or scrolling the last row
   into view, waiting for the row count to grow each time, until the list holds the window, and
   keep the count as the position's `steps`. On a list that drops earlier rows as it scrolls,
@@ -58,20 +62,25 @@ the next rows. Pick the first that fits, and name it as the mechanism:
 
 ## Changed lists
 
-Lists change between calls. Pass `selectRows` the rows you read from where the position starts,
-in the site's order: it continues after the last row the previous page returned, wherever that
-row now is, drops rows already returned, and says the list changed when that row is gone or a
-returned row came back. When it is gone, it repeats rows rather than skipping them. Return its `listChanged` as `list_changed`. When the site applied a
-context the caller did not set, such as a location it picked, pass it as `context` to both, so a
-different one sets `list_changed`. When dropping leaves fewer than `limit`, read on. Never
-promise a snapshot the site does not keep.
+Lists change between calls. The next position always names the site page that holds the last
+row you return, even when that row ends the page, never the page after it: a row removed above a
+page's end moves the next page's first row back across it, and only the anchor's own page shows
+that. Pass `selectRows` the rows you read from where the position starts, in the site's order:
+it continues after the last row the previous page returned, wherever that row now is, drops rows
+already returned, and says the list changed when that row is gone or a returned row came back.
+When it is gone, it repeats rows rather than skipping them. A site's own continuation `token`
+starts after that row, so there its absence is no change. Return its `listChanged` as
+`list_changed`. When the site applied a context the caller did not set, such as a location it
+picked, pass it as `context` to both, so a different one sets `list_changed`. When dropping
+leaves fewer than `limit`, read on. Never promise a snapshot the site does not keep.
 
 ## Stop
 
 Return as soon as you hold `limit` rows. Per call, read at most 5 site pages or 10 steps, within
 `remainingMs()`; when a bound stops you, return what you read with a position that continues.
 `finishList` sets `next_cursor` to null past the deepest position a tool can rebuild without the
-site's link or token (10 site pages or 20 steps); `has_more` stays true, and the description
+site's link or token (10 site pages or 20 steps), or when the site's link or token is too long
+for a cursor; `has_more` stays true, `next_cursor_unavailable` says why, and the description
 names that depth. When the site refuses its own link or token and the position cannot be
 rebuilt, throw `errors.InvalidInput` with `field: "cursor"` and `kind: "site_expired"`. Never
 return a position the tool could not follow.

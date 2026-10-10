@@ -584,7 +584,8 @@ const authoredExecution = (
                 entrypoint: execution.entrypoint,
                 // Only a live step receives a value; offline steps run the handle text as written.
                 sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
-                input: admission.input,
+                input,
+                list: admission.list,
                 browser:
                   watch === undefined
                     ? browser

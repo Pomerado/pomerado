@@ -9,7 +9,6 @@ import {
   type ListCursorScope,
 } from "../runtime/list-cursor.js";
 import type { CursorRefusal } from "../runtime/list-page.js";
-import { siteDomain } from "../runtime/same-site.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PomeradoRequest } from "./contracts.js";
 import { runOutcomeFailure } from "./run-report.js";
@@ -29,16 +28,12 @@ export const localListScope = (
   session: Pick<StandaloneSession, "options">,
   operation: string,
   siteOrigin: string,
-): ListCursorScope => {
-  const domain = siteDomain(siteOrigin);
-  return {
-    keys: localListCursorKeys(session.options.listCursors?.keys),
-    operation,
-    siteOrigin,
-    ...(domain === undefined ? {} : { siteDomain: domain }),
-    now: session.options.listCursors?.now?.() ?? Date.now(),
-  };
-};
+): ListCursorScope => ({
+  keys: localListCursorKeys(session.options.listCursors?.keys),
+  operation,
+  siteOrigin,
+  now: session.options.listCursors?.now?.() ?? Date.now(),
+});
 
 /** An artifact's cursors are bound to its site and its files, which a new build replaces. */
 const artifactScope = (
@@ -73,8 +68,8 @@ export const refusedCursor = (admission: {
   );
 
 /**
- * The input a run of `artifact` starts with: its cursor checked and replaced by the position it
- * holds. A refused cursor fails the run as a refused input before anything reaches the site.
+ * What a run of `artifact` gets beside its input: the position its cursor holds, once checked. A
+ * refused cursor fails the run as a refused input before anything reaches the site.
  */
 export const admitArtifactCursor = (
   session: StandaloneSession,
@@ -88,11 +83,14 @@ export const admitArtifactCursor = (
       artifactScope(session, artifact, siteOrigin),
     );
     return admission.ok
-      ? Effect.succeed(admission.input)
+      ? Effect.succeed(admission.list)
       : Effect.fail(runOutcomeFailure(request.effect, "operation")(refusedCursor(admission)));
   });
 
-/** The run's output with its next cursor signed for the caller. */
+/**
+ * The run's output with its next cursor signed for the caller. A next position the host could
+ * not sign leaves `next_cursor` null, with `next_cursor_unavailable` saying why.
+ */
 export const sealArtifactOutput = (
   session: StandaloneSession,
   artifact: MintArtifact,

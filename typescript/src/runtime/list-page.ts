@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { Either, Schema } from "effect";
 import { OperationFailure, operationErrors } from "./operation-failure.js";
+import { listHostOf } from "./list-host.js";
+
+export { withListHost, type ListHost } from "./list-host.js";
 
 // One page of a list per call, and a cursor to the next. A script reads the position it continues
 // from with `startList`, picks the rows it returns with `selectRows` and writes the list's output
 // fields with `finishList`. The host signs every cursor a caller sees and checks it before the
 // next run starts, so a script never writes, signs or parses a cursor itself: the position it
-// gets is one this tool returned within the hour, for the same inputs.
+// gets is one this tool returned within the hour, for the same inputs. The position reaches the
+// script on a host channel beside its input (`withListHost`), never in the input itself, so a run
+// whose host did not check a cursor refuses it rather than trusting what the caller sent.
 
 /** Rows a call returns when the caller names no `limit`, and the most it may ask for. */
 export const listLimitDefault = 20;
@@ -15,6 +20,16 @@ export const listLimitMax = 50;
 export const listCursorMaxLength = 2_048;
 /** How long a cursor can be used after the run that returned it. */
 export const listCursorTtlMs = 3_600_000;
+/**
+ * The most row-key digests a cursor keeps from the rows returned before it: the tail of the last
+ * page, which is what a later page needs to drop rows it already returned.
+ */
+export const listSeenMax = 16;
+/**
+ * The most bytes a draft's JSON may take. With the host's own fields and signature added, any
+ * draft within it seals into a cursor no longer than `listCursorMaxLength`.
+ */
+export const listDraftMaxBytes = 1_360;
 /** The most one call reads before it returns what it has with a cursor that continues. */
 export const listCallBounds = { sitePages: 5, steps: 10 } as const;
 /**
@@ -40,16 +55,18 @@ export const ListMechanism = Schema.Literal(
 export type ListMechanism = typeof ListMechanism.Type;
 
 /**
- * Why a cursor was refused. The host refuses `malformed`, `altered`, `version`, `other_tool`,
- * `inputs_changed`, `expired` and `off_site` before the run starts; the script refuses
- * `mechanism_changed` when the tool now pages another way, and `site_expired` when the site
- * refuses its own link or token and the position cannot be rebuilt.
+ * Why a cursor was refused. The host refuses `malformed`, `altered`, `unknown_key`, `version`,
+ * `other_tool`, `other_account`, `inputs_changed`, `expired` and `off_site` before the run starts;
+ * the script refuses `mechanism_changed` when the tool now pages another way, and `site_expired`
+ * when the site refuses its own link or token and the position cannot be rebuilt.
  */
 export const CursorRefusal = Schema.Literal(
   "malformed",
   "altered",
+  "unknown_key",
   "version",
   "other_tool",
+  "other_account",
   "inputs_changed",
   "expired",
   "off_site",
@@ -60,7 +77,11 @@ export type CursorRefusal = typeof CursorRefusal.Type;
 
 /** A row key's or context's digest in a cursor: 48 bits, so no account value rides in it. */
 const Digest = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{8}$/u));
-const Count = Schema.Int.pipe(Schema.between(0, 100_000));
+const countMax = 100_000;
+const Count = Schema.Int.pipe(Schema.between(0, countMax));
+const hrefMaxLength = 1_024;
+const tokenMaxLength = 512;
+const scopeMaxLength = 200;
 
 /**
  * Where the next rows start on the site: the site page and the offset within it, the steps of a
@@ -73,26 +94,31 @@ export const ListPosition = Schema.Struct({
   steps: Schema.optional(Count),
   offset: Count,
   pageSize: Schema.optional(Schema.Int.pipe(Schema.between(1, 10_000))),
-  href: Schema.optional(Schema.String.pipe(Schema.maxLength(1_024))),
-  token: Schema.optional(Schema.String.pipe(Schema.maxLength(512))),
-  scope: Schema.optional(Schema.String.pipe(Schema.maxLength(200))),
+  href: Schema.optional(Schema.String.pipe(Schema.maxLength(hrefMaxLength))),
+  token: Schema.optional(Schema.String.pipe(Schema.maxLength(tokenMaxLength))),
+  scope: Schema.optional(Schema.String.pipe(Schema.maxLength(scopeMaxLength))),
 });
 export type ListPosition = typeof ListPosition.Type;
 
+const draftBytes = (draft: unknown) => Buffer.byteLength(JSON.stringify(draft), "utf8");
+
 /**
  * The part of a cursor a script writes and reads: its mechanism, position, the rows returned so
- * far, the anchor (the last returned row's key digest), the digests of the last page's keys and
- * the digest of the context the site applied. The host adds the tool, the inputs' digest and the
- * expiry, and signs it.
+ * far, the anchor (the last returned row's key digest), the digests of the last page's last keys
+ * and the digest of the context the site applied. The host adds the tool, the inputs' digest, the
+ * caller it was issued to and the expiry, and signs it. Its JSON is at most `listDraftMaxBytes`.
  */
-export const ListDraft = Schema.Struct({
+export const listDraftFields = {
   m: ListMechanism,
   pos: ListPosition,
   n: Count,
   a: Schema.optional(Digest),
-  s: Schema.Array(Digest).pipe(Schema.maxItems(listLimitMax)),
+  s: Schema.Array(Digest).pipe(Schema.maxItems(listSeenMax)),
   cx: Schema.optional(Digest),
-});
+};
+export const ListDraft = Schema.Struct(listDraftFields).pipe(
+  Schema.filter((draft) => draftBytes(draft) <= listDraftMaxBytes),
+);
 export type ListDraft = typeof ListDraft.Type;
 
 /** How a draft travels between the runtime and its host, never to a caller. */
@@ -157,7 +183,23 @@ export const listOutputFields = {
     description:
       "True when the site's list changed since the cursor was issued; rows may be missing or repeated relative to earlier pages.",
   }),
+  next_cursor_unavailable: Schema.optional(
+    Schema.Literal(
+      "depth_cap",
+      "position_too_long",
+      "unsigned_host",
+      "off_site",
+      "not_a_draft",
+      "inputs_not_json",
+    ).annotations({
+      description:
+        "Why next_cursor is null although has_more is true: depth_cap past the deepest page this tool can reach again, position_too_long when the site's link to the next page is too long for a cursor, off_site when it leaves the site, or the host could not sign one.",
+    }),
+  ),
 };
+
+/** Why a list that has more returned no next cursor. */
+export type ListCursorUnavailable = NonNullable<ListOutput["next_cursor_unavailable"]>;
 
 /** The list fields `finishList` writes into a tool's output. */
 export interface ListOutput {
@@ -166,6 +208,13 @@ export interface ListOutput {
   readonly has_more: boolean;
   readonly total_results: number | null;
   readonly list_changed: boolean;
+  readonly next_cursor_unavailable?:
+    | "depth_cap"
+    | "position_too_long"
+    | "unsigned_host"
+    | "off_site"
+    | "not_a_draft"
+    | "inputs_not_json";
 }
 
 /** Where a call starts: its `limit`, and on a later page the position the cursor holds. */
@@ -179,16 +228,19 @@ export interface ListStart {
   readonly anchor?: string;
   readonly seen: ReadonlySet<string>;
   readonly context?: string;
+  /** Whether the run's host signs the next cursor; without it, `finishList` returns none. */
+  readonly signed: boolean;
 }
 
 const refuse = (reason: CursorRefusal, message: string) =>
   new operationErrors.InvalidInput(message, { field: "cursor", kind: reason });
 
 /**
- * Reads the call's `limit` and the position its cursor holds, before any browser work. A cursor
- * reaches the script only after the host checked its signature, tool, inputs and expiry. It
- * throws `errors.InvalidInput` with `field: "cursor"` when the cursor is not one the host
- * checked, or the tool now pages another way than when it was issued.
+ * Reads the call's `limit` and the position its cursor holds, before any browser work. The
+ * position comes from the host, which checked the cursor's signature, tool, inputs, caller and
+ * expiry before the run started. It throws `errors.InvalidInput` with `field: "cursor"` when the
+ * run has a cursor its host did not check, or the tool now pages another way than when it was
+ * issued. An empty cursor is none.
  */
 export const startList = (
   input: unknown,
@@ -202,9 +254,11 @@ export const startList = (
     typeof limitValue === "number" && Number.isInteger(limitValue)
       ? Math.min(Math.max(limitValue, 1), listLimitMax)
       : listLimitDefault;
-  if (cursor === undefined || cursor === null)
-    return { limit, mechanism: options.mechanism, returned: 0, seen: new Set() };
-  const draft = decodeListDraft(cursor);
+  const host = listHostOf(input);
+  const signed = host !== undefined;
+  if (cursor === undefined || cursor === null || cursor === "")
+    return { limit, mechanism: options.mechanism, returned: 0, seen: new Set(), signed };
+  const draft = host?.position;
   if (draft === undefined)
     throw refuse(
       "malformed",
@@ -223,18 +277,21 @@ export const startList = (
     ...(draft.a === undefined ? {} : { anchor: draft.a }),
     seen: new Set(draft.s),
     ...(draft.cx === undefined ? {} : { context: draft.cx }),
+    signed,
   };
 };
 
 /**
  * Picks the rows that follow the previous page from `rows`, the rows the call read in the site's
- * order from where its position starts. It continues after the anchor, the last row the previous
- * page returned, wherever that row now is. When the anchor is gone, it continues after the last
- * row the previous page returned that is still there, else from the first row, so a change
- * repeats rows rather than skipping them. It drops rows the previous page returned and any key
- * twice. `listChanged` is true when the anchor is gone, a returned row came back or the
- * context the site applied (such as a location it chose) differs. A key is the row's stable ID;
- * give a promoted copy of a row its own key, such as `sponsored:` plus the ID, to keep both.
+ * order from where its position starts: the site page that holds the anchor, the last row the
+ * previous page returned. It continues after the anchor, wherever that row now is. When the
+ * anchor is gone, it continues after the last row the previous page returned that is still
+ * there, else from the first row, so a change repeats rows rather than skipping them. It drops
+ * rows the previous page returned and any key twice. `listChanged` is true when the anchor is
+ * gone, a returned row came back or the context the site applied (such as a location it chose)
+ * differs. A position holding the site's own continuation `token` starts after the anchor, so
+ * there the anchor's absence is no change. A key is the row's stable ID; give a promoted copy of
+ * a row its own key, such as `sponsored:` plus the ID, to keep both.
  */
 export const selectRows = <Row>(
   list: ListStart,
@@ -250,11 +307,14 @@ export const selectRows = <Row>(
     const anchor = list.anchor === undefined ? -1 : digests.lastIndexOf(list.anchor);
     if (anchor >= 0) start = anchor + 1;
     else {
-      // The anchor is gone, or on the site page before: continue after the last returned row
-      // still here, so a removal repeats rows rather than skipping them.
+      // The anchor is gone: continue after the last returned row still here, so a removal
+      // repeats rows rather than skipping them. Rows that start past the anchor, such as a site
+      // page after it, cannot show whether a row above them went away, so they say the list may
+      // have changed; only the site's own token continues past the anchor by design.
       const lastSeen = digests.findLastIndex((digest) => list.seen.has(digest));
       start = lastSeen + 1;
-      if (position.offset > 0 || lastSeen >= 0) changed = true;
+      if (lastSeen >= 0 || (list.anchor !== undefined && position.token === undefined))
+        changed = true;
     }
     if (
       list.context !== undefined &&
@@ -285,11 +345,20 @@ const reachable = (next: ListPosition) =>
   next.token !== undefined ||
   ((next.page ?? 1) <= listDepth.sitePages && (next.steps ?? 0) <= listDepth.steps);
 
+/** Whether a next position fits in a cursor, with room for everything else the cursor holds. */
+const fits = (next: ListPosition) =>
+  (next.href?.length ?? 0) <= hrefMaxLength &&
+  (next.token?.length ?? 0) <= tokenMaxLength &&
+  (next.scope?.length ?? 0) <= scopeMaxLength;
+
 /**
  * Writes the list's output fields for the rows this call returns. `next` is where the following
- * rows start, null when the site shows nothing further. Past the deepest position the tool can
- * rebuild without a site link or token, `next_cursor` is null and `has_more` stays true. The host
- * signs `next_cursor` and fills `next_cursor_expires_at` after the run.
+ * rows start, null when the site shows nothing further; it names the site page that holds the
+ * last returned row, so the next call finds that row again. When the list has more but no cursor
+ * can continue it, `next_cursor` is null, `has_more` stays true and `next_cursor_unavailable`
+ * says why: past the deepest position the tool can rebuild without a site link or token, a site
+ * link or token too long for a cursor, or a host that does not sign cursors. The host signs
+ * `next_cursor` and fills `next_cursor_expires_at` after the run.
  */
 export const finishList = <Row>(
   list: ListStart,
@@ -308,26 +377,42 @@ export const finishList = <Row>(
       `finishList got ${page.rows.length} rows for a limit of ${list.limit}; return at most limit rows`,
       { dispatch: "unknown" },
     );
-  const digests = page.rows.map((row) => listDigest(page.keyOf(row)));
-  const next = page.next !== null && reachable(page.next) ? page.next : null;
-  const anchor = digests.at(-1) ?? list.anchor;
-  const seen = digests.length > 0 ? digests : [...list.seen];
-  const context = page.context === undefined ? list.context : listDigest(page.context);
-  return {
-    next_cursor:
-      next === null
-        ? null
-        : encodeListDraft({
-            m: list.mechanism,
-            pos: Schema.decodeUnknownSync(ListPosition)(next),
-            n: list.returned + page.rows.length,
-            ...(anchor === undefined ? {} : { a: anchor }),
-            s: seen.slice(-listLimitMax),
-            ...(context === undefined ? {} : { cx: context }),
-          }),
+  const fields = {
     next_cursor_expires_at: null,
     has_more: page.hasMore || page.next !== null,
     total_results: page.totalResults,
     list_changed: page.listChanged,
   };
+  const ended = (reason: ListCursorUnavailable): ListOutput => ({
+    next_cursor: null,
+    ...fields,
+    has_more: true,
+    next_cursor_unavailable: reason,
+  });
+  if (page.next === null) return { next_cursor: null, ...fields };
+  if (!reachable(page.next)) return ended("depth_cap");
+  if (!fits(page.next)) return ended("position_too_long");
+  if (!list.signed) return ended("unsigned_host");
+  const digests = page.rows.map((row) => listDigest(page.keyOf(row)));
+  const anchor = digests.at(-1) ?? list.anchor;
+  const seen = digests.length > 0 ? digests : [...list.seen];
+  const context = page.context === undefined ? list.context : listDigest(page.context);
+  const draft = Schema.decodeUnknownEither(ListDraft)({
+    m: list.mechanism,
+    pos: page.next,
+    n: Math.min(list.returned + page.rows.length, countMax),
+    ...(anchor === undefined ? {} : { a: anchor }),
+    s: seen.slice(-listSeenMax),
+    ...(context === undefined ? {} : { cx: context }),
+  });
+  if (Either.isLeft(draft)) {
+    // Within each field's length, a position can still be too large as a whole.
+    const positionValid = Either.isRight(Schema.decodeUnknownEither(ListPosition)(page.next));
+    if (positionValid) return ended("position_too_long");
+    throw new OperationFailure(
+      `finishList got a next position that is not one: ${String(draft.left.message).slice(0, 500)}`,
+      { dispatch: "unknown" },
+    );
+  }
+  return { next_cursor: encodeListDraft(draft.right), ...fields };
 };
