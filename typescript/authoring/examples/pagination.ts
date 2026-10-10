@@ -43,9 +43,11 @@ const Listed = Schema.Struct({
 });
 
 // Append pagination on an observed list: "Show more" adds the next rooms to the same list, each
-// row named by its data-room-id. Each step waits for the rows it added. The control going is the
-// end of the list. A step that adds no identified row while nothing shows the list loading, with
-// the control still offered, is not proof of the end: the read says it is partial.
+// row named by its data-room-id. Each step waits for the rows it added. The control gone or
+// disabled after a step's rows arrived is the end of the list. A step that adds no identified row
+// is not proof of the end: one more read without a click decides, and the end is only the rows
+// still not grown with the control still gone or disabled; with the control still offered, the
+// read says it is partial.
 // Adapt every role, name and attribute from your own session's evidence.
 export const readRooms = defineOperation(
   {
@@ -107,10 +109,18 @@ export const readRooms = defineOperation(
             if (step === 20) return { rows: found.rows, end: "step_cap" };
             if ((await more.count()) !== 1 || !(await more.isEnabled())) return { rows: found.rows, end: "list_end" };
             const before = found.rows.length;
-            found = await read(Math.min(limit, before + pageSize), () => more.click({ timeout: waitLimits.action }));
-            // No rows added: the end only when the page stopped offering more.
-            if (found.rows.length === before)
-              return { rows: found.rows, end: (await more.count()) === 1 && (await more.isEnabled()) ? "stalled" : "list_end" };
+            const wanted = Math.min(limit, before + pageSize);
+            found = await read(wanted, () => more.click({ timeout: waitLimits.action }));
+            if (found.rows.length > before) continue;
+            // No rows added. Many sites hide or disable the control while a step loads, and a load
+            // the wait cannot see (another domain's API, a timer) can outlast it, so a control gone
+            // now is not yet the end. Read once more without a click: the end is only rows that
+            // still did not grow with the control still gone or disabled. A control still offered
+            // after a step that added nothing is a stalled list, said as partial.
+            found = await read(wanted);
+            if (found.rows.length > before) continue;
+            const offered = (await more.count()) === 1 && (await more.isEnabled());
+            return { rows: found.rows, end: offered ? "stalled" : "list_end" };
           }
           return { rows: found.rows, end: "limit" };
         }

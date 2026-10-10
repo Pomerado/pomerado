@@ -786,10 +786,10 @@ const besideRows = (page: Page, sign: string, more = false) =>
       for (const button of document.querySelectorAll("button")) button.onclick = () => setTimeout(() => add(8, 12), 100);
     </script>`);
 
-const shortRead = (count: number, action = false) => `
+const shortRead = (count: number, action = false, noProgressMs = 400) => `
   const started = Date.now();
   const { rows } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
-    count: ${count}, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+    count: ${count}, key: { attribute: "data-id" }, noProgressMs: ${noProgressMs}, stableMs: 100, unchangedMs: 300, timeout: 8000,
     ${action ? 'action: () => page.getByRole("button", { name: "Show more" }).click({ timeout: 1000 }),' : ""}
   });
   return { count: rows.length, ms: Date.now() - started };`;
@@ -811,10 +811,11 @@ for (const sign of ["sentinel", "wrapper"])
     page,
   }) => {
     await besideRows(page, sign, true);
-    const answer = await call(page, shortRead(20, true));
+    // A 4 s no-progress window: a sign held as new would keep the short list at least that long.
+    const answer = await call(page, shortRead(20, true, 4000));
     expect(answer.error).toBeUndefined();
     const result = answer.result as { count: number; ms: number };
     expect(result.count).toBe(12);
     // The sign was there before the click, so it is the page's own: no hold.
-    expect(result.ms).toBeLessThan(1200);
+    expect(result.ms).toBeLessThan(3000);
   });

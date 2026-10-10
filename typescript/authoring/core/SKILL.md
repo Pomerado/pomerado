@@ -442,8 +442,9 @@ long as it shows, changes in that part count as progress, and so do the site's o
 every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
 while it is new, so a decoration holds a wait for at most the no-progress window; `waitForRows`
 also waits while one shows beside its rows, never inside one, and for the requests its `action`
-started. A request already in flight when a wait starts is not seen: on a page still loading its
-list, name its loading sign as `loading`. Read results;
+started. Without an `action`, a list beside a loader that never leaves costs about one
+no-progress window. A request already in flight when a wait starts is not seen: on a page still
+loading its list, name its loading sign as `loading`. Read results;
 return an empty list for a listing's empty state;
 throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
 asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an

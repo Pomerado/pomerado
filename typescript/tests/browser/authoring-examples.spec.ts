@@ -517,7 +517,7 @@ test("append example ends at the control going beside a loader the page always s
     description: "The first page's loader counts until it held for the runtime's fixed 8 s no-progress window.",
   });
   await appendingRooms(page, 4, "removed", true);
-  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+  expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
     Either.right({ rooms: roomList(4), coverage: "complete" }),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
@@ -540,7 +540,7 @@ test("append example reports a step that adds no rows while Show more stays as p
       "A step that adds nothing ends only once the rows held unchanged for the helper's fixed two seconds.",
   });
   await appendingRooms(page, 2, "stuck");
-  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+  expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
     Either.right({
       rooms: roomList(2),
       coverage: "partial",
@@ -550,9 +550,15 @@ test("append example reports a step that adds no rows while Show more stays as p
   await expect(page.locator("#clicks")).toHaveText("1");
 });
 
-// A rooms site whose "Show more" asks the site's API for the next two rooms, which answers after
-// `delayMs`, while a spinner shows below the list.
-const slowAppendingRooms = async (page: Page, delayMs: number) => {
+// A rooms site whose "Show more" loads the next two rooms after `delayMs`, through the site's API or
+// a timer, while a spinner shows below the list and the control is hidden or disabled; once every
+// room shows, the control goes.
+const slowAppendingRooms = async (
+  page: Page,
+  delayMs: number,
+  via: "request" | "timer" = "request",
+  whileLoading: "kept" | "hidden" | "disabled" = "kept",
+) => {
   const origin = "https://rooms.example.test";
   await page.route(`${origin}/**`, async (route) => {
     const url = new URL(route.request().url());
@@ -572,7 +578,10 @@ const slowAppendingRooms = async (page: Page, delayMs: number) => {
         button.onclick = async () => {
           document.querySelector("#clicks").textContent++;
           document.querySelector("#status").innerHTML = '<div class="spinner" style="height: 20px"></div>';
-          await fetch("/more");
+          if (${JSON.stringify(whileLoading)} === "hidden") button.hidden = true;
+          if (${JSON.stringify(whileLoading)} === "disabled") button.disabled = true;
+          if (${JSON.stringify(via)} === "request") await fetch("/more");
+          else await new Promise((resolve) => setTimeout(resolve, ${delayMs}));
           document.querySelector("ul").insertAdjacentHTML("beforeend",
             '<li data-room-id="room-3"><span class="name">East room</span></li><li data-room-id="room-4"><span class="name">West room</span></li>');
           document.querySelector("#status").innerHTML = "";
@@ -583,6 +592,20 @@ const slowAppendingRooms = async (page: Page, delayMs: number) => {
   });
   await page.goto(`${origin}/`);
 };
+
+for (const whileLoading of ["hidden", "disabled"] as const)
+  test(`append example never calls a control ${whileLoading} while a step loads the end of the list`, async ({
+    page,
+  }) => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "The step loads for 10 s without a request the wait can see, past the runtime's fixed 8 s window.",
+    });
+    await slowAppendingRooms(page, 10_000, "timer", whileLoading);
+    const { result } = await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 40_000 });
+    // Every room, or the rooms read so far said to be partial: never a short list called complete.
+    expect(result).toEqual(Either.right({ rooms: roomList(4), coverage: "complete" }));
+  });
 
 test("append example waits for a step whose rooms take longer than the request hold", async ({ page }) => {
   test.info().annotations.push({

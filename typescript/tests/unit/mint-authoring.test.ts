@@ -710,11 +710,11 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["a22635e28b35a85e993a897f2a04bb17c6c76cda29cf9bde095191133df3184b", "core"],
+    ["d8431d5863b9b4dc1a6f35dd48273d6bd574b425d8ce60833a46d6b797d7aca8", "core"],
     ["a07d4da00748f6ac71acec9dc6f287f583f9e80871eb3ee4aa0fb4e1ad4070f5", "search"],
     ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
     ["d118f146eba0b2f1ff9782812886281617265c6157fdd5a6709c0cb5a07695e6", "testing"],
-    ["0f576e242cd5b09e7c8a5aae6ca31ff54ed58b3657cdc4f926c7ae1a3b440eee", "pagination"],
+    ["b7fc597230df85f21a15ddc3355ea9c8095d0977a7aead099470d92c136d49c4", "pagination"],
     ["6470768cbe2c563e9c8895b6e25f0f5c1507633b6088404b55e72530884fe2a4", "forms"],
     ["09e84954722f44a2a527ebd259777380bb7f978431c5952db02cb5289c11422c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
