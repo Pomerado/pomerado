@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serialize } from "node:v8";
@@ -54,6 +54,32 @@ const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
 const refusalOf = (detail: { readonly field?: string; readonly available?: readonly string[] }) =>
   detail.field === undefined && detail.available === undefined ? {} : { refusal: detail };
+/** The longest frame the protocol carries. */
+const maximumFrameLength = 300;
+/**
+ * The first frame of an error's stack, or its causes', in the authored source this child staged
+ * (under src/, explore/, test/ or scratch/), as `path:line` relative to the staging directory.
+ * Undefined when none is found or the stack cannot be read.
+ */
+const authoredFrame = (error: unknown): string | undefined => {
+  try {
+    const root = pathToFileURL(`${realpathSync(process.cwd())}/`).href;
+    for (let cause = error, depth = 0; cause instanceof Error && depth < 4; depth++) {
+      for (const line of (cause.stack ?? "").split("\n").slice(1)) {
+        const match = /(file:\/\/[^\s)]+?):(\d+):\d+\)?\s*$/u.exec(line);
+        const url = match?.[1];
+        if (url === undefined || !url.startsWith(root)) continue;
+        const path = decodeURIComponent(url.slice(root.length));
+        if (/^(?:src|explore|test|scratch)\//u.test(path))
+          return `${path}:${match?.[2] ?? ""}`.slice(-maximumFrameLength);
+      }
+      cause = cause.cause;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
@@ -422,8 +448,9 @@ await Effect.runPromise(
   }).pipe(
     Effect.catchAll((error) =>
       journalState.pipe(
-        Effect.flatMap((metadata) =>
-          send({
+        Effect.flatMap((metadata) => {
+          const frame = authoredFrame(error);
+          return send({
             kind: "error",
             error: error.message || error.name,
             ...metadata,
@@ -431,6 +458,7 @@ await Effect.runPromise(
             ...("sessionLoss" in error && error.sessionLoss === "session_not_kept"
               ? { sessionLoss: "session_not_kept" }
               : {}),
+            ...(frame === undefined ? {} : { frame }),
             ...(error instanceof InvalidInput && error.issues !== undefined
               ? { inputIssues: error.issues }
               : {}),
@@ -443,8 +471,8 @@ await Effect.runPromise(
               : "_tag" in error && typeof error._tag === "string"
                 ? { code: error._tag }
                 : {}),
-          }),
-        ),
+          });
+        }),
       ),
     ),
   ),

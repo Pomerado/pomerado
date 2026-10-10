@@ -10,6 +10,11 @@ import type { InputIssue } from "../runtime/errors.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
+import {
+  LiveTestRecord,
+  type LiveTestBatchCase,
+  type LiveTestCaseRun,
+} from "./live-tests.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
   OriginalPolicyFailureCode,
@@ -532,7 +537,7 @@ export const ExecutionRequest = Schema.Struct({
   testInput: Schema.optional(
     Schema.String.pipe(Schema.minLength(2), Schema.maxLength(16_384)).annotations({
       description:
-        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. At most 2 per attempt. Omit it to run the caller's input.",
+        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. A signed-in read runs at most 4 per attempt; a read signed out has no limit, and runs a planned batch in parallel with live_tests. Omit it to run the caller's input.",
     }),
   ),
   /** Only on authenticate, and only where the host offers autofill sign-in. */
@@ -549,6 +554,77 @@ export const ExecutionRequest = Schema.Struct({
 export type ExecutionRequest = typeof ExecutionRequest.Type;
 /** The execute tool's input where the host offers no autofill sign-in: no `signInStep`. */
 export const ManagedSignInExecutionRequest = ExecutionRequest.omit("signInStep");
+
+/**
+ * What a host provides for a read's live tests. The minting agent plans cases in
+ * `test/cases.json`, from a checklist the harness derives from the tool's schemas, and runs them
+ * in batches. Live test cases never count toward a signed-in read's four agent-chosen tests: a
+ * batch runs only on a read that has not signed in.
+ */
+export interface LiveTestHost {
+  /**
+   * The current source's declared input and output JSON Schemas for `entrypoint`, read offline
+   * without running the operation.
+   */
+  readonly schemas: (
+    entrypoint: string,
+  ) => Effect.Effect<{ readonly input: unknown; readonly output: unknown }, MintFailure>;
+  /**
+   * Runs one batch on the workspace's current source, whose digest is `batch.sourceDigest`. It
+   * MUST first have Guardian review the whole batch once, as a live test of a read whose
+   * `currentExecution.input` is `agent_chosen_batch` and whose submitted input lists every case's
+   * input, and run nothing unless Guardian allows it. Then it runs each case like an example:
+   * a fresh script process on a page reset to the site's origin with the site's data cleared, in
+   * the build's browser or, at most `batch.workers` at once, on separate fresh browsers opened
+   * like it, never in tabs of one browser. `runLiveTestCase` runs a case and its next page. A
+   * case a host problem, a challenge or the deadline stopped is `inconclusive`; a case not run by
+   * `batch.deadlineAt` (epoch milliseconds) is `inconclusive` with reason `deadline`.
+   */
+  readonly run: (batch: LiveTestBatch) => Effect.Effect<LiveTestBatchResult, MintFailure>;
+  /** The most browsers this host runs a batch on at once, the build's own included. */
+  readonly maxWorkers: number;
+}
+
+/** One batch of a read's live test cases. */
+export interface LiveTestBatch {
+  readonly entrypoint: string;
+  readonly sourceDigest: string;
+  readonly cases: readonly LiveTestBatchCase[];
+  /** How many cases may run at once, each on its own browser; 1 to the host's `maxWorkers`. */
+  readonly workers: number;
+  /** When the batch must end, in epoch milliseconds. */
+  readonly deadlineAt: number;
+}
+
+export type LiveTestBatchResult =
+  | {
+      readonly status: "ran";
+      readonly reviewId?: string;
+      readonly cases: readonly LiveTestCaseRun[];
+      /** How many browsers the cases ran on. */
+      readonly lanes: number;
+      /** Browsers the host closed after a challenge; their cases moved to the build's browser. */
+      readonly challengeStops?: number;
+    }
+  | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
+
+/**
+ * The live_tests tool: `plan` shows the checklist the host derived from the tool's schemas, the
+ * cases in `test/cases.json` and each case's latest result (with full outputs for the cases
+ * named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * after one Guardian review, at most `maxWorkers` at once on separate fresh browsers.
+ */
+export const LiveTestsRequest = Schema.Struct({
+  action: Schema.Literal("plan", "run"),
+  entrypoint: Schema.String,
+  cases: Schema.NullOr(
+    Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))).pipe(
+      Schema.maxItems(50),
+    ),
+  ),
+  maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
+});
+export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 
 export const CaptureRequest = Schema.Struct({
   kind: Schema.Literal("full", "response"),
@@ -1076,6 +1152,8 @@ export interface MintActions {
   readonly requestBrowserRecovery?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Tests a signed-in marker; reports the check unavailable where the host has none. */
   readonly checkSignedInMarker?: (input: unknown) => Effect.Effect<string, MintFailure>;
+  /** A read's planned live tests (`LiveTestsRequest`); absent where the host runs none. */
+  readonly liveTests?: (input: unknown) => Effect.Effect<string, MintFailure>;
 }
 
 /**
@@ -1206,6 +1284,11 @@ export interface ExampleJournal {
 
 export interface MintHarnessSnapshot {
   readonly executions: readonly ExecutionEvidence[];
+  /**
+   * Each live test case's latest result, so a takeover keeps them. Optional, so a rollout's old
+   * and new workers each restore the other's checkpoint.
+   */
+  readonly liveTests?: readonly LiveTestRecord[];
   /**
    * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and
    * source digests, so a takeover tracks them, and refuses their repeats, even when the
@@ -1371,6 +1454,7 @@ const HarnessTerminal = Schema.Struct({
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
+  liveTests: Schema.optionalWith(Schema.Array(LiveTestRecord), { exact: true }),
   outcomeWrites: Schema.optionalWith(Schema.Array(OutcomeWrite), { exact: true }),
   purposes: Schema.Array(
     Schema.Struct({
@@ -1718,6 +1802,11 @@ export interface MintDependencies {
   readonly checkSignedInMarker?: (
     marker: SignedInMarkerCheckRequest,
   ) => Effect.Effect<SignedInMarkerCheck, MintFailure>;
+  /**
+   * Runs a read's planned live tests in batches (`LiveTestHost`). Absent, the minter is offered
+   * no live_tests tool and tests one input at a time with execute.
+   */
+  readonly liveTests?: LiveTestHost;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   readonly projection: MintProjection;
@@ -1762,6 +1851,12 @@ export interface MintDependencies {
   readonly publish: (
     request: PublicationRequest,
     evidence: ExecutionEvidence,
+    /**
+     * Host evidence for the publication review. `liveTests` is the harness's record of a read's
+     * live tests on the source it publishes: the host gives it to the review as the host-owned,
+     * unpublished file `publication/tests.json`. Never a reason to refuse publication by itself.
+     */
+    hostEvidence?: { readonly liveTests?: object },
   ) => Effect.Effect<MintCompletion, MintFailure>;
   /** Absent when this host never publishes past unresolved input feedback. */
   readonly inputFeedbackFallback?: InputFeedbackFallback;

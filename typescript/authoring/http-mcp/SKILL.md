@@ -72,7 +72,8 @@ HTTP implementation, `src/tool-http.mjs`, of the same operation. Build them in t
    `readJson(http, request, schema)` answers the decoded value, and `readText(http, request)`
    answers `{ text, response }`, so destructure it for an HTML or text body:
    `const { text } = yield* readText(http, request)`.
-6. Test it, as below. A read gets one live test; a write iterates offline until it works.
+6. Test it, as below. A read iterates live like the Playwright version; a write iterates
+   offline until it works.
 
 Preserve semantics: method, query and body roles, redirects, account, ordering and
 response meaning. Compare IDs, filters, units, freshness, coverage and empty or error
@@ -155,10 +156,8 @@ refuses literal tokens.
   sign-in for a signed-in read, or with exploration cookies and storage cleared for an
   anonymous one. So it cannot pass on state exploration left. The host records the
   result as the HTTP version's live evidence: transport, duration and output schemas.
-  Compare its output with the example's IDs, counts and fields. If that one test fails, do
-  not test again: say why in coverage, delete `src/tool-http.mjs` and publish the Playwright
-  version alone. Get the parsing right offline first, against the recorded exchanges, so the
-  one live test counts.
+  Compare its output with the example's IDs, counts and fields. Get the parsing right offline
+  first, against the recorded exchanges, then iterate live until it matches.
 - **Read why it failed:** a failed execution's `result.cause.class` says where the failure
   came from. `transport`: the relay, proxy or provider could not complete the request, so the
   site's answer never came back; `cause.http` has the request, `transport`, `durationMs`, the

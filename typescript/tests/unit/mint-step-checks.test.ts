@@ -29,10 +29,11 @@ const agentTest = (input: unknown) =>
 const chosen = { input: "agent_chosen" as const };
 
 describe("preflightTestInput", () => {
-  it("runs a read's live tests on inputs the agent picks, at most four", () => {
+  it("runs a signed-in read's live tests on inputs the agent picks, at most four", () => {
     const scope = (history: readonly { readonly input?: "agent_chosen" }[]) => ({
       buildEffect: "read" as const,
       executionHistory: history,
+      signedIn: true,
     });
     const ran = (count: number) => Array.from({ length: count }, () => chosen);
     expect(preflightTestInput(agentTest({ amountMinor: 12 }), scope([]))).toBeUndefined();
@@ -40,10 +41,27 @@ describe("preflightTestInput", () => {
     expect(preflightTestInput(agentTest({ amountMinor: 78 }), scope(ran(3)))).toBeUndefined();
     expect(preflightTestInput(agentTest({ amountMinor: 91 }), scope(ran(4)))).toEqual({
       supported: false,
-      reason: expect.stringContaining("already ran 4 live tests with an input you chose"),
+      reason: expect.stringContaining("already ran 4 live tests with an input you chose, the most a signed-in read allows"),
     });
     // A step without testInput is the caller's input, whatever the count.
     expect(preflightTestInput(request(), scope(ran(4)))).toBeUndefined();
+  });
+
+  it("runs as many as a read signed out needs, and keeps the limit where the host does not say", () => {
+    const ran = Array.from({ length: 12 }, () => chosen);
+    expect(
+      preflightTestInput(agentTest({ amountMinor: 12 }), {
+        buildEffect: "read",
+        executionHistory: ran,
+        signedIn: false,
+      }),
+    ).toBeUndefined();
+    expect(
+      preflightTestInput(agentTest({ amountMinor: 12 }), {
+        buildEffect: "read",
+        executionHistory: ran,
+      }),
+    ).toMatchObject({ supported: false });
   });
 
   it("counts an agent-chosen input the operation rejected, and not a test Guardian denied", () => {

@@ -17,7 +17,7 @@ interface Refusal {
 }
 const refused = (reason: string): Refusal => ({ supported: false, reason });
 
-/** Live read tests an attempt may run on an input the agent chose. */
+/** Live tests a signed-in read may run per attempt on an input the agent chose. */
 const maximumAgentTestInputs = 4;
 /** Why an agent-chosen test input that is not JSON text never runs. */
 export const testInputNotJson =
@@ -26,14 +26,17 @@ const JsonText = Schema.parseJson();
 
 /**
  * Preflight's refusal of a step's `testInput`, if any. Only a read's live test may run an input
- * the agent chose, at most four per attempt, counted from the history's `agent_chosen` marks; a
- * test Guardian denied never ran and left none.
+ * the agent chose. A read signed out runs as many as it needs. A signed-in read runs at most four
+ * per attempt, counted from the history's `agent_chosen` marks; a test Guardian denied never ran
+ * and left none. A host that does not say whether the read signed in keeps the limit.
  */
 export const preflightTestInput = (
   submitted: ExecutionRequest,
   scope: {
     readonly buildEffect: MintRequest["effect"] | undefined;
-    readonly executionHistory: readonly { readonly input?: "agent_chosen" }[];
+    readonly executionHistory: readonly { readonly input?: "agent_chosen" | "agent_chosen_batch" }[];
+    /** Whether the read signed in; a read signed out has no limit on agent-chosen tests. */
+    readonly signedIn?: boolean;
   },
 ): Refusal | undefined => {
   if (submitted.testInput === undefined) return undefined;
@@ -47,10 +50,11 @@ export const preflightTestInput = (
     );
   if (Option.isNone(Schema.decodeUnknownOption(JsonText)(submitted.testInput)))
     return refused(testInputNotJson);
+  if (scope.signedIn === false) return undefined;
   const chosen = scope.executionHistory.filter((entry) => entry.input === "agent_chosen").length;
   return chosen >= maximumAgentTestInputs
     ? refused(
-        `This attempt already ran ${maximumAgentTestInputs} live tests with an input you chose, the most it allows. Run a live test with the caller's input (omit testInput) or publish. Nothing was executed.`,
+        `This attempt already ran ${maximumAgentTestInputs} live tests with an input you chose, the most a signed-in read allows. Run a live test with the caller's input (omit testInput) or publish. Nothing was executed.`,
       )
     : undefined;
 };

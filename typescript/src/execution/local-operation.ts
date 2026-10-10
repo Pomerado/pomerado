@@ -87,6 +87,8 @@ export class LocalOperationFailure extends Error {
   readonly sessionLoss?: "session_not_kept";
   /** The input a script's `InvalidInput` named and the choices the page offers for it. */
   readonly refusal?: InputRefusalDetail;
+  /** The authored source line that threw, such as `src/tool.mjs:12`, when the child named one. */
+  readonly frame?: string;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -98,12 +100,14 @@ export class LocalOperationFailure extends Error {
       readonly reported?: boolean;
       readonly sessionLoss?: "session_not_kept";
       readonly refusal?: InputRefusalDetail;
+      readonly frame?: string;
     } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
     if (options.refusal !== undefined) this.refusal = options.refusal;
+    if (options.frame !== undefined) this.frame = options.frame;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -288,6 +292,7 @@ const handleTerminalMessage = (
           {
             ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
             ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+            ...(message.frame === undefined ? {} : { frame: message.frame }),
           },
         ),
       ),

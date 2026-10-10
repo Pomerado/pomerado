@@ -21,6 +21,7 @@ import { holdsFileHandle } from "../mint/file-handles.js";
 import { fileReadback } from "../mint/file-readback.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { sourceDigest } from "../mint/step-checks.js";
+import { liveTestsEvidencePath } from "../mint/live-tests.js";
 import { checkWriteSession } from "../mint/write-session.js";
 import type { MintState } from "./mint-state.js";
 import { SignInOrigin } from "./contracts.js";
@@ -162,7 +163,7 @@ export const screenedSignIn = <E>(
 
 export const mintPublication =
   (state: MintState): MintDependencies["publish"] =>
-  (publication, evidence) =>
+  (publication, evidence, hostEvidence) =>
     Effect.gen(function* () {
       const { runs, workspace, context, writeSession } = state;
       const { secrets, browser } = state.session;
@@ -302,7 +303,17 @@ export const mintPublication =
                   completed: evidence.status === "completed",
                   schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
                 }),
-                files: new Map([[exampleOutputPath, output.text]]),
+                files: new Map([
+                  [exampleOutputPath, output.text],
+                  ...(hostEvidence?.liveTests === undefined
+                    ? []
+                    : [
+                        [
+                          liveTestsEvidencePath,
+                          JSON.stringify(hostEvidence.liveTests, null, 2),
+                        ] as const,
+                      ]),
+                ]),
                 baseline,
                 intentDerivedInput: sample.intentDerivedInput,
               };

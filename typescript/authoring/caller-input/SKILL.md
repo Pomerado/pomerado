@@ -18,7 +18,8 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
 - a fact only the caller has that the site now asks for.
 
 Never ask for a value the request, the input or an earlier answer already supplied, a private
-one included: use that value. In the tool, take it from its input, or a private one, such as
+one included: use that value. Never undo an answer that declined something by doing it anyway
+or by offering it as an input (core skill). In the tool, take it from its input, or a private one, such as
 part of an identity number, through a declared `secret` question, never a plain-text field.
 When question review finds a question redundant, remove the ask and use the supplied value; a
 reworded question still asks for it again. A placeholder that stands in for a redacted value,

@@ -140,6 +140,8 @@ export const LocalOperationMessage = Schema.Union(
     tag: Schema.optionalWith(Schema.String, { exact: true }),
     /** The host could not sign the page in again (`ensureSignedIn`). */
     sessionLoss: Schema.optionalWith(Schema.Literal("session_not_kept"), { exact: true }),
+    /** The authored source line that threw, such as `src/tool.mjs:12`, when the stack names one. */
+    frame: Schema.optionalWith(Schema.String.pipe(Schema.maxLength(300)), { exact: true }),
     inputIssues: Schema.optionalWith(
       Schema.Array(InputIssue).pipe(Schema.maxItems(maximumInputIssues)),
       { exact: true },
