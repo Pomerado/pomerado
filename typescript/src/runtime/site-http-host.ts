@@ -64,6 +64,14 @@ const absoluteUrl = (value: unknown): URL | undefined => {
   }
 };
 
+const safeIdentifier = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
+
+/** An invalid header name described without quoting it: it may be a pasted header line. */
+const describeInvalidHeaderName = (name: string): string => {
+  const at = [...name].findIndex((char) => !headerName.test(char));
+  return `a header name of ${name.length} characters whose character ${at + 1} is not allowed in a name`;
+};
+
 /**
  * The first request-check rule the request breaks, checked in the order the fields are written,
  * or undefined. The transport's capabilities are checked after the request decodes.
@@ -84,7 +92,8 @@ const requestRefusal = (input: unknown): HttpRequestRefusal | undefined => {
     if (typeof headers !== "object" || headers === null || Array.isArray(headers))
       return { rule: "request_invalid", detail: "headers is not an object of strings" };
     for (const [name, value] of Object.entries(headers)) {
-      if (!headerName.test(name)) return { rule: "header_name_invalid", header: name };
+      if (!headerName.test(name))
+        return { rule: "header_name_invalid", detail: describeInvalidHeaderName(name) };
       if (typeof value !== "string") return { rule: "header_value_not_text", header: name };
       if (/[\r\n]/.test(value)) return { rule: "header_value_newline", header: name };
     }
@@ -109,13 +118,16 @@ const requestRefusal = (input: unknown): HttpRequestRefusal | undefined => {
     if (!Array.isArray(requires))
       return { rule: "request_invalid", detail: "requires is not a list of capabilities" };
     const unknown: unknown = requires.find((capability) => !capabilities.has(capability));
-    if (unknown !== undefined)
-      return { rule: "capability_unsupported", capability: String(unknown).slice(0, 96) };
+    if (unknown !== undefined) {
+      return typeof unknown === "string" && safeIdentifier.test(unknown)
+        ? { rule: "capability_unsupported", capability: unknown }
+        : { rule: "capability_unsupported", detail: "a capability that is not a plain identifier" };
+    }
   }
   return undefined;
 };
 
-/** The refused request's method and URL, without any user:password in the URL. */
+/** The refused request's method and URL, without the URL's user:password, query or fragment. */
 const refusedRequest = (input: unknown) => {
   if (typeof input !== "object" || input === null) return {};
   const method: unknown = Reflect.get(input, "method");
@@ -125,8 +137,10 @@ const refusedRequest = (input: unknown) => {
   if (url !== undefined) {
     url.username = "";
     url.password = "";
+    url.search = "";
+    url.hash = "";
   }
-  const shown = url?.href ?? (raw.includes("@") ? "" : raw);
+  const shown = url?.href ?? (raw.includes("@") ? "" : (raw.split(/[?#]/, 1)[0] ?? ""));
   return shown === ""
     ? {}
     : { request: { method: method.slice(0, 16), url: shown.slice(0, 2048) } };

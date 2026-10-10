@@ -160,7 +160,6 @@ describe("requests SiteHttp refuses or bounds", () => {
       [
         { url: "/a", method: "GET", headers: { ":authority": "shop.example" } },
         "header_name_invalid",
-        { header: ":authority" },
       ],
       [
         { url: "/a", method: "GET", headers: { accept: "text/html\r\nx: y" } },
@@ -199,6 +198,70 @@ describe("requests SiteHttp refuses or bounds", () => {
     const result = await request(shop, { url: "https://user:secret@shop.example/a", method: "GET" });
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(result._tag === "Left" ? result.left.message : "").not.toContain("secret");
+  });
+
+  it("never echoes request text that may hold a secret in a refusal", async () => {
+    const cases: readonly (readonly [string, unknown, string, string])[] = [
+      [
+        "a header line sent as a header name",
+        { url: "/a", method: "GET", headers: { "authorization: Bearer tok123": "x" } },
+        "header_name_invalid",
+        "tok123",
+      ],
+      [
+        "a fragment",
+        { url: "https://shop.example/a?id=1#access_token=tok123", method: "GET" },
+        "url_has_fragment",
+        "tok123",
+      ],
+      [
+        "a query value on a refused request",
+        { url: "https://shop.example/a?key=tok123", method: "TRACE" },
+        "method_unsupported",
+        "tok123",
+      ],
+      [
+        "a capability that is not an identifier",
+        { url: "/a", method: "GET", requires: ["Bearer tok123"] },
+        "capability_unsupported",
+        "tok123",
+      ],
+      [
+        "a body that is not text",
+        { url: "/a", method: "POST", body: { token: "tok123" } },
+        "request_invalid",
+        "tok123",
+      ],
+      [
+        "headers that are not an object",
+        { url: "/a", method: "GET", headers: ["tok123"] },
+        "request_invalid",
+        "tok123",
+      ],
+      [
+        "requires that is not a list",
+        { url: "/a", method: "GET", requires: "tok123" },
+        "request_invalid",
+        "tok123",
+      ],
+      ["a request that is not an object", "tok123", "request_invalid", "tok123"],
+    ];
+    for (const [label, sent, rule, secret] of cases) {
+      const shop = await site({ direct: json({}, "kernel-curl") });
+      const result = await request(shop, sent);
+      expect(result, label).toMatchObject({
+        left: { _tag: "HttpFailure", dispatch: "not_sent", refusal: { rule } },
+      });
+      expect(JSON.stringify(result), label).not.toContain(secret);
+      expect(result._tag === "Left" ? result.left.message : "", label).toContain(rule);
+      expect(shop.sent, label).toHaveLength(0);
+    }
+  });
+
+  it("names the field a non-text body breaks, not its value", async () => {
+    const shop = await site({ direct: json({}, "kernel-curl") });
+    const result = await request(shop, { url: "/a", method: "POST", body: { token: "tok123" } });
+    expect(result._tag === "Left" ? result.left.message : "").toContain("body");
   });
 
   it("bounds a response with a limit alone, on a transport without the buffered contract", async () => {

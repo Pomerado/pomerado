@@ -189,8 +189,8 @@ refuses literal tokens.
   a relay timeout on the transport is `transport`. `parsing` with `code: "invalid_response"`
   means the provider's envelope did not decode, not the site's body. `destination_status`
   with `code: "response_too_large"` and a 2xx status means the site answered normally with a
-  body over the limit: fetch less (a narrower page or API call), don't treat it as an error
-  page.
+  body over the limit: fetch less (a narrower page or API call), or drop a `maxResponseBytes`
+  you set below the 8 MiB default; don't treat it as an error page.
   `readText` and `readJson` classify the site's answers; an error you throw yourself has no
   cause unless it keeps the `HttpFailure` as its `cause`.
 - **Write:** the real write is the act session, which runs the Playwright version; the

@@ -109,7 +109,7 @@ export interface HttpRequestRefusal {
 const refusalFixes: Record<HttpRequestRule, string> = {
   request_invalid:
     "send { url, method, headers?, body?, requires?, timeoutMs?, maxResponseBytes? } with text values",
-  url_not_absolute: "use an absolute http(s) URL or a site path that starts with one /",
+  url_not_absolute: "use an absolute http(s) URL, or a site path that starts with one / when the host knows the site's origin",
   url_has_credentials: "leave user:password out of the URL",
   url_has_fragment: "leave the #fragment out of the URL",
   method_unsupported: "use GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS, in capitals",
