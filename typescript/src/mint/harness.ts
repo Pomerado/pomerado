@@ -780,7 +780,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       const availabilityInstruction = () => {
         if (executionClosed)
-          return "Live execution has ended for this attempt, but its eligible retained receipt can still be published. Correct source if needed and call finish_build with that receipt's executionId; do not execute again. request_input is still available when publication needs something only the user knows. ";
+          return "Live execution has ended for this attempt, but its eligible retained receipt can still be published: call finish_build with that receipt's executionId while the source it ran is unchanged (a host may also accept a change confined to the output schema); do not execute again. A correction that changes what runs needs a fresh example, which needs live execution, so end with report_blocked reason host_unavailable, never policy. request_input is still available when publication needs something only the user knows. ";
         switch (dependencies.executionAvailability?.()) {
           case "host_unavailable":
             return "The execution host is unavailable. End this attempt; preserve existing receipts and unresolved effects. Source edits or user input cannot restore this host. ";
