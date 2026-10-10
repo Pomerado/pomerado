@@ -18,7 +18,8 @@ and boxes, toggles, and every group that is collapsed, scrolled out of view or b
 filters", "More" or "Show all" button (core skill, the input schema). Make every
 control that narrows or orders the results an optional input wired to its control, even one the
 request never names; leave out only controls that change neither which results come back nor
-their order, such as a layout or language switch.
+their order, such as a layout or language switch. A safety default (core skill) is not an input
+either, and the tool turns it off.
 
 - Take each input's choices from the site. When it offers the same choices for every query, the
   enum lists all of them as the page shows them. When they depend on the query, such as sizes or
