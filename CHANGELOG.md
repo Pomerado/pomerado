@@ -289,6 +289,7 @@
 - Guardian's execution policy counts searching with the site's broader setting or its default as a routine implementation choice when the site's form has no setting for a request's constraint, such as a cabin class with only "Show all".
 - The auth skill says that on a one-time-code screen the minter prefers one read that finds the code fields, the submit and any remember-this-device box, then sends the code step at once, since codes expire in minutes. When the site refuses a code, it prefers clicking the site's resend control before the caller is asked for a new code.
 - The core skill tells the minter never to search the open web for the page a task needs, but to make its URL an input and ask the caller for it.
+- The writes skill tells the minter to prefer marking the commit at the step that submits the booking or order. A hold that expires on its own, such as a reserved table or a cart timer, is not the commit.
 
 ### Fixes
 

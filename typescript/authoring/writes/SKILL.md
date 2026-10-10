@@ -111,6 +111,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   submission: the task may already be complete. The host cannot see a
   commit sent as a GET link or over a websocket, so the mark is its evidence of
   whether the commit step ran.
+- Prefer marking the commit at the step that submits the booking or order. A hold that
+  expires on its own, such as a reserved table or a cart timer, is not the commit.
 - The host refuses an `act` step whose source is unchanged since it ran and sent
   state-changing requests: submitting it again could commit twice.
 - Read `stateChangingRequests` on every step. It lists the commit your step caused,
