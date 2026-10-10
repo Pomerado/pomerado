@@ -34,8 +34,11 @@ export interface WriteDeclaration {
   readonly commits?: readonly string[];
 }
 
-/** A commit mark's name: short lowercase words joined by hyphens, never a runtime value. */
-export const commitMarkPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+/**
+ * A commit mark's name: a short identifier, a letter then letters, digits, hyphens or underscores,
+ * such as `place-order`, `place_order` or `placeOrder`, never a runtime value.
+ */
+export const commitMarkPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 export const commitMarkMaxLength = 48;
 
 export interface Operation<Input, EncodedInput, Output, EncodedOutput, Error, Services> {

@@ -11,7 +11,8 @@ import { commitMarkMaxLength, commitMarkPattern } from "./operation.js";
 
 /**
  * A runner's report of a write's commit marks. Only authored mark names pass: a name is a short
- * hyphenated word list, so it can never carry a caller's value into host records.
+ * identifier with no spaces or punctuation beyond hyphens and underscores, so a caller's value
+ * such as an email address or a sentence never reaches host records as one.
  */
 const CommitReport = Schema.Struct({
   commits: Schema.Array(

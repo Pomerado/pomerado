@@ -42,6 +42,12 @@ describe("commit evidence", () => {
       evidence: "entered",
     },
     { report: { commits: [{ name: "save", state: "confirmed" }] }, evidence: "entered" },
+    // Any short identifier is a mark name: underscores and either case pass, as hyphens do.
+    { report: { commits: [{ name: "place_order", state: "sent" }] }, evidence: "entered" },
+    { report: { commits: [{ name: "placeOrder", state: "sent" }] }, evidence: "entered" },
+    // A space, a dot or more than 48 characters is not a mark name, so the report proves nothing.
+    { report: { commits: [{ name: "place.order", state: "sent" }] }, evidence: "unreported" },
+    { report: { commits: [{ name: `a${"b".repeat(48)}`, state: "sent" }] }, evidence: "unreported" },
   ])("reads $evidence from $report", ({ report, evidence }) => {
     expect(commitReportOf(report).evidence).toBe(evidence);
   });
@@ -52,6 +58,14 @@ describe("commit evidence", () => {
       marks: [{ name: "save", state: "sent" }],
     });
     expect(commitReportOf({})).toEqual({ evidence: "unreported" });
+  });
+
+  it("keeps a mark named with underscores or capitals, as the script entered it", () => {
+    const marks = [
+      { name: "save_address", state: "confirmed" },
+      { name: "placeOrder", state: "sent" },
+    ];
+    expect(commitReportOf({ commits: marks })).toEqual({ evidence: "entered", marks });
   });
 
   it.each([
