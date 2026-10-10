@@ -85,7 +85,10 @@ our automation.
 Not finding a value where you first looked is not that evidence. Before you call a value
 unavailable, check where the site would show it for the requested scope, such as the requested
 date's calendar or the results for the requested search. Settled evidence for the requested
-option, such as the site showing it as sold out or not offered, is enough.
+option, such as the site not listing it, is enough, and so is the site showing it sold out or
+unavailable for a write. A read that finds the requested option greyed out or sold out returns it
+as unavailable data with the page's alternatives instead (.agents/core/SKILL.md, "Configure,
+then read").
 
 When the site does not match the request exactly, tell two cases apart:
 
@@ -170,10 +173,15 @@ HTTP version (`src/tool-http.mjs`), which may build its requests from the caller
 **Read back every input before returning.** Read the page's own display of each input the
 site shows, such as the date picker, selected time, party size, passengers, cabin, applied
 filters, sort and selected options, and refuse a mismatch: the tool's code fails the run
-(`OperationFailure`) and never returns results for an input that did not apply. Echoed input, a
+(`OperationFailure`) and never returns results for an input that did not apply. Two cases return
+results with what applied instead: a number on a scale the site steps returns its applied bound,
+and a filter group the page disables for the results is reported as not offered
+(.agents/search/SKILL.md). Echoed input, a
 URL the tool built, a URL parameter, a box checked before the site applied it or the option's
 name elsewhere on the page does not show an input applied; read the site's committed state, such
-as the applied chip, the selected control or the results' own state. A detail read also checks
+as the applied chip, the selected control or the results' own state, and compare its text with
+the input normalized for case and whitespace. A location the caller supplied that did not apply
+throws `LocationNotApplied` instead (.agents/core/SKILL.md). A detail read also checks
 the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing
 tool: read .agents/search/SKILL.md before you settle its inputs.
 

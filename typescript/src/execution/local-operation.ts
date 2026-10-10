@@ -9,7 +9,10 @@ import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
 import type { InputIssue } from "../runtime/errors.js";
-import type { InputRefusalDetail } from "../runtime/operation-failure.js";
+import type {
+  InputRefusalDetail,
+  LocationNotAppliedDetail,
+} from "../runtime/operation-failure.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { asksAsDeclared } from "./declared-questions.js";
 import {
@@ -87,6 +90,8 @@ export class LocalOperationFailure extends Error {
   readonly sessionLoss?: "session_not_kept";
   /** The input a script's `InvalidInput` named and the choices the page offers for it. */
   readonly refusal?: InputRefusalDetail;
+  /** The location a script's `LocationNotApplied` named and what the page kept instead. */
+  readonly location?: LocationNotAppliedDetail;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -98,12 +103,14 @@ export class LocalOperationFailure extends Error {
       readonly reported?: boolean;
       readonly sessionLoss?: "session_not_kept";
       readonly refusal?: InputRefusalDetail;
+      readonly location?: LocationNotAppliedDetail;
     } = {},
   ) {
     super(message);
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
     if (options.refusal !== undefined) this.refusal = options.refusal;
+    if (options.location !== undefined) this.location = options.location;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -288,6 +295,7 @@ const handleTerminalMessage = (
           {
             ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
             ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+            ...(message.location === undefined ? {} : { location: message.location }),
           },
         ),
       ),

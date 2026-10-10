@@ -90,6 +90,73 @@ class InputRejected extends Error {
   }
 }
 
+/** The longest a location's site message may be. */
+export const maximumLocationMessageLength = 1000;
+
+/**
+ * A location the caller supplied that the page did not apply: the input that names it, the
+ * caller's value, what the page committed instead when it showed one, the tool's step that
+ * failed, and the page's own words when it showed an error.
+ */
+export interface LocationNotAppliedDetail {
+  readonly field: string;
+  readonly requested: string;
+  readonly applied?: string;
+  readonly step: string;
+  readonly siteMessage?: string;
+}
+
+/** A part's text, a finite number such as a numeric ZIP code included. */
+const boundedText = (value: unknown, limit: number) => {
+  const text = typeof value === "number" && Number.isFinite(value) ? String(value) : value;
+  return typeof text === "string" && text.trim() !== "" ? text.trim().slice(0, limit) : undefined;
+};
+
+/**
+ * The detail as a host may carry it, each part bounded; undefined when it lacks the field, the
+ * requested value or the step.
+ */
+export const boundedLocationDetail = (detail: unknown): LocationNotAppliedDetail | undefined => {
+  if (typeof detail !== "object" || detail === null) return undefined;
+  const at = (key: string, limit = maximumRefusalChoiceLength) =>
+    boundedText(Reflect.get(detail, key), limit);
+  const [field, requested, applied, step, siteMessage] = [
+    at("field"),
+    at("requested"),
+    at("applied"),
+    at("step"),
+    at("siteMessage", maximumLocationMessageLength),
+  ];
+  if (field === undefined || requested === undefined || step === undefined) return undefined;
+  return {
+    field,
+    requested,
+    ...(applied === undefined ? {} : { applied }),
+    step,
+    ...(siteMessage === undefined ? {} : { siteMessage }),
+  };
+};
+
+/**
+ * The page did not apply a location the caller supplied, such as a ZIP, address or store, after
+ * the tool's bounded retries. The run fails rather than return results for another place.
+ * Scripts throw it as `errors.LocationNotApplied`, after reading the page's committed location
+ * back: `new errors.LocationNotApplied(message, { field: "zip", requested: input.zip, applied,
+ * step: "store_save", siteMessage })`. `applied` is what the page kept, when it shows one;
+ * `siteMessage` is the page's own error, when it showed one. A location the site says it does
+ * not serve is the caller's to correct: that is `InvalidInput` with the places it offers.
+ */
+class LocationRejected extends Error {
+  override readonly name = "LocationNotApplied";
+  readonly _tag = "LocationNotApplied";
+  readonly location?: LocationNotAppliedDetail;
+  constructor(message: string, detail?: LocationNotAppliedDetail) {
+    super(message.slice(0, 4096));
+    const bounded = boundedLocationDetail(detail);
+    if (bounded !== undefined) this.location = bounded;
+  }
+}
+
 /** A site refused a sign-in value; its field kind contains no credential or page text. */
 export class CredentialsRejected extends Error {
   override readonly name = "CredentialsRejected";
@@ -147,6 +214,7 @@ const unexpectedScriptFailure = (error: unknown, dispatch: Dispatch) =>
 export type ScriptFailure =
   | OperationFailure
   | InputRejected
+  | LocationRejected
   | CredentialsRejected
   | BrowserActionTimeout
   | ChallengeFailure
@@ -158,6 +226,7 @@ export type ScriptFailure =
 const passThrough = (error: unknown): error is ScriptFailure =>
   error instanceof OperationFailure ||
   error instanceof InputRejected ||
+  error instanceof LocationRejected ||
   error instanceof CredentialsRejected ||
   error instanceof ChallengeFailure ||
   error instanceof DialogFailure ||
@@ -186,5 +255,6 @@ export const operationErrors = {
   OperationFailure,
   ChallengeFailure,
   InvalidInput: InputRejected,
+  LocationNotApplied: LocationRejected,
   CredentialsRejected,
 } as const;

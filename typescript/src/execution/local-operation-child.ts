@@ -44,7 +44,9 @@ const { ExecutionContext, makeEffectJournal } = await import("../runtime/context
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
-const { boundedRefusalDetail } = await import("../runtime/operation-failure.js");
+const { boundedLocationDetail, boundedRefusalDetail } = await import(
+  "../runtime/operation-failure.js"
+);
 const { BrowserExecuteResponse } = await import("../runtime/browser-execution.js");
 const { makeScriptInput, ScriptInput, ScriptInputFailure } =
   await import("../runtime/script-input.js");
@@ -445,6 +447,12 @@ await Effect.runPromise(
             ...("_tag" in error && error._tag === "InvalidInput"
               ? refusalOf(boundedRefusalDetail(error))
               : {}),
+            // A location the script could not apply, with what the page kept instead.
+            ...(() => {
+              if (!("_tag" in error) || error._tag !== "LocationNotApplied") return {};
+              const location = boundedLocationDetail(Reflect.get(error, "location"));
+              return location === undefined ? {} : { location };
+            })(),
             ...("code" in error && typeof error.code === "string"
               ? { code: error.code }
               : "_tag" in error && typeof error._tag === "string"
