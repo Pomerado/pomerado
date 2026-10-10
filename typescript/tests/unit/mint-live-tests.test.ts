@@ -357,6 +357,66 @@ it("tells the agent when the host could not read the schemas its verdicts and ne
   expect(String(ran["schemaProblem"])).toContain("could not read src/tool.ts's input and output schemas");
 });
 
+it("checks each case's output as it checks an example's, and the record keeps the findings", async () => {
+  const markup = {
+    status: "completed" as const,
+    output: {
+      results: [{ name: "Example &amp; Co <b>Lamp</b>" }],
+      has_next_page: false,
+      next_cursor: null,
+    },
+  };
+  const { host } = liveTestHost({ "repeat-1": markup });
+  const published = publications();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("live_tests", runAll, "run"),
+        call("execute", example, "example"),
+        call("finish_build", finish, "finish"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    read,
+  );
+  const root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+  await f.run();
+
+  // The agent reads the case's findings, a blocking one marked, with what it means and a sample.
+  const ran = resultOf(f.requests[1], "run") as {
+    cases: Record<string, unknown>[];
+    outputChecksInstruction?: string;
+  };
+  const flagged = ran.cases.find((testCase) => testCase["id"] === "repeat-1");
+  expect(flagged?.["outputChecks"]).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: "results[].name",
+        check: "markup",
+        blocking: true,
+        meaning: expect.any(String),
+        sample: expect.stringContaining("Lamp"),
+      }),
+    ]),
+  );
+  expect(ran.cases.find((testCase) => testCase["id"] === "sort-price")).not.toHaveProperty(
+    "outputChecks",
+  );
+  expect(ran.outputChecksInstruction).toEqual(expect.any(String));
+
+  // A finding on a case never refuses publication; the record keeps it compactly for the review.
+  expect(published.seen).toHaveLength(1);
+  const record = published.seen[0]?.liveTests as { cases: Record<string, unknown>[] };
+  expect(record.cases.find((testCase) => testCase["id"] === "repeat-1")?.["outputChecks"]).toEqual([
+    { path: "results[].name", check: "markup", count: 1, blocking: true },
+  ]);
+});
+
 it("keeps a failing case in the publication record after the minter deletes or changes it", async () => {
   const { host, batches } = liveTestHost({
     "sort-price": { status: "failed", errorClass: "TimeoutError", frame: "src/tool.ts:12" },

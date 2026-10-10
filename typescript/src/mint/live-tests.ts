@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Clock, Effect, Either, Schema } from "effect";
+import { outputCheckMeaning, outputChecks, type OutputCheck } from "../runtime/output-lint.js";
 
 /**
  * Live tests of a read: the cases the minting agent designs in `test/cases.json`, each case's
@@ -500,6 +501,28 @@ export const caseDigest = (testCase: LiveTestCase) =>
     .digest("hex")
     .slice(0, 16);
 
+/** One output check finding on a case's output, as the shared output check reports it. */
+export interface LiveTestOutputCheck {
+  readonly path: string;
+  readonly check: OutputCheck;
+  readonly count: number;
+  readonly blocking: boolean;
+  /** One matched value, screened. */
+  readonly sample?: string;
+  readonly partial?: true;
+}
+
+export const LiveTestOutputChecks: Schema.Schema<readonly LiveTestOutputCheck[]> = Schema.Array(
+  Schema.Struct({
+    path: Schema.String,
+    check: Schema.Literal(...outputChecks),
+    count: Schema.NonNegativeInt,
+    blocking: Schema.Boolean,
+    sample: Schema.optionalWith(Schema.String, { exact: true }),
+    partial: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  }),
+);
+
 /** One case's latest result, as the harness keeps it across a takeover. */
 export interface LiveTestRecord {
   readonly id: string;
@@ -515,6 +538,8 @@ export interface LiveTestRecord {
   readonly refusal?: { readonly field?: string; readonly available?: readonly string[] };
   /** A short screened excerpt of the output. */
   readonly excerpt?: string;
+  /** The output check's findings on the output the verdict judged. */
+  readonly outputChecks?: readonly LiveTestOutputCheck[];
   readonly durationMs: number;
   readonly lane?: number;
   /** The case as it ran, so a result outlives the case's removal or edit. */
@@ -543,6 +568,7 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
     { exact: true },
   ),
   excerpt: Schema.optionalWith(Schema.String, { exact: true }),
+  outputChecks: Schema.optionalWith(LiveTestOutputChecks, { exact: true }),
   durationMs: Schema.NonNegativeInt,
   lane: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   input: Schema.optionalWith(Schema.Record({ key: Schema.String, value: Schema.Unknown }), {
@@ -619,6 +645,14 @@ export const caseView = (
           ...(record.frame === undefined ? {} : { frame: record.frame }),
           ...(record.refusal === undefined ? {} : { refusal: record.refusal }),
           ...(record.excerpt === undefined ? {} : { excerpt: record.excerpt }),
+          ...(record.outputChecks === undefined
+            ? {}
+            : {
+                outputChecks: record.outputChecks.map((finding) => ({
+                  ...finding,
+                  meaning: outputCheckMeaning[finding.check],
+                })),
+              }),
           durationMs: record.durationMs,
           ...(record.lane === undefined ? {} : { lane: record.lane }),
         }),
@@ -696,10 +730,28 @@ export const liveTestsEvidence = (options: {
 }) => {
   const { file, records, sourceDigest } = options;
   const outOfTime = options.outOfTime === true;
-  const cases = file.cases.map((testCase) => ({
-    ...caseView(testCase, records.get(testCase.id), sourceDigest),
-    input: testCase.input,
-  }));
+  const cases = file.cases.map((testCase) => {
+    const { outputChecks: findings, ...view } = caseView(
+      testCase,
+      records.get(testCase.id),
+      sourceDigest,
+    );
+    return {
+      ...view,
+      input: testCase.input,
+      // Compact for the review: it reads the values in the excerpt and the captures.
+      ...(findings === undefined
+        ? {}
+        : {
+            outputChecks: findings.map(({ path, check, count, blocking }) => ({
+              path,
+              check,
+              count,
+              blocking,
+            })),
+          }),
+    };
+  });
   const notTested = file.notTested ?? [];
   const retired = retiredViews(file, records, options.replaced ?? [], sourceDigest);
   const nothing =
@@ -725,7 +777,7 @@ export const liveTestsEvidence = (options: {
       kind: "host_live_tests",
       note: nothing
         ? "Written by the host, never by the minter. The minter designed and ran no live test case, so beyond the example nothing was tested live."
-        : "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch; purpose is the minter's account of what the case establishes. status is against the source being published: stale means the source or the case changed after the case ran. notTested lists what the minter chose not to test, and why. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
+        : "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch; purpose is the minter's account of what the case establishes. status is against the source being published: stale means the source or the case changed after the case ran. outputChecks lists the host's output check findings on a case's output. notTested lists what the minter chose not to test, and why. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
       ...(sourceDigest === undefined ? {} : { sourceDigest }),
       ...(outOfTime ? { outOfTime: true } : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),

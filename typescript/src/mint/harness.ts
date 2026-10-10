@@ -102,6 +102,7 @@ import {
   liveTestsEvidence,
   liveTestsEvidencePath,
   liveTestsEvidenceProblem,
+  LiveTestOutputChecks,
   maximumBatchCases,
   outputExcerpt,
   primaryListOf,
@@ -119,6 +120,7 @@ import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
 import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
 import { outputChecksRefusal } from "./output-notes.js";
+import { lintOutput } from "../runtime/output-lint.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -3067,6 +3069,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             cursor: cursorPairOf(input, output),
             list: primaryListOf(input, output),
+            outputSchema: output,
           };
         });
       const emptyCases: LiveTestCasesFile = { cases: [] };
@@ -3085,15 +3088,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ? { output: liveTestOutputs.get(testCase.id) }
               : {}),
           }));
+          const shown =
+            options.ran === undefined
+              ? cases
+              : cases.filter((testCase) => options.ran?.includes(testCase.id));
           return {
             kind: "host_live_tests",
             entrypoint,
             ...(Either.isLeft(read) ? { casesFileProblem: read.left } : {}),
-            cases:
-              options.ran === undefined
-                ? cases
-                : cases.filter((testCase) => options.ran?.includes(testCase.id)),
+            cases: shown,
             ...(options.ran === undefined ? {} : { otherCases: file.cases.length - options.ran.length }),
+            ...(shown.some((testCase) => "outputChecks" in testCase)
+              ? {
+                  outputChecksInstruction:
+                    "The host checked every value each case returned, as it checks the example's. Check each finding against the page. Fix a wrong value at the read in source: read rendered text with visibleText, visibleTexts or readRows, expand collapsed text before reading it and read it back, and scope rows to the main list; never clean a string afterwards. A value that is correct as it is needs no change. A case's findings never refuse publication by themselves, but a blocking one (script, css, markup, template_residue) in the example's output refuses finish_build until fixed or overridden.",
+                }
+              : {}),
             ...(file.notTested === undefined ? {} : { notTested: file.notTested }),
             instruction:
               cases.length === 0
@@ -3221,6 +3231,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     Effect.orElseSucceed(() => "[message withheld]"),
                   );
             const excerpt = outputExcerpt(screened);
+            // The same output check an example gets, on the output the verdict judged; a sample
+            // is a value from it, so it is screened like the output.
+            const findings =
+              judged.output === undefined
+                ? []
+                : lintOutput(judged.output, {
+                    ...("outputSchema" in shape ? { outputSchema: shape.outputSchema } : {}),
+                    samples: true,
+                  });
+            const outputChecks =
+              findings.length === 0
+                ? undefined
+                : yield* dependencies.projection.json(findings).pipe(
+                    Effect.flatMap((value) =>
+                      Schema.decodeUnknown(LiveTestOutputChecks)(value),
+                    ),
+                    Effect.orElseSucceed(() =>
+                      findings.map(({ sample: _sample, ...finding }) => finding),
+                    ),
+                  );
             const digestOfCase = caseDigest(testCase);
             const previous = liveTestRecords.get(run.id);
             if (
@@ -3246,6 +3276,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(judged.frame === undefined ? {} : { frame: judged.frame }),
               ...(judged.refusal === undefined ? {} : { refusal: judged.refusal }),
               ...(excerpt === undefined ? {} : { excerpt }),
+              ...(outputChecks === undefined ? {} : { outputChecks }),
               durationMs: Math.max(0, Math.round(run.durationMs)),
               ...(run.lane === undefined ? {} : { lane: run.lane }),
               input: testCase.input,
