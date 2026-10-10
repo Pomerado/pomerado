@@ -51,16 +51,11 @@ export const SiteHttpRequest = Schema.Struct({
   body: Schema.optional(Schema.String),
   requires: Schema.optional(Schema.Array(HttpCapability)),
   timeoutMs: Schema.optional(Schema.Number.pipe(Schema.finite(), Schema.positive())),
+  // A limit alone bounds the response; `buffered-response-v1` without one selects the default.
   maxResponseBytes: Schema.optional(
     Schema.Number.pipe(Schema.int(), Schema.between(1, maxSiteHttpResponseBytes)),
   ),
-}).pipe(
-  Schema.filter(
-    (request) =>
-      request.maxResponseBytes === undefined ||
-      request.requires?.includes("buffered-response-v1") === true,
-  ),
-);
+});
 export type SiteHttpRequest = typeof SiteHttpRequest.Type;
 
 export const HttpFailureCode = Schema.Literal(
@@ -79,9 +74,73 @@ export const HttpFailureCode = Schema.Literal(
 );
 export type HttpFailureCode = typeof HttpFailureCode.Type;
 
+/**
+ * The request check's rules. A request that breaks one fails before anything is sent, naming the
+ * rule, so the code can be fixed and run again.
+ */
+export const HttpRequestRule = Schema.Literal(
+  "request_invalid",
+  "url_not_absolute",
+  "url_has_credentials",
+  "url_has_fragment",
+  "method_unsupported",
+  "body_on_get_or_head",
+  "header_name_invalid",
+  "header_value_not_text",
+  "header_value_newline",
+  "timeout_invalid",
+  "max_response_bytes_out_of_range",
+  "capability_unsupported",
+);
+export type HttpRequestRule = typeof HttpRequestRule.Type;
+
+/** Which request-check rule refused a request, and the header or capability it was about. */
+export interface HttpRequestRefusal {
+  readonly rule: HttpRequestRule;
+  readonly header?: string;
+  readonly capability?: string;
+  /** The transport that lacks `capability`. */
+  readonly transport?: string;
+  /** For `request_invalid`: what did not decode. */
+  readonly detail?: string;
+}
+
+/** How to fix a request each rule refused, in one sentence. */
+const refusalFixes: Record<HttpRequestRule, string> = {
+  request_invalid:
+    "send { url, method, headers?, body?, requires?, timeoutMs?, maxResponseBytes? } with text values",
+  url_not_absolute: "use an absolute http(s) URL, or a site path that starts with one / when the host knows the site's origin",
+  url_has_credentials: "leave user:password out of the URL",
+  url_has_fragment: "leave the #fragment out of the URL",
+  method_unsupported: "use GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS, in capitals",
+  body_on_get_or_head: "leave body out of a GET or HEAD request, even an empty one",
+  header_name_invalid:
+    "send only plain header names; leave out HTTP/2 pseudo-headers such as :authority",
+  header_value_not_text: "send each header value as a string",
+  header_value_newline: "remove line breaks from the header value",
+  timeout_invalid: "give timeoutMs as a positive number of milliseconds, or leave it out",
+  max_response_bytes_out_of_range: `give maxResponseBytes as a whole number from 1 to ${maxSiteHttpResponseBytes}, or leave it out for that default`,
+  capability_unsupported: "leave out the capability this host's transport lacks",
+};
+
+const refusalLine = (refusal: HttpRequestRefusal) =>
+  [
+    `refused by the request check, nothing was sent: ${refusal.rule}`,
+    refusal.header === undefined ? "" : `(header ${JSON.stringify(refusal.header)})`,
+    refusal.capability === undefined
+      ? ""
+      : `(capability ${JSON.stringify(refusal.capability)}${refusal.transport === undefined ? "" : ` on ${refusal.transport}`})`,
+    refusal.detail === undefined ? "" : `(${refusal.detail})`,
+    `(fix: ${refusalFixes[refusal.rule]})`,
+  ]
+    .filter((part) => part !== "")
+    .join(" ");
+
 export interface HttpFailureFields {
   readonly code: HttpFailureCode;
   readonly dispatch: Dispatch;
+  /** The request check's refusal, for a request refused before anything was sent. */
+  readonly refusal?: HttpRequestRefusal;
   readonly response?: {
     readonly status: number;
     readonly body: {
@@ -149,6 +208,7 @@ const relayParts = (relay: RelayedFailure | undefined, hostDetail: FailureDetail
 const describeHttpFailure = (fields: HttpFailureFields) =>
   [
     `${fields.code} (dispatch ${fields.dispatch})`,
+    fields.refusal === undefined ? "" : refusalLine(fields.refusal),
     fields.request === undefined ? "" : `${fields.request.method} ${fields.request.url}`,
     fields.response === undefined ? "" : `answered ${fields.response.status}`,
     ...relayParts(fields.relay, fields.failureDetail),

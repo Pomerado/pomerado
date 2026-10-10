@@ -162,3 +162,66 @@ export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct
     left: { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" },
   });
 }, 30_000);
+
+/** A site that answers every request with one HTML page of `bytes` bytes. */
+const pageSite = (bytes: number) => {
+  const sent: SiteHttpRequest[] = [];
+  const page = `<html><title>Lamps</title><body>${"x".repeat(Math.max(0, bytes - 45))}</body></html>`;
+  const transport: HttpTransport = {
+    name: "kernel-curl",
+    capabilities: ["session-cookies"],
+    send: (request) => {
+      sent.push(request);
+      return Promise.resolve({
+        status: 200,
+        headers: { "content-type": ["text/html"] },
+        body: new TextEncoder().encode(page),
+        transport: "kernel-curl",
+        gaps: [],
+      });
+    },
+  };
+  return { transport, sent, bytes: page.length };
+};
+
+const boundedRead = `import { Effect, Schema } from "effect";
+import { defineHttpOperation, readText } from "pomerado/runtime";
+export default defineHttpOperation({
+  name: "read_page",
+  input: Schema.Struct({}),
+  output: Schema.Struct({ bytes: Schema.Number }),
+  run: (_input, http) =>
+    Effect.gen(function* () {
+      const { text } = yield* readText(http, {
+        url: "/search?q=lamp",
+        method: "GET",
+        maxResponseBytes: 5_000_000,
+      });
+      return { bytes: text.length };
+    }),
+});`;
+
+it("reads a large page with a response limit and nothing else declared", async () => {
+  const site = pageSite(3_000_000);
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: boundedRead,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({ _tag: "Right", right: { output: { bytes: site.bytes } } });
+  expect(site.sent).toHaveLength(1);
+}, 30_000);
+
+it("fails a page over the response limit as too large, after sending it", async () => {
+  const site = pageSite(6_000_000);
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: boundedRead,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Left",
+    left: { tag: "HttpFailure", code: "response_too_large" },
+  });
+  expect(site.sent).toHaveLength(1);
+}, 30_000);

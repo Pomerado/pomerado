@@ -6,7 +6,25 @@ description: Build the http implementation beside the playwright script from the
 # Two implementations: playwright and http
 
 Every mint publishes the Playwright script, `src/tool.mjs`, and, when its route ports, an
-HTTP implementation, `src/tool-http.mjs`, of the same operation. Build them in that order:
+HTTP implementation, `src/tool-http.mjs`, of the same operation.
+
+## Request rules (check every request)
+
+- `url`: absolute `https://`, or a site path starting with `/`; no `#fragment`, no
+  user:password.
+- `method` in capitals. GET and HEAD carry no `body`, not even `""`.
+- `headers`: string values with plain names. Never copy HTTP/2 pseudo-headers (`:authority`,
+  `:path`), `cookie` or `content-length` from a capture.
+- Leave out `maxResponseBytes` unless you need a lower limit than the 8 MiB default; a limit
+  alone is enough.
+- Import only `effect`, `pomerado/runtime` (or `../../runtime/index.js`) and your own files
+  under `src/`. `src/tool.mjs` and `src/tool-http.mjs` may share a module there.
+- A request refused before sending fails `request_refused` (code `invalid_request` or
+  `unsupported_capability`, dispatch `not_sent`), and its message says "refused by the request
+  check, nothing was sent" with the rule it broke and how to fix it. Nothing reached the site:
+  fix it and run again; it is not a failed live test.
+
+## Build them in order
 
 1. Run the Playwright flow first: a read explores and runs its example, and a write
    performs its act session (the writes skill). Clicking through the real site is how
@@ -171,8 +189,8 @@ refuses literal tokens.
   a relay timeout on the transport is `transport`. `parsing` with `code: "invalid_response"`
   means the provider's envelope did not decode, not the site's body. `destination_status`
   with `code: "response_too_large"` and a 2xx status means the site answered normally with a
-  body over the limit: lower what you fetch or raise `maxResponseBytes`, don't treat it as
-  an error page.
+  body over the limit: fetch less (a narrower page or API call), or drop a `maxResponseBytes`
+  you set below the 8 MiB default; don't treat it as an error page.
   `readText` and `readJson` classify the site's answers; an error you throw yourself has no
   cause unless it keeps the `HttpFailure` as its `cause`.
 - **Write:** the real write is the act session, which runs the Playwright version; the
@@ -238,10 +256,8 @@ site code to interpret. Curl responses expose no final URL or redirect chain; th
 fetch gives `finalUrl`, and its visible headers exclude Set-Cookie even though the browser
 updates its cookie jar. Streaming and binary
 uploads are not supported. The default timeout is 60 seconds through the finite body,
-bounded by the execution deadline. Response bodies use an 8 MiB ceiling; declare
-`buffered-response-v1` in `requires` to select that versioned contract and optionally a
-lower `maxResponseBytes`. Larger bodies fail as `response_too_large` without a partial
-body. Cancellation cannot prove an in-flight website effect was undone.
+bounded by the execution deadline. Response bodies use an 8 MiB ceiling; `maxResponseBytes`
+alone sets a lower one. Larger bodies fail as `response_too_large` without a partial body. Cancellation cannot prove an in-flight website effect was undone.
 
 Do not assume an API-looking URL returns JSON when opened with `page.goto`: document
 navigation can negotiate HTML. For a demonstrated JSON endpoint, send
