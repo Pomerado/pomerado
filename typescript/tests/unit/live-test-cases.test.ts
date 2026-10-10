@@ -1,6 +1,7 @@
 import { Either } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  caseDigest,
   cursorPairOf,
   decodeCasesFile,
   judgeCase,
@@ -104,6 +105,9 @@ describe("judgeCase", () => {
     });
     expect(judgeCase({ expect: "error" }, failed("LocationNotApplied"), undefined).verdict).toBe("pass");
     expect(judgeCase({ expect: "error" }, failed("TimeoutError"), undefined).verdict).toBe("fail");
+    // Only a declared refusal is the loud failure a case expects; a code bug never passes.
+    expect(judgeCase({ expect: "error" }, failed("OperationFailure"), undefined).verdict).toBe("fail");
+    expect(judgeCase({ expect: "error" }, failed("TypeError"), undefined).verdict).toBe("fail");
     expect(judgeCase({ expect: "result" }, failed("TimeoutError"), undefined)).toMatchObject({
       verdict: "fail",
       frame: "src/tool.mjs:40",
@@ -125,6 +129,14 @@ describe("judgeCase", () => {
         { field: "results" },
       ).verdict,
     ).toBe("inconclusive");
+  });
+});
+
+describe("caseDigest", () => {
+  it("keeps a result when only the case's purpose is reworded", () => {
+    const testCase = { id: "a", purpose: "One.", input: { query: "lamp" }, expect: "result" as const };
+    expect(caseDigest({ ...testCase, purpose: "Another." })).toBe(caseDigest(testCase));
+    expect(caseDigest({ ...testCase, expect: "empty" })).not.toBe(caseDigest(testCase));
   });
 });
 

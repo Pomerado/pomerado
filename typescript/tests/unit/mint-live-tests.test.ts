@@ -132,10 +132,12 @@ const cases = {
 };
 
 /** A host that runs each case through `outcomes`, recording each batch it was asked to run. */
-const liveTestHost = (
-  outcomes: Readonly<Record<string, LiveTestOutcome>>,
-  result?: LiveTestBatchResult,
-) => {
+/** Each case's outcome, the same for every batch or by the batch's index. */
+type Outcomes =
+  | Readonly<Record<string, LiveTestOutcome>>
+  | ((batch: number) => Readonly<Record<string, LiveTestOutcome>>);
+
+const liveTestHost = (outcomes: Outcomes, result?: LiveTestBatchResult) => {
   const batches: LiveTestBatch[] = [];
   const host: LiveTestHost = {
     maxWorkers: 3,
@@ -143,6 +145,7 @@ const liveTestHost = (
     run: (batch) =>
       Effect.sync(() => {
         batches.push(batch);
+        const now = typeof outcomes === "function" ? outcomes(batches.length - 1) : outcomes;
         return (
           result ?? {
             status: "ran" as const,
@@ -150,7 +153,7 @@ const liveTestHost = (
             lanes: Math.min(batch.workers, batch.cases.length),
             cases: batch.cases.map((testCase, index) => ({
               id: testCase.id,
-              outcome: outcomes[testCase.id] ?? {
+              outcome: now[testCase.id] ?? {
                 status: "completed" as const,
                 output: { results: [{ name: "Lamp" }], has_next_page: true, next_cursor: "c2" },
               },
@@ -233,12 +236,9 @@ it("runs the cases a read designed as one batch and hands publication the host's
   await writeWorkspace(root, { "src/tool.ts": toolSource });
   const outcome = await f.run();
 
-  // Before any case exists, the plan sends the agent to design its own; the host builds no
-  // checklist from the schemas.
+  // Before any case exists, the plan lists none; the host builds no checklist from the schemas.
   const planned = resultOf(f.requests[1], "plan");
   expect(planned["cases"]).toEqual([]);
-  expect(planned).not.toHaveProperty("checklist");
-  expect(String(planned["instruction"])).toContain("testing skill");
 
   // The first passing example's receipt reminds the agent of its cases.
   const receipt = resultOf(f.requests[2], "example");
@@ -283,7 +283,6 @@ it("runs the cases a read designed as one batch and hands publication the host's
     cases: { id: string; status: string; input: unknown }[];
     notTested: unknown;
   };
-  expect(record).not.toHaveProperty("checklist");
   expect(record.cases).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -354,7 +353,7 @@ it("tells the agent when the host could not read the schemas its verdicts and ne
   expect(batches).toHaveLength(1);
   const ran = resultOf(f.requests[1], "run");
   expect(ran["status"]).toBe("ran");
-  expect(String(ran["schemaProblem"])).toContain("could not read src/tool.ts's input and output schemas");
+  expect(ran).toHaveProperty("schemaProblem");
 });
 
 it("checks each case's output as it checks an example's, and the record keeps the findings", async () => {
@@ -480,6 +479,102 @@ it("keeps a failing case in the publication record after the minter deletes or c
     ]),
   );
   expect(published.seen[0]?.coverage).toContain("2 retired cases (2 last failed)");
+});
+
+/** Runs `turns` of live_tests batches, editing the workspace before each, then publishes. */
+const batchesThenPublish = async (
+  outcomes: Outcomes,
+  edits: readonly Readonly<Record<string, string>>[],
+) => {
+  const { host, batches } = liveTestHost(outcomes);
+  const published = publications();
+  let root = "";
+  const runs = edits.map((_edit, index) => call("live_tests", runAll, `run_${index}`));
+  const f = await fixture(
+    async (_request, index) => {
+      const edit = edits[index];
+      if (edit !== undefined) await writeWorkspace(root, edit);
+      return (
+        [...runs, call("execute", example, "example"), call("finish_build", finish, "finish")][
+          index
+        ] ?? prose()
+      );
+    },
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    read,
+  );
+  root = (f.workspace as unknown as { root: string }).root;
+  await f.run();
+  expect(batches).toHaveLength(edits.length);
+  return published.seen[0]?.liveTests as { retired: Record<string, unknown>[] };
+};
+const otherStore = (expectation: string) =>
+  JSON.stringify({
+    cases: [
+      {
+        id: "other-store",
+        purpose: "A second store the store picker lists.",
+        input: { query: "lamp", store: "Mill Street" },
+        expect: expectation,
+      },
+    ],
+  });
+const emptyList = {
+  status: "completed" as const,
+  output: { results: [], has_next_page: false, next_cursor: null },
+};
+
+it("never excuses a failure by a case that changed its expectation to what the tool returned", async () => {
+  // The second store's results come back empty; the agent relabels the case to expect that.
+  const record = await batchesThenPublish({ "other-store": emptyList }, [
+    { "src/tool.ts": toolSource, "test/cases.json": otherStore("result") },
+    { "test/cases.json": otherStore("empty") },
+  ]);
+  expect(record.retired).toEqual([
+    expect.objectContaining({ id: "other-store", lastVerdict: "fail", expect: "result" }),
+  ]);
+  expect(record.retired[0]).not.toHaveProperty("excusedBy");
+});
+
+it("excuses a failure only by a case passing its input and expectation after the code changed", async () => {
+  const record = await batchesThenPublish(
+    (batch) => (batch === 0 ? { "other-store": emptyList } : {}),
+    [
+      { "src/tool.ts": toolSource, "test/cases.json": otherStore("result") },
+      {
+        "src/tool.ts": `${toolSource}// fixed\n`,
+        "test/cases.json": otherStore("result").replace('"other-store"', '"second-store"'),
+      },
+    ],
+  );
+  expect(record.retired).toEqual([
+    expect.objectContaining({
+      id: "other-store",
+      retiredBecause: "deleted from the cases file",
+      excusedBy: "second-store",
+    }),
+  ]);
+});
+
+it("keeps a failure that passed when run again on the same code as flaky", async () => {
+  const record = await batchesThenPublish(
+    (batch) => (batch === 0 ? { "other-store": emptyList } : {}),
+    [{ "src/tool.ts": toolSource, "test/cases.json": otherStore("result") }, {}],
+  );
+  expect(record.retired).toEqual([
+    expect.objectContaining({
+      id: "other-store",
+      lastVerdict: "fail",
+      flaky: true,
+      onPublishedSource: true,
+    }),
+  ]);
+  expect(record.retired[0]).not.toHaveProperty("excusedBy");
 });
 
 it("publishes with the gaps when too little time is left for a batch, and the record says so", async () => {

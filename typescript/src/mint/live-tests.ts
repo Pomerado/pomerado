@@ -396,6 +396,13 @@ const inconclusiveDetail: Readonly<Record<LiveTestInconclusiveReason, string>> =
 };
 
 /**
+ * The failures a tool throws on purpose to refuse loudly, the only ones a case that expects
+ * `error` passes on. Any other throw, an `OperationFailure` that wraps an unexpected exception
+ * included, is a bug.
+ */
+const declaredRefusals: ReadonlySet<string> = new Set(["LocationNotApplied"]);
+
+/**
  * A case's verdict from its runs and what it expected. `list` is where a list read's results sit
  * (`primaryListOf`); undefined judges a details read by its values.
  */
@@ -466,15 +473,16 @@ export const judgeCase = (
         ...(outcome.message === undefined ? {} : { message: outcome.message.slice(0, 600) }),
         ...(outcome.frame === undefined ? {} : { frame: outcome.frame }),
       };
-      if (testCase.expect === "error" && !/timeout/iu.test(outcome.errorClass))
+      if (testCase.expect === "error" && declaredRefusals.has(outcome.errorClass))
         return { ...base, verdict: "pass" };
+      const threw = `The tool threw ${outcome.errorClass}${outcome.frame === undefined ? "" : ` at ${outcome.frame}`}.`;
       return {
         ...base,
         verdict: "fail",
         detail:
           testCase.expect === "error"
-            ? `${page}The tool timed out instead of failing with a clear error.`
-            : `${page}The tool threw ${outcome.errorClass}${outcome.frame === undefined ? "" : ` at ${outcome.frame}`}. Fix the code at that line.`,
+            ? `${page}${threw} A case that expects error passes only on a declared refusal (${[...declaredRefusals].join(", ")}); any other throw is a bug in the tool. Fix the code at that line.`
+            : `${page}${threw} Fix the code at that line.`,
       };
     }
   }
@@ -546,8 +554,11 @@ export interface LiveTestRecord {
   readonly input?: Input;
   readonly purpose?: string;
   readonly expect?: LiveTestExpectation;
+  readonly nextPage?: true;
   /** A failing result the minter replaced by changing the case; kept for the publication review. */
   readonly retired?: true;
+  /** A retired failure whose case, unchanged, did not fail when run again on the same source. */
+  readonly flaky?: true;
 }
 
 export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
@@ -576,7 +587,9 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
   }),
   purpose: Schema.optionalWith(Schema.String, { exact: true }),
   expect: Schema.optionalWith(LiveTestExpectation, { exact: true }),
+  nextPage: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   retired: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  flaky: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 
 /** The first few items of an output, as compact text, for an excerpt. */
@@ -671,32 +684,59 @@ const retiredViews = (
 ) => {
   const current = new Map(file.cases.map((testCase) => [testCase.id, caseDigest(testCase)]));
   const deleted = [...records.values()].filter((record) => !current.has(record.id));
-  const changed = replaced.filter((record) => current.get(record.id) !== record.caseDigest);
+  const changed = replaced.filter(
+    (record) => record.flaky === true || current.get(record.id) !== record.caseDigest,
+  );
+  // What a current case runs and expects, for the cases that pass on the published source.
+  const runs = (input: unknown, expect: unknown, nextPage: boolean) =>
+    canonical([input, expect, nextPage]);
+  const passing = file.cases
+    .filter((testCase) => caseStatus(testCase, records.get(testCase.id), sourceDigest) === "pass")
+    .map((testCase) => ({
+      id: testCase.id,
+      runs: runs(testCase.input, testCase.expect, testCase.next_page === true),
+    }));
+  /**
+   * A failure on earlier source that a case passing on the published source runs again with the
+   * same input and expectation. Never one on the published source, which is flaky or unfixed.
+   */
+  const excusedBy = (record: LiveTestRecord) => {
+    if (record.sourceDigest === sourceDigest || record.input === undefined) return undefined;
+    const ran = runs(record.input, record.expect, record.nextPage === true);
+    return passing.find((entry) => entry.runs === ran)?.id;
+  };
   return [
     ...deleted.map((record) => [record, "deleted from the cases file"] as const),
     ...changed.map(
       (record) =>
         [
           record,
-          current.has(record.id)
-            ? "changed after it failed"
-            : "changed after it failed, then deleted",
+          record.flaky === true
+            ? "failed, then did not fail when run again unchanged on the same source: flaky"
+            : current.has(record.id)
+              ? "changed after it failed"
+              : "changed after it failed, then deleted",
         ] as const,
     ),
-  ].map(([record, because]) => ({
-    id: record.id,
-    retiredBecause: because,
-    ...(record.purpose === undefined ? {} : { purpose: record.purpose }),
-    ...(record.expect === undefined ? {} : { expect: record.expect }),
-    ...(record.input === undefined ? {} : { input: record.input }),
-    lastVerdict: record.verdict,
-    onPublishedSource: record.sourceDigest === sourceDigest,
-    got: record.got,
-    ...(record.detail === undefined ? {} : { detail: record.detail }),
-    ...(record.errorClass === undefined ? {} : { errorClass: record.errorClass }),
-    ...(record.frame === undefined ? {} : { frame: record.frame }),
-    ...(record.excerpt === undefined ? {} : { excerpt: record.excerpt }),
-  }));
+  ].map(([record, because]) => {
+    const excuse = record.verdict === "fail" ? excusedBy(record) : undefined;
+    return {
+      id: record.id,
+      retiredBecause: because,
+      ...(record.flaky === true ? { flaky: true } : {}),
+      ...(excuse === undefined ? {} : { excusedBy: excuse }),
+      ...(record.purpose === undefined ? {} : { purpose: record.purpose }),
+      ...(record.expect === undefined ? {} : { expect: record.expect }),
+      ...(record.input === undefined ? {} : { input: record.input }),
+      lastVerdict: record.verdict,
+      onPublishedSource: record.sourceDigest === sourceDigest,
+      got: record.got,
+      ...(record.detail === undefined ? {} : { detail: record.detail }),
+      ...(record.errorClass === undefined ? {} : { errorClass: record.errorClass }),
+      ...(record.frame === undefined ? {} : { frame: record.frame }),
+      ...(record.excerpt === undefined ? {} : { excerpt: record.excerpt }),
+    };
+  });
 };
 
 const outOfTimeNote =
@@ -777,7 +817,7 @@ export const liveTestsEvidence = (options: {
       kind: "host_live_tests",
       note: nothing
         ? "Written by the host, never by the minter. The minter designed and ran no live test case, so beyond the example nothing was tested live."
-        : "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch; purpose is the minter's account of what the case establishes. status is against the source being published: stale means the source or the case changed after the case ran. outputChecks lists the host's output check findings on a case's output. notTested lists what the minter chose not to test, and why. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
+        : "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch; purpose is the minter's account of what the case establishes. status is against the source being published: stale means the source or the case changed after the case ran. outputChecks lists the host's output check findings on a case's output. notTested lists what the minter chose not to test, and why. retired lists cases the minter deleted, failures it replaced by changing the case, and failures that did not repeat when the unchanged case ran again on the same source (flaky), with their last result; excusedBy names a case that passes the same input with the same expectation on the published source after the source changed.",
       ...(sourceDigest === undefined ? {} : { sourceDigest }),
       ...(outOfTime ? { outOfTime: true } : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),

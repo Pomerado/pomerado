@@ -3158,7 +3158,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               status: "batch_size",
               instruction:
                 selected.length === 0
-                  ? `${liveTestCasesPath} has no cases to run. Plan them first (action plan). Nothing was executed.`
+                  ? `${liveTestCasesPath} has no cases to run. Design them there first, as the testing skill says. Nothing was executed.`
                   : `A batch runs at most ${maximumBatchCases} cases; name the ones to run in cases. Nothing was executed.`,
             });
           const shape = yield* liveTestShape(request.entrypoint);
@@ -3253,15 +3253,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   );
             const digestOfCase = caseDigest(testCase);
             const previous = liveTestRecords.get(run.id);
+            // A failure the run replaces stays in the record: the case changed after it, or it
+            // did not fail again on the same source and case, which shows it is flaky.
+            const flaky =
+              previous?.caseDigest === digestOfCase &&
+              previous.sourceDigest === sourceDigest &&
+              judged.verdict !== "fail";
             if (
               previous !== undefined &&
               previous.verdict === "fail" &&
-              previous.caseDigest !== digestOfCase &&
+              (previous.caseDigest !== digestOfCase || flaky) &&
               !liveTestReplaced.some(
-                (entry) => entry.id === previous.id && entry.caseDigest === previous.caseDigest,
+                (entry) =>
+                  entry.id === previous.id &&
+                  entry.caseDigest === previous.caseDigest &&
+                  entry.sourceDigest === previous.sourceDigest,
               )
             ) {
-              liveTestReplaced.push({ ...previous, retired: true });
+              liveTestReplaced.push({ ...previous, retired: true, ...(flaky ? { flaky: true } : {}) });
               liveTestReplaced.splice(0, Math.max(0, liveTestReplaced.length - maximumBatchCases));
             }
             liveTestRecords.set(run.id, {
@@ -3282,6 +3291,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               input: testCase.input,
               purpose: testCase.purpose,
               expect: testCase.expect,
+              ...(testCase.next_page === true ? { nextPage: true } : {}),
             });
             verdicts[judged.verdict] = (verdicts[judged.verdict] ?? 0) + 1;
             if (attemptBound && judged.verdict === "inconclusive" && judged.got === "deadline")

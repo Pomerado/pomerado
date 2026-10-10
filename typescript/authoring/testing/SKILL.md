@@ -37,8 +37,9 @@ it; none is required, and one case may serve several:
   undo or hide each other, and the combination a real caller would most likely send;
 - different real values unlike the example's: another retailer, store or seller, another
   category, a record whose page is laid out differently (a single option, grouped options, a
-  multi-item page, sold out). Find them on the site, in a listing or picker you opened; never
-  invent them;
+  multi-item page, sold out); for other reads, another route, date range or region, another
+  category of listing, or a document or order page of another kind. Find them on the site, in a
+  listing or picker you opened; never invent them;
 - edge cases: a value the site does not list at all (`invalid_input`, with the page's choices
   listed), a query or filter with no results (`empty`, never a throw), and an option the page lists
   but greys out, such as a sold-out size, which a read returns as unavailable data;
@@ -68,7 +69,9 @@ About 10 to 20 cases is typical. Write them in `test/cases.json`:
 ```
 
 `purpose` says in a sentence what the case establishes. `expect` is `result`, `empty`,
-`invalid_input` or `error` (a loud failure). Use real values the site offers, which you saw while
+`invalid_input` or `error`: a loud refusal the tool throws on purpose, `LocationNotApplied`; any
+other throw is a bug and fails the case. Expect `empty`, `invalid_input` or `error` only for an
+input the site really has no results for, does not offer or cannot apply. Use real values the site offers, which you saw while
 exploring: listed options, places, dates, counts, records and retailers the site lists. Never use
 a person's, account's or record's name, number or code, and never the caller's own values beyond
 the example's input. List under `notTested` anything the tool claims that you chose not to test,
@@ -80,7 +83,8 @@ where the host has them, and you get every result: its status, what it returned,
 error with the source line that threw. Name cases in action `plan` to read their full outputs,
 and check what they mean, not just pass or fail: every item matches the filters, the order follows
 the sort, the applied location is the one asked for, page 2 differs from page 1. A failing case is
-a bug in the tool: fix the code at that line, never drop the input or narrow the schema to pass. A
+a bug in the tool: fix the code at that line. Never drop the input, narrow the schema or change a
+case's expectation to match what it returned to make it pass; fix the code. A
 run that returns partly filled results, or passes only when run again, is missing a wait for
 content: fix the wait, not the retry, then run that input again a few times. After the example
 passes, read its returned fields once at the answer and again about 10 s later on the same page; a
@@ -100,7 +104,8 @@ this order: make your last edit, run the cases again, run the example last, then
 `finish_build`. Publication review reads the host's record of your cases (`publication/tests.json`),
 not your account of them, and judges them against what the tool claims: a failing case, or a
 claim no passing case tests while time remained, holds publication back. Deleting or changing a
-case after it failed does not hide the failure: the record keeps its last result as retired. When
+case after it failed does not hide the failure: the record keeps its last result as retired, and
+so does a failure that passes when run again on the same code, as flaky. When
 `live_tests` answers `no_time`, run the example last and publish; the record says time ran out.
 
 A signed-in read tests one input at a time instead: up to four live tests per attempt with an
