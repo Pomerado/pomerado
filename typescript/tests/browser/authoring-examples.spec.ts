@@ -601,6 +601,44 @@ test("append example keeps a list whose step adds no rows while Show more stays 
   await expect(page.locator("#clicks")).toHaveText("1");
 });
 
+test("append example ends a list that still stalls on the next call instead of returning the same cursor", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "Each call's step that adds nothing ends only once the rows held unchanged for the helper's fixed two seconds.",
+  });
+  const scope = roomCursors();
+  await appendingRooms(page, 2, "stuck");
+  const first = await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000, list: {} });
+  expect(first.result).toEqual(Either.right(moreRooms(roomList(2))));
+  const cursor = (sealListOutput(Either.getOrThrow(first.result), { limit: 10 }, scope).output as {
+    readonly next_cursor: string;
+  }).next_cursor;
+  const admitted = admitListCursor({ limit: 10, cursor }, scope);
+  if (!admitted.ok) throw new Error(admitted.message);
+  await appendingRooms(page, 2, "stuck");
+  const second = await runExample(
+    page,
+    readRooms,
+    { limit: 10, cursor },
+    { deadlineMs: 30_000, list: admitted.list },
+  );
+  // No rows and no step further: the list ends honestly as partial, never with the same cursor.
+  expect(second.result).toEqual(
+    Either.right({
+      rooms: [],
+      next_cursor: null,
+      next_cursor_expires_at: null,
+      has_more: true,
+      total_results: null,
+      list_changed: false,
+      next_cursor_unavailable: "no_progress",
+    }),
+  );
+});
+
 // A rooms site whose "Show more" loads the next two rooms after `delayMs`, through the site's API or
 // a timer, while a spinner shows below the list and the control is hidden or disabled; once every
 // room shows, the control goes.

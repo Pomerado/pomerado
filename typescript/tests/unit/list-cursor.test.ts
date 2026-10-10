@@ -324,6 +324,33 @@ describe("finishList", () => {
     });
   });
 
+  // A list that stalls while the site still offers more would otherwise hand back the cursor it
+  // was given, with no rows, on every call: a caller paging until has_more is false never ends.
+  it("ends a later page that returned no rows and stayed at its position, keeping has_more", () => {
+    const stalled = { steps: 1, offset: 2 };
+    const later = continuing(cursorOf(pageOne(stalled, "append")), "append");
+    const again = (next: ListPosition, returned: readonly Row[]) =>
+      finishList(later, {
+        rows: returned,
+        keyOf,
+        next,
+        hasMore: true,
+        totalResults: null,
+        listChanged: false,
+      });
+    expect(again(stalled, [])).toEqual({
+      next_cursor: null,
+      next_cursor_expires_at: null,
+      has_more: true,
+      total_results: null,
+      list_changed: false,
+      next_cursor_unavailable: "no_progress",
+    });
+    // A step further, or rows returned, is progress and continues.
+    expect(again({ steps: 2, offset: 2 }, []).next_cursor).toMatch(/^pcd1\./u);
+    expect(again(stalled, rows("c")).next_cursor).toMatch(/^pcd1\./u);
+  });
+
   it("refuses more rows than limit", () => {
     expect(() =>
       finishList(startList(hosted({ limit: 1 }), { mechanism: "append" }), {

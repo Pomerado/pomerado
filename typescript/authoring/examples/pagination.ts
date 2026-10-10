@@ -169,6 +169,8 @@ const Listed = Schema.Struct({
 // is not proof of the end: one more read without a click decides, and the end is only the rows
 // still not grown with the control still gone or disabled. A list that stops growing while the
 // control is still offered has more: it returns a position that continues, never a null cursor.
+// A later call that still stalls there returns no rows at the same position, and finishList ends
+// the list with has_more true and next_cursor_unavailable "no_progress".
 // A later page replays the steps its position holds, then reads on after the last row the
 // previous page returned.
 // Adapt every role, name and attribute from your own session's evidence.

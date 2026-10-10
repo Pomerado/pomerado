@@ -28,8 +28,8 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
 - Filters and sort are choices: set them as "Configure, then read" in the core skill says, and
   read the results last. When the page's list of choices does not hold a caller's value, the
   tool throws `InvalidInput` with `field` and `available`, the choices the group it opened for
-  that value offers on this search's page. A control the tool could not find, open or apply
-  makes it throw `OperationFailure`.
+  that value offers on this search's page, only after reading them. A control the tool could not
+  find, open or apply makes it throw `OperationFailure`.
 - A price or other numeric range is a number, never a label to match: a slider's labels and
   steps often change with the result set. Set the nearest step inside the caller's bound (down
   for a maximum, up for a minimum), the range's end for a value outside it, read the applied

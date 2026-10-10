@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
   call,
+  message,
   currentOf,
   execution,
   executionIdOf,
@@ -203,6 +204,75 @@ test("runs a list case's page two from the cursor its page one returned, checked
     const excerpt = String(ran.cases[0]?.["excerpt"]);
     expect(excerpt).toContain('{"id":"c"},{"id":"d"}');
     expect(excerpt).not.toContain('"id":"a"');
+  } finally {
+    await site.close();
+  }
+});
+
+test("refuses a case whose cursor the host never signed before the case touches the site", async () => {
+  // Chromium runs the batch's review and the build's first page; the refused case runs nothing.
+  test.setTimeout(60_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>List</title><h1>List</h1>"),
+  );
+  // Well formed, under a key this host does not hold: a hand-made or altered cursor.
+  const forged = `pc1.unknownkey.${Buffer.from('{"v":1}').toString("base64url")}.${"A".repeat(43)}`;
+  let before = 0;
+  let after = 0;
+  try {
+    const guardian = recordingGuardian();
+    const { requests } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "List the fixture rows",
+      timeoutMs: 600_000,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": listTool,
+            "test/cases.json": JSON.stringify({
+              cases: [
+                {
+                  id: "forged",
+                  covers: ["input:query"],
+                  input: { query: "rows", cursor: forged },
+                  expect: "result",
+                },
+              ],
+            }),
+          }),
+        () => {
+          before = site.requests.length;
+          return [
+            call("live_tests", {
+              intent: "Run the case",
+              action: "run",
+              entrypoint: "src/tool.mjs",
+              cases: null,
+              maxWorkers: 1,
+            }),
+          ];
+        },
+        () => {
+          after = site.requests.length;
+          return [message("Done.")];
+        },
+      ],
+    });
+    const ran = toolResult(requests[2], "live_tests") as {
+      readonly status: string;
+      readonly cases: readonly Readonly<Record<string, unknown>>[];
+    };
+    expect(ran.status).toBe("ran");
+    expect(ran.cases[0]).toMatchObject({
+      id: "forged",
+      status: "fail",
+      got: "InvalidInput",
+      refusal: { field: "cursor" },
+    });
+    // Refused before the case's page reset: the site saw no request for it.
+    expect(after).toBe(before);
   } finally {
     await site.close();
   }

@@ -186,6 +186,7 @@ export const listOutputFields = {
   next_cursor_unavailable: Schema.optional(
     Schema.Literal(
       "depth_cap",
+      "no_progress",
       "position_too_long",
       "unsigned_host",
       "off_site",
@@ -193,7 +194,7 @@ export const listOutputFields = {
       "inputs_not_json",
     ).annotations({
       description:
-        "Why next_cursor is null although has_more is true: depth_cap past the deepest page this tool can reach again, position_too_long when the site's link to the next page is too long for a cursor, off_site when it leaves the site, or the host could not sign one.",
+        "Why next_cursor is null although has_more is true: depth_cap past the deepest page this tool can reach again, no_progress when this call returned no results and could not move past the cursor's position, position_too_long when the site's link to the next page is too long for a cursor, off_site when it leaves the site, or the host could not sign one.",
     }),
   ),
 };
@@ -210,6 +211,7 @@ export interface ListOutput {
   readonly list_changed: boolean;
   readonly next_cursor_unavailable?:
     | "depth_cap"
+    | "no_progress"
     | "position_too_long"
     | "unsigned_host"
     | "off_site"
@@ -345,6 +347,16 @@ const reachable = (next: ListPosition) =>
   next.token !== undefined ||
   ((next.page ?? 1) <= listDepth.sitePages && (next.steps ?? 0) <= listDepth.steps);
 
+/** Whether two positions name the same place on the site. */
+const samePosition = (a: ListPosition, b: ListPosition) =>
+  a.page === b.page &&
+  a.steps === b.steps &&
+  a.offset === b.offset &&
+  a.pageSize === b.pageSize &&
+  a.href === b.href &&
+  a.token === b.token &&
+  a.scope === b.scope;
+
 /** Whether a next position fits in a cursor, with room for everything else the cursor holds. */
 const fits = (next: ListPosition) =>
   (next.href?.length ?? 0) <= hrefMaxLength &&
@@ -357,7 +369,10 @@ const fits = (next: ListPosition) =>
  * last returned row, so the next call finds that row again. When the list has more but no cursor
  * can continue it, `next_cursor` is null, `has_more` stays true and `next_cursor_unavailable`
  * says why: past the deepest position the tool can rebuild without a site link or token, a site
- * link or token too long for a cursor, or a host that does not sign cursors. The host signs
+ * link or token too long for a cursor, a later page that returned no rows and stayed at the
+ * position it started from, such as a list that stalls while the site still offers more (so a
+ * caller paging until `has_more` is false still ends), or a host that does not sign cursors. The
+ * host signs
  * `next_cursor` and fills `next_cursor_expires_at` after the run.
  */
 export const finishList = <Row>(
@@ -390,6 +405,12 @@ export const finishList = <Row>(
     next_cursor_unavailable: reason,
   });
   if (page.next === null) return { next_cursor: null, ...fields };
+  if (
+    page.rows.length === 0 &&
+    list.position !== undefined &&
+    samePosition(page.next, list.position)
+  )
+    return ended("no_progress");
   if (!reachable(page.next)) return ended("depth_cap");
   if (!fits(page.next)) return ended("position_too_long");
   if (!list.signed) return ended("unsigned_host");

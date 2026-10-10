@@ -60,7 +60,8 @@ the next rows. Pick the first that fits, and name it as the mechanism:
   still gone or disabled. A list that stalls while the control is still offered has more: return
   the rows read with `has_more` true and a position that continues, never a null next cursor. On
   a list that drops earlier rows as it scrolls, collect rows by key as they show. If the URL
-  gains a page parameter after a step, the site is paged: keep that link.
+  gains a page parameter after a step, the site is paged: keep that link. Never treat a repeated
+  click as safe if it could submit or change anything.
 - `offset`: the whole list is on one page; the position's `offset` is where the next window
   starts. With any mechanism, when `limit` is smaller than the site's page, the next position
   points into that page by its `offset`.
@@ -84,9 +85,11 @@ leaves fewer than `limit`, read on. Never promise a snapshot the site does not k
 Return as soon as you hold `limit` rows. Per call, read at most 5 site pages or 10 steps, within
 `remainingMs()`; when a bound stops you, return what you read with a position that continues.
 `finishList` sets `next_cursor` to null past the deepest position a tool can rebuild without the
-site's link or token (10 site pages or 20 steps), or when the site's link or token is too long
-for a cursor; `has_more` stays true, `next_cursor_unavailable` says why, and the description
-names that depth. When the site refuses its own link or token and the position cannot be
+site's link or token (10 site pages or 20 steps), when the site's link or token is too long for
+a cursor, or when a later page returned no rows and its next position is the one it started
+from, such as a list that still stalls where the previous call stopped (`no_progress`), so a
+caller paging until `has_more` is false still ends; `has_more` stays true,
+`next_cursor_unavailable` says why, and the description names that depth. When the site refuses its own link or token and the position cannot be
 rebuilt, throw `errors.InvalidInput` with `field: "cursor"` and `kind: "site_expired"`. Never
 return a position the tool could not follow.
 

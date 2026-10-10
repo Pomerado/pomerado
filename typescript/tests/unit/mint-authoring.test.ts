@@ -723,10 +723,10 @@ it("renders the pinned standalone authoring", async () => {
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["03d33921ece2b6577814e68c9759fb2d8748d02589747135fa8d07fbbe58424e", "core"],
-    ["ee949072b6045cb9acfab5df9856cc8b4545d36134c3b4807035b3d71a2bcb2a", "search"],
+    ["70e5a52f57bd96d565e14d8f442819f950f947eb8f29d988b58c6f7a5e1b6781", "search"],
     ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
     ["f8e46b7634947b10db4a1de32fdf7d3717422c5d5b4dd43fa9cc7369477a201a", "testing"],
-    ["271fd3ed0cc44a4b1d3b42ebd9e21c9bc820a68822dbd469e32d33b95c002cca", "pagination"],
+    ["d35d7773604975c8b97a39f818c4c1ccd2724b3328847d2b5dc4b0c2188c1fe5", "pagination"],
     ["6470768cbe2c563e9c8895b6e25f0f5c1507633b6088404b55e72530884fe2a4", "forms"],
     ["09e84954722f44a2a527ebd259777380bb7f978431c5952db02cb5289c11422c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
