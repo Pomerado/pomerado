@@ -112,18 +112,38 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   whether the commit step ran.
 - The host refuses an `act` step whose source is unchanged since it ran and sent
   state-changing requests: submitting it again could commit twice.
-- Read `stateChangingRequests` on every step. It lists the commit your step caused
-  and any autosave or draft save. That is the evidence for the `http` version; any
-  other write is unintended and must not be in the script.
-- The step that reads the result back ends the session. Read the site's own proof of this
-  commit: the confirmation it shows (an order, booking or reference number), or the saved
-  state (the orders page, the booking list, the updated profile). Match it to the caller's
-  values, return the number or record in the output, and call `verified()` with no argument
-  just before returning. Declare `write: { confirmation: "readback" }`.
-  Make no execute call after either: a later call reopens the effect. A generic
-  toast or a 200 response is not a confirmation. After the confirming step, further
-  `act` steps are refused.
-- Only if the site offers neither, the write is `unverifiable`: do not call
+- Read `stateChangingRequests` on every step. It lists the commit your step caused,
+  with each request's response status, and any autosave or draft save. That is the
+  evidence for the `http` version; any other write is unintended and must not be in
+  the script.
+- Prefer confirming the write from its commit request. Keep the click on the final commit
+  control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as
+  that click, wait for the site's response to the request it sends, matched by the method
+  and path the session saw carry the commit on the site, and by its body where the body
+  shows the caller's values, as `references/write-readback.ts` does. Wait too for every way
+  the page can answer with `waitForOutcome`, listing the site's error or validation message
+  first. The write went through when that response is 2xx or 3xx, a body the call can read
+  shows no error, and the page shows no error or validation message after it. A 200 whose
+  body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says
+  the work is queued, went through too; return the site's own status word for it in the
+  output. Then read what the output promises from that response or from the page the commit
+  left, match it to the caller's values, and call `verified()` with no argument just before
+  returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
+  such as a list, a history or an account screen, only to prove the write. Make no execute
+  call after `verified()`: a later call reopens the effect. After the confirming step,
+  further `act` steps are refused.
+- Read the site's own proof instead only when the commit request can't confirm the write:
+  no such request went out; it failed, got no answer or returned an error status; its body
+  shows an error, or can't be read on an endpoint that reports errors with a 200, such as
+  GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET
+  link; or a later stage the site can still refuse, such as sending what an earlier click
+  saved, sent no request of its own. Then read the confirmation it shows (an order, booking
+  or reference number) or the saved state (the orders page, the booking list, the updated
+  profile), match it to the caller's values, return the number or record in the output, and
+  call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from
+  any other request.
+- Only if the site offers none of these, a commit response the call can check, a
+  confirmation or the saved state, the write is `unverifiable`: do not call
   `verified`. It publishes flagged, and its runs report the write as possibly
   completed. A session in which any step recorded a confirmation is never
   `unverifiable`; publish against the confirming step.
@@ -153,7 +173,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
   committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
-  further write, run an `act` step that only reads the page or the account. If the
+  further write, run an `act` step that only reads the page or the account. When
+  `stateChangingRequests` shows the failed step's commit request went through, that
+  step may read only the page as it stands: check it for an error or validation
+  message, read what the output needs, and call `verified()` there. If the
   write happened, call `verified()` there and publish against that step, never
   submitting it again. If nothing happened, do the write with the
   caller's values and read its confirmation. The host refuses only an unchanged
@@ -201,8 +224,9 @@ account ID, is a free-form input, never an enum member, example or default in th
 public schema (core's input schema rules).
 
 The composed script publishes without ever running end to end, so it ends with a check that
-tells whether its action succeeded: the site's confirmation for this submission, or a read-back
-of the saved state matched to the input, unless the site offers neither; then declare it
+tells whether its action succeeded: its commit response checked as above, the site's
+confirmation for this submission, or a read-back of the saved state matched to the input,
+unless the site offers none of them; then declare it
 `unverifiable`. Compose it from the steps that worked, also when a commit step returned an
 uncertain result and a later read-back showed the write landed.
 
