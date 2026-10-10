@@ -49,7 +49,13 @@ several controls in one test whenever that covers more. Check the remaining valu
 against pages you captured where that applies, and list any input no live run set under
 untested in `coverage`, so a reader sees it as unverified. A control that fails
 its test is fixed, never dropped from the schema. A live run that returns partly filled results,
-or passes only when run again, shows a missing wait for content: fix the wait in source.<!-- pomerado:section testing.offline-fixtures -->
+or passes only when run again, shows a missing wait for content: fix the wait in source.
+Read every string in each result. After each run with output the host reports output checks:
+values that hold code, styles, markup or template leftovers, text read collapsed or cut short,
+a whole card's text, repeated entries or records, and fields that never vary or are always
+empty. Check each against the page: fix a wrong value at the read in source, never by
+cleaning the string afterwards; a correct value needs no change (publication skill). Set each
+`include` value the tool offers in at least one live run.<!-- pomerado:section testing.offline-fixtures -->
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read

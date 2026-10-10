@@ -15,6 +15,7 @@ import {
   type ExampleOutputSource,
 } from "../mint/publication-review.js";
 import { contractExtractionNote } from "../mint/review-context.js";
+import { outputNotes, outputNotesPath } from "../mint/output-notes.js";
 import { oneTimeLoginUrlParameters, refuseCredentialParts } from "../mint/login-url.js";
 import { holdsSecretHandle } from "../mint/secret-handles.js";
 import { holdsFileHandle } from "../mint/file-handles.js";
@@ -289,6 +290,26 @@ export const mintPublication =
               intentDerivedInput: writeSession.input,
             }
           : yield* Effect.gen(function* () {
+              const notes = outputNotes({
+                output: sample.output,
+                outputSchema: result.schemas.output,
+                ...(sample.controlLabels === undefined
+                  ? {}
+                  : { controlLabels: sample.controlLabels }),
+                ...(publication.outputOverrides === undefined
+                  ? {}
+                  : { overrides: publication.outputOverrides }),
+              });
+              if (notes.blocking.length > 0)
+                return yield* new MintFailure({
+                  code: "PublicationUnavailable",
+                  reason: "output_checks_blocked",
+                  outputFindings: notes.blocking.map(({ path, check, count }) => ({
+                    path,
+                    check,
+                    count,
+                  })),
+                });
               const baseline = savedOperationFiles(new Map(sample.sources), sample.entrypoint);
               const output = yield* outputEvidence(state, sample, {
                 executionId: evidence.executionId,
@@ -302,7 +323,10 @@ export const mintPublication =
                   completed: evidence.status === "completed",
                   schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
                 }),
-                files: new Map([[exampleOutputPath, output.text]]),
+                files: new Map([
+                  [exampleOutputPath, output.text],
+                  ...(notes.any ? [[outputNotesPath, notes.text] as const] : []),
+                ]),
                 baseline,
                 intentDerivedInput: sample.intentDerivedInput,
               };

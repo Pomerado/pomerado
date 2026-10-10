@@ -90,6 +90,7 @@ import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
 import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
+import { outputChecksRefusal } from "./output-notes.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -3414,6 +3415,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ...proposed.httpVersion,
                       note: yield* screenMintText(dependencies, proposed.httpVersion.note),
                     };
+              const outputOverrides =
+                proposed.outputOverrides === undefined
+                  ? undefined
+                  : yield* Effect.forEach(proposed.outputOverrides, (override) =>
+                      screenMintText(dependencies, override.reason).pipe(
+                        Effect.map((reason) => ({ ...override, reason })),
+                      ),
+                    );
               const publication = yield* dependencies
                 .publish(
                   {
@@ -3423,6 +3432,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     coverage,
                     ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
                     ...(httpVersion === undefined ? {} : { httpVersion }),
+                    ...(outputOverrides === undefined ? {} : { outputOverrides }),
                   },
                   evidence,
                 )
@@ -3696,6 +3706,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.reason,
                     {},
                     "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
+                  );
+                if (error.reason === "output_checks_blocked")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    { outputFindings: error.outputFindings ?? [] },
+                    outputChecksRefusal(error.outputFindings ?? []),
                   );
                 if (error.reason === "variants_unsupported")
                   return notPublished(
