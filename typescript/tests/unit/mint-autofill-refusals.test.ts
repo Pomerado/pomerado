@@ -19,6 +19,7 @@ import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { mintError } from "../../src/standalone/errors.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
+import { CdpCommandRefused, fakeDevtoolsKeyboard } from "../support/fake-devtools.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -111,9 +112,9 @@ const recorderOn = (page: AutofillPage, keyboard: CredentialKeyboard) => {
  * A synthetic password screen behind the standalone host's sign-in: each authenticate inspects
  * it, then focuses the field. The field takes the focus and the host's native insertion refuses
  * with the given cause, or, for `not_focused`, an overlay keeps the focus. `bindingKeys` holds
- * each binding the host placed on the field.
+ * each binding the host placed on the field. A `keyboard` given inserts in its own way instead.
  */
-const passwordScreen = (refusals: readonly ScreenRefusal[]) => {
+const passwordScreen = (refusals: readonly ScreenRefusal[], keyboard?: CredentialKeyboard) => {
   const answers = refusals.flatMap((refusal) => [
     inspected,
     refusal === "not_focused" ? focusAnswers.not_focused : focusAnswers.focused,
@@ -126,10 +127,13 @@ const passwordScreen = (refusals: readonly ScreenRefusal[]) => {
       execute: () => Effect.sync(() => answers.shift() ?? { error: "not_found", target: 0 }),
     },
     {
-      insertText: (target) =>
-        Effect.sync(() => {
+      insertText: (target, text) =>
+        Effect.suspend(() => {
           bindingKeys.push(target.bindingKey);
-          return insertions.shift() ?? "insertion_rejected";
+          return (
+            keyboard?.insertText(target, text) ??
+            Effect.succeed(insertions.shift() ?? "insertion_rejected")
+          );
         }),
     },
   );
@@ -332,6 +336,40 @@ it("does not count refusals with different insertion causes as one repeated refu
   });
   expect(third).not.toHaveProperty("buildOutcome");
   expect(outcome.recoveryReason).not.toBe("sign_in_unavailable");
+});
+
+// The browser may refuse a DevTools command the host sends before the one call that carries the
+// value, such as the read of a third-party frame's document. Nothing was typed, so the agent hears
+// a refused field with no credential sent, and may sign in again.
+it("lets the agent sign in again when the browser refuses a command before the value was sent", async () => {
+  for (const { refused, cause } of [
+    { refused: "DOM.getDocument", cause: "binding_not_found" },
+    { refused: "DOM.resolveNode", cause: "binding_unresolved" },
+  ] as const) {
+    const devtools = fakeDevtoolsKeyboard({ page: 1 }, (command) =>
+      command.method === refused
+        ? new CdpCommandRefused(command.method, command.params)
+        : undefined,
+    );
+    const screen = passwordScreen([cause], devtools.keyboard);
+    const run = await fixture(
+      (_request, index) => (index === 0 ? authenticate("sign_in_1") : finalAnswer),
+      { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
+      { effect: "read", siteOrigin: site },
+    );
+    await run.run();
+    const answer = answerTo(run.requests[1], "sign_in_1");
+    expect(answer).toMatchObject({
+      code: "AutofillRefused",
+      signInOutcome: "signed_out",
+      nextStep: "authenticate",
+      credentialSent: false,
+      countsTowardSignInCap: false,
+      authentication: { hostRefusal: { check: "typing_refused", field: 0, cause } },
+    });
+    expect(devtools.sent.map(({ method }) => method)).not.toContain("Runtime.callFunctionOn");
+    expect(JSON.stringify(answer)).not.toContain("synthetic-password");
+  }
 });
 
 // A refusal whose sign-in cleanup the host could not confirm may have left the site signed in:

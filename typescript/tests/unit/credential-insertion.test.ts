@@ -2,7 +2,15 @@ import { Effect } from "effect";
 import { expect, it } from "vitest";
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import type { AutofillInspection, AutofillStep } from "../../src/destinations/autofill-step.js";
-import { makeCredentialKeyboard } from "../../src/destinations/credential-keyboard.js";
+import {
+  type CredentialKeyboard,
+  makeCredentialKeyboard,
+} from "../../src/destinations/credential-keyboard.js";
+import {
+  CdpCommandRefused,
+  fakeDevtoolsKeyboard,
+  type SentCommand,
+} from "../support/fake-devtools.js";
 
 const site = "https://login.example.test";
 const password = "synthetic-password";
@@ -82,3 +90,132 @@ for (const { name, markedPerSession, cause } of [
     for (const secret of [bindingKey, password, "#password"])
       expect(recorded).not.toContain(secret);
   });
+
+/**
+ * A focused password field's fill through `keyboard`, on a page whose step has no submit: every
+ * call finds the field and takes the focus, and the submit's call finds none to click.
+ */
+const fillThrough = (keyboard: CredentialKeyboard) =>
+  Effect.runPromise(
+    fillAutofillStep({
+      step,
+      values: [password],
+      inspection,
+      page: {
+        targetId: "primary",
+        execute: (code) =>
+          Effect.succeed(
+            code.includes("guardKey")
+              ? { submit: "none", url: inspection.page }
+              : { focused: true, url: inspection.page },
+          ),
+      },
+      keyboard,
+    }),
+  );
+const methods = (sent: readonly SentCommand[]) =>
+  sent.map(({ method, sessionId }) => `${sessionId} ${method}`);
+
+// A tab's third-party frames each have their own DevTools session, and the browser may refuse to
+// read one's document. The field is in the page's own document, so the host still types it.
+it("types into the page's field when a third-party frame's session refuses its document read", async () => {
+  const devtools = fakeDevtoolsKeyboard({ page: 1, "third-party-frame": 0 }, (command) =>
+    command.sessionId === "third-party-frame" && command.method === "DOM.getDocument"
+      ? new CdpCommandRefused(command.method, command.params)
+      : undefined,
+  );
+  const report = await fillThrough(devtools.keyboard);
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [{ slot: "password", status: "filled" }],
+    submit: "none",
+  });
+  expect(methods(devtools.sent)).toEqual([
+    "page DOM.getDocument",
+    "third-party-frame DOM.getDocument",
+    "page DOM.resolveNode",
+    "page Runtime.callFunctionOn",
+    "page Runtime.releaseObject",
+  ]);
+});
+
+// Before the one call that carries the value, the host has typed nothing, so a refused command
+// there refuses the field as typed nothing, and the agent may correct the step and send it again.
+for (const { refused, insertion } of [
+  { refused: "DOM.getDocument", insertion: "binding_not_found" },
+  { refused: "DOM.resolveNode", insertion: "binding_unresolved" },
+] as const)
+  it(`refuses the field as typed nothing (${insertion}) when the browser refuses ${refused}`, async () => {
+    const devtools = fakeDevtoolsKeyboard({ page: 1 }, (command) =>
+      command.method === refused
+        ? new CdpCommandRefused(command.method, command.params)
+        : undefined,
+    );
+    const report = await fillThrough(devtools.keyboard);
+    expect(report).toMatchObject({
+      outcome: "refused",
+      reason: "credential_target_refused",
+      target: 0,
+      failureDetail: { context: { check: "typing_refused", insertion } },
+    });
+    expect(report).not.toHaveProperty("typed");
+    expect(methods(devtools.sent)).not.toContain("page Runtime.callFunctionOn");
+    expect(JSON.stringify(report)).not.toContain(password);
+  });
+
+// The call that carries the value may have typed it before its answer was lost, so the fill
+// stays uncertain: refused by the browser, or answered outside the finite set.
+for (const { name, devtools } of [
+  {
+    name: "the browser refuses the call that carries the value",
+    devtools: () =>
+      fakeDevtoolsKeyboard({ page: 1 }, (command) =>
+        command.method === "Runtime.callFunctionOn"
+          ? new CdpCommandRefused(command.method, command.params)
+          : undefined,
+      ),
+  },
+  {
+    name: "that call answers outside the finite set",
+    devtools: () => fakeDevtoolsKeyboard({ page: 1 }, undefined, "unexpected"),
+  },
+])
+  it(`stays uncertain when ${name}`, async () => {
+    const { keyboard, sent } = devtools();
+    const report = await fillThrough(keyboard);
+    expect(report).toMatchObject({ outcome: "uncertain", reason: "fill_call_failed", typed: true });
+    expect(methods(sent)).toContain("page Runtime.callFunctionOn");
+  });
+
+// A refused command's diagnostics name the transport's finite reason and the command's method, so
+// the next failure says which command the browser refused. Never the value, its parameters or the
+// error's message, and a label that holds the value is dropped.
+it("keeps a refused typing command's reason and method, never the value or its parameters", async () => {
+  const refuseTyping = (reason?: string) =>
+    fakeDevtoolsKeyboard({ page: 1 }, (command) => {
+      if (command.method !== "Runtime.callFunctionOn") return undefined;
+      const refusal = new CdpCommandRefused(command.method, command.params);
+      return reason === undefined ? refusal : Object.assign(refusal, { reason });
+    });
+  const report = await fillThrough(refuseTyping().keyboard);
+  expect(report).toMatchObject({
+    outcome: "uncertain",
+    failureDetail: {
+      context: {
+        errorName: "CdpCommandFailure",
+        errorReason: "cdp_command_error",
+        errorMethod: "Runtime.callFunctionOn",
+      },
+    },
+  });
+  const recorded = JSON.stringify(report);
+  for (const secret of [password, "synthetic refusal", "arguments", "params"])
+    expect(recorded).not.toContain(secret);
+
+  const echoed = await fillThrough(refuseTyping(`rejected ${password.toUpperCase()}`).keyboard);
+  expect(echoed).toMatchObject({
+    failureDetail: { context: { errorMethod: "Runtime.callFunctionOn" } },
+  });
+  expect(echoed).not.toHaveProperty("failureDetail.context.errorReason");
+  expect(JSON.stringify(echoed).toLowerCase()).not.toContain(password);
+});
