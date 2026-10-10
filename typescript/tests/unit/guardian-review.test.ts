@@ -661,6 +661,27 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(sentence);
   });
 
+  // A write whose own commit request went through was sent to another screen to prove it. The
+  // page the commit left is that read-back, and a repeat of the write stays denied.
+  it("tells Guardian the page a commit left is the read-back when its commit request went through", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "tell the agent to read back the result in a step that changes nothing. When that write's step shows its commit request went through, with a 2xx or 3xx status and no error after it, reading the page as it stands is that read-back; another page is not needed. Only a write the review found not_done may be done again.";
+    for (const policy of [
+      requests[0]?.systemInstructions ?? "",
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      expect(policy).toContain(sentence);
+  });
+
   // Turning off a preselected partner comparison box read as an invented search choice, so an edit
   // could drop it and leave the box sending the search to another site.
   it("tells Guardian that turning off a data-sharing, tracking or marketing option is a safety default", async () => {
