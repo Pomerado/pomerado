@@ -438,7 +438,7 @@ describe("the publication policy", () => {
   // example shows it broken. Hosts with their own publication policy get it with the live tests.
   it("judges a repair on the lines it changed, beside the maintenance rule for live tests", () => {
     const rule =
-      "In a repair, prefer denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken. Note other doubts about unchanged lines without denying.";
+      "In a repair, prefer denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken. Note other doubts about unchanged lines without denying, except a privacy or credential finding.";
     expect(publicationLiveTestsPolicy).toContain(
       `and note other gaps in the rationale only. When publication/tests.json is absent, judge coverage as before. ${rule}`,
     );
