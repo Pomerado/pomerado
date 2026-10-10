@@ -408,7 +408,7 @@ describe("a publication decision", () => {
 describe("the publication policy", () => {
   it("is the core text, naming the files the host writes", () => {
     const policy = guardianPublicationPolicy;
-    expect(policy.split("\n")).toHaveLength(17);
+    expect(policy.split("\n")).toHaveLength(18);
     expect(
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
     ).toBe(true);
