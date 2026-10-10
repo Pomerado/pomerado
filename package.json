@@ -301,6 +301,11 @@
       "import": "./dist/typescript/src/mint/operation-source.js",
       "default": "./dist/typescript/src/mint/operation-source.js"
     },
+    "./core/mint/output-notes": {
+      "types": "./dist/typescript/src/mint/output-notes.d.ts",
+      "import": "./dist/typescript/src/mint/output-notes.js",
+      "default": "./dist/typescript/src/mint/output-notes.js"
+    },
     "./core/mint/outcome-review": {
       "types": "./dist/typescript/src/mint/outcome-review.d.ts",
       "import": "./dist/typescript/src/mint/outcome-review.js",
@@ -585,6 +590,11 @@
       "types": "./dist/typescript/src/runtime/operation-failure.d.ts",
       "import": "./dist/typescript/src/runtime/operation-failure.js",
       "default": "./dist/typescript/src/runtime/operation-failure.js"
+    },
+    "./core/runtime/output-lint": {
+      "types": "./dist/typescript/src/runtime/output-lint.d.ts",
+      "import": "./dist/typescript/src/runtime/output-lint.js",
+      "default": "./dist/typescript/src/runtime/output-lint.js"
     },
     "./core/runtime/policy-metadata": {
       "types": "./dist/typescript/src/runtime/policy-metadata.d.ts",

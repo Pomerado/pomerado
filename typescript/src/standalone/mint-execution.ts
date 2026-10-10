@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  controlLabelsFromAriaSnapshot,
+  lintOutput,
+  outputChecksNotice,
+} from "../runtime/output-lint.js";
 import { Effect, Either } from "effect";
 import {
   runLocalOperation,
@@ -431,6 +436,22 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
     const { runs } = state;
     const { projection } = state.session;
 
+    // A live step's output is checked against the page it left: a value holding one of its
+    // controls' labels was read collapsed.
+    const capture =
+      execution.target === "liveBrowser" ? state.context.observedCapture : undefined;
+    const controlLabels =
+      capture === undefined ? undefined : controlLabelsFromAriaSnapshot(capture);
+    const outputChecks =
+      result.output === undefined
+        ? undefined
+        : outputChecksNotice(
+            lintOutput(result.output, {
+              outputSchema: result.schemas.output,
+              ...(controlLabels === undefined ? {} : { controlLabels }),
+              samples: true,
+            }),
+          );
     const evidence: ExecutionEvidence = {
       executionId: id,
       status: "completed",
@@ -443,6 +464,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
         stderr: result.stderr,
         inputSchema: result.schemas.input,
         outputSchema: result.schemas.output,
+        ...(outputChecks === undefined ? {} : { outputChecks }),
       }),
       review: reviewFeedback(reviewed),
     };
@@ -452,6 +474,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
       input,
       ...(intentDerivedInput === undefined ? {} : { intentDerivedInput }),
       output: result.output,
+      ...(controlLabels === undefined ? {} : { controlLabels }),
       purpose: execution.purpose,
       journal: result,
       ...(reviewed.decision.action === undefined ? {} : { action: reviewed.decision.action }),

@@ -266,6 +266,44 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
+- Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
+  back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
+  cut short.
+- Return each fact once. Never add a field holding a whole row's or card's text beside the typed
+  fields: give a fact they miss its own typed field, or offer the whole text only as the
+  `card_text` section below.
+
+**Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
+are large and repeated on every record: the filters, facets and sorts the site offers, each
+record's full displayed text, related or recommended records, options that show only on a hover
+or a click, a panel each record opens. Leave each such section out of the default output and
+offer it through one optional input, `include`: an array of the section names this tool can add,
+empty by default (`{ "type": "array", "uniqueItems": true, "items": { "enum": [...] } }`), whose
+description says what each name adds and what it costs.
+- Decide by cost, not by bytes: a short list that takes a click to open on every run is a
+  section; a fact each record already shows is a field.
+- Use the standard names where they fit: `filters` (the filter groups, facets and sorts the site
+  offers for these inputs), `card_text` (each record's full displayed text), `related` (the
+  site's related or recommended records) and `variants` (each record's options). Name any other
+  section for what it holds, in lowercase with underscores.
+- Examples across kinds of sites: a shop's search offers `filters` and `card_text`; a fare search
+  its `filters` and each fare's `fare_rules`, which open in a panel; a rentals or real-estate
+  listing its `nearby` listings; a documentation search each hit's `full_section`, beyond its
+  title and snippet; an orders list each order's `items`, when they show only after opening it.
+- A section's output field is optional in the schema and absent unless asked for, never
+  null-filled, and its description starts "Only with `include: ["name"]`".
+- Without its name, the tool does none of a section's work: it opens no filter group, hovers on
+  nothing and opens no panel. What the caller set is always read back whatever `include` says,
+  such as the filters it applied, returned as `applied_filters`.
+
+**Results, related records and groups.** A list holds only the records the site returned for the
+inputs. Scope the row locator to the main list, and leave out related, recommended, recently
+viewed and "others also" sections; with `include: ["related"]` return them in their own `related`
+list of the same row shape, never mixed into the results and never counted toward a limit. A
+sponsored or promoted row inside the main list stays where it is, marked as such. A card that
+stands for a group, such as one product in several flavours or sizes, a hotel with several room
+types or a building with several units for rent, is one result marked as a group (for example
+`kind: "group"`), with the options or count the card shows, never presented as one of its members.
 
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
@@ -336,11 +374,17 @@ from the hostname: its last labels can be a public suffix (`co.uk`) or another t
 `document`.
 Read each output value from the element or structured-data entry that holds the whole value,
 never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or
-the record's own key, using its `innerText`.
+the record's own key, with `visibleText`, `visibleTexts` or `readRows` (paste `visibleTextCode`
+from `pomerado/runtime` at the top of the call's code). They return only the text a person sees
+on the rendered page, with whitespace normalized and zero-width characters removed, and fail
+instead of returning hidden text; `as: "accessible"` reads what a screen reader reads instead.
+`textContent` always includes hidden text, scripts and styles, and so does `innerText` of an
+element that is not rendered, such as a hidden duplicate of the block you meant. `readRows`
+reads a window of rows in one call, each field relative to its row.
 Never read it from a broad container, whole-page text, tag-stripped HTML, a regex over page-wide
-text or a page-wide setting such as a currency or language picker: `textContent` also includes
-hidden text and scripts, and a heading, label or placeholder is not the value beside it. Read
-embedded data separately when it is relevant to the requested operation.
+text or a page-wide setting such as a currency or language picker: a heading, label or
+placeholder is not the value beside it. Read embedded data separately when it is relevant to
+the requested operation.
 Default budgets: action, readiness and navigation 30 s. Give every Playwright
 wait in the code an explicit `timeout`, and keep `timeout_sec` within `remainingMs()`.
 Child waits cannot extend the outer deadline. Explicitly name observation conditions.

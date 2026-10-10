@@ -59,7 +59,9 @@ Wait for the search's answer with `waitForOutcome` (core skill). Prefer naming i
 no-results message and its results over waiting for the results alone. Read every field of every
 result from that result's own card on every run. Lean toward more information (core skill,
 output fields): return the facts on each card a caller could reasonably use to choose among
-results, with full displayed values, and a maker or provider line in its own field. When only
+results, with full displayed values, and a maker or provider line in its own field. Return only
+the site's results for these inputs, with related or recommended items, the filters the site
+offers and each card's whole text only as `include` sections (core skill, optional sections). When only
 some cards show a fact, its field is nullable and null exactly on the cards that don't. Read the
 results only once every card you return is filled in. When the site marks results as suggestions
 rather than matches, such as "no exact matches, showing similar items", return that. A search

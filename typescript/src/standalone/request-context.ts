@@ -556,6 +556,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         observed = undefined;
         observedUrl = undefined;
       },
+      /** The accessibility snapshot of the page the last live step left, redacted, if taken. */
+      get observedCapture() {
+        return observed?.capture.text;
+      },
       /** The address of the page the last live step left, as the browser reported it. */
       get observedUrl() {
         return observedUrl;

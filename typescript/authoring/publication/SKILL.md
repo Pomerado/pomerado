@@ -70,8 +70,15 @@ first:
   filter, sort or compare its own field (core skill, output fields). A flight card reading "XX
   234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234",
   "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00",
-  "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
-  or stand in for one value that truly does not parse, with that field's description saying so.
+  "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may stand in for one value that
+  truly does not parse, with that field's description saying so; a record's whole text is only
+  an `include` section (core skill, optional sections).
+- **Clean output.** Every string is clean displayed text: no code, styles, markup, template
+  leftovers, control labels or repeated entries. `finish_build` refuses an example whose output
+  holds code, styles, markup or template leftovers, and gives the publication review the host's
+  other output checks as evidence. When a flagged value is what the tool is meant to return,
+  such as code on a site that publishes code, name its path and check with the reason in
+  `finish_build`'s `outputOverrides`; Guardian reads the reason.
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the

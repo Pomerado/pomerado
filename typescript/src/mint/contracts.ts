@@ -7,6 +7,7 @@ import type { CapabilityReview } from "../capabilities/review-contracts.js";
 import { IntakeReasonCode } from "../capabilities/intake-contracts.js";
 import type { FailureDetail } from "../runtime/failure-detail.js";
 import type { InputIssue } from "../runtime/errors.js";
+import { outputChecks, type OutputFinding } from "../runtime/output-lint.js";
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
@@ -166,6 +167,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly confirmActionIds?: readonly string[];
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
+  /** For `output_checks_blocked`, each blocking finding by path, check and count; never a value. */
+  readonly outputFindings?: readonly Pick<OutputFinding, "path" | "check" | "count">[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
   readonly destinationEvidenceGap?:
     | "no_route_evidence"
@@ -347,7 +350,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** A `read_source` of a capture the workspace does not hold: it is not saved yet. */
     | "capture_not_saved"
     /** A repair loosens its registered tool's output contract; `weakenedOutputs` names each field. */
-    | "output_obligation_weakened";
+    | "output_obligation_weakened"
+    /**
+     * The example's output holds code, styles, markup or template leftovers the minter did not
+     * override with a reason; `outputFindings` names each path and check.
+     */
+    | "output_checks_blocked";
   /** For `output_obligation_weakened`, each registered output field the repair loosens and how. */
   readonly weakenedOutputs?: readonly WeakenedOutput[];
   /** What login URL and metadata feedback names: parts, parameter names and credential kinds, never values. */
@@ -750,6 +758,26 @@ export const PublicationRequest = Schema.Struct({
         choice: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(120)),
       }),
     ).pipe(Schema.maxItems(8)),
+  ),
+  /**
+   * Output check findings the minter says are intended, each with why. A blocking one no longer
+   * refuses publication, and the publication review reads every override and its reason.
+   */
+  outputOverrides: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(300)).annotations({
+          description: "The finding's field path exactly as the host reported it",
+        }),
+        check: Schema.Literal(...outputChecks).annotations({
+          description: "The finding's check exactly as the host reported it",
+        }),
+        reason: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
+          description:
+            "Why this value is the tool's intended output, such as a tool whose purpose is returning code",
+        }),
+      }),
+    ).pipe(Schema.maxItems(16)),
   ),
 });
 export type PublicationRequest = typeof PublicationRequest.Type;
