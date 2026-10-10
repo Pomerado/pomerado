@@ -323,6 +323,7 @@ const waitForOutcome = async (outcomes, options = {}) => {
     let previous;
     let last;
     let signature;
+    let quietBefore = false;
     while (true) {
       const observations = await look();
       looks += 1;
@@ -363,8 +364,12 @@ const waitForOutcome = async (outcomes, options = {}) => {
         throw failure;
       }
       // Nothing shows, not even an answer from before the action, and the page went quiet.
+      // A quiet page fails only when the next look agrees, since the page may have answered
+      // between this look's outcomes and its progress sample.
       const anyShown = names.some((name) => observations?.[name].visible > 0);
-      if (decision === undefined && !anyShown && progress.quietMs() >= noProgressMs) {
+      const quiet = decision === undefined && !anyShown && progress.quietMs() >= noProgressMs;
+      if (quiet && !quietBefore) quietBefore = true;
+      else if (quiet) {
         const seen = last ?? {};
         const failure = outcomeWaitFailure(
           "outcome_unknown",
@@ -375,7 +380,7 @@ const waitForOutcome = async (outcomes, options = {}) => {
         );
         finish({ reason: "outcome_unknown" }, failure.message);
         throw failure;
-      }
+      } else quietBefore = false;
       // Only a first sighting is looked at again at once; anything else waits for the next poll.
       if (settled) await waitSleep(100);
       previous = decision;
@@ -489,6 +494,7 @@ const valueWaitLoop = async (wait, options, evaluate, timeoutDefault) => {
     let candidate;
     let candidateAt = begun;
     let filled = -1;
+    let quietBefore = false;
     while (true) {
       let state;
       try {
@@ -528,7 +534,10 @@ const valueWaitLoop = async (wait, options, evaluate, timeoutDefault) => {
         finish({ reason: "values_timeout" }, failure.message);
         throw failure;
       }
-      if (progress.quietMs() >= noProgressMs && !state?.ready) {
+      // A quiet page fails only when the next look agrees, as in waitForOutcome.
+      const quiet = progress.quietMs() >= noProgressMs && !state?.ready;
+      if (quiet && !quietBefore) quietBefore = true;
+      else if (quiet) {
         const reason = state?.reason ?? "values_loading";
         const failure = valueWaitFailure(
           reason,
@@ -538,7 +547,7 @@ const valueWaitLoop = async (wait, options, evaluate, timeoutDefault) => {
         );
         finish({ reason }, failure.message);
         throw failure;
-      }
+      } else quietBefore = false;
       await waitSleep(100);
     }
   } finally {
@@ -652,6 +661,9 @@ const waitForChange = async (fields, options = {}) => {
   if (options.before === undefined && options.action === undefined)
     throw new TypeError("waitForChange needs before (the values from before the choice) or action (the choice itself)");
   let before = options.before;
+  if (before !== undefined && (before === null || typeof before !== "object" || Array.isArray(before) ||
+      Object.keys(before).sort().join() !== Object.keys(specs).sort().join()))
+    throw new TypeError("waitForChange's before must be the values object an earlier wait returned, with the same field names");
   const settle = options.stableMs ?? waitLimits.settle;
   const unchangedMs = options.unchangedMs ?? waitLimits.unchanged;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;

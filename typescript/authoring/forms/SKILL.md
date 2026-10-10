@@ -118,14 +118,16 @@ options do not exist.
 
 Playwright `locator.count()` and `locator.isVisible()` are immediate observations,
 not waits. After opening a popup, wait for its owned, named container and requested
-option to become visible before checking uniqueness. For a known popup locator,
-use `await popup.waitFor({ state: "visible", timeout: 30000 })` in the call; apply
-the same bounded wait to the exact option within that popup. A zero count directly
+option to become visible before checking uniqueness. For a known popup locator, open it
+with `waitForOutcome({ popup }, { action: () => field.click({ timeout: 5000 }) })` in the
+call, so a popup that never opens fails in seconds; then wait the same way, without an
+action, for the exact option within that popup. A zero count directly
 after a click does not establish absence. Inspect the post-action accessibility
 snapshot before changing the selector or attempting another action.
 
 A filled query plus a visible listbox can still show the previous response.
-Wait for observed current-query readiness and the relevant owned option; do not
+Wait for observed current-query readiness and the relevant owned option, such as
+`waitForChange` on the options with the typing as its `action`; do not
 label an old result window with the new query generation. A matching old option
 alone does not establish it.
 

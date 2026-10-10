@@ -20,7 +20,9 @@ import readHeading from "../../authoring/examples/native-page.js";
 import readCatalog, {
   detailFromUrl,
   detailNavigation,
+  searchThenRead,
 } from "../../authoring/examples/navigation.js";
+import { readRooms } from "../../authoring/examples/pagination.js";
 import selectStatus from "../../authoring/examples/selection.js";
 import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
@@ -332,6 +334,162 @@ test("detail example opens the caller's record URL unchanged and checks the page
   ])
     expect(failure(await read(offSite))).toMatchObject({ _tag: "InvalidInput" });
   expect(site.opened).toHaveLength(before);
+});
+
+// A rooms site whose search the build proved reachable by its results URL, /search?q=. Site
+// "proved" still answers that URL; "moved" now sends it to the entry page and its search box
+// submits to /find?term=; "ignored" answers /search for its last query whatever q says, and its
+// search box submits ?query=. Every results page shows its search box holding the query it answers.
+const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored") => {
+  const requests: string[] = [];
+  const rooms = [
+    ["room-1", "North room"],
+    ["room-2", "South room"],
+    ["room-3", "East room"],
+  ] as const;
+  const searchForm = (action: string, name: string, value = "") =>
+    `<form role="search" action="${action}"><input type="search" name="${name}" aria-label="Search rooms" value="${value}"></form>`;
+  const resultsPage = (action: string, name: string, query: string) => {
+    const found = rooms.filter(([, room]) => room.toLowerCase().includes(query.toLowerCase()));
+    return `${searchForm(action, name, query)}${
+      found.length === 0
+        ? `<p role="status">No matching rooms</p>`
+        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`
+    }`;
+  };
+  await page.route(`${origin}/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/favicon.ico") return route.fulfill({ status: 404 });
+    requests.push(url.pathname + url.search);
+    const html = (body: string) => route.fulfill({ contentType: "text/html", body });
+    const [action, name] =
+      template === "moved" ? ["/find", "term"] : template === "ignored" ? ["/search", "query"] : ["/search", "q"];
+    if (url.pathname === "/") return html(searchForm(action, name));
+    if (template === "moved" && url.pathname === "/search")
+      return html(`<script>location.replace("/")</script>`);
+    if (url.pathname === action)
+      return html(
+        resultsPage(
+          action,
+          name,
+          template === "ignored" ? url.searchParams.get("query") ?? "north" : url.searchParams.get(name) ?? "",
+        ),
+      );
+    return route.fulfill({ status: 404, body: "Not found" });
+  });
+  return requests;
+};
+
+const roomRows = Either.right({
+  rooms: [
+    { id: "room-1", name: "North room" },
+    { id: "room-2", name: "South room" },
+  ],
+  more: true,
+});
+
+test("search example opens the proved results URL once and reads the rows there", async ({
+  page,
+}) => {
+  const origin = "https://rooms.example.test";
+  const requests = await roomsSite(page, origin, "proved");
+  const { result } = await runExample(
+    page,
+    searchThenRead,
+    { query: "room", limit: 2 },
+    { siteOrigin: origin },
+  );
+  expect(result).toEqual(roomRows);
+  expect(requests).toEqual(["/search?q=room"]);
+});
+
+for (const [template, landing] of [
+  ["moved", "an entry page"],
+  ["ignored", "another query's results"],
+] as const)
+  test(`search example falls back to the site's search box once when the results URL shows ${landing}`, async ({
+    page,
+  }) => {
+    const origin = "https://rooms.example.test";
+    const requests = await roomsSite(page, origin, template);
+    const { result } = await runExample(
+      page,
+      searchThenRead,
+      { query: "room", limit: 2 },
+      { siteOrigin: origin },
+    );
+    expect(result).toEqual(roomRows);
+    // The results URL once, never a variant of it, then the site's own search once.
+    expect(requests.filter((request) => /^\/(?:search|find)\?/.test(request))).toEqual([
+      "/search?q=room",
+      template === "moved" ? "/find?term=room" : "/search?query=room",
+    ]);
+  });
+
+// A rooms list that pages by appending: each "Show more" click adds the next two of `total` rooms
+// after a short load, their names filling in a moment after the rows appear. With "removed" the
+// button goes once every room shows; with "stuck" it stays and adds nothing.
+const roomNames = ["North room", "South room", "East room", "West room"];
+const appendingRooms = async (page: Page, total: number, ending: "removed" | "stuck") => {
+  await page.setContent(`
+    <ul aria-label="Rooms"></ul><button>Show more</button><output id="clicks">0</output>
+    <script>{
+      const names = ${JSON.stringify(roomNames.slice(0, total))};
+      let shown = 0;
+      const list = document.querySelector("ul");
+      const button = document.querySelector("button");
+      const next = () => {
+        list.setAttribute("aria-busy", "true");
+        setTimeout(() => {
+          const added = names.slice(shown, shown + 2).map((name, index) => {
+            const row = document.createElement("li");
+            row.dataset.roomId = "room-" + (shown + index + 1);
+            row.innerHTML = '<span class="name"></span>';
+            list.append(row);
+            setTimeout(() => { row.querySelector(".name").textContent = name; }, 80);
+            return row;
+          });
+          shown += added.length;
+          list.setAttribute("aria-busy", "false");
+          if (shown === names.length && ${JSON.stringify(ending)} === "removed") button.remove();
+        }, 120);
+      };
+      button.onclick = () => { document.querySelector("#clicks").textContent++; next(); };
+      next();
+    }</script>`);
+};
+const roomList = (count: number) =>
+  roomNames.slice(0, count).map((name, index) => ({ id: `room-${index + 1}`, name }));
+
+test("append example reads each step's filled-in new rows until the control goes", async ({
+  page,
+}) => {
+  await appendingRooms(page, 4, "removed");
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example stops at the limit without another step", async ({ page }) => {
+  await appendingRooms(page, 4, "removed");
+  expect((await runExample(page, readRooms, { limit: 1 })).result).toEqual(
+    Either.right({ rooms: roomList(1), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("0");
+});
+
+test("append example ends the list at a step that adds no rows", async ({ page }) => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "A step that adds nothing ends only once the rows held unchanged for the helper's fixed two seconds.",
+  });
+  await appendingRooms(page, 2, "stuck");
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(2), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
 });
 
 const siteOrigin = "https://members.example.test";
@@ -993,6 +1151,21 @@ test("calendar example moves to the requested month and reads the committed date
   expect(
     failure((await runExample(page, pickTravelDate, { date: "2026-11-03" })).result),
   ).toMatchObject({ _tag: "OperationFailure", message: "day_ambiguous" });
+});
+
+test("calendar example stops when a month step leaves the shown month unchanged", async ({
+  page,
+}) => {
+  // The calendar offers nothing past its last month: its next-month button does nothing there.
+  await page.setContent(`
+    <input aria-label="Travel date" readonly>
+    <div role="dialog" aria-label="Choose date">
+      <button>Previous month</button><button>Next month</button>
+      <section data-month="2026-12"><button data-date="2026-12-01">1</button></section>
+    </div>`);
+  expect(
+    failure((await runExample(page, pickTravelDate, { date: "2027-01-01" })).result),
+  ).toMatchObject({ _tag: "OperationFailure", message: "month_unavailable", dispatch: "not_sent" });
 });
 
 /** A synthetic documents site on its own origin, with a file input and a statement export. */

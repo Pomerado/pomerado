@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
 import type { KernelOperationContext } from "../../src/browser/index.js";
 
 // Observed contract: /checkout fills item, quantity and a gift-wrap add-on the page offers
@@ -43,7 +43,7 @@ const fillCheckout = async ({ kernel, sessionId, siteOrigin, input, errors }: Co
     code: `
       const checkout = ${JSON.stringify(new URL("/checkout", siteOrigin).href)};
       const input = ${JSON.stringify(input)};
-      await page.goto(checkout, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.goto(checkout, { waitUntil: "domcontentloaded", timeout: ${timeoutDefaults.navigation} });
       const form = page.getByRole("form", { name: "Checkout", exact: true });
       if ((await form.count()) !== 1) return { failure: "checkout_changed" };
       await form.getByLabel("Item", { exact: true }).fill(input.item, { timeout: 5000 });

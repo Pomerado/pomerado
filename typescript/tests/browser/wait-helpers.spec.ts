@@ -107,7 +107,7 @@ test("the site's own loading sign counts once it is named, and a page without it
   const html = `
     <section id="answer"><div class="wheel">Please hold</div></section>
     <script>
-      setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 900);
+      setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 1500);
     </script>`;
   await page.setContent(html);
   expect((await outcome(page, `noProgressMs: 300, timeout: 3000, loading: page.locator(".wheel")`)).shown).toBe(
@@ -448,4 +448,15 @@ test("a probe call acts with a short default timeout, and later calls get Playwr
     code: `await page.locator("#late").waitFor(); return "seen";`,
   });
   expect(later).toEqual({ success: true, result: "seen" });
+});
+
+test("a before that is not the values object of the same fields is refused at once", async ({
+  page,
+}) => {
+  await quotePage(page, "$240", null);
+  const answer = await call(
+    page,
+    `await waitForChange({ total: page.locator("#total") }, { before: ["$240"], noProgressMs: 300 });`,
+  );
+  expect(answer.error).toMatch(/^waitForChange's before must be the values object/u);
 });

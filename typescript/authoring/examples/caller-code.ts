@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
 
 // A code the site sends during the action splits the flow into two calls. The first call stops
 // where the site asks for the code; the script asks the caller for it, and the second call gets
@@ -34,8 +34,8 @@ export default defineOperation(
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const current = new URL(page.url());
         if (!onSite(current)) return false;
-        await page.getByRole("button", { name: "Send code", exact: true }).click({ timeout: 30000 });
-        await page.getByLabel("Verification code", { exact: true }).waitFor({ state: "visible", timeout: 30000 });
+        await page.getByRole("button", { name: "Send code", exact: true }).click({ timeout: ${timeoutDefaults.action} });
+        await page.getByLabel("Verification code", { exact: true }).waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} });
         return true;
       `,
     });
@@ -48,10 +48,10 @@ export default defineOperation(
     const confirmed = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
-        await page.getByLabel("Verification code", { exact: true }).fill(${JSON.stringify(code)}, { timeout: 30000 });
-        await page.getByRole("button", { name: "Confirm", exact: true }).click({ timeout: 30000 });
+        await page.getByLabel("Verification code", { exact: true }).fill(${JSON.stringify(code)}, { timeout: ${timeoutDefaults.action} });
+        await page.getByRole("button", { name: "Confirm", exact: true }).click({ timeout: ${timeoutDefaults.action} });
         const done = page.getByRole("status", { name: "Address change confirmed", exact: true });
-        return await done.waitFor({ state: "visible", timeout: 30000 }).then(() => true, () => false);
+        return await done.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} }).then(() => true, () => false);
       `,
     });
     if (!confirmed.success)

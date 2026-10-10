@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
 
 const PageOption = Schema.Struct({ value: Schema.NonEmptyString, label: Schema.NonEmptyString });
 const Offer = Schema.Union(
@@ -66,7 +66,7 @@ export default defineOperation(
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const current = new URL(page.url());
         if (!onSite(current)) return { failure: "unexpected_page" };
-        await page.getByRole("button", { name: "Choose " + flight, exact: true }).click({ timeout: 30000 });
+        await page.getByRole("button", { name: "Choose " + flight, exact: true }).click({ timeout: ${timeoutDefaults.action} });
         const seatMap = page.getByRole("radiogroup", { name: "Seats", exact: true });
         // The seat map names its flight once that flight's seats are shown.
         await seatMap
@@ -114,11 +114,11 @@ export default defineOperation(
         // The wait can be long, so confirm the page still offers the chosen seat first.
         const seat = seatMap.locator("input[value=" + JSON.stringify(chosenSeat) + "]");
         if ((await seat.count()) !== 1 || (await seat.isDisabled())) return { failure: "choice_gone" };
-        await seat.check({ timeout: 30000 });
-        await page.getByLabel("Traveler", { exact: true }).selectOption(chosenTraveler, { timeout: 30000 });
-        await page.getByRole("button", { name: "Book", exact: true }).click({ timeout: 30000 });
+        await seat.check({ timeout: ${timeoutDefaults.action} });
+        await page.getByLabel("Traveler", { exact: true }).selectOption(chosenTraveler, { timeout: ${timeoutDefaults.action} });
+        await page.getByRole("button", { name: "Book", exact: true }).click({ timeout: ${timeoutDefaults.action} });
         const confirmation = page.getByRole("status", { name: "Booking confirmation", exact: true });
-        const shown = await confirmation.waitFor({ state: "visible", timeout: 30000 }).then(() => true, () => false);
+        const shown = await confirmation.waitFor({ state: "visible", timeout: ${timeoutDefaults.answerCap} }).then(() => true, () => false);
         if (!shown) return { failure: "not_confirmed" };
         return { reference: await confirmation.getAttribute("data-reference") };
       `,
