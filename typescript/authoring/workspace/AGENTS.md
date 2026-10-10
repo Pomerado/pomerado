@@ -439,9 +439,8 @@ and sign in again when the build signs in. A write build reads back first whethe
 commit took effect and never submits one that did. `host_unavailable`
 ends live execution: preserve receipts and unresolved effects; do not retry execution or request
 user input to restore the host. An eligible retained receipt may still publish with
-`finish_build` while the source it ran is unchanged; a host may also accept a change confined to
-the output schema that the receipt's output still satisfies. A correction that changes what runs
-needs a fresh example, which needs live execution: end with `report_blocked` reason
+`finish_build` while the source it ran is unchanged. Any source correction, the schemas
+included, needs a fresh example, which needs live execution: end with `report_blocked` reason
 `host_unavailable`, never `policy`. Without a receipt the attempt ends. `open` still requires every
 existing authorization and review check. An absent field does not promise availability.
 
