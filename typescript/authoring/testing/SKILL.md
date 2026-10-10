@@ -49,7 +49,11 @@ several controls in one test whenever that covers more. Check the remaining valu
 against pages you captured where that applies, and list any input no live run set under
 untested in `coverage`, so a reader sees it as unverified. A control that fails
 its test is fixed, never dropped from the schema. A live run that returns partly filled results,
-or passes only when run again, shows a missing wait for content: fix the wait in source.
+or passes only when run again, shows a missing wait for content: fix the wait in source. After
+the example passes, read its returned fields once at the answer and again about 10 s later on the
+same page; a field that changed is filled late, so wait for it in source or describe it as live,
+such as a countdown. A run that sits idle after its answer showed, or opens controls its input
+did not use, works for more than it returns: trim it.
 Read every string in each result. After each run with output the host reports output checks:
 values that hold code, styles, markup or template leftovers, text read collapsed or cut short,
 a whole card's text, repeated entries or records, and fields that never vary or are always

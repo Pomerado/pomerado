@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, timeoutDefaults } from "../../src/browser/index.js";
 
 const Results = Schema.Struct({
   items: Schema.Array(
@@ -35,7 +35,7 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 90,
       code: `
-        await page.goto(${JSON.stringify(new URL("/", siteOrigin).href)}, { timeout: 30000 });
+        await page.goto(${JSON.stringify(new URL("/", siteOrigin).href)}, { timeout: ${timeoutDefaults.navigation} });
         // Site HTTP runs inside the page, with its cookies, so the request boundary sees it.
         // Never use page.request or a Node-side fetch.
         return await page.evaluate(async (url) => {

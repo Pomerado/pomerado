@@ -151,21 +151,32 @@ other business effects still need their existing authority.
 
 **Work through the page's own controls.** In the Playwright version and your browser probes,
 type into the site's search boxes and forms, pick its suggestions and options, and click its
-links and buttons. URLs built from caller values are brittle for many kinds of input, so the
-page's controls are usually the easier and more reliable way. A URL the caller supplied, on the
+links and buttons. URLs built from caller values are brittle for many kinds of input, so build
+the flow through the page's controls first. A URL the caller supplied, on the
 tool's site, may be opened unchanged: the build's start page, or a URL input such as a product
 or listing page, which a details tool takes as input and opens directly. A stable identifier
 route the site itself uses may be opened from the caller's identifier when it is clearly better
 than the controls, such as a record page at `/items/<id>` instead of crawling a directory.
-Either way, read the page's identity back from the page and fail if it does not match. Never
-build or iterate on search, filter or sort parameters from caller values to reverse-engineer the
-site's search in place of its controls.
+Either way, read the page's identity back from the page and fail if it does not match.
+
+When the controls flow lands on a URL the site produced, and two runs with different inputs show
+which parts of it carry which input, such as the query, dates, guests or party size, sort, page
+or a record's own identifier route, the tool may open that URL with the caller's values in those
+parts, built with `URLSearchParams` for a query part or `encodeURIComponent` for a path part and
+every other part copied as the site wrote it, once the build checked that it gives the same answer as the controls. At run time it reads every input
+back from the page, and when the landing is not an answer it named or a read-back differs, it
+runs the controls flow once instead, in a named function such as `throughControls`
+(`references/navigation.ts`). Never guess a parameter, never iterate on URL variants, and take an
+opaque filter code only from a link the page produced in this run. A POST form, a URL that
+carries a per-session token, a value that needs a typeahead pick to resolve, a location or store
+the site keeps in cookies, and every step on a write's path go through the controls.
 
 A URL the site produced in this run is fine to read, return, reload or follow, such as the
 results page your search landed on or a link's own `href`. So is the site's entry page, or a
 fixed page the site links to, opened by its exact `href`. Never trim or guess a link: a link
-with its query removed is a URL you wrote. When a site control does not offer the caller's
-value, wait for it, retry it or use another of the site's own controls, and return
+with its query removed is a URL you wrote. A record's identifier route the site itself uses, such
+as the canonical link its page declares, is not a trimmed link. When a site control does not
+offer the caller's value, wait for it, retry it or use another of the site's own controls, and return
 `InvalidInput` when the site shows the value does not exist. Never fall back to a guessed URL.
 This holds for `src/tool.mjs`, every fallback in it and your own probes. It does not cover the
 HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input.

@@ -308,7 +308,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
   // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
   // most rows to pass and returns what is there after that.
-  ["core", "After applying a filter, prefer waiting up to 15s for results to filter."],
+  ["core", "After a search or a filter, use `waitForChange` on the rows you return"],
   // A reload after a choice such as a city can drop the search box's suggestions, so the tool
   // types into the box again.
   [
@@ -715,17 +715,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["5c1c54e7f21dbc2eaf23b05844df735889d8fc18fd7826e4d9fa370624ce3799", "core"],
-    ["52b6f64e30303759e5bbe02fb7afb1d2d6091cfe4ac9c1c8f426d5ef9c8ca5c8", "search"],
-    ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
-    ["3fc3ba08d617a6be45f6b5ea2b184066e5b78ba72cbd55c65006a9e18dc7eb15", "testing"],
-    ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
-    ["bf93224e727fa574c22d4c3e47f8b88432b234a306990aa1acb50bfdf6d8f9f7", "forms"],
-    ["6c3b0e8152250a208b2350eef8d30492e3ae9a9a9e62cc3f9e31d3339b2135e1", "writes"],
+    ["c0fca123f38f77deec1edbd279c5e716ef0593e3b69aeb9402d0e7f99297c46a", "core"],
+    ["56660d309f3bb109bc607b8dabb5b5980ac0c87ebd9f30df85f67c6dd72797d6", "search"],
+    ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
+    ["08fd8f04e8806ab17008fe4dae18ed76ea6d46131c24c3b17c8048871c98d5b7", "testing"],
+    ["b7fc597230df85f21a15ddc3355ea9c8095d0977a7aead099470d92c136d49c4", "pagination"],
+    ["6470768cbe2c563e9c8895b6e25f0f5c1507633b6088404b55e72530884fe2a4", "forms"],
+    ["09e84954722f44a2a527ebd259777380bb7f978431c5952db02cb5289c11422c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["206379302afb0b012834bbecac9000d301691fe08bb24085045a3a0998f76dbc", "caller-input"],
+    ["4b8e7325756470b6b41e071c0a6d114754fa83501bad64991e7778e07a734a55", "caller-input"],
     ["5518153d5728150a2c658fbea2539b435fe8389b488247b693c38160f879f199", "publication"],
-    ["1eccfcd1e8443d151123e508fb94c628cbde48b112fcbf0711f2a89beece0e57", "workspace/AGENTS.md"],
+    ["c70105399d2cec61ce8ca48bf754916505c386f9806432ea59bd9caf31ce9316", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

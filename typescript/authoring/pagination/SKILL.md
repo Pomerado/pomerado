@@ -33,8 +33,14 @@ bottom, adds rows to the same list instead of navigating. Detect it when activat
 control leaves the URL and page number unchanged while the row count grows, or when a
 scroll adds rows. Then page by repeating that one action and reading only the rows it
 added, identified by stable ID, until the control disappears or disables, a step adds no
-new rows, or the requested count is met. Bound the loop: a fixed step cap and a time
-budget, with a short wait for rows after each step. On hitting a bound, return the rows
+new rows, or the requested count is met. Bound the loop with a fixed step cap and a time
+budget, and wait for the new rows with `waitForRows` after each step, the click or scroll as
+its `action`. The control gone or disabled after a step's rows arrived is the end. A control
+that hides or disables while a step loads is not: when a step adds no identified rows, read once
+more without acting, and call it the end only if the rows still did not grow and the control is
+still gone or disabled. If the control is still offered, return the rows read as partial, with
+the reason.
+On hitting a bound, return the rows
 read with an explicit reason and no pretend next cursor. Never treat a repeated click as
 safe if it could submit or change anything.
 

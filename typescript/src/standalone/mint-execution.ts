@@ -45,6 +45,8 @@ import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
+import { probeCallCode } from "../runtime/host-execute.js";
+import type { BrowserExecute } from "../runtime/browser-execution.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import type { SignInStepResult } from "../mint/sign-in-recorder.js";
@@ -546,6 +548,15 @@ const authoredExecution = (
         ? context.signInCodes().flatMap((handle) => known.get(handle) ?? [])
         : [];
     const signInOrigins = state.signInOrigins.all();
+    // An exploration probe's own calls act with the action budget as their default timeout.
+    const probing = (scriptBrowser: { readonly sessionId: string; readonly executeResponse: BrowserExecute }) =>
+      execution.purpose === "explore" && live
+        ? {
+            sessionId: scriptBrowser.sessionId,
+            executeResponse: ((code, timeoutSec) =>
+              scriptBrowser.executeResponse(probeCallCode(code), timeoutSec)) satisfies BrowserExecute,
+          }
+        : scriptBrowser;
     const watch =
       codes.length === 0
         ? undefined
@@ -597,10 +608,11 @@ const authoredExecution = (
             // Only a live step receives a value; offline steps run the handle text as written.
             sources: live ? [...handles.fill(files, context.siteOrigin)] : sources,
             input,
-            browser:
+            browser: probing(
               watch === undefined
                 ? browser
                 : { sessionId: browser.sessionId, executeResponse: watch.executeResponse },
+            ),
             siteOrigin: context.siteOrigin,
             ...(siteDomain(context.siteOrigin) === undefined
               ? {}

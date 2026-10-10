@@ -13,8 +13,9 @@ export class BrowserActionTimeout extends Error {
 }
 
 /**
- * Only Kernel's failed response establishes a settled timeout: a native action's, or the authoring
- * library's `waitForOutcome` that saw no outcome within its own timeout.
+ * Only Kernel's failed response establishes a settled timeout: a native action's, or one of the
+ * runtime's page waits that ended without its answer: no outcome, or values still loading, within
+ * its cap or once the page stopped progressing.
  */
 export const nativeActionTimeout = (answer: {
   readonly success: boolean;
@@ -25,6 +26,8 @@ export const nativeActionTimeout = (answer: {
   (/^(?:TimeoutError:\s*)?(?:locator|page|frame)\.[A-Za-z]+: Timeout \d+ms exceeded\b/u.test(
     answer.error,
   ) ||
-    /^(?:OutcomeWaitFailure:\s*)?outcome_timeout after \d+ ms:/u.test(answer.error))
+    /^(?:(?:OutcomeWait|ValueWait)Failure:\s*)?(?:outcome_(?:timeout|unknown)|values_(?:loading|timeout)|change_unknown) after \d+ ms\b/u.test(
+      answer.error,
+    ))
     ? answer.error
     : undefined;

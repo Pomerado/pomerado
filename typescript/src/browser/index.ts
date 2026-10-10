@@ -54,10 +54,16 @@ export { CalendarDate, formControlsCode } from "./form-controls.js";
 export { outcomeWaitCode } from "./outcome-wait.js";
 export { visibleTextCode } from "./visible-text.js";
 export { normalizeText } from "../runtime/text.js";
+export { waitCode } from "./wait.js";
 export { FileInput, FileOutput, FileRefused, defaultFileLimits } from "../runtime/files.js";
 export type { FileObject, FileLimits, PlacedFile, ScriptFiles } from "../runtime/files.js";
 export type { FormControlShape } from "./form-controls.js";
-export type { OutcomeObservation } from "./outcome-wait.js";
+export type {
+  OutcomeObservation,
+  WaitProgress,
+  WaitProgressSign,
+  WaitRecord,
+} from "./wait.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";
 export type { DialogActionPort } from "./dialogs/action.js";

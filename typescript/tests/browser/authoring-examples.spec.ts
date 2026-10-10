@@ -20,7 +20,9 @@ import readHeading from "../../authoring/examples/native-page.js";
 import readCatalog, {
   detailFromUrl,
   detailNavigation,
+  searchThenRead,
 } from "../../authoring/examples/navigation.js";
+import { readRooms } from "../../authoring/examples/pagination.js";
 import selectStatus from "../../authoring/examples/selection.js";
 import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
@@ -245,6 +247,9 @@ const recordsSite = async (page: Page, origin: string) => {
     }
     if (url.pathname === "/records/record_5")
       return html(`<script>location.replace("/records/archived")</script>`);
+    if (url.pathname === "/records/record_gone")
+      return route.fulfill({ status: 404, contentType: "text/html", body: `<h1>Record not found</h1>` });
+    if (url.pathname === "/records/record_blank") return html(`<main><p>Welcome back</p></main>`);
     const shown = url.pathname === "/records/record_7" ? "record_42" : url.pathname.slice(9);
     return html(`<section role="region" aria-label="Continue to record" data-record-id="${shown}">
         <button onclick="this.closest('section').outerHTML = '<section role=region aria-label=\\'Record details\\' data-record-id=${shown}><h1>Quarterly report</h1></section>'">Continue</button>
@@ -332,6 +337,322 @@ test("detail example opens the caller's record URL unchanged and checks the page
   ])
     expect(failure(await read(offSite))).toMatchObject({ _tag: "InvalidInput" });
   expect(site.opened).toHaveLength(before);
+});
+
+test("detail example reports the site's not-found page for a record URL at once", async ({ page }) => {
+  const origin = "https://records.example.invalid";
+  await recordsSite(page, origin);
+  const started = Date.now();
+  const { result } = await runExample(
+    page,
+    detailFromUrl,
+    { record_url: `${origin}/records/record_gone` },
+    { siteOrigin: origin },
+  );
+  expect(failure(result)).toMatchObject({ _tag: "InvalidInput", message: "The site has no record at this URL" });
+  expect(Date.now() - started).toBeLessThan(3000);
+});
+
+test("detail example fails a record URL whose page shows no answer once the page stops progressing", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The example uses the runtime's 8 s no-progress budget, which a test cannot inject.",
+  });
+  const origin = "https://records.example.invalid";
+  await recordsSite(page, origin);
+  const started = Date.now();
+  const { result } = await runExample(
+    page,
+    detailFromUrl,
+    { record_url: `${origin}/records/record_blank` },
+    { siteOrigin: origin },
+  );
+  expect(failure(result)).toMatchObject({ _tag: "BrowserActionTimeout" });
+  expect(String((failure(result) as { message: string }).message)).toMatch(/^outcome_unknown after /u);
+  // Well before the 30 s cap.
+  expect(Date.now() - started).toBeLessThan(15_000);
+});
+
+// A rooms site whose search the build proved reachable by its results URL, /search?q=. Site
+// "proved" still answers that URL; "moved" now sends it to the entry page and its search box
+// submits to /find?term=; "ignored" answers /search for its last query whatever q says, and its
+// search box submits ?query=. Every results page shows its search box holding the query it answers.
+const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored") => {
+  const requests: string[] = [];
+  const rooms = [
+    ["room-1", "North room"],
+    ["room-2", "South room"],
+    ["room-3", "East room"],
+  ] as const;
+  const searchForm = (action: string, name: string, value = "") =>
+    `<form role="search" action="${action}"><input type="search" name="${name}" aria-label="Search rooms" value="${value}"></form>`;
+  const resultsPage = (action: string, name: string, query: string) => {
+    const found = rooms.filter(([, room]) => room.toLowerCase().includes(query.toLowerCase()));
+    return `${searchForm(action, name, query)}${
+      found.length === 0
+        ? `<p role="status">No matching rooms</p>`
+        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`
+    }`;
+  };
+  await page.route(`${origin}/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/favicon.ico") return route.fulfill({ status: 404 });
+    requests.push(url.pathname + url.search);
+    const html = (body: string) => route.fulfill({ contentType: "text/html", body });
+    const [action, name] =
+      template === "moved" ? ["/find", "term"] : template === "ignored" ? ["/search", "query"] : ["/search", "q"];
+    if (url.pathname === "/") return html(searchForm(action, name));
+    if (template === "moved" && url.pathname === "/search")
+      return html(`<script>location.replace("/")</script>`);
+    if (url.pathname === action)
+      return html(
+        resultsPage(
+          action,
+          name,
+          template === "ignored" ? url.searchParams.get("query") ?? "north" : url.searchParams.get(name) ?? "",
+        ),
+      );
+    return route.fulfill({ status: 404, body: "Not found" });
+  });
+  return requests;
+};
+
+const roomRows = Either.right({
+  rooms: [
+    { id: "room-1", name: "North room" },
+    { id: "room-2", name: "South room" },
+  ],
+  more: true,
+});
+
+test("search example opens the proved results URL once and reads the rows there", async ({
+  page,
+}) => {
+  const origin = "https://rooms.example.test";
+  const requests = await roomsSite(page, origin, "proved");
+  const { result } = await runExample(
+    page,
+    searchThenRead,
+    { query: "room", limit: 2 },
+    { siteOrigin: origin },
+  );
+  expect(result).toEqual(roomRows);
+  expect(requests).toEqual(["/search?q=room"]);
+});
+
+for (const [template, landing] of [
+  ["moved", "an entry page"],
+  ["ignored", "another query's results"],
+] as const)
+  test(`search example falls back to the site's search box once when the results URL shows ${landing}`, async ({
+    page,
+  }) => {
+    const origin = "https://rooms.example.test";
+    const requests = await roomsSite(page, origin, template);
+    const { result } = await runExample(
+      page,
+      searchThenRead,
+      { query: "room", limit: 2 },
+      { siteOrigin: origin },
+    );
+    expect(result).toEqual(roomRows);
+    // The results URL once, never a variant of it, then the site's own search once.
+    expect(requests.filter((request) => /^\/(?:search|find)\?/.test(request))).toEqual([
+      "/search?q=room",
+      template === "moved" ? "/find?term=room" : "/search?query=room",
+    ]);
+  });
+
+// A rooms list that pages by appending: each "Show more" click adds the next two of `total` rooms
+// after a short load, their names filling in a moment after the rows appear. With "removed" the
+// button goes once every room shows; with "stuck" it stays and adds nothing.
+const roomNames = ["North room", "South room", "East room", "West room"];
+const appendingRooms = async (page: Page, total: number, ending: "removed" | "stuck", sentinel = false) => {
+  await page.setContent(`
+    <main><ul aria-label="Rooms"></ul>${sentinel ? '<div class="infinite-loader" style="height: 20px"></div>' : ""}</main>
+    <button>Show more</button><output id="clicks">0</output>
+    <script>{
+      const names = ${JSON.stringify(roomNames.slice(0, total))};
+      let shown = 0;
+      const list = document.querySelector("ul");
+      const button = document.querySelector("button");
+      const next = () => {
+        list.setAttribute("aria-busy", "true");
+        setTimeout(() => {
+          const added = names.slice(shown, shown + 2).map((name, index) => {
+            const row = document.createElement("li");
+            row.dataset.roomId = "room-" + (shown + index + 1);
+            row.innerHTML = '<span class="name"></span>';
+            list.append(row);
+            setTimeout(() => { row.querySelector(".name").textContent = name; }, 80);
+            return row;
+          });
+          shown += added.length;
+          list.setAttribute("aria-busy", "false");
+          if (shown === names.length && ${JSON.stringify(ending)} === "removed") button.remove();
+        }, 120);
+      };
+      button.onclick = () => { document.querySelector("#clicks").textContent++; next(); };
+      next();
+    }</script>`);
+};
+const roomList = (count: number) =>
+  roomNames.slice(0, count).map((name, index) => ({ id: `room-${index + 1}`, name }));
+
+test("append example reads each step's filled-in new rows until the control goes", async ({
+  page,
+}) => {
+  await appendingRooms(page, 4, "removed");
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example ends at the control going beside a loader the page always shows", async ({ page }) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The first page's loader counts until it held for the runtime's fixed 8 s no-progress window.",
+  });
+  await appendingRooms(page, 4, "removed", true);
+  expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example stops at the limit without another step", async ({ page }) => {
+  await appendingRooms(page, 4, "removed");
+  expect((await runExample(page, readRooms, { limit: 1 })).result).toEqual(
+    Either.right({ rooms: roomList(1), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("0");
+});
+
+test("append example reports a step that adds no rows while Show more stays as partial, never complete", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description:
+      "A step that adds nothing ends only once the rows held unchanged for the helper's fixed two seconds.",
+  });
+  await appendingRooms(page, 2, "stuck");
+  expect((await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 30_000 })).result).toEqual(
+    Either.right({
+      rooms: roomList(2),
+      coverage: "partial",
+      limitation: "Show more added no rooms while the site still offered it",
+    }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+// A rooms site whose "Show more" loads the next two rooms after `delayMs`, through the site's API or
+// a timer, while a spinner shows below the list and the control is hidden or disabled; once every
+// room shows, the control goes.
+const slowAppendingRooms = async (
+  page: Page,
+  delayMs: number,
+  via: "request" | "timer" = "request",
+  whileLoading: "kept" | "hidden" | "disabled" = "kept",
+) => {
+  const origin = "https://rooms.example.test";
+  await page.route(`${origin}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/more") {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await route.fulfill({ contentType: "application/json", body: "{}" }).catch(() => undefined);
+      return;
+    }
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<main>
+        <ul aria-label="Rooms"><li data-room-id="room-1"><span class="name">North room</span></li><li data-room-id="room-2"><span class="name">South room</span></li></ul>
+        <div id="status"></div><button>Show more</button><output id="clicks">0</output>
+      </main>
+      <script>
+        const button = document.querySelector("button");
+        button.onclick = async () => {
+          document.querySelector("#clicks").textContent++;
+          document.querySelector("#status").innerHTML = '<div class="spinner" style="height: 20px"></div>';
+          if (${JSON.stringify(whileLoading)} === "hidden") button.hidden = true;
+          if (${JSON.stringify(whileLoading)} === "disabled") button.disabled = true;
+          if (${JSON.stringify(via)} === "request") await fetch("/more");
+          else await new Promise((resolve) => setTimeout(resolve, ${delayMs}));
+          document.querySelector("ul").insertAdjacentHTML("beforeend",
+            '<li data-room-id="room-3"><span class="name">East room</span></li><li data-room-id="room-4"><span class="name">West room</span></li>');
+          document.querySelector("#status").innerHTML = "";
+          button.remove();
+        };
+      </script>`,
+    });
+  });
+  await page.goto(`${origin}/`);
+};
+
+for (const whileLoading of ["hidden", "disabled"] as const)
+  test(`append example never calls a control ${whileLoading} while a step loads the end of the list`, async ({
+    page,
+  }) => {
+    test.info().annotations.push({
+      type: "slow",
+      description: "The step loads for 10 s without a request the wait can see, past the runtime's fixed 8 s window.",
+    });
+    await slowAppendingRooms(page, 10_000, "timer", whileLoading);
+    const { result } = await runExample(page, readRooms, { limit: 10 }, { deadlineMs: 40_000 });
+    // Every room, or the rooms read so far said to be partial: never a short list called complete.
+    expect(result).toEqual(Either.right({ rooms: roomList(4), coverage: "complete" }));
+  });
+
+test("append example waits for a step whose rooms take longer than the request hold", async ({ page }) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The site's API answers after 5 s, past the 4 s a request stays busy when the wait did not start it.",
+  });
+  await slowAppendingRooms(page, 5000);
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+// A rooms list with padding that streams each page in: ten rows per load, one every 80 ms.
+const streamingRooms = (page: Page, total: number) =>
+  page.setContent(`
+    <ul aria-label="Rooms" style="padding: 20px"></ul><button>Show more</button><output id="clicks">0</output>
+    <script>{
+      let shown = 0;
+      const list = document.querySelector("ul");
+      const next = () => {
+        const until = Math.min(shown + 10, ${total});
+        for (let at = 1; shown < until; at += 1) {
+          const id = (shown += 1);
+          setTimeout(() => list.insertAdjacentHTML("beforeend",
+            '<li data-room-id="room-' + id + '"><span class="name">Room ' + id + '</span></li>'), at * 80);
+        }
+      };
+      document.querySelector("button").onclick = () => { document.querySelector("#clicks").textContent++; next(); };
+      next();
+    }</script>`);
+
+test("append example takes its page size from a first page that streamed in, not from its first rows", async ({
+  page,
+}) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "A first page shorter than the limit counts only once its rows held for the helper's fixed two seconds.",
+  });
+  await streamingRooms(page, 40);
+  expect((await runExample(page, readRooms, { limit: 30 })).result).toEqual(
+    Either.right({
+      rooms: Array.from({ length: 30 }, (_, index) => ({ id: `room-${index + 1}`, name: `Room ${index + 1}` })),
+      coverage: "complete",
+    }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("2");
 });
 
 const siteOrigin = "https://members.example.test";
@@ -538,6 +859,31 @@ test("ARIA listbox example waits for this query's delayed options and reads the 
     Either.right({ code: "B" }),
   );
   await expect(page.locator("#choices")).toHaveAttribute("data-query-at-commit", "airport b");
+  await expect(page.locator("#commits")).toHaveText("1");
+});
+
+test("ARIA listbox example reports a choice the status never shows without waiting out a fixed timeout", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <input role="combobox" aria-label="Airport" aria-expanded="false" aria-controls="choices">
+    <output role="status" aria-label="Selected airport">A</output><output id="commits">0</output>
+    <ul role="listbox" id="choices" style="display:none;min-height:20px"></ul>
+    <script>
+      const control = document.querySelector("input"); const popup = document.querySelector("#choices");
+      control.onclick = () => { control.setAttribute("aria-expanded", "true"); popup.style.display = "block"; };
+      control.oninput = () => setTimeout(() => {
+        popup.innerHTML = '<li role="option" data-key="B">Airport B</li>';
+        popup.dataset.query = control.value;
+      }, 50);
+      popup.onclick = () => { document.querySelector("#commits").textContent++; };
+    </script>`);
+  const started = Date.now();
+  expect(
+    failure((await runExample(page, chooseAirport, { code: "B", query: "airport b" })).result),
+  ).toMatchObject({ _tag: "OperationFailure", message: "not_committed", dispatch: "sent" });
+  // The status stayed the same for the unchanged window after the click, never a 30 s wait.
+  expect(Date.now() - started).toBeLessThan(5000);
   await expect(page.locator("#commits")).toHaveText("1");
 });
 
@@ -993,6 +1339,21 @@ test("calendar example moves to the requested month and reads the committed date
   expect(
     failure((await runExample(page, pickTravelDate, { date: "2026-11-03" })).result),
   ).toMatchObject({ _tag: "OperationFailure", message: "day_ambiguous" });
+});
+
+test("calendar example stops when a month step leaves the shown month unchanged", async ({
+  page,
+}) => {
+  // The calendar offers nothing past its last month: its next-month button does nothing there.
+  await page.setContent(`
+    <input aria-label="Travel date" readonly>
+    <div role="dialog" aria-label="Choose date">
+      <button>Previous month</button><button>Next month</button>
+      <section data-month="2026-12"><button data-date="2026-12-01">1</button></section>
+    </div>`);
+  expect(
+    failure((await runExample(page, pickTravelDate, { date: "2027-01-01" })).result),
+  ).toMatchObject({ _tag: "OperationFailure", message: "month_unavailable", dispatch: "not_sent" });
 });
 
 /** A synthetic documents site on its own origin, with a file input and a statement export. */

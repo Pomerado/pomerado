@@ -1,10 +1,27 @@
 import { Effect } from "effect";
 
+/**
+ * The one set of budgets the runtime's waits apply and the authoring skills quote.
+ *
+ * - `navigation`: a `goto` or URL wait, to document commit.
+ * - `action`: a click, fill, press or select on an element a wait has shown ready, and every action
+ *   in an exploration probe.
+ * - `answer`: how long a wait goes on with no visible progress before it fails.
+ * - `answerCap`: the hard cap on an answer wait while the page keeps progressing.
+ * - `settle`: the gap between the two looks that must agree on the values a tool returns.
+ * - `unchanged`: how long an answer or value from before an action must hold to count as unchanged.
+ * - `lateFillCap`: the cap on waiting for values the site fills in after its answer.
+ */
 export const timeoutDefaults = {
   execution: 20 * 60_000,
   action: 5_000,
   readiness: 5_000,
   navigation: 30_000,
+  answer: 8_000,
+  answerCap: 30_000,
+  settle: 500,
+  unchanged: 2_000,
+  lateFillCap: 15_000,
   http: 60_000,
 } as const;
 
