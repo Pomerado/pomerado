@@ -286,6 +286,11 @@
       "import": "./dist/typescript/src/mint/invocation.js",
       "default": "./dist/typescript/src/mint/invocation.js"
     },
+    "./core/mint/live-tests": {
+      "types": "./dist/typescript/src/mint/live-tests.d.ts",
+      "import": "./dist/typescript/src/mint/live-tests.js",
+      "default": "./dist/typescript/src/mint/live-tests.js"
+    },
     "./core/mint/login-url": {
       "types": "./dist/typescript/src/mint/login-url.d.ts",
       "import": "./dist/typescript/src/mint/login-url.js",

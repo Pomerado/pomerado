@@ -63,6 +63,10 @@ the source files, never captures.
   a read's example, or on each write act step that needs it (the first act step that passes it
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input.
+- `live_tests` plans and runs a read's live tests when the host offers it: the checklist it
+  derives from your schemas, your cases in `test/cases.json` and every result, run in parallel
+  batches on fresh browsers. Plan them as soon as you know the page and its inputs, and read
+  .agents/testing/SKILL.md first.
 - `retain_capture`, `finish_build` and `request_input` are described below and in their
   tool descriptions.
 - `report_blocked` ends the build as blocked when its task is impossible as asked (below).
@@ -436,11 +440,12 @@ write's task is done once, in its act session, and uncertain private-field submi
 fenced, regardless of the read flag. An authentication submission with an unknown outcome is
 always fenced.
 
-Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that,
-choose meaningful tests, with no fixed count or promotion tier. A read may run up to four live
-tests with an input you choose (`testInput`), spent on the riskiest controls; run them before
-the first `finish_build`. Report skipped,
-unsupported or missing bodies honestly.
+Testing a read is your job, never the caller's (.agents/testing/SKILL.md). A read signed out
+plans its tests at the start, from the checklist `live_tests` derives from its schemas, refines
+them once the example passes, and runs as many as it needs, in parallel batches. A signed-in read
+runs up to four live tests with an input you choose (`testInput`), spent on the riskiest controls.
+Finish in this order: your last edit, the cases again, then the example last, before
+`finish_build`. Report skipped, unsupported or missing bodies honestly.
 
 <!-- pomerado:section agents.implementations -->
 

@@ -413,7 +413,7 @@ describe("the publication policy", () => {
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
     ).toBe(true);
     expect(policy).toContain(
-      "Every owner: host file is written by the host, which the minter cannot edit: any entry file the host adds to the bundle and every publication/ file (the definition, the example or session output and the session steps). No file must be read in full:",
+      "Every owner: host file is written by the host, which the minter cannot edit: any entry file the host adds to the bundle and every publication/ file (the definition, the example or session output, the session steps and the live test record). No file must be read in full:",
     );
     expect(policy).toContain(
       "never ask for a source correction or another run for it. When such a file shows a problem the minter's source causes, the finding keeps its ordinary reason and the rationale names the source to change.",

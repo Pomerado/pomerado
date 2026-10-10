@@ -345,10 +345,10 @@ const formerSections: readonly (readonly [string, string])[] = [
   ["pagination", "A mint question keeps the live browser for up to 10 minutes; that is not cursor expiry."],
   ["writes", "- The first `act` step claims the build's write."],
   ["publication", "- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens it."],
-  ["workspace/AGENTS.md", "Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that, choose meaningful tests"],
+  ["workspace/AGENTS.md", "Testing a read is your job, never the caller's (.agents/testing/SKILL.md)."],
   ["workspace/AGENTS.md", "- `src/`: your operation. It exists from the start and is empty until you write to it"],
   ["testing", "Choose cases that catch actual risk: applied filters, account scope, IDs, units"],
-  ["testing", "A read may run up to four live tests per attempt with an input you choose instead of the caller's"],
+  ["testing", "Where the host offers `live_tests`, a read signed out has no limit on live tests, and the host runs them for you in parallel."],
 ];
 
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
@@ -715,17 +715,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["c0fca123f38f77deec1edbd279c5e716ef0593e3b69aeb9402d0e7f99297c46a", "core"],
+    ["d6998ab49a8d205fa0964af44ad44d3c770c7b3b96ab535a23e7da7aaac1bf94", "core"],
     ["56660d309f3bb109bc607b8dabb5b5980ac0c87ebd9f30df85f67c6dd72797d6", "search"],
     ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
-    ["08fd8f04e8806ab17008fe4dae18ed76ea6d46131c24c3b17c8048871c98d5b7", "testing"],
+    ["a8ba8b2e822f01fd1bba5b3bdd241e7a263c9aa1ed4465948b77dbdeeb3fe0f4", "testing"],
     ["b7fc597230df85f21a15ddc3355ea9c8095d0977a7aead099470d92c136d49c4", "pagination"],
     ["6470768cbe2c563e9c8895b6e25f0f5c1507633b6088404b55e72530884fe2a4", "forms"],
     ["09e84954722f44a2a527ebd259777380bb7f978431c5952db02cb5289c11422c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["4b8e7325756470b6b41e071c0a6d114754fa83501bad64991e7778e07a734a55", "caller-input"],
-    ["5518153d5728150a2c658fbea2539b435fe8389b488247b693c38160f879f199", "publication"],
-    ["c70105399d2cec61ce8ca48bf754916505c386f9806432ea59bd9caf31ce9316", "workspace/AGENTS.md"],
+    ["bcf2c2d8cebae229466169182c4815a2bce91e82fbdd6fd0543b36153ec387f4", "caller-input"],
+    ["b0785c9a1d2e6c89a1e55e7c70e03e9adeff6c512f0adadbad7e78a9128a8804", "publication"],
+    ["2251ffbb08404c98701e22288e09ca135c9b176bb91998af929ee6effcdce126", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

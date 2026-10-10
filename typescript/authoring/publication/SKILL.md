@@ -100,7 +100,11 @@ first:
   and live tests, with the input each ran, such as page 1 of one query), offline (fixture<!-- pomerado:section publication.saved-http --> and parser tests, synthetic cases such as page boundaries included) and untested (such as
   a later page, a query with no results or another layout, live). Name each exposed input under
   the run that set it, or under untested (testing skill). An offline or synthetic check never
-  stands in for a live one.
+  stands in for a live one. For a read signed out, the host adds its own line from its record of
+  your live test cases and gives the review that record (`publication/tests.json`): the
+  checklist, each case's input, expectation and result on the source you publish, and each
+  skipped item's reason. Guardian judges missing, failing and stale items there, and checks every
+  `not_applicable` and `declined` reason against the captures and the request.
 - **Errors.** A thrown message states the cause the code observed, such as a status or a missing
   element, never a guessed one.
 - **Write options.** Each option on the path is an input even when the caller left the choice to

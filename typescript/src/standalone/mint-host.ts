@@ -23,6 +23,7 @@ import type { RequestContext } from "./request-context.js";
 import { mintState, type MintState } from "./mint-state.js";
 import { mintExecution } from "./mint-execution.js";
 import { mintPublication } from "./mint-publication.js";
+import { localLiveTests } from "./mint-live-tests.js";
 import { mintError } from "./errors.js";
 import { memoryPublicationDecisions } from "./publication-decisions.js";
 import { listed, signInOriginsToAsk } from "./sign-in-origin-question.js";
@@ -123,7 +124,11 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
         const { buildEffect } = context;
         const refusal =
           localStepRefusal(execution, state.writeSession.started) ??
-          preflightTestInput(execution, { buildEffect, executionHistory: context.testHistory() }) ??
+          preflightTestInput(execution, {
+            buildEffect,
+            executionHistory: context.testHistory(),
+            signedIn: context.signedIn,
+          }) ??
           exampleInputRefusal(execution, {
             buildEffect,
             callerInput: context.input,
@@ -140,6 +145,7 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
       }),
     reviewAndExecute: mintExecution(state),
     checkSignedInMarker: (marker) => state.markers.check(marker),
+    liveTests: localLiveTests(state),
     publish: mintPublication(state),
     // The local host keeps no recovery checkpoint; its write completion reads the assessments.
     outcomeReview: {

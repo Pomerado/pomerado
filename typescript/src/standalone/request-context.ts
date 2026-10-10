@@ -346,7 +346,7 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       readonly purpose: string;
       readonly target: string;
       readonly entrypoint?: string;
-      readonly input?: "agent_chosen";
+      readonly input?: "agent_chosen" | "agent_chosen_batch";
     };
     /** A step's settled history entry; its result is the next reviews' step result. */
     const settled = (step: HistoryStep, evidence: ExecutionEvidence): ExecutionEntry => {

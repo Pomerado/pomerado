@@ -92,6 +92,8 @@ export class LocalOperationFailure extends Error {
   readonly refusal?: InputRefusalDetail;
   /** The location a script's `LocationNotApplied` named and what the page kept instead. */
   readonly location?: LocationNotAppliedDetail;
+  /** The authored source line that threw, such as `src/tool.mjs:12`, when the child named one. */
+  readonly frame?: string;
   constructor(
     message: string,
     readonly journal: LocalOperationJournal,
@@ -104,6 +106,7 @@ export class LocalOperationFailure extends Error {
       readonly sessionLoss?: "session_not_kept";
       readonly refusal?: InputRefusalDetail;
       readonly location?: LocationNotAppliedDetail;
+      readonly frame?: string;
     } = {},
   ) {
     super(message);
@@ -111,6 +114,7 @@ export class LocalOperationFailure extends Error {
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
     if (options.refusal !== undefined) this.refusal = options.refusal;
     if (options.location !== undefined) this.location = options.location;
+    if (options.frame !== undefined) this.frame = options.frame;
   }
 }
 export interface LocalOperationOutput extends LocalOperationJournal {
@@ -296,6 +300,7 @@ const handleTerminalMessage = (
             ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
             ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
             ...(message.location === undefined ? {} : { location: message.location }),
+            ...(message.frame === undefined ? {} : { frame: message.frame }),
           },
         ),
       ),
