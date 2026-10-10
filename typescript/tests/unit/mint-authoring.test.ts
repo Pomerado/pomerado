@@ -204,6 +204,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["pagination", "1. Validate cursor/query/account scope before browser effects."],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
   ["writes", "A write build changes something real on the caller's account"],
+  ["writes", "Prefer confirming the write from its commit request."],
   ["writes", "- The first read-back that matches confirms the write; stop there."],
   ["writes", "- State from before the write never matches."],
   [
@@ -299,6 +300,30 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   [
     "publication",
     'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
+  ],
+  // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
+  // most rows to pass and returns what is there after that.
+  ["core", "After a search or a filter, use `waitForChange` on the rows you return"],
+  // A reload after a choice such as a city can drop the search box's suggestions, so the tool
+  // types into the box again.
+  [
+    "core",
+    "After a step that reloads the page, such as choosing a city, prefer typing into the search box again when its suggestions don't appear.",
+  ],
+  // A preselected option that only shares the caller's data, tracks or signs up for marketing is
+  // turned off on every run, with no input and no question.
+  ["core", "- Turn safety defaults off."],
+  // An obvious refusal settles the caller's run at once; one from the tool's own empty read never
+  // claims to be obvious.
+  [
+    "core",
+    'When the refusal is obvious, start the message with "Caller input error:" so the caller gets it at once.',
+  ],
+  // A record whose name differs from the caller's only in case is still that record, so a picker's
+  // "Add new" row never creates a near-duplicate of it.
+  [
+    "forms",
+    'Prefer matching an existing record by a case-insensitive exact name, and prefer never picking an "Add new" row when an existing record matches.',
   ],
 ];
 
@@ -621,6 +646,40 @@ it("has a write confirm from its first matching read-back, never from state befo
   ).toContain("// The first read-back that matches confirms the write");
 });
 
+/*
+ * A write whose own commit request came back 2xx or 3xx, with no error in its body or on the page
+ * after it, went through, so the minter confirms it in the commit call instead of opening another
+ * page to prove it. It reads the site back only when that request cannot settle the write.
+ */
+it("has a write confirm from its own commit request, and read back only when that cannot settle it", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does. Wait too for every way the page can answer with `waitForOutcome`, listing the site\'s error or validation message first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return the site\'s own status word for it in the output. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+  );
+  // Every case the request cannot settle keeps a read-back.
+  expect(text("writes")).toContain(
+    "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body shows an error, or can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then read the confirmation it shows (an order, booking or reference number) or the saved state (the orders page, the booking list, the updated profile), match it to the caller's values, return the number or record in the output, and call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from any other request.",
+  );
+  expect(text("writes")).toContain(
+    "Before any further write, run an `act` step that only reads the page or the account. When `stateChangingRequests` shows the failed step's commit request went through, that step may read only the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
+  );
+  expect(text("writes")).not.toContain("a 200 response is not a confirmation");
+  expect(text("forms")).toContain(
+    "Prefer confirming from the commit request the final click sends, checked as the writes skill says, and otherwise by meaningful resource/readback, never from a generic toast alone or another request's 200.",
+  );
+  expect(text("forms")).toContain(
+    "Never call it for a toast alone, a status code without the page's error check, or a missing confirmation",
+  );
+  // The request list carries each request's response status for that check.
+  expect(text("core")).toContain(
+    "Each entry also lists its requests' final response `statuses` in order, and `unanswered` counts any with no answer when the step ended.",
+  );
+  expect(text("core")).toContain(
+    "For a write session, the list shows the commit your step caused and any autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no error after it, is what the writes skill confirms from. A 200 whose body reports an error, as GraphQL can, did not go through.",
+  );
+});
+
 // A write that passed the page's headings to `verified` lost its receipt. With no argument there
 // is nothing to get wrong, so no skill or reference teaches the argument form any more.
 it("teaches every write to call verified() with no argument and declare a read-back", async () => {
@@ -651,17 +710,17 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["a76c1e2990f97352b35f36cf07e3ab19ede9af294920425be1c261c17277ba3c", "core"],
-    ["992ce38145d4b8b15f3a33903f2d3d1127ed0d986deee368f1e6bfe81a6db469", "search"],
+    ["2f943b5cddce50bd73c208184a14bba1246437e670fcf514c0dd0a6bffef8371", "core"],
+    ["a07d4da00748f6ac71acec9dc6f287f583f9e80871eb3ee4aa0fb4e1ad4070f5", "search"],
     ["99c2f13a8463bbcc3de2e11503cd416993d8120a2cc2370b167b0809d2458c4b", "auth"],
     ["d118f146eba0b2f1ff9782812886281617265c6157fdd5a6709c0cb5a07695e6", "testing"],
     ["19a798ffe40e0f0fa4be517aa72c7c8ae548ef51bf25e1852ed3fb86cda645ae", "pagination"],
-    ["ce4adf21331a4105b963c52b839c7b8e3f75f4e0f1c319c68faee56f62016472", "forms"],
-    ["afc8a6f4e9727a75f30d5d2d1a20331a29f68d00f827b1b5bed17dc9acbda8b4", "writes"],
+    ["7baa5299d6989b48b67c579aa38a494c8ce7088f88a87121e55749735a4717ba", "forms"],
+    ["09e84954722f44a2a527ebd259777380bb7f978431c5952db02cb5289c11422c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["6cf1bc4017a4b48ee19bcf67e9afe8f0f24b7924f78c960b55c346238b6d4410", "caller-input"],
-    ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
-    ["8ffa7f1d80d84eb83b0aeb1e2a9ce9d82c7574f9f0f0c25a9c3f35cf3bc1a0b5", "workspace/AGENTS.md"],
+    ["5feb55202eb2c47708da89eac8d180097fa371a509589a91978b01243e9b2cab", "caller-input"],
+    ["4868454cc9110c57d2fdbdc1aa73e9006c053e4163a2c9c6540ca2132a4119f2", "publication"],
+    ["d194c4855bd81a26a31b1827d5e4aeb8025615a8f4f5d15b824071b6dae0c16e", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });
