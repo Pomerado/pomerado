@@ -26,11 +26,12 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
   enum lists all of them as the page shows them. When they depend on the query, such as sizes or
   brands, take a string and match it against the choices this search's page shows.
 - Filters and sort are choices: set them as "Configure, then read" in the core skill says, and
-  read the results last. When the page's list of choices does not hold a caller's value and
-  offers more than a catch-all such as "Show all", the tool throws `InvalidInput` with `field`
-  and `available`, the choices the group it opened for that value offers on this search's page,
-  only after reading them. A control the site has but the tool could not find, open or apply
-  makes it throw `OperationFailure`.
+  read the results last. When the page's list of choices does not hold a caller's value but a
+  broader choice such as "Show all" covers it, choose the broader choice and return the rows the
+  site gives, saying so in the description. Otherwise the tool throws `InvalidInput` with
+  `field` and `available`, the choices the group it opened for that value offers on this
+  search's page, only after reading them. A control the site has but the tool could not find,
+  open or apply makes it throw `OperationFailure`.
 - A price or other numeric range is a number, never a label to match: a slider's labels and
   steps often change with the result set. Set the nearest step inside the caller's bound (down
   for a maximum, up for a minimum), the range's end for a value outside it, read the applied
@@ -41,9 +42,6 @@ it: on each run it opens only the groups the caller's inputs use (see "Apply and
 - Never set a filter or sort in code, even one the request names: each is an input. When the
   site offers a sort, it is an optional input listing every order the site offers. A page size
   visitors cannot change is the site's; state it in the description.
-- When the site's search has no control for one of the caller's filters, prefer leaving that
-  control at the site's default, filtering the returned rows to the caller's value and saying so
-  in the description.
 
 ## Apply and read back
 
