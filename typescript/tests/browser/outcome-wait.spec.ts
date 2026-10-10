@@ -110,7 +110,7 @@ test("a timeout says what each outcome matched", async ({ page }) => {
   await searchPage(page, `<p hidden>No rooms match your dates</p><p>Still searching</p>`, 50);
   const { error } = await call(page, waitBody(300));
   expect(error).toBe(
-    "outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 1, results 0 visible of 0",
+    "outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 1, results 0 visible of 0; no progress seen",
   );
 });
 
@@ -198,7 +198,7 @@ test("after an action that leaves the results as they were, the wait ends after 
   await filteredResults(page, "same");
   const { error } = await call(page, filterBody("timeout: 300, unchangedMs: 5000"));
   expect(error).toBe(
-    "outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 0, results 1 visible of 1, unchanged",
+    "outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 0, results 1 visible of 1, unchanged; no progress seen",
   );
 });
 
