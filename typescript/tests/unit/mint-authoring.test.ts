@@ -303,6 +303,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // Rows a filter has not yet applied to are read too early, so the tool waits a bounded time for
   // most rows to pass and returns what is there after that.
   ["core", "After applying a filter, prefer waiting up to 15s for results to filter."],
+  // A reload after a choice such as a city can drop the search box's suggestions, so the tool
+  // types into the box again.
+  [
+    "core",
+    "After a step that reloads the page, such as choosing a city, prefer typing into the search box again when its suggestions don't appear.",
+  ],
   // A preselected option that only shares the caller's data, tracks or signs up for marketing is
   // turned off on every run, with no input and no question.
   ["core", "- Turn safety defaults off."],
@@ -669,7 +675,7 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["0f5ae91a1d093c8d7ea6e32339464e96e4a7a423fed8509de69e9f27a328bd9c", "core"],
+    ["48bd85492fd8e9f689a8f3f801bca6496851834b67b59aff8eddee6551832ae7", "core"],
     ["0841a8c299fe27b3342c2f5d87a70b3562c5c50024bf39b5531f0c643afba388", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
@@ -677,7 +683,7 @@ it("renders the pinned standalone authoring", async () => {
     ["085c9fa237bf2c1faed1f46aee594b4b76c71d3bdb5466ab97cf4fee7b5df7cc", "forms"],
     ["733976baf11dd3a53d09529942a7a2256fe71ecd0c67a4447f9883a1446a1b9c", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
-    ["175a47a0822e3b66ee4a43db244754fc1a33f4fd177a78f5e1649e7068d97cd0", "caller-input"],
+    ["154f5252ceb4827d56de4e77b08c8d66612f55325f93bf1e0998e9422586d148", "caller-input"],
     ["4868454cc9110c57d2fdbdc1aa73e9006c053e4163a2c9c6540ca2132a4119f2", "publication"],
     ["063a16465c8eb4c0d6b577a063481dcd972f990f8569ac85ce0565e03b9d0316", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],

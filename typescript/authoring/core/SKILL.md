@@ -425,6 +425,8 @@ After a search or a filter, prefer waiting for the site's own sign that this loa
 as a spinner that showed and went, or a result count that updated, before reading results.
 After applying a filter, prefer waiting up to 15s for results to filter. Return when the
 majority of results pass the filter.
+After a step that reloads the page, such as choosing a city, prefer typing into the search box
+again when its suggestions don't appear.
 <!-- pomerado:section core.site-origin -->After a probe reveals a challenge, inspect the retained Page in follow-up probes
 and wait for the intended page/control within the existing deadline and job budget;
 do not click the challenge, reload, or navigate to another route merely because

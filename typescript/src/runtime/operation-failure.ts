@@ -73,9 +73,9 @@ export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
  * picks one of them, so nothing asks it for a replacement. A message that starts
  * "Caller input error:" marks an obvious refusal: the input alone breaks a rule of the task,
  * checked before any site action, or the page refused the value in its own words, which the
- * message quotes. A host may end such a run at once, with no repair and no question. Otherwise
- * only a refusal without choices, of a free-form value the page lists no options for, may be
- * checked by a host that repairs, which asks the caller only when its check leaves real doubt.
+ * message quotes. A host may end such a run at once, with no repair and no question. A refusal
+ * without choices, of a free-form value the page lists no options for, may be checked by a host
+ * that repairs, which asks the caller only when its check leaves real doubt.
  */
 class InputRejected extends Error {
   override readonly name = "InvalidInput";
