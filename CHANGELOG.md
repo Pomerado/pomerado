@@ -288,6 +288,7 @@
 - The search skill says that when the site's search has no control for one of the caller's filters, the tool prefers leaving the site's default, filtering the returned rows to the caller's value and saying so in the description.
 - Guardian's execution policy counts searching with the site's broader setting or its default as a routine implementation choice when the site's form has no setting for a request's constraint, such as a cabin class with only "Show all".
 - The auth skill says that on a one-time-code screen the minter prefers one read that finds the code fields, the submit and any remember-this-device box, then sends the code step at once, since codes expire in minutes. When the site refuses a code, it prefers clicking the site's resend control before the caller is asked for a new code.
+- The core skill tells the minter never to search the open web for the page a task needs, but to make its URL an input and ask the caller for it.
 
 ### Fixes
 

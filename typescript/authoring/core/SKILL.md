@@ -610,6 +610,9 @@ returns. When several candidates remain, inspect them and choose by evidence suc
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
+Never search the open web, such as Google, to find the page a task needs. Make its URL an
+input and ask the caller for it.
+
 For a detail read whose input is the record's page URL, check that it is https on the tool's
 site and open it unchanged. Otherwise reach the record through the site's own search, list or
 link for the schema-validated caller identifier, or through a stable identifier route the site
