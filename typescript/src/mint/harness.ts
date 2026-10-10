@@ -29,6 +29,7 @@ import { Cause, Clock, Deferred, Effect, Exit, FiberSet, Option, Schema, Scope }
 import {
   AgentRequest,
   blockedExplanationLimit,
+  BlockedReport,
   BuildBlocked,
   CaptureRequest,
   ExecutionRefusal,
@@ -4048,7 +4049,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active("publication");
-                    const submitted = yield* decode(BuildBlocked, input);
+                    const report = yield* decode(BlockedReport, input);
+                    // The host's own end, not the task's: no explanation reaches the caller, so
+                    // none is reviewed, and the outcome names the host's cause.
+                    if (report.reason === "host_unavailable") {
+                      if (!hostIsUnavailable())
+                        return JSON.stringify({
+                          status: "blocked_refused",
+                          reason: "host_available",
+                          userInputRequired: false,
+                          instruction:
+                            "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.",
+                        });
+                      terminal ??= unavailableHostTerminal();
+                      yield* diagnose({ phase: "blocked", reason: "host_unavailable" });
+                      return JSON.stringify({
+                        status: "host_unavailable",
+                        notice:
+                          "The build ended because the host has no live execution for what it still needs. It ends as the host's failure, not as blocked; nothing more runs in this attempt.",
+                      });
+                    }
+                    const submitted = { ...report, reason: report.reason };
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, submitted.explanation),
                     );

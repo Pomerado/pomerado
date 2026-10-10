@@ -767,6 +767,16 @@ export const BuildBlocked = Schema.Struct({
   explanation: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(blockedExplanationLimit)),
 });
 /**
+ * What the minter sends `report_blocked`: a blocked ending's reason, or `host_unavailable` when the
+ * host has ended live execution and what the build still needs, such as a fresh example a review
+ * asked for, cannot run without it. That one ends the attempt as the host's failure, never as a
+ * block: nothing about the task is impossible, so the caller never reads it as one.
+ */
+export const BlockedReport = Schema.Struct({
+  reason: Schema.Literal("site_lacks_capability", "policy", "host_unavailable"),
+  explanation: BuildBlocked.fields.explanation,
+});
+/**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
  * Guardian's question review allowed the caller to read it. `new_mint_recommended` is the ending of
  * a `mint_update` whose change belongs in a new build: the reviewed summary of the change and the

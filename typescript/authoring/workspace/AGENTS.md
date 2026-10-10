@@ -438,8 +438,11 @@ leaves the next live execution a fresh browser on a new, empty profile: read `pa
 and sign in again when the build signs in. A write build reads back first whether its earlier
 commit took effect and never submits one that did. `host_unavailable`
 ends live execution: preserve receipts and unresolved effects; do not retry execution or request
-user input to restore the host. An eligible retained receipt may still receive source
-correction and `finish_build`; without one the attempt ends. `open` still requires every
+user input to restore the host. An eligible retained receipt may still publish with
+`finish_build` while the source it ran is unchanged; a host may also accept a change confined to
+the output schema that the receipt's output still satisfies. A correction that changes what runs
+needs a fresh example, which needs live execution: end with `report_blocked` reason
+`host_unavailable`, never `policy`. Without a receipt the attempt ends. `open` still requires every
 existing authorization and review check. An absent field does not promise availability.
 
 <!-- pomerado:section agents.maintenance-heading -->
@@ -478,6 +481,12 @@ feedback you can act on, a sign-in problem (a passkey-only sign-in is not one:
 .agents/auth/SKILL.md), a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
 only the caller knows (ask with `request_input`), or a timeout. A target on another
 registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
+
+`report_blocked` also takes `host_unavailable`, which is not a block: `executionAvailability` is
+`host_unavailable` and what the build still needs cannot run without live execution, such as the
+fresh example a source correction needs. The attempt ends as the host's failure, with no
+explanation review. A host fault is never `policy`, even after a review denied something you
+could still fix.
 
 ## Publication
 

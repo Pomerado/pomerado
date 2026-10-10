@@ -638,6 +638,46 @@ const freshAgent = {
 const unavailableReview = () =>
   Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" }));
 
+// Failure mode: a review asked for a source correction after the host had ended live execution,
+// so the fresh example it needed could never run, and the minter's only ending was a policy block
+// that misreported a host fault. host_unavailable ends the attempt as the host's failure.
+it("ends as the host's failure when the minter reports the host gone", async () => {
+  let hostDown = false;
+  let questionReviews = 0;
+  const replies: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        const report = {
+          reason: "host_unavailable",
+          explanation: "The host ended live execution before the corrected example could run.",
+        };
+        replies.push(JSON.parse(yield* reportBlocked(report)));
+        yield* turn.actions.execute(execution);
+        hostDown = true;
+        replies.push(JSON.parse(yield* reportBlocked(report)));
+      }),
+    {
+      executionAvailability: () => (hostDown ? "host_unavailable" : "open"),
+      reviewQuestion: () =>
+        Effect.sync(() => {
+          questionReviews++;
+          return { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(replies).toEqual([
+    expect.objectContaining({ status: "blocked_refused", reason: "host_available" }),
+    expect.objectContaining({ status: "host_unavailable" }),
+  ]);
+  expect(outcome).toMatchObject({ build: "incomplete", hostFailure: "host_unavailable" });
+  expect(outcome.blocked).toBeUndefined();
+  expect(questionReviews).toBe(0);
+});
+
 // A takeover in the middle of a blocked explanation's review outage keeps it resubmittable, so the
 // build can still end blocked instead of looping on the refusal until it runs out of calls.
 it("ends blocked after a takeover during a blocked explanation's review outage", async () => {
