@@ -693,7 +693,7 @@ describe("the OpenAI publication reviewer", () => {
       ),
     );
     const naming =
-      "Site naming the host requires, such as a site name and summary in publication/definition.json, only identifies the site the tool is filed under and what that site is: it never claims that the tool loads, reads or acts on that site, so a tool that never opens the site, such as one that only transforms its input, is no unsupported_claim for its site naming alone. A name, description or declared variant that promises site behavior the source lacks still is.";
+      "is no unsupported_claim for its site naming alone. The tool's own name, description or a declared variant that promises site behavior the source lacks still is.";
     // A host with its own publication policy composes the same decision policy.
     expect(publicationDecisionPolicy).toContain(naming);
     const policy = policyOf(requests[0]);
