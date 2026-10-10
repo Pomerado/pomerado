@@ -56,7 +56,10 @@ import { normalizeText } from "../runtime/text.js";
  * - `not_found`: the locator matched nothing (`matched` 0), or a `required` field had no rendered
  *   match; then `field` names it and `row` is its row's index among the rendered rows.
  * - `hidden_only`: the locator matched only hidden elements (`matched`, `rendered` 0). `readRows`
- *   fails so too when rows matched but none is rendered; it returns `[]` only when none matched.
+ *   fails so too when rows matched and none is rendered in the chosen mode while one of them still
+ *   shows content, such as rows hidden from screen readers read `as: "accessible"`. Rows hidden
+ *   wholly, such as a template row a no-results page keeps, read as `[]`: check the page's empty
+ *   state when an empty list needs telling apart from a wrong selector.
  * - `ambiguous`: `visibleText` found several rendered matches (`matched`, `rendered`). Scope the
  *   locator to one, or use `visibleTexts` or `readRows` for a list.
  * - `too_long`: a value is longer than `maxLength` (`length`, `maxLength`, and `field` and `row`
@@ -100,7 +103,7 @@ const visibleTextPage = (elements, arg) => {
   };
   // clip-path: inset() that takes in at least the whole box, such as inset(50%).
   const insetHides = (clipPath) => {
-    const inset = /^inset\(([^)]*?)(?:\s+round\b[^)]*)?\)$/u.exec(clipPath);
+    const inset = /^inset\(([^)]{0,200}?)(?:\s{1,10}round\b[^)]{0,200})?\)$/u.exec(clipPath);
     if (inset === null || !/^[\d.\s%]+$/u.test(inset[1])) return false;
     const [top = 0, right = top, bottom = top, left = right] = lengths(inset[1]);
     return top + bottom >= 100 || left + right >= 100;
@@ -108,6 +111,8 @@ const visibleTextPage = (elements, arg) => {
   // Hidden from view but kept for screen readers: a clipped box of at most 1 px, a zero-area
   // clip, or a box placed wholly outside the page.
   const visuallyHidden = (element, computed) => {
+    // An element with display: contents has no box to clip or move; its children are judged.
+    if (computed.display === "contents") return false;
     if (insetHides(computed.clipPath)) return true;
     if (parseFloat(computed.textIndent) <= -999) return true;
     const positioned = computed.position === "absolute" || computed.position === "fixed";
@@ -196,7 +201,13 @@ const visibleTextPage = (elements, arg) => {
   if (arg.fields === undefined)
     return elements.map((element) => (rendered(element, null) ? read(element, arg.lines) : null));
   const rows = elements.filter((element) => rendered(element, null));
-  if (elements.length > 0 && rows.length === 0) return { hidden: elements.length };
+  // No row rendered: an empty list, such as a no-results page that keeps a hidden template row,
+  // unless a matched row still shows content, which means the rows are hidden in this mode.
+  const showsContent = (element) =>
+    [element, ...[...element.querySelectorAll("*")].slice(0, 500)].some((child) =>
+      child.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+        && hasArea(child.getClientRects()));
+  if (rows.length === 0 && elements.some(showsContent)) return { hidden: elements.length };
   const end = arg.limit === null ? rows.length : Math.min(rows.length, arg.from + arg.limit);
   const records = [];
   for (let index = arg.from; index < end; index += 1) {

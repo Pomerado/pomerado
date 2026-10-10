@@ -48,6 +48,15 @@ describe("output checks of one string", () => {
     ["markup", "<p>Free returns</p>"],
     ["markup", '<x-price value="12">'],
     ["template_residue", "Price: $NaN"],
+    // Tight single rules, comments and bootstrap calls.
+    ["css", ".x{color:red}"],
+    ["css", "a:hover{text-decoration:underline}"],
+    ["css", ".x-1{opacity:.5}"],
+    ["css", ".hdr{z-index:2}"],
+    ["css", "h1{font-family:Inter,sans-serif}"],
+    ["markup", "Blue mug <!-- react-text: 12 --> $12"],
+    ["script", "_satellite.pageBottom();"],
+    ["script", 'if(typeof window!=="undefined"){init()}'],
   ];
   it.each(positives)("flags %s in %j", (check, value) => {
     expect(checkOf(value)).toContain(check);
@@ -92,6 +101,16 @@ describe("output checks of one string", () => {
       "Steps: mix (2 min); rest (10 min); bake (25 min) => serve",
       "Use code SAVE10 at checkout (one per order); not valid on gift cards",
       "A {great} deal: 2 for 1",
+      "Free shipping {on orders over $50}",
+      "{name}@example.com",
+      "Width: 100%; Height: auto; Color: black; Border: none",
+      "Opacity: 0; Visibility: hidden; Display: none",
+      "Let x = 3; then y = 2x + 1 = 7;",
+      "Rich & Famous <3",
+      "AT&T <Unlimited>",
+      "<0.5% alcohol and >20% protein",
+      "Value is NaN in this context",
+      "In the box {cable; charger; manual; case; strap; cloth}",
     ];
     for (const value of corpus)
       expect(
@@ -106,31 +125,48 @@ describe("output checks of one string", () => {
     expect(checkOf("Blue\u00AD shirt")).toEqual(["invisible_chars"]);
   });
 
-  it("lets a schema declare code, so code is not flagged as a leak", () => {
+  it("keeps a declared code or markup field's findings, never blocking, naming the declared type", () => {
     const outputSchema = {
       type: "object",
       properties: {
         script: { type: "string", contentMediaType: "text/javascript" },
         style: { type: "string", contentMediaType: "text/css" },
-      },
-    };
-    expect(
-      checksOf(
-        { script: "const total = values.reduce((sum, value) => sum + value, 0);", style: ".a{display:flex}" },
-        { outputSchema },
-      ),
-    ).toEqual([]);
-  });
-
-  it("allows markup or JSON text where the schema declares that media type", () => {
-    const outputSchema = {
-      type: "object",
-      properties: {
-        value: { type: "string", contentMediaType: "text/html" },
+        page: { type: "string", contentMediaType: "text/html" },
         data: { type: "string", contentMediaType: "application/json" },
       },
     };
-    expect(checksOf({ value: "<p>Hello</p>", data: '{"a":1}' }, { outputSchema })).toEqual([]);
+    const findings = lintOutput(
+      {
+        script: "const total = values.reduce((sum, value) => sum + value, 0);",
+        style: ".a{display:flex}",
+        page: "<p>Hello</p>",
+        data: '{"a":1}',
+      },
+      { outputSchema },
+    );
+    expect(findings.map(({ path, check, blocking }) => `${path} ${check} ${blocking}`)).toEqual([
+      "script script false",
+      "style css false",
+      "page markup false",
+      "data json_text false",
+    ]);
+    for (const finding of findings) expect(finding.override).toContain("contentMediaType");
+  });
+
+  it("never lets prose or an unrelated media type waive a leak", () => {
+    for (const contentMediaType of ["text/markdown", "application/x-www-form-urlencoded", "text/x-anything"]) {
+      const outputSchema = {
+        type: "object",
+        properties: { value: { type: "string", contentMediaType } },
+      };
+      const findings = lintOutput(
+        { value: "About <script>var a = 1;</script> function(){ return 1; }" },
+        { outputSchema },
+      );
+      expect(findings.filter((finding) => finding.blocking).map(({ check }) => check), contentMediaType).toContain(
+        "script",
+      );
+    }
   });
 
   it("flags a long string in a list's record, unless its schema allows that length", () => {
@@ -185,10 +221,22 @@ describe("output checks of one string", () => {
     ]);
     // A label that is also a whole value in the output, such as a record's title link, is content.
     expect(
-      checksOf({ results: [{ title: "Show more" }, { title: "A quiet room. Show more" }] }, {
-        controlLabels: ["Show more"],
+      checksOf({ results: [{ title: "Full details" }, { title: "A quiet room. Full details" }] }, {
+        controlLabels: ["Full details"],
       }),
     ).toEqual([]);
+  });
+
+  it("flags a value that ends with an expand control's words, whatever controls the page showed", () => {
+    for (const value of [
+      "A mug with a wide handle and\u2026 Read more",
+      "A mug with a wide handle Show more",
+      "A mug with a wide handle. See more \u203A",
+      "A mug with a wide handle and\u2026 more",
+    ])
+      expect(checkOf(value), value).toEqual(["collapsed_text"]);
+    for (const value of ["Read more", "You should read more", "Show more of the garden", "Learn more about it"])
+      expect(checkOf(value), value).toEqual([]);
   });
 
   it("flags an ending ellipsis only when the page offered a control to expand it", () => {
@@ -311,5 +359,69 @@ describe("control labels from an accessibility snapshot", () => {
       '- textbox "Search"',
     ].join("\n");
     expect(controlLabelsFromAriaSnapshot(snapshot)).toEqual(["Show more"]);
+  });
+
+  it("lists an expand control built as a link that stays on the page", () => {
+    const snapshot = [
+      "- paragraph:",
+      "  - text: A mug with a wide handle and\u2026",
+      '  - link "Read more":',
+      '    - /url: "#"',
+      "- text: Another text",
+      '- link "Show details":',
+      "  - /url: javascript:void(0)",
+      "- text: Third text",
+      '- link "See more":',
+      "  - /url: /full-article",
+    ].join("\n");
+    expect(controlLabelsFromAriaSnapshot(snapshot)).toEqual(["Read more", "Show details"]);
+  });
+});
+
+describe("bounded cost", () => {
+  // Text a page can show, shaped to make a backtracking pattern retry without end. Each value
+  // must lint in well under the bound even on a loaded host.
+  const items = (count: number, item: (index: number) => string) =>
+    Array.from({ length: count }, (_, index) => item(index)).join("; ");
+  const pathological: readonly (readonly [string, string])[] = [
+    ["an unclosed brace list", `In the box {${items(24, (index) => `item ${index}`)}`],
+    ["a brace list of specs", `Specs {${items(30, (index) => `spec ${index}: value ${index}`)}`],
+    ["a brace config", `config { ${items(30, (index) => `key${index} value${index}`)}`],
+    ["empty statements after a brace", `a{${"; ".repeat(25_000)}`],
+    ["declarations after a brace", `a{${"color:0; ".repeat(5_000)}`],
+    ["declarations without a brace", "color:0 ".repeat(6_250)],
+    ["a long member chain", `window${".a".repeat(25_000)}`],
+    ["a long call chain", `${"a.".repeat(25_000)}b`],
+    ["spaces after a parenthesis", `(${" ".repeat(50_000)}`],
+    ["spaces after function", `function${" ".repeat(50_000)}`],
+    ["an unclosed JSON string", `{"a":"${"x".repeat(50_000)}`],
+    ["an unclosed tag", `<a ${'b="1" '.repeat(5_000)}`],
+    ["a long tag name", `<x${"-a".repeat(25_000)}`],
+    ["an unclosed comment", `<!--${"x".repeat(50_000)}`],
+    ["an unclosed placeholder", `{{${"x".repeat(50_000)}`],
+    ["a long number", `color:${"1".repeat(50_000)}`],
+    ["blank space between lines", `a\n${" ".repeat(50_000)}\nb`],
+    ["a long run of distinct words", Array.from({ length: 400 }, (_, index) => `w${index}`).join(" ")],
+  ];
+  it.each(pathological)("lints %s in bounded time", (_name, value) => {
+    const started = performance.now();
+    lintOutput({ value });
+    expect(performance.now() - started).toBeLessThan(1_500);
+  });
+
+  it("stops comparing records at a budget and reports what it found as partial", () => {
+    const record = (index: number) => {
+      const fields = Object.fromEntries(
+        Array.from({ length: 24 }, (_, field) => [`f${field}`, `value ${index} field ${field}`]),
+      );
+      return { ...fields, text: Object.values(fields).join(" ") };
+    };
+    const small = lintOutput({ results: Array.from({ length: 20 }, (_, index) => record(index)) });
+    expect(small.find((finding) => finding.check === "card_text")).toMatchObject({ count: 20 });
+    expect(small.find((finding) => finding.check === "card_text")?.partial).toBeUndefined();
+    const large = lintOutput({ results: Array.from({ length: 3_000 }, (_, index) => record(index)) });
+    const cardText = large.find((finding) => finding.check === "card_text");
+    expect(cardText).toMatchObject({ path: "results[].text", partial: true, blocking: false });
+    expect(cardText?.count).toBeLessThan(3_000);
   });
 });

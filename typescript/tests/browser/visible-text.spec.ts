@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
 import { visibleTextCode } from "../../src/browser/visible-text.js";
 import { normalizeText } from "../../src/runtime/text.js";
+import { controlLabelsFromAriaSnapshot, lintOutput } from "../../src/runtime/output-lint.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 
 // The authoring library's text readers, run as a Kernel call body runs them (`page` in scope) on
@@ -271,10 +272,25 @@ test("rows laid out with display: contents read through their rendered children"
   });
 });
 
-test("readRows fails as hidden_only when rows matched but none is rendered", async ({ page }) => {
+test("readRows reads an empty list as [] when its only rows are hidden templates", async ({ page }) => {
   await page.setContent(`
-    <ul><li class="offer" hidden>Room 1</li><li class="offer" style="display: none">Room 2</li></ul>`);
-  const { result } = await failureOf(page, `readRows(page.locator(".offer"), { name: ":scope" })`);
+    <p>No rooms match these dates.</p>
+    <ul><li class="offer" hidden><h3>{{name}}</h3></li><li class="offer" style="display: none">Room 2</li></ul>`);
+  const { result } = await call(page, `return await readRows(page.locator(".offer"), { name: ":scope" });`);
+  expect(result).toEqual([]);
+  const { result: none } = await call(page, `return await readRows(page.locator(".absent"), { name: ":scope" });`);
+  expect(none).toEqual([]);
+});
+
+test("readRows fails as hidden_only when matched rows show content but none is rendered in its mode", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <ul><li class="offer" aria-hidden="true">Room 1</li><li class="offer" aria-hidden="true">Room 2</li></ul>`);
+  const { result } = await failureOf(
+    page,
+    `readRows(page.locator(".offer"), { name: ":scope" }, { as: "accessible" })`,
+  );
   expect(result).toEqual({
     name: "VisibleTextFailure",
     reason: "hidden_only",
@@ -282,6 +298,34 @@ test("readRows fails as hidden_only when rows matched but none is rendered", asy
     matched: 2,
     rendered: 0,
   });
-  const { result: none } = await call(page, `return await readRows(page.locator(".absent"), { name: ":scope" });`);
-  expect(none).toEqual([]);
+});
+
+test("a display: contents row that clips overflow reads through its children", async ({ page }) => {
+  await page.setContent(`
+    <div style="display: grid; grid-template-columns: 1fr 1fr">
+      <div class="row" style="display: contents; overflow: hidden"><span>Garden room</span><span>120.00</span></div>
+    </div>`);
+  const { result } = await call(page, `return await readRows(page.locator(".row"), { row: ":scope" });`);
+  expect(result).toEqual([{ row: "Garden room 120.00" }]);
+});
+
+test("an expand control built as an on-page link or a clickable span is caught in the text it was read into", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <p id="link">A mug with a wide handle and\u2026 <a href="#">Read more</a></p>
+    <div id="script-link">A cup that stacks neatly <a href="javascript:void(0)">Read more</a></div>
+    <div id="span">A bowl for every day <span onclick="void 0">Read more</span></div>`);
+  const { result } = await call(
+    page,
+    `return {
+      link: await visibleText(page.locator("#link")),
+      scriptLink: await visibleText(page.locator("#script-link")),
+      span: await visibleText(page.locator("#span")),
+    };`,
+  );
+  const controlLabels = controlLabelsFromAriaSnapshot(await page.locator("body").ariaSnapshot());
+  expect(controlLabels).toEqual(["Read more"]);
+  const findings = lintOutput(result, { controlLabels }).map(({ path, check }) => `${path} ${check}`);
+  expect(findings).toEqual(["link collapsed_text", "scriptLink collapsed_text", "span collapsed_text"]);
 });

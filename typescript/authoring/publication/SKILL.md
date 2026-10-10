@@ -80,7 +80,9 @@ first:
   source. A check can be wrong: when a flagged value is correct as returned, such as code on a
   tool that returns code or the page's own text that only resembles code, name its path and
   check with the reason in `finish_build`'s `outputOverrides`; Guardian checks the reason against
-  the captures.
+  the captures. A field that holds code or markup on purpose may instead declare it with
+  `contentMediaType`, such as `text/javascript`, `text/css` or `text/html`: its findings then name
+  that type and never block, and Guardian checks that the type fits what the field holds.
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the
