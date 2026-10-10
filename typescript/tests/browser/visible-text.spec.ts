@@ -118,7 +118,7 @@ test("zero-width characters and no-break spaces are normalized, and blocks becom
   page,
 }) => {
   const first = "Total:\u00A0$\u200B12.99";
-  const second = "Due\u2060  in \uFEFF3\u200C days";
+  const second = "Due\u2060  in \uFEFF3\u00AD days";
   await page.setContent(`
     <div id="box"><div>${first}</div><p>${second}</p>Tax<br>included<span> here</span></div>`);
   const { result } = await call(
@@ -235,4 +235,53 @@ test("a value over maxLength fails as too_long without its text", async ({ page 
     length: 45,
     maxLength: 10,
   });
+});
+
+test("joiners that spell a word or join an emoji are kept", async ({ page }) => {
+  const word = "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645";
+  const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+  await page.setContent(`<p id="phrase" lang="fa">${word} ${family}</p>`);
+  const { result } = await call(page, `return await visibleText(page.locator("#phrase"));`);
+  expect(result).toBe(`${word} ${family}`);
+});
+
+test("rows laid out with display: contents read through their rendered children", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <div style="display: grid; grid-template-columns: 1fr 1fr">
+      <div class="row" id="first" style="display: contents"><span class="name">Garden room</span><span class="price">120.00</span></div>
+      <div class="row" style="display: contents">Lake room<span class="price">140.00</span></div>
+      <div class="row" style="display: contents"><span class="name" style="display: none">Closed room</span></div>
+      <div class="row" style="display: contents; visibility: hidden"><span class="name">Hidden room</span></div>
+    </div>`);
+  const { result } = await call(
+    page,
+    `return {
+      rows: await readRows(page.locator(".row"), { row: ":scope", price: ".price" }),
+      first: await visibleText(page.locator("#first")),
+    };`,
+  );
+  expect(result).toEqual({
+    rows: [
+      { row: "Garden room 120.00", price: "120.00" },
+      { row: "Lake room 140.00", price: "140.00" },
+    ],
+    first: "Garden room 120.00",
+  });
+});
+
+test("readRows fails as hidden_only when rows matched but none is rendered", async ({ page }) => {
+  await page.setContent(`
+    <ul><li class="offer" hidden>Room 1</li><li class="offer" style="display: none">Room 2</li></ul>`);
+  const { result } = await failureOf(page, `readRows(page.locator(".offer"), { name: ":scope" })`);
+  expect(result).toEqual({
+    name: "VisibleTextFailure",
+    reason: "hidden_only",
+    message: "hidden_only: 2 matched, 0 rendered",
+    matched: 2,
+    rendered: 0,
+  });
+  const { result: none } = await call(page, `return await readRows(page.locator(".absent"), { name: ":scope" });`);
+  expect(none).toEqual([]);
 });

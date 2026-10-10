@@ -217,3 +217,45 @@ async ({kernel,sessionId}) => {
     await site.close();
   }
 });
+
+test("page text that only resembles code, beside navigation links, publishes with nothing to note", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((_request, response) =>
+    html(
+      response,
+      `<title>Fixture</title>
+      <nav><a href="/women">Women</a> <a href="/sale">Sale</a> <button>More</button></nav>
+      <h1>Running Shoes for Women</h1>
+      <p id=specs>Dimensions (L x W x H): 10 x 5 x 3 in; Weight (lbs): 2.5; Material (outer): nylon; Color (main): black</p>
+      <p id=care>size: M; color: navy; fit: slim; care: hand wash</p>
+      <p id=returns>Return policy: 30 days (unopened); 15 days (opened); exchanges (any time); see terms (below)</p>`,
+    ),
+  );
+  const tool = `import { Schema } from "effect";
+import { defineOperation, visibleTextCode } from "../runtime/index.js";
+export default defineOperation({name:"read_shoe",input:Schema.Struct({}),output:Schema.Struct({name:Schema.String,specs:Schema.String,care:Schema.String,returns:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:visibleTextCode+"\\nreturn [await visibleText(page.locator('h1')), await visibleText(page.locator('#specs')), await visibleText(page.locator('#care')), await visibleText(page.locator('#returns'))];",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  const [name, specs, care, returns] = response.result;
+  return {name, specs, care, returns};
+});`;
+  const guardian = recordingGuardian();
+  try {
+    const { built, requests } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "src/tool.mjs": tool }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "example")],
+        (request) => finish(request, "finish", "example"),
+      ],
+    });
+    expect(outputChecksOf(requests[2], "example")).toBeUndefined();
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    expect(readOf(publications(guardian.reviews)[0], notesPath)).toBeUndefined();
+  } finally {
+    await site.close();
+  }
+});

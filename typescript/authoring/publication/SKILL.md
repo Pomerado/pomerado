@@ -76,9 +76,11 @@ first:
 - **Clean output.** Every string is clean displayed text: no code, styles, markup, template
   leftovers, control labels or repeated entries. `finish_build` refuses an example whose output
   holds code, styles, markup or template leftovers, and gives the publication review the host's
-  other output checks as evidence. When a flagged value is what the tool is meant to return,
-  such as code on a site that publishes code, name its path and check with the reason in
-  `finish_build`'s `outputOverrides`; Guardian reads the reason.
+  other output checks as leads. Check each finding against the page and fix a wrong read in
+  source. A check can be wrong: when a flagged value is correct as returned, such as code on a
+  tool that returns code or the page's own text that only resembles code, name its path and
+  check with the reason in `finish_build`'s `outputOverrides`; Guardian checks the reason against
+  the captures.
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the

@@ -64,11 +64,11 @@ export const outputNotes = (input: {
 
 /** The refusal's instruction to the minter, naming each blocking finding by path and check. */
 export const outputChecksRefusal = (blocking: readonly Pick<OutputFinding, "path" | "check" | "count">[]) =>
-  `Not published: the example's output holds what no page shows a person: ${blocking
+  `Not published: the example's output looks like it holds what no page shows a person: ${blocking
     .map(
       (finding) =>
         `${finding.path} ${outputCheckMeaning[finding.check]} (${finding.check}, ${finding.count} ${finding.count === 1 ? "value" : "values"})`,
     )
     .join(
       "; ",
-    )}. Fix the read in source: read rendered text with visibleText, visibleTexts or readRows instead of textContent, innerHTML or a hidden copy, then run the example again and call finish_build with that new executionId. Only when such a value is the tool's intended output, such as a tool that returns code, call finish_build again with the same executionId and outputOverrides naming each path and check with the reason; the publication reviewer reads every override.`;
+    )}. Check each against the page. When the read took a hidden copy, a script, a style or markup, fix it in source: read rendered text with visibleText, visibleTexts or readRows instead of textContent, innerHTML or a hidden copy, then run the example again and call finish_build with that new executionId. When a value is correct as it is, such as code the tool is meant to return or the page's own displayed text that only resembles code, call finish_build again with the same executionId and outputOverrides naming each path and check with the reason; the publication reviewer checks every override against the captures.`;

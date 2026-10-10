@@ -17,7 +17,8 @@ import { normalizeText } from "../runtime/text.js";
  *   inside the row, or to `{ selector, attribute?, required?, lines? }`; `":scope"` is the row
  *   itself. A field is the row's first rendered match of its selector, read as text, or as the
  *   trimmed value of `attribute` when one is named, such as `{ selector: "a", attribute: "href" }`.
- *   A field with no rendered match is `null`, or fails when it is `required`.
+ *   A field with no rendered match is `null`, or fails when it is `required`. A row laid out with
+ *   `display: contents`, which has no box of its own, is rendered when a child of it is.
  *
  *   ```js
  *   const offers = await readRows(page.locator("#results li.offer"), {
@@ -28,7 +29,10 @@ import { normalizeText } from "../runtime/text.js";
  *   ```
  *
  * They read the page as it is now and never wait: wait for the answer first, for example with
- * `waitForOutcome`. They never change the page.
+ * `waitForOutcome`. They never change the page. They do not read into an iframe (read its frame's
+ * locator instead), they read a panel collapsed by size alone, such as `max-height: 0` with
+ * `overflow: hidden`, as visible, and they treat an absolutely positioned slide placed beyond the
+ * page's width, as some carousels do, as hidden.
  *
  * Options:
  *
@@ -42,15 +46,17 @@ import { normalizeText } from "../runtime/text.js";
  *   line per block, list item, table row or `<br>`.
  * - `maxLength`: default 4000 characters per value.
  *
- * Text is normalized as `normalizeText` does: zero-width characters removed, no-break and other
- * Unicode spaces read as spaces, runs of spaces collapsed, lines trimmed and empty lines dropped.
+ * Text is normalized as `normalizeText` does: characters that never show removed (the zero-width
+ * non-joiner and joiner, which spell words and join emoji, stay), no-break and other Unicode
+ * spaces read as spaces, runs of spaces collapsed, lines trimmed and empty lines dropped.
  *
  * They throw an `Error` named `VisibleTextFailure` with a `reason`, and a message that carries
  * counts, never page text:
  *
  * - `not_found`: the locator matched nothing (`matched` 0), or a `required` field had no rendered
  *   match; then `field` names it and `row` is its row's index among the rendered rows.
- * - `hidden_only`: the locator matched only hidden elements (`matched`, `rendered` 0).
+ * - `hidden_only`: the locator matched only hidden elements (`matched`, `rendered` 0). `readRows`
+ *   fails so too when rows matched but none is rendered; it returns `[]` only when none matched.
  * - `ambiguous`: `visibleText` found several rendered matches (`matched`, `rendered`). Scope the
  *   locator to one, or use `visibleTexts` or `readRows` for a list.
  * - `too_long`: a value is longer than `maxLength` (`length`, `maxLength`, and `field` and `row`
@@ -122,12 +128,31 @@ const visibleTextPage = (elements, arg) => {
   };
   const excluded = (element, computed) =>
     arg.as === "accessible" ? element.getAttribute("aria-hidden") === "true" : visuallyHidden(element, computed);
+  const childrenOf = (node) =>
+    node.shadowRoot?.childNodes
+      ?? (node.localName === "slot" ? node.assignedNodes({ flatten: true }) : node.childNodes);
+  const hasArea = (rects) => [...rects].some((rect) => rect.width > 0 || rect.height > 0);
+  // An element with display: contents has no box of its own: it shows what its children show,
+  // a rendered child element or a text node with a box.
+  const showsBox = (element) => {
+    if (style(element).display !== "contents")
+      return element.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+        && hasArea(element.getClientRects());
+    return [...childrenOf(element)].some((child) => {
+      if (child.nodeType === Node.ELEMENT_NODE) return !skipped(child) && !excluded(child, style(child)) && showsBox(child);
+      if (child.nodeType !== Node.TEXT_NODE || child.data.trim() === "") return false;
+      const parent = parentOf(child);
+      if (parent === null || style(parent).visibility !== "visible") return false;
+      const range = document.createRange();
+      range.selectNodeContents(child);
+      return hasArea(range.getClientRects());
+    });
+  };
   // A match is rendered when it has a box a person could see, and neither it nor an ancestor up
   // to stop is hidden in this mode.
   const rendered = (element, stop) => {
     if (!element.isConnected || element.closest("[hidden], template") !== null) return false;
-    if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
-    if (![...element.getClientRects()].some((rect) => rect.width > 0 || rect.height > 0)) return false;
+    if (!showsBox(element)) return false;
     for (let at = element; at !== null && at !== stop; at = parentOf(at)) {
       if (at.nodeType !== Node.ELEMENT_NODE) break;
       if (skipped(at) || excluded(at, style(at))) return false;
@@ -162,11 +187,7 @@ const visibleTextPage = (elements, arg) => {
       const display = computed.display;
       const separator = display === "table-cell" ? " " : inline(display) ? "" : "\n";
       parts.push(separator);
-      if (computed.contentVisibility !== "hidden") {
-        const children = node.shadowRoot?.childNodes
-          ?? (node.localName === "slot" ? node.assignedNodes({ flatten: true }) : node.childNodes);
-        for (const child of children) visit(child);
-      }
+      if (computed.contentVisibility !== "hidden") for (const child of childrenOf(node)) visit(child);
       parts.push(separator);
     };
     visit(root);
@@ -175,6 +196,7 @@ const visibleTextPage = (elements, arg) => {
   if (arg.fields === undefined)
     return elements.map((element) => (rendered(element, null) ? read(element, arg.lines) : null));
   const rows = elements.filter((element) => rendered(element, null));
+  if (elements.length > 0 && rows.length === 0) return { hidden: elements.length };
   const end = arg.limit === null ? rows.length : Math.min(rows.length, arg.from + arg.limit);
   const records = [];
   for (let index = arg.from; index < end; index += 1) {
@@ -233,6 +255,9 @@ const readRows = async (rows, fields, options = {}) => {
     }];
   });
   const answer = await rows.evaluateAll(visibleTextPage, { as, lines, maxLength, from, limit, fields: entries });
+  if (answer.hidden !== undefined)
+    throw visibleTextFailure("hidden_only", answer.hidden + " matched, 0 rendered",
+      { matched: answer.hidden, rendered: 0 });
   if (answer.missing !== undefined)
     throw visibleTextFailure("not_found",
       "required field " + answer.missing.field + " has no rendered match in row " + answer.missing.row,

@@ -760,8 +760,9 @@ export const PublicationRequest = Schema.Struct({
     ).pipe(Schema.maxItems(8)),
   ),
   /**
-   * Output check findings the minter says are intended, each with why. A blocking one no longer
-   * refuses publication, and the publication review reads every override and its reason.
+   * Output check findings the minter says are wrong about a correct value, each with why: the
+   * tool's intended output, such as code, or page text that only resembles code. A blocking one no
+   * longer refuses publication, and the publication review checks every override and its reason.
    */
   outputOverrides: Schema.optional(
     Schema.Array(
@@ -774,7 +775,7 @@ export const PublicationRequest = Schema.Struct({
         }),
         reason: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
           description:
-            "Why this value is the tool's intended output, such as a tool whose purpose is returning code",
+            "Why the value is correct as returned: the tool's intended output, such as code on a tool that returns code, or the page's own displayed text that only resembles code",
         }),
       }),
     ).pipe(Schema.maxItems(16)),

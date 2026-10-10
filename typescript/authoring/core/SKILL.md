@@ -307,7 +307,8 @@ types or a building with several units for rent, is one result marked as a group
 
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
-  itinerary as one text blob or summary, and keep every result row the page shows.
+  itinerary as one text blob or summary, and keep every result row of the main list the page
+  shows.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
@@ -376,7 +377,7 @@ Read each output value from the element or structured-data entry that holds the 
 never a shorter or secondary one, found by a stable id, a `data-` attribute, a role and name or
 the record's own key, with `visibleText`, `visibleTexts` or `readRows` (paste `visibleTextCode`
 from `pomerado/runtime` at the top of the call's code). They return only the text a person sees
-on the rendered page, with whitespace normalized and zero-width characters removed, and fail
+on the rendered page, with whitespace normalized and invisible characters removed, and fail
 instead of returning hidden text; `as: "accessible"` reads what a screen reader reads instead.
 `textContent` always includes hidden text, scripts and styles, and so does `innerText` of an
 element that is not rendered, such as a hidden duplicate of the block you meant. `readRows`

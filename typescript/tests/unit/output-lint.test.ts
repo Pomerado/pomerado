@@ -29,9 +29,25 @@ describe("output checks of one string", () => {
     ["json_text", '{"sku":"A1","price":3}'],
     ["invisible_chars", "Blue\u200B shirt"],
     ["untrimmed", " leading space"],
-    ["collapsed_text", "A bright room facing the garden, with a desk and\u2026"],
-    ["collapsed_text", "A bright room facing the garden..."],
     ["duplicate_entries", "Customer reviews Customer reviews"],
+    // Script and style shapes text read from a container that holds a script or style comes out in.
+    ["script", 'Blue mug {"@context":"https://schema.org","@type":"Product","name":"Blue mug"} $12.00'],
+    ["script", 'Blue mug {"sku":"A1","price":12,"currency":"USD"} in stock'],
+    ["script", 'self.__next_f.push([1,"abc"])'],
+    ["script", "gtag('config', 'G-ABC123');"],
+    ["script", "try{Typekit.load({async:true})}catch(e){}"],
+    ["script", "requestAnimationFrame(() => init())"],
+    ["script", "Rated 4.5 window.dataLayer = window.dataLayer || [];"],
+    ["script", "if(a){b=c;}else{d();}return e;"],
+    ["css", ".css-1x2y3z{display:flex}"],
+    ["css", "Blue mug .a{display:flex}.b{margin:0} $12"],
+    ["css", ":root{--brand:#123}"],
+    ["css", "@media screen and (min-width: 40em) { .grid { gap: 8px } }"],
+    ["css", "@font-face{font-family:Brand;src:url(/f.woff2)}"],
+    ["markup", 'See <a href="/terms">terms</a>'],
+    ["markup", "<p>Free returns</p>"],
+    ["markup", '<x-price value="12">'],
+    ["template_residue", "Price: $NaN"],
   ];
   it.each(positives)("flags %s in %j", (check, value) => {
     expect(checkOf(value)).toContain(check);
@@ -53,6 +69,57 @@ describe("output checks of one string", () => {
       "<3 years old",
     ];
     for (const value of corpus) expect(checkOf(value), value).toEqual([]);
+  });
+
+  it("never blocks page text that only resembles code", () => {
+    const corpus = [
+      "Dimensions (L x W x H): 10 x 5 x 3 in; Weight (lbs): 2.5; Material (outer): nylon; Color (main): black",
+      "Price: $12.99 (was $19.99) (save 35%) (limited time) (members only) (in store) (online)",
+      "Return policy: 30 days (unopened); 15 days (opened); exchanges (any time); see terms (below)",
+      "Smith (2019); Jones (2020); Lee (2021); Park (2022); Chen (2023); Diaz (2024); Kim (2025)",
+      "Download document.final.pdf now",
+      "Save on window.cleaner.co supplies",
+      "let x = 5 and solve for y",
+      "size: M; color: navy; fit: slim; care: hand wash",
+      "calories: 200; fat: 10g; sodium: 300mg; sugar: 5g",
+      "width: 10 in; height: 5 in; depth: 3 in",
+      "Contact press@media.example.com",
+      "The behavior is undefined.",
+      "Division by zero is undefined in arithmetic",
+      "If a<b and c>d then swap",
+      "Cable <USB-C> to <Lightning> adapter",
+      "Choose a size {S, M, L}; then a colour {red, blue}",
+      "Steps: mix (2 min); rest (10 min); bake (25 min) => serve",
+      "Use code SAVE10 at checkout (one per order); not valid on gift cards",
+      "A {great} deal: 2 for 1",
+    ];
+    for (const value of corpus)
+      expect(
+        lintOutput({ value }).filter((finding) => finding.blocking),
+        value,
+      ).toEqual([]);
+  });
+
+  it("keeps zero-width joiners, which are part of correct spelling and emoji", () => {
+    expect(checkOf("\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645")).toEqual([]);
+    expect(checkOf("Family \u{1F468}\u200D\u{1F469}\u200D\u{1F467} pass")).toEqual([]);
+    expect(checkOf("Blue\u00AD shirt")).toEqual(["invisible_chars"]);
+  });
+
+  it("lets a schema declare code, so code is not flagged as a leak", () => {
+    const outputSchema = {
+      type: "object",
+      properties: {
+        script: { type: "string", contentMediaType: "text/javascript" },
+        style: { type: "string", contentMediaType: "text/css" },
+      },
+    };
+    expect(
+      checksOf(
+        { script: "const total = values.reduce((sum, value) => sum + value, 0);", style: ".a{display:flex}" },
+        { outputSchema },
+      ),
+    ).toEqual([]);
   });
 
   it("allows markup or JSON text where the schema declares that media type", () => {
@@ -90,12 +157,54 @@ describe("output checks of one string", () => {
     expect(checkOf("A bright room facing the garden. Show more", { controlLabels })).toEqual([
       "collapsed_text",
     ]);
+    expect(checkOf("A bright room facing the garden with a desk Show more", { controlLabels })).toEqual([
+      "collapsed_text",
+    ]);
     expect(checkOf("Registration\nSTR-0001\nShow more", { controlLabels })).toEqual([
       "collapsed_text",
     ]);
     // A value that is only the label, or holds its words inside a sentence, is not.
     expect(checkOf("Show more", { controlLabels })).toEqual([]);
     expect(checkOf("Show more of the garden from the balcony", { controlLabels })).toEqual([]);
+  });
+
+  it("matches only a page's expand controls, never its navigation or a record's own title", () => {
+    const controlLabels = ["Women", "Sale", "Home", "More", "Kids", "Books", "Blue mug", "Add to cart"];
+    for (const value of [
+      "Running Shoes for Women",
+      "Garden Plants for Sale",
+      "Welcome Home",
+      "Less is More",
+      "Acme Blue mug",
+      "Blue mug $12\nAdd to cart",
+    ])
+      expect(checkOf(value, { controlLabels }), value).toEqual([]);
+    // A one-word "more" control counts after an ellipsis or on its own line.
+    expect(checkOf("A bright room facing the garden\u2026 More", { controlLabels })).toEqual([
+      "collapsed_text",
+    ]);
+    // A label that is also a whole value in the output, such as a record's title link, is content.
+    expect(
+      checksOf({ results: [{ title: "Show more" }, { title: "A quiet room. Show more" }] }, {
+        controlLabels: ["Show more"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("flags an ending ellipsis only when the page offered a control to expand it", () => {
+    const snippet = "Install the package, then call setup with your key and\u2026";
+    expect(checkOf(snippet)).toEqual([]);
+    expect(checkOf(snippet, { controlLabels: ["Next page"] })).toEqual([]);
+    expect(checkOf(snippet, { controlLabels: ["Read more"] })).toEqual(["collapsed_text"]);
+  });
+
+  it("leaves a card_text section's control labels and ellipses alone", () => {
+    const controlLabels = ["Show more"];
+    expect(
+      checksOf({ results: [{ title: "Blue mug", card_text: "Blue mug\nA mug with a\u2026\nShow more" }] }, {
+        controlLabels,
+      }),
+    ).toEqual([]);
   });
 
   it("only samples when asked, and cuts a sample to 80 characters", () => {
@@ -178,16 +287,29 @@ describe("overrides", () => {
 });
 
 describe("control labels from an accessibility snapshot", () => {
-  it("lists short button and link names, not long link text", () => {
+  it("lists the expand controls that follow text, not navigation, actions or list controls", () => {
     const snapshot = [
+      "- navigation:",
+      '  - link "Women":',
+      "    - /url: /women",
+      '  - button "More"',
       '- heading "Garden room" [level=1]',
-      '- paragraph: A bright room. Show more',
+      "- paragraph: A bright room facing the garden\u2026",
       '- button "Show more"',
-      '- link "Read all 42 reviews"',
-      '- link "Garden room with a balcony, a desk and a view over the lawn"',
+      '- button "Add to cart"',
+      "- list:",
+      "  - listitem:",
+      '    - link "Blue mug":',
+      "      - /url: /p/1",
+      "    - text: A sturdy mug with a\u2026",
+      '    - link "Read more":',
+      "      - /url: /p/1",
+      '- button "Show more results"',
+      "- text: Free returns on most items",
+      '- button "See all" [expanded]',
       "- button",
       '- textbox "Search"',
     ].join("\n");
-    expect(controlLabelsFromAriaSnapshot(snapshot)).toEqual(["Show more", "Read all 42 reviews"]);
+    expect(controlLabelsFromAriaSnapshot(snapshot)).toEqual(["Show more"]);
   });
 });

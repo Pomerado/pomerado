@@ -52,7 +52,8 @@ or passes only when run again, shows a missing wait for content: fix the wait in
 Read every string in each result. After each run with output the host reports output checks:
 values that hold code, styles, markup or template leftovers, text read collapsed or cut short,
 a whole card's text, repeated entries or records, and fields that never vary or are always
-empty. Fix each at the read in source, never by cleaning the string afterwards. Set each
+empty. Check each against the page: fix a wrong value at the read in source, never by
+cleaning the string afterwards; a correct value needs no change (publication skill). Set each
 `include` value the tool offers in at least one live run.<!-- pomerado:section testing.offline-fixtures -->
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
