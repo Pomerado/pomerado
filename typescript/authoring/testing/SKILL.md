@@ -68,7 +68,8 @@ Write `test/cases.json`:
 site offers, which you saw while exploring: listed options, places, dates, counts, records and
 retailers the site lists. Never use a person's, account's or record's name, number or code, and
 never the caller's own values beyond the example's input. Say why for every item you skip: an
-item the site cannot have is `not_applicable`, and a choice the caller declined is `declined`.
+item the site cannot have is `not_applicable`, and a choice the request, the caller or the owner
+declined is `declined` (core skill).
 Never leave an item out silently.
 
 Run them with `live_tests` action `run` (`cases` null runs them all; `maxWorkers` up to 3). One

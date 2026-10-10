@@ -7,14 +7,16 @@ import {
   listOutputFields,
   selectRows,
   startList,
+  visibleTextCode,
   waitCode,
 } from "../../src/browser/index.js";
 import type { ListPosition } from "../../src/browser/index.js";
 
 // A search whose site pages with numbered pages and a Next link. Page one runs the search through
 // the site's own form; a later page opens the site's own link to its page from the cursor and
-// reads the query back. The selectors and the read are site logic: replace them with what the
-// build observed on the site.
+// reads the query back. Each read waits for the list's answer, then only for the rows this call
+// can return, and reads their visible text. The selectors and the read are site logic: replace
+// them with what the build observed on the site.
 
 const Listing = Schema.Struct({
   id: Schema.NonEmptyString.annotations({ description: "The site's listing ID" }),
@@ -25,38 +27,58 @@ const Listing = Schema.Struct({
 });
 type Listing = typeof Listing.Type;
 
-/** One site page as the read returns it. */
+/** One site page as the read returns it: `more` says it holds rows past the ones read. */
 const SitePage = Schema.Struct({
   url: Schema.String,
   query: Schema.String,
   rows: Schema.Array(Listing),
+  more: Schema.Boolean,
   next: Schema.NullOr(Schema.String),
   total: Schema.NullOr(Schema.Number),
   empty: Schema.Boolean,
 });
 type SitePage = typeof SitePage.Type;
 
-/** Waits for the list's answer, then reads the page's query, rows, Next link and count. */
-const readPageCode = `
-await page.locator("#results, #no-results").first().waitFor({ timeout: 10000 });
-return await page.evaluate(() => {
-  const count = /of (\\d+)/.exec(document.querySelector("#count")?.textContent ?? "");
-  return {
-    url: location.href,
-    query: document.querySelector("#q")?.value ?? "",
-    rows: [...document.querySelectorAll("#results > li[data-id]")].map((row) => ({
-      id: row.dataset.id ?? "",
-      title: row.querySelector(".title")?.innerText.trim() ?? "",
-      sponsored: row.querySelector(".sponsored") !== null,
-    })),
-    next: document.querySelector("a[rel=next]")?.href ?? null,
-    total: count === null ? null : Number(count[1]),
-    empty: document.querySelector("#no-results") !== null,
-  };
-});`;
+/**
+ * Page code, after waitCode and visibleTextCode with `site` and `action` declared: waits for the
+ * list's answer, the site's empty message or its results, then for the first `count` rows to
+ * have their ID and title filled in and holding, and reads the query the page shows, its count
+ * and its Next link. A page that shows no answer throws outcome_unknown or outcome_timeout, and
+ * rows still loading when the page stops progressing throw values_loading: the host retries a
+ * read once after either, so they are never caught here.
+ */
+const readPageCode = (count: number) => `
+const results = page.locator("#results");
+const shown = await waitForOutcome({ empty: page.locator("#no-results"), results }, { ...site, action });
+const query = (await page.locator("#q").inputValue({ timeout: waitLimits.action })).trim();
+if (shown === "empty")
+  return { url: page.url(), query, rows: [], more: false, next: null, total: null, empty: true };
+const { rows, more } = await waitForRows(page.locator("#results > li"), {
+  title: ".title",
+  // The badge's presence is the mark, so read its class rather than text it may not have.
+  sponsored: { selector: ".sponsored", attribute: "class", optional: true },
+}, { count: ${count}, key: { attribute: "data-id" }, region: results, ...site });
+const counted = /of (\\d+)/.exec((await visibleTexts(page.locator("#count")))[0] ?? "");
+const next = page.locator("a[rel=next]");
+const nextHref = (await next.count()) === 1 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
+return {
+  url: page.url(),
+  query,
+  rows: rows.map((row) => ({ id: row.key, title: row.title, sponsored: row.sponsored !== null })),
+  more,
+  next: nextHref === null ? null : new URL(nextHref, page.url()).href,
+  total: counted === null ? null : Number(counted[1]),
+  empty: false,
+};`;
 
 /** A promoted copy keeps its own key, so the organic row and the copy both stay. */
 const keyOf = (row: Listing) => (row.sponsored ? `sponsored:${row.id}` : row.id);
+
+/**
+ * Reading on to another site page needs at least this much of the run's time left. With less, the
+ * call returns the rows it read and a position that continues.
+ */
+const readOnMs = 5_000;
 
 export default defineOperation(
   {
@@ -72,41 +94,58 @@ export default defineOperation(
       ...listOutputFields,
     }),
   },
-  async ({ kernel, sessionId, siteOrigin, input, errors }) => {
+  async ({ kernel, sessionId, siteOrigin, siteDomain, input, remainingMs, errors }) => {
     // Before any browser work: the limit, and on a later page the position the cursor holds.
     const list = startList(input, { mechanism: "pages" });
-    const run = async (code: string): Promise<SitePage> => {
+    if (siteOrigin === undefined)
+      throw new errors.OperationFailure("No site origin for a live run", { dispatch: "not_sent" });
+    // One Kernel call per site page: `steps` brings the page and `action` is the step that brings
+    // its answer, run once by the wait. Each call stays inside the run's own deadline.
+    const run = async (steps: string, action: string, count: number): Promise<SitePage> => {
+      const timeoutSec = Math.min(60, Math.floor(remainingMs() / 1_000) - 1);
+      if (timeoutSec < 1) throw new errors.OperationFailure("No time left to read the list");
       const answer = await kernel.browsers.playwright.execute(sessionId, {
-        code,
-        timeout_sec: 30,
+        timeout_sec: timeoutSec,
+        code: `
+${waitCode}
+${visibleTextCode}
+// The site's own requests, on every host of its domain, count as progress.
+const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
+${steps}
+const action = ${action};
+${readPageCode(count)}`,
       });
       if (!answer.success)
         throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
       return Schema.decodeUnknownSync(SitePage)(answer.result);
     };
-    const search = () =>
-      run(`await page.goto(${JSON.stringify(siteOrigin ?? "")});
-await page.locator("#q").fill(${JSON.stringify(input.query)});
-await page.locator("#go").click();
-${readPageCode}`);
-    const open = (href: string) =>
-      run(`await page.goto(${JSON.stringify(href)});
-${readPageCode}`);
+    const navigate = (url: string) =>
+      `await page.goto(${JSON.stringify(url)}, { waitUntil: "domcontentloaded", timeout: waitLimits.navigation });`;
+    const search = (count: number) =>
+      run(
+        `${navigate(siteOrigin)}
+await page.locator("#q").fill(${JSON.stringify(input.query)}, { timeout: waitLimits.action });`,
+        `() => page.locator("#go").click({ timeout: waitLimits.action })`,
+        count,
+      );
+    const open = (href: string, count: number) => run(navigate(href), "undefined", count);
 
+    // Wait only for the rows this call can return: on its first page, those before the cursor's
+    // offset and a window after them; on a later page, what the window still lacks.
     const href = list.position?.href;
-    const pages = [href === undefined ? await search() : await open(href)];
+    const firstCount = (list.position?.offset ?? 0) + list.limit;
+    const pages = [href === undefined ? await search(firstCount) : await open(href, firstCount)];
     // The page shows the query it ran: a later page opened from a link reads it back too.
-    if (pages[0]?.query !== input.query)
+    if (pages[0]?.query !== input.query.trim())
       throw new errors.OperationFailure("The results page does not show the requested query");
     // Read on until the window is full, the site has no more, or this call's bound is reached.
     const rowsRead = () => pages.flatMap((sitePage) => sitePage.rows);
-    while (
-      selectRows(list, rowsRead(), keyOf).rows.length < list.limit &&
-      pages.length < listCallBounds.sitePages
-    ) {
-      const next = pages.at(-1)?.next;
-      if (next === null || next === undefined) break;
-      pages.push(await open(next));
+    const lacking = () => list.limit - selectRows(list, rowsRead(), keyOf).rows.length;
+    while (lacking() > 0 && pages.length < listCallBounds.sitePages && remainingMs() > readOnMs) {
+      const lastPage = pages.at(-1);
+      // Rows still unread on this page come before its Next link: the next call reads them.
+      if (lastPage === undefined || lastPage.more || lastPage.next === null) break;
+      pages.push(await open(lastPage.next, lacking()));
     }
 
     const selected = selectRows(list, rowsRead(), keyOf);
@@ -130,9 +169,10 @@ ${readPageCode}`);
           ? sitePage.rows.length
           : sitePage.rows.findIndex((row) => keyOf(row) === keyOf(last)) + 1;
     const next: ListPosition | null =
-      sitePage === undefined || (offset >= sitePage.rows.length && sitePage.next === null)
+      sitePage === undefined ||
+      (offset >= sitePage.rows.length && !sitePage.more && sitePage.next === null)
         ? null
-        : last === undefined && sitePage.next !== null
+        : last === undefined && !sitePage.more && sitePage.next !== null
           ? // Nothing new on the pages read: start the next call at the page after them.
             { page: pageNumber + 1, offset: 0, href: sitePage.next }
           : { page: pageNumber, offset, href: sitePage.url };

@@ -159,7 +159,7 @@ export const boundedLocationDetail = (detail: unknown): LocationNotAppliedDetail
  * the tool's bounded retries. The run fails rather than return results for another place.
  * Scripts throw it as `errors.LocationNotApplied`, after reading the page's committed location
  * back: `new errors.LocationNotApplied(message, { field: "zip", requested: input.zip, applied,
- * step: "store_save", siteMessage })`. `applied` is what the page kept, when it shows one;
+ * step: "set_location", siteMessage })`. `applied` is what the page kept, when it shows one;
  * `siteMessage` is the page's own error, when it showed one. A location the site says it does
  * not serve is the caller's to correct: that is `InvalidInput` with the places it offers.
  */

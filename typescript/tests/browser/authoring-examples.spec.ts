@@ -22,7 +22,7 @@ import readCatalog, {
   detailNavigation,
   searchThenRead,
 } from "../../authoring/examples/navigation.js";
-import { readRooms } from "../../authoring/examples/pagination.js";
+import searchListings, { readRooms } from "../../authoring/examples/pagination.js";
 import selectStatus from "../../authoring/examples/selection.js";
 import readInvoiceIds from "../../authoring/examples/variants.js";
 import createTask from "../../authoring/examples/write-readback.js";
@@ -528,6 +528,56 @@ const roomCursors = (): ListCursorScope => ({
   keys: randomListCursorKeys(),
   operation: "list_rooms",
   now: Date.now(),
+});
+
+// A listing site that pages three rows at a time behind a search form, with a Next link. Each
+// results page shows its rows at once and fills in their titles a moment later, as a page that
+// streams its rows' details does.
+const lateTitleListings = async (page: Page, origin: string) => {
+  const listings = ["L1", "L2", "L3", "L4", "L5"];
+  await page.route(`${origin}/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/favicon.ico") return route.fulfill({ status: 404 });
+    const query = url.searchParams.get("q") ?? "";
+    const form = `<form action="/search"><input id="q" name="q" value="${query}"><button id="go">Search</button></form>`;
+    if (url.pathname !== "/search") return route.fulfill({ contentType: "text/html", body: form });
+    const pageNumber = Number(url.searchParams.get("page") ?? "1");
+    const rows = listings.slice((pageNumber - 1) * 3, pageNumber * 3);
+    const more = pageNumber * 3 < listings.length;
+    return route.fulfill({
+      contentType: "text/html",
+      body: `${form}<p id="count">${(pageNumber - 1) * 3 + 1}-${(pageNumber - 1) * 3 + rows.length} of ${listings.length}</p>
+<ol id="results">${rows.map((id) => `<li data-id="${id}"><span class="title"></span></li>`).join("")}</ol>
+${more ? `<a rel="next" href="/search?q=${encodeURIComponent(query)}&page=${pageNumber + 1}">Next</a>` : ""}
+<script>setTimeout(() => {
+  for (const row of document.querySelectorAll("#results > li")) row.querySelector(".title").textContent = "Lamp " + row.dataset.id;
+}, 300);</script>`,
+    });
+  });
+};
+
+test("paged search example waits for the titles of the rows it returns to fill in", async ({ page }) => {
+  const origin = "https://listings.example.test";
+  await lateTitleListings(page, origin);
+  const { result } = await runExample(
+    page,
+    searchListings,
+    { query: "lamps", limit: 2 },
+    { siteOrigin: origin, list: {} },
+  );
+  expect(result).toEqual(
+    Either.right({
+      results: [
+        { id: "L1", title: "Lamp L1", sponsored: false },
+        { id: "L2", title: "Lamp L2", sponsored: false },
+      ],
+      next_cursor: expect.stringMatching(/^pcd1\./u),
+      next_cursor_expires_at: null,
+      has_more: true,
+      total_results: 5,
+      list_changed: false,
+    }),
+  );
 });
 
 test("append example reads each step's filled-in new rows until the control goes", async ({

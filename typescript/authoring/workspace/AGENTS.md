@@ -164,14 +164,16 @@ than the controls, such as a record page at `/items/<id>` instead of crawling a 
 Either way, read the page's identity back from the page and fail if it does not match.
 
 When the controls flow lands on a URL the site produced, and two runs with different inputs show
-which parts of it carry which input, such as the query, dates, guests or party size, sort, page
-or a record's own identifier route, the tool may open that URL with the caller's values in those
+which parts of it carry which input, such as the query, dates, guests or party size, sort or a
+record's own identifier route, the tool may open that URL with the caller's values in those
 parts, built with `URLSearchParams` for a query part or `encodeURIComponent` for a path part and
 every other part copied as the site wrote it, once the build checked that it gives the same answer as the controls. At run time it reads every input
 back from the page, and when the landing is not an answer it named or a read-back differs, it
 runs the controls flow once instead, in a named function such as `throughControls`
 (`references/navigation.ts`). Never guess a parameter, never iterate on URL variants, and take an
-opaque filter code only from a link the page produced in this run. A POST form, a URL that
+opaque filter code only from a link the page produced in this run. A page number or offset is
+not such a part: the tool reaches a later page by the site's own link, which the cursor keeps,
+never by editing a number into the URL it opens (pagination skill). A POST form, a URL that
 carries a per-session token, a value that needs a typeahead pick to resolve, a location or store
 the site keeps in cookies, and every step on a write's path go through the controls.
 

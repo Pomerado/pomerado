@@ -89,8 +89,9 @@ first:
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the
-  input schema). Guardian counts such an input as part of the
-  tool, never as scope drift or an unsupported claim. Each input you accept is applied and read
+  input schema). The one exception is a choice the request, the caller or the owner declined,
+  which is never an input for any caller (core skill). Guardian counts such an input as part of
+  the tool, never as scope drift or an unsupported claim. Each input you accept is applied and read
   back (core skill, the input schema, and `AGENTS.md`; the search skill for a search).
 - **Personal data.** No personal data from the session in source, schemas, examples or metadata:
   names, emails, account numbers, addresses or the owner's answers (the list below).
