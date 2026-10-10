@@ -606,8 +606,9 @@ value from the page instead of clicking the control that changes it, and run it
 again. Setting a read's location, filter, sort or option through the site's control is part of
 the read, not a saved preference (the input schema above). For a write session, the list shows the commit your step caused and any
 autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no
-error after it, is what the writes skill confirms from. The list is the evidence for the
-`http` version, and any other write is unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
+error after it, is what the writes skill confirms from. A 200 whose body reports an error, as
+GraphQL can, did not go through. The list is the evidence for the `http` version, and any
+other write is unintended and must not be in the composed script. `initiator` is evidence, not proof: `evaluated_script` is usually your own
 page evaluation, `page_script` is the site's script (which your click can also
 start), and `parser` is markup such as a form submission.
 

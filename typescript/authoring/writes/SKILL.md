@@ -123,21 +123,21 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   shows the caller's values, as `references/write-readback.ts` does. Wait too for every way
   the page can answer with `waitForOutcome`, listing the site's error or validation message
   first. The write went through when that response is 2xx or 3xx, a body the call can read
-  shows no error, and the page shows no error or validation message after it. A 202 or a
-  body that says the work is queued went through too; return the site's own status word for
-  it in the output. Then read
-  what the output promises from that response or from the page the commit left, match it to
-  the caller's values, and call `verified()` with no argument just before returning. Declare
-  `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a
-  history or an account screen, only to prove the write. Make no execute call after
-  `verified()`: a later call reopens the effect. After the confirming step, further `act`
-  steps are refused.
+  shows no error, and the page shows no error or validation message after it. A 200 whose
+  body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says
+  the work is queued, went through too; return the site's own status word for it in the
+  output. Then read what the output promises from that response or from the page the commit
+  left, match it to the caller's values, and call `verified()` with no argument just before
+  returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
+  such as a list, a history or an account screen, only to prove the write. Make no execute
+  call after `verified()`: a later call reopens the effect. After the confirming step,
+  further `act` steps are refused.
 - Read the site's own proof instead only when the commit request can't confirm the write:
   no such request went out; it failed, got no answer or returned an error status; its body
-  shows an error, or can't be read on an endpoint that reports errors with a 200, such as
-  GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET
-  link; or a later stage the site can still refuse, such as sending what an earlier click
-  saved, sent no request of its own. Then read the confirmation it shows (an order, booking
+  can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch
+  call; the page shows an error; the commit went over a websocket or a GET link; or a later
+  stage the site can still refuse, such as sending what an earlier click saved, sent no
+  request of its own. Then read the confirmation it shows (an order, booking
   or reference number) or the saved state (the orders page, the booking list, the updated
   profile), match it to the caller's values, return the number or record in the output, and
   call `verified()` as above. A generic toast alone is not a confirmation, nor is a 200 from
