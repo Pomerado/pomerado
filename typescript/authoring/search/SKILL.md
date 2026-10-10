@@ -66,9 +66,15 @@ rather than matches, such as "no exact matches, showing similar items", return t
 that applied every input and got the site's no-results message returns an empty list, never an
 error.
 
+## Pages
+
+A search returns one page of results per call and a cursor to the next: read the pagination
+skill before you settle the schema. The window is the first `limit` results in the site's
+order, sponsored ones in place.
+
 ## Describe and test it
 
 The description briefly states the design decisions, limits and interpretations a caller needs,
-such as the site's default location, a fixed page size or the first page only. Set every input
+such as the site's default location and how the site pages. Set every input
 you expose in at least one live run before publishing, as the testing skill says, and give each
 an `examples` value the site offers for a typical query.

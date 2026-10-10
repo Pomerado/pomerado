@@ -27,11 +27,15 @@ const RefusalText = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(maximumRefusalChoiceLength),
 );
-/** A script's refusal: the input it names and the choices the page offers for it. */
+/** A script's refusal: the input it names, the choices the page offers for it and its kind. */
 export const InputRefusal = Schema.Struct({
   field: Schema.optionalWith(RefusalText, { exact: true }),
   available: Schema.optionalWith(
     Schema.Array(RefusalText).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
+    { exact: true },
+  ),
+  kind: Schema.optionalWith(
+    Schema.String.pipe(Schema.pattern(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u), Schema.maxLength(40)),
     { exact: true },
   ),
 });

@@ -48,7 +48,9 @@ several controls in one test whenever that covers more. Check the remaining valu
 against pages you captured where that applies, and list any input no live run set under
 untested in `coverage`, so a reader sees it as unverified. A control that fails
 its test is fixed, never dropped from the schema. A live run that returns partly filled results,
-or passes only when run again, shows a missing wait for content: fix the wait in source.<!-- pomerado:section testing.offline-fixtures -->
+or passes only when run again, shows a missing wait for content: fix the wait in source. A tool
+that returns a list runs page two live with the cursor page one returned, and reaches a last
+page (pagination skill).<!-- pomerado:section testing.offline-fixtures -->
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read

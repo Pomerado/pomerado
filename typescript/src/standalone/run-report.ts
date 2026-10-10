@@ -155,6 +155,9 @@ const operationEvidence = (declared: DeclaredEffect, error: unknown): RunEvidenc
     ...(reason === "invalid_input" && error.refusal?.available !== undefined
       ? { refusal_available: error.refusal.available }
       : {}),
+    ...(reason === "invalid_input" && error.refusal?.kind !== undefined
+      ? { refusal_kind: error.refusal.kind }
+      : {}),
   };
 };
 

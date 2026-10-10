@@ -13,7 +13,6 @@ import authEntry from "../../authoring/examples/auth-entry.js";
 import bookSeat from "../../authoring/examples/caller-choice.js";
 import dialogPicker from "../../authoring/examples/dialog-picker.js";
 import placeOrder from "../../authoring/examples/write-session.js";
-import { continueInvoices } from "../../authoring/examples/pagination.js";
 import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
 import { inputFeedbackInstruction } from "../../src/mint/input-feedback.js";
 import { loadAuthoringSkills, loadWorkspaceGuide } from "../../src/mint/skills.js";
@@ -201,8 +200,11 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ],
   ["forms", "Preserve add/replace and single/multiple intent."],
   ["forms", "- Walk every step for real, in the session, with the caller's values."],
-  ["pagination", "1. Validate cursor/query/account scope before browser effects."],
-  ["pagination", "Never recreate a hold, draft, upload, payment token or write as pagination."],
+  [
+    "pagination",
+    "Spread `listInputFields` into the input schema's fields and `listOutputFields` into the output schema's",
+  ],
+  ["pagination", "Never recreate a hold, draft, upload, payment token or write in order to page."],
   ["writes", "A write build changes something real on the caller's account"],
   ["writes", "- The first read-back that matches confirms the write; stop there."],
   ["writes", "- State from before the write never matches."],
@@ -293,12 +295,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // fails the output check.
   [
     "core",
-    "**Never loosen a value the request needs.** The values the request needs are each value it names, the record's identifier as the site shows it, and the context those depend on as the page shows it, such as dates, a party size or a location. Make each one required and non-null, typed so a value the code could not read fails the output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever the request's wording or a description says. A run whose output fails its schema goes to repair. - The one exception is a record whose own page genuinely does not show the value, such as an item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a field that says why, such as its availability, and both descriptions say so. - Null never covers a value the page shows that the code failed to read: that throws `OperationFailure` naming it. Never turn a read that found nothing into null (`?.innerText ?? null`); a missing element is a failure, not an absence. - Before your first example, list the needed values. If the page may not show one, settle it then: find where the site shows it, on every layout its records use, or ask the owner. **Output fields.** Design the output for what a caller could use, and lean toward more fields and more information rather than the minimum: include the facts about each record or result that a caller could reasonably use to identify, choose, compare or act on it, not only the values the request names. Leave out what is unrelated to the tool's purpose or of no use to a caller. - Keep each value's full displayed text. Read the element that holds the whole value, never a shorter or secondary one. When the page splits one value across elements, such as a maker line above a linked name or an author line above a title, return each part in its own field. Never drop either part. - Prefer a separate typed field for each fact over folding it into another field's text. Never derive a value the page does not show. - A field that is not a needed value is nullable when records on this site can lack it, and it is null exactly when this record does not show it. - Never declare a field the code does not read. A field that is always null, empty or fixed is not a disclosed limit: read it from the page, or leave the field out. Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row the page shows. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
+    "**Never loosen a value the request needs.** The values the request needs are each value it names, the record's identifier as the site shows it, and the context those depend on as the page shows it, such as dates, a party size or a location. Make each one required and non-null, typed so a value the code could not read fails the output check (`Schema.NonEmptyString` for text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever the request's wording or a description says. A run whose output fails its schema goes to repair. - The one exception is a record whose own page genuinely does not show the value, such as an item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a field that says why, such as its availability, and both descriptions say so. - Null never covers a value the page shows that the code failed to read: that throws `OperationFailure` naming it. Never turn a read that found nothing into null (`?.innerText ?? null`); a missing element is a failure, not an absence. - Before your first example, list the needed values. If the page may not show one, settle it then: find where the site shows it, on every layout its records use, or ask the owner. **Output fields.** Design the output for what a caller could use, and lean toward more fields and more information rather than the minimum: include the facts about each record or result that a caller could reasonably use to identify, choose, compare or act on it, not only the values the request names. Leave out what is unrelated to the tool's purpose or of no use to a caller. - Keep each value's full displayed text. Read the element that holds the whole value, never a shorter or secondary one. When the page splits one value across elements, such as a maker line above a linked name or an author line above a title, return each part in its own field. Never drop either part. - Prefer a separate typed field for each fact over folding it into another field's text. Never derive a value the page does not show. - A field that is not a needed value is nullable when records on this site can lack it, and it is null exactly when this record does not show it. - Never declare a field the code does not read. A field that is always null, empty or fixed is not a disclosed limit: read it from the page, or leave the field out. - A list that can run past one page returns one page per call and a cursor to the next, as the pagination skill says. Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row the page shows, up to the call's `limit` (pagination skill). - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
     "publication",
-    'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Inputs.**',
+    'did not return is refused (`contract_output_mismatch`). Values the request needs are required and non-null: never loosen one. Only a record whose own page shows no such value may return null, together with a field saying why; a description never excuses a nullable needed value, and Guardian refuses a schema that makes one optional or nullable. No output is a constant where the page shows a value, and titles and names are returned in full (core skill, output fields). - **Typed output.** Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary. Give each fact a caller would filter, sort or compare its own field (core skill, output fields). A flight card reading "XX 234, 7:00 AM-3:31 PM, Nonstop, 5h 31m" should return `{ "flight_number": "XX 234", "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00", "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site\'s own text may ride beside the typed fields, or stand in for one value that truly does not parse, with that field\'s description saying so. - **Lists.** A tool that returns a list the site can run past one page takes `limit` and `cursor` and returns one page with `next_cursor` (pagination skill), or says the site shows the whole list at once. - **Inputs.**',
   ],
 ];
 
@@ -312,7 +314,7 @@ const formerSections: readonly (readonly [string, string])[] = [
   ["auth", "A run can begin partway through that flow because its bound profile or remembered device omitted an earlier stage."],
   ["caller-input", "1. Declare every question the run may ask in the contract, `defineOperation({ name, input, output, questions }, ...)`, by id, with its `type` and a short `prompt`."],
   ["forms", "Filling in or advancing a form that saves data on the site (an application, a profile, a contracting or checkout form) is a write, even when nothing is submitted yet"],
-  ["pagination", "A mint question keeps the live browser for up to 10 minutes; that is not cursor expiry."],
+  ["pagination", "The host signs every cursor and checks it before the next run starts"],
   ["writes", "- The first `act` step claims the build's write."],
   ["publication", "- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens it."],
   ["workspace/AGENTS.md", "Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that, choose meaningful tests"],
@@ -651,16 +653,16 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["38970ebfc1a595a646b0f3825b8ec80da8cd30c903bd39494b7fd8f8d2c62ef1", "core"],
-    ["407cca93896aacbe2453cfb9d0e17d6171d9b321c4ebb909f0cfe0f61b267e5d", "search"],
+    ["9f07e37e15d2a7dd0726736cd6de5d85c9260af54121ae8b577a43b0d64b6b49", "core"],
+    ["8d8c0dce123b5be734ee6bd869b79fe4544775cfdf66c2ffbc6a28af7dc42d46", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
-    ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
-    ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
+    ["04e08032c31c2fee0563743b2b8094fe04ed9264de5f4700931e3f2ad93429dd", "testing"],
+    ["600dc11d04caabfa72c98583f98e066f63d74024c211bf67b5be70823618ea70", "pagination"],
     ["74476a5505ce6492c2e631923f1e5632526e7130faa08ef96c9eccfdcfe8508c", "forms"],
     ["708559d8ec4def8d573c3bd3504494ee27ef62a054af69f3601e59f6a43f9251", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["7d1941f96fd36ca47595f77251b20f38448070e878c98bad77795c6f2663bc44", "caller-input"],
-    ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
+    ["df4b0f3073d447c78e58218a2d4359ae9ed9259ff55ef5fb58de0097adf8d53b", "publication"],
     ["4c0b524c06329f908c5d3138e739c43ffec6ddb119108b0f7485b6de02af3773", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
@@ -771,70 +773,6 @@ it("accepts authoritative empty invoices and rejects absent/invalid bodies", asy
   );
   for (const body of ["", "{}", '{"invoices":[],"complete":"yes"}'])
     expect(await parse(body)).toMatchObject({ _tag: "Left" });
-});
-
-it.each(["usable", "expired", "unavailable"] as const)(
-  "continues the scoped read through %s state",
-  async (state) => {
-    const calls: string[] = [];
-    const result = await Effect.runPromise(
-      continueInvoices(
-        "open",
-        "account-a",
-        { scope: "account-a", query: "open", afterId: "invoice-1" },
-        {
-          inspectWarmState: Effect.succeed(state),
-          reconstructRead: Effect.sync(() => {
-            calls.push("reconstruct");
-            return "ready" as const;
-          }),
-          readAfter: (id) =>
-            Effect.sync(() => {
-              calls.push(id);
-              return { ids: ["invoice-3"], coverage: "complete" as const };
-            }),
-        },
-      ),
-    );
-    expect(calls).toEqual(state === "usable" ? ["invoice-1"] : ["reconstruct", "invoice-1"]);
-    // Changed live data need not contain a former invoice-2 snapshot.
-    expect(result.ids).toEqual(["invoice-3"]);
-  },
-);
-
-it("rejects cursor scope before inspection and gives no cursor for unsupported reconstruction", async () => {
-  let touched = false;
-  const site = {
-    inspectWarmState: Effect.sync(() => {
-      touched = true;
-      return "expired" as const;
-    }),
-    reconstructRead: Effect.succeed("unsupported" as const),
-    readAfter: () => Effect.die("must not execute unsupported continuation"),
-  };
-  expect(
-    await Effect.runPromise(
-      Effect.either(
-        continueInvoices(
-          "open",
-          "account-b",
-          { scope: "account-a", query: "open", afterId: "1" },
-          site,
-        ),
-      ),
-    ),
-  ).toMatchObject({ _tag: "Left" });
-  expect(touched).toBe(false);
-  const partial = await Effect.runPromise(
-    continueInvoices(
-      "open",
-      "account-a",
-      { scope: "account-a", query: "open", afterId: "1" },
-      site,
-    ),
-  );
-  expect(partial.coverage).toBe("partial");
-  expect(partial.next).toBeUndefined();
 });
 
 it("selects old/new structural variants deterministically and rejects ambiguous/loading/unknown", () => {

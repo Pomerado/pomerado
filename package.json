@@ -561,6 +561,16 @@
       "import": "./dist/typescript/src/runtime/site-http-host.js",
       "default": "./dist/typescript/src/runtime/site-http-host.js"
     },
+    "./core/runtime/list-cursor": {
+      "types": "./dist/typescript/src/runtime/list-cursor.d.ts",
+      "import": "./dist/typescript/src/runtime/list-cursor.js",
+      "default": "./dist/typescript/src/runtime/list-cursor.js"
+    },
+    "./core/runtime/list-page": {
+      "types": "./dist/typescript/src/runtime/list-page.d.ts",
+      "import": "./dist/typescript/src/runtime/list-page.js",
+      "default": "./dist/typescript/src/runtime/list-page.js"
+    },
     "./core/runtime/kernel-operation": {
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
       "import": "./dist/typescript/src/runtime/kernel-operation.js",

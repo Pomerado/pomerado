@@ -131,6 +131,8 @@ export interface RunEvidence {
   readonly refusal_field?: string | undefined;
   /** Every choice the page offers for the refused input, when the tool read them. */
   readonly refusal_available?: readonly string[] | undefined;
+  /** The refusal's kind as a short token, such as a refused cursor's `expired`. */
+  readonly refusal_kind?: string | undefined;
   /** The login field the website rejected. */
   readonly rejected_field?: string | undefined;
 }
@@ -222,6 +224,7 @@ export const runError = (view: RunEvidence): RunFailure => {
         ...(view.refusal_available === undefined || view.refusal_available.length === 0
           ? {}
           : { available: view.refusal_available }),
+        ...(view.refusal_kind === undefined ? {} : { kind: view.refusal_kind }),
       });
     case "login_identity_conflict":
       return failure("login_identity_conflict", {});

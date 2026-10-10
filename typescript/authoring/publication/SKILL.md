@@ -72,6 +72,9 @@ first:
   "departure_time": "2026-11-16T07:00:00-08:00", "arrival_time": "2026-11-16T15:31:00-05:00",
   "stops": 0, "duration_minutes": 331 }` rather than `{ "summary": "XX 234 7:00 AM ..." }`. The site's own text may ride beside the typed fields,
   or stand in for one value that truly does not parse, with that field's description saying so.
+- **Lists.** A tool that returns a list the site can run past one page takes `limit` and
+  `cursor` and returns one page with `next_cursor` (pagination skill), or says the site shows the
+  whole list at once.
 - **Inputs.** Nothing the caller could vary is a literal, and every control the flow offers
   that narrows, orders or configures what the tool returns, a location included, is an optional
   input, even one the request never mentioned and one you never asked about (core skill, the

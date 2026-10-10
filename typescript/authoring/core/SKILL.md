@@ -266,10 +266,13 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
+- A list that can run past one page returns one page per call and a cursor to the next, as the
+  pagination skill says.
 
 Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
-  itinerary as one text blob or summary, and keep every result row the page shows.
+  itinerary as one text blob or summary, and keep every result row the page shows, up to the
+  call's `limit` (pagination skill).
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.

@@ -52,8 +52,14 @@ const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
-const refusalOf = (detail: { readonly field?: string; readonly available?: readonly string[] }) =>
-  detail.field === undefined && detail.available === undefined ? {} : { refusal: detail };
+const refusalOf = (detail: {
+  readonly field?: string;
+  readonly available?: readonly string[];
+  readonly kind?: string;
+}) =>
+  detail.field === undefined && detail.available === undefined && detail.kind === undefined
+    ? {}
+    : { refusal: detail };
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
 const send = (message: unknown) =>
   Effect.try({
