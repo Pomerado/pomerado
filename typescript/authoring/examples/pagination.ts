@@ -39,12 +39,13 @@ export const continueInvoices = <E>(
 
 const Listed = Schema.Struct({
   rows: Schema.Array(Schema.Struct({ key: Schema.NonEmptyString, name: Schema.NonEmptyString })),
-  end: Schema.Literal("list_end", "limit", "step_cap"),
+  end: Schema.Literal("list_end", "limit", "step_cap", "stalled"),
 });
 
 // Append pagination on an observed list: "Show more" adds the next rooms to the same list, each
-// row named by its data-room-id. Each step waits for the rows it added; a step that adds no
-// identified row while no loading sign shows is the end of the list, as is the control going.
+// row named by its data-room-id. Each step waits for the rows it added. The control going is the
+// end of the list. A step that adds no identified row while nothing shows the list loading, with
+// the control still offered, is not proof of the end: the read says it is partial.
 // Adapt every role, name and attribute from your own session's evidence.
 export const readRooms = defineOperation(
   {
@@ -107,7 +108,9 @@ export const readRooms = defineOperation(
             if ((await more.count()) !== 1 || !(await more.isEnabled())) return { rows: found.rows, end: "list_end" };
             const before = found.rows.length;
             found = await read(Math.min(limit, before + pageSize), () => more.click({ timeout: waitLimits.action }));
-            if (found.rows.length === before) return { rows: found.rows, end: "list_end" };
+            // No rows added: the end only when the page stopped offering more.
+            if (found.rows.length === before)
+              return { rows: found.rows, end: (await more.count()) === 1 && (await more.isEnabled()) ? "stalled" : "list_end" };
           }
           return { rows: found.rows, end: "limit" };
         }
@@ -117,9 +120,16 @@ export const readRooms = defineOperation(
       throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
     const result = Schema.decodeUnknownSync(Listed)(answer.result);
     const rooms = result.rows.map(({ key, name }) => ({ id: key, name }));
-    // A bound reached before the list ended is said, with no pretend continuation.
-    return result.end === "step_cap"
-      ? { rooms, coverage: "partial" as const, limitation: "Stopped after 20 Show more steps" }
-      : { rooms, coverage: "complete" as const };
+    // A bound reached before the list ended, or a list that stopped growing while it still
+    // offered more, is said, with no pretend continuation.
+    if (result.end === "step_cap")
+      return { rooms, coverage: "partial" as const, limitation: "Stopped after 20 Show more steps" };
+    if (result.end === "stalled")
+      return {
+        rooms,
+        coverage: "partial" as const,
+        limitation: "Show more added no rooms while the site still offered it",
+      };
+    return { rooms, coverage: "complete" as const };
   },
 );

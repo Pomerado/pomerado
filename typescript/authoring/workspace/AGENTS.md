@@ -159,8 +159,8 @@ Either way, read the page's identity back from the page and fail if it does not 
 When the controls flow lands on a URL the site produced, and two runs with different inputs show
 which parts of it carry which input, such as the query, dates, guests or party size, sort, page
 or a record's own identifier route, the tool may open that URL with the caller's values in those
-parts, built with `URLSearchParams` and every other part copied as the site wrote it, once the
-build checked that it gives the same answer as the controls. At run time it reads every input
+parts, built with `URLSearchParams` for a query part or `encodeURIComponent` for a path part and
+every other part copied as the site wrote it, once the build checked that it gives the same answer as the controls. At run time it reads every input
 back from the page, and when the landing is not an answer it named or a read-back differs, it
 runs the controls flow once instead, in a named function such as `throughControls`
 (`references/navigation.ts`). Never guess a parameter, never iterate on URL variants, and take an

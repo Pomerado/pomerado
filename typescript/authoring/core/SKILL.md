@@ -440,7 +440,8 @@ changed element counts at once. Pass the site's own loading sign as `loading`, t
 page the answer appears in as `region`, and the context's `siteDomain`, so the sign counts for as
 long as it shows, changes in that part count as progress, and so do the site's own requests on
 every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
-while it is new, so a decoration never holds a wait. Read results;
+while it is new, so a decoration never holds a wait; `waitForRows` also waits while one shows
+beside its rows, never inside one, and for the requests its `action` started. Read results;
 return an empty list for a listing's empty state;
 throw `InvalidInput` with the site's own words for a refusal or a greyed-out choice the input
 asked for; ask the caller about a pick-one list (.agents/caller-input/SKILL.md). It throws an

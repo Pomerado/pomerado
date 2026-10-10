@@ -518,7 +518,9 @@ test("append example stops at the limit without another step", async ({ page }) 
   await expect(page.locator("#clicks")).toHaveText("0");
 });
 
-test("append example ends the list at a step that adds no rows", async ({ page }) => {
+test("append example reports a step that adds no rows while Show more stays as partial, never complete", async ({
+  page,
+}) => {
   test.info().annotations.push({
     type: "slow",
     description:
@@ -526,7 +528,57 @@ test("append example ends the list at a step that adds no rows", async ({ page }
   });
   await appendingRooms(page, 2, "stuck");
   expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
-    Either.right({ rooms: roomList(2), coverage: "complete" }),
+    Either.right({
+      rooms: roomList(2),
+      coverage: "partial",
+      limitation: "Show more added no rooms while the site still offered it",
+    }),
+  );
+  await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+// A rooms site whose "Show more" asks the site's API for the next two rooms, which answers after
+// `delayMs`, while a spinner shows below the list.
+const slowAppendingRooms = async (page: Page, delayMs: number) => {
+  const origin = "https://rooms.example.test";
+  await page.route(`${origin}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/more") {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await route.fulfill({ contentType: "application/json", body: "{}" }).catch(() => undefined);
+      return;
+    }
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<main>
+        <ul aria-label="Rooms"><li data-room-id="room-1"><span class="name">North room</span></li><li data-room-id="room-2"><span class="name">South room</span></li></ul>
+        <div id="status"></div><button>Show more</button><output id="clicks">0</output>
+      </main>
+      <script>
+        const button = document.querySelector("button");
+        button.onclick = async () => {
+          document.querySelector("#clicks").textContent++;
+          document.querySelector("#status").innerHTML = '<div class="spinner" style="height: 20px"></div>';
+          await fetch("/more");
+          document.querySelector("ul").insertAdjacentHTML("beforeend",
+            '<li data-room-id="room-3"><span class="name">East room</span></li><li data-room-id="room-4"><span class="name">West room</span></li>');
+          document.querySelector("#status").innerHTML = "";
+          button.remove();
+        };
+      </script>`,
+    });
+  });
+  await page.goto(`${origin}/`);
+};
+
+test("append example waits for a step whose rooms take longer than the request hold", async ({ page }) => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "The site's API answers after 5 s, past the 4 s a request stays busy when the wait did not start it.",
+  });
+  await slowAppendingRooms(page, 5000);
+  expect((await runExample(page, readRooms, { limit: 10 })).result).toEqual(
+    Either.right({ rooms: roomList(4), coverage: "complete" }),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
 });

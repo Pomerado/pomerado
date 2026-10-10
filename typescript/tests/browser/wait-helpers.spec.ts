@@ -526,12 +526,12 @@ test("a loading sign that appears after the action keeps the wait alive past the
     <script>
       document.querySelector("button").onclick = () => {
         document.querySelector("#answer").innerHTML = '<div class="results-skeleton" style="height: 40px"></div>';
-        setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 700);
+        setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(rooms)}; }, 600);
       };
     </script>`);
   const answer = await outcome(
     page,
-    `noProgressMs: 300, unchangedMs: 1000, timeout: 3000, action: () => page.getByRole("button", { name: "Search" }).click()`,
+    `noProgressMs: 500, timeout: 3000, action: () => page.getByRole("button", { name: "Search" }).click()`,
   );
   expect(answer, JSON.stringify(answer)).toMatchObject({ shown: "results" });
 });
@@ -660,4 +660,93 @@ test("a row's field is read from its visible match, and a field only hidden is s
     });`,
   );
   expect(hidden.error).toMatch(/: 1 identified rows of 1, needed 1; badge hidden in row 1; /u);
+});
+
+// A list of ten rows whose "Show more" loads ten more after `delayMs`: through the site's API when
+// `request`, else in the page. While it loads, a spinner shows beside the list, or the list is
+// aria-busy, or nothing shows but the request.
+const growingList = (page: Page, sign: "spinner" | "busy" | "none", request: boolean, delayMs = 1500) =>
+  site(
+    page,
+    `<main>
+      <ol id="results"></ol><div id="loading-more"></div><button type="button">Show more</button>
+    </main>
+    <script>
+      const list = document.querySelector("#results");
+      const add = (from) => {
+        for (let i = from; i < from + 10; i += 1)
+          list.insertAdjacentHTML("beforeend", '<li data-id="r' + i + '"><h3>Row ' + i + '</h3></li>');
+      };
+      add(1);
+      document.querySelector("button").onclick = async () => {
+        if (${JSON.stringify(sign)} === "spinner")
+          document.querySelector("#loading-more").innerHTML = '<div class="load-spinner" style="height: 20px"></div>';
+        if (${JSON.stringify(sign)} === "busy") list.setAttribute("aria-busy", "true");
+        if (${request}) await fetch("/api/more");
+        else await new Promise((resolve) => setTimeout(resolve, ${delayMs}));
+        add(11);
+        document.querySelector("#loading-more").innerHTML = "";
+        list.removeAttribute("aria-busy");
+      };
+    </script>`,
+    async (path) => {
+      if (path === "/api/more") await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return { body: "{}" };
+    },
+  );
+
+const growBody = `
+  const { rows } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
+    count: 20, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+    action: () => page.getByRole("button", { name: "Show more" }).click({ timeout: 1000 }),
+  });
+  return rows.length;`;
+
+for (const [sign, request] of [
+  ["spinner", true],
+  ["none", true],
+  ["spinner", false],
+  ["busy", false],
+] as const)
+  test(`a "Show more" that loads for longer than the holds returns the grown list: ${sign} sign, ${request ? "site request" : "no request"}`, async ({
+    page,
+  }) => {
+    await growingList(page, sign, request);
+    expect(await call(page, growBody)).toEqual({ result: 20 });
+  });
+
+test("a list still loading at the first look, with its spinner below the rows, returns every row", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <main>
+      <ol id="results"><li data-id="r1"><h3>Row 1</h3></li><li data-id="r2"><h3>Row 2</h3></li></ol>
+      <div class="results-loader" style="height: 20px"></div>
+    </main>
+    <script>
+      setTimeout(() => {
+        for (let i = 3; i <= 10; i += 1)
+          document.querySelector("#results").insertAdjacentHTML("beforeend", '<li data-id="r' + i + '"><h3>Row ' + i + '</h3></li>');
+        document.querySelector(".results-loader").remove();
+      }, 1500);
+    </script>`);
+  const answer = await call(
+    page,
+    `const { rows, more } = await waitForRows(page.locator("#results > li"), { name: "h3" }, {
+      count: 10, key: { attribute: "data-id" }, noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 4000,
+    });
+    return { count: rows.length, more };`,
+  );
+  expect(answer).toEqual({ result: { count: 10, more: false } });
+});
+
+test("a row whose key is only hidden is said to have its key hidden", async ({ page }) => {
+  await page.setContent(`<ol id="results"><li><h3>Room 1</h3><span class="id" hidden>room-1</span></li></ol>`);
+  const answer = await call(
+    page,
+    `await waitForRows(page.locator("#results > li"), { name: "h3" }, {
+      count: 1, key: ".id", noProgressMs: 300, stableMs: 100,
+    });`,
+  );
+  expect(answer.error).toMatch(/: 0 identified rows of 1, needed 1; key hidden in row 1; /u);
 });
