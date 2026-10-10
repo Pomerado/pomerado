@@ -9,6 +9,7 @@ import {
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import {
   guardianPublicationPolicy,
+  publicationLiveTestsPolicy,
   publicationSafetyDefaultPolicy,
 } from "../../src/guardian/publication.js";
 import {
@@ -431,6 +432,17 @@ describe("the publication policy", () => {
       "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches, the tool lists them for the caller instead of picking one.";
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
+  });
+
+  // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
+  // example shows it broken. Hosts with their own publication policy get it with the live tests.
+  it("judges a repair on the lines it changed, beside the maintenance rule for live tests", () => {
+    const rule =
+      "In a repair, prefer denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken. Note other doubts about unchanged lines without denying.";
+    expect(publicationLiveTestsPolicy).toContain(
+      `and note other gaps in the rationale only. When publication/tests.json is absent, judge coverage as before. ${rule}`,
+    );
+    expect(guardianPublicationPolicy).toContain(`\n${publicationLiveTestsPolicy}\n`);
   });
 
   // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,

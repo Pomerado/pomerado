@@ -290,6 +290,7 @@
 - The auth skill says that on a one-time-code screen the minter prefers one read that finds the code fields, the submit and any remember-this-device box, then sends the code step at once, since codes expire in minutes. When the site refuses a code, it prefers clicking the site's resend control before the caller is asked for a new code.
 - The core skill tells the minter never to search the open web for the page a task needs, but to make its URL an input and ask the caller for it.
 - The writes skill tells the minter to prefer marking the commit at the step that submits the booking or order. A hold that expires on its own, such as a reserved table or a cart timer, is not the commit.
+- Guardian's publication policy says a repair's review prefers denying only for lines the repair changed, or for unchanged lines that a failing run or example shows broken, and notes other doubts about unchanged lines without denying. It is part of `publicationLiveTestsPolicy`, so a host with its own publication policy that includes it gets the rule too.
 
 ### Fixes
 
