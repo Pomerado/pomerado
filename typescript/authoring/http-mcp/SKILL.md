@@ -21,7 +21,8 @@ version is built from its act session's requests and tested offline only (Test i
   alone is enough.
 - Import only `effect`, `pomerado/runtime` (or `../../runtime/index.js`) and your own files
   under `src/`. Parse pages with `readEmbeddedJson`, `embeddedJson` and `parseHtml` from
-  `pomerado/runtime`; no other package exists, so never hand-write a regex parser for markup.
+  `pomerado/runtime`; no other package exists. They read state blocks, JSON attributes, state a
+  script assigns and markup, so never hand-write a regex parser for any of them.
   `src/tool.mjs` and `src/tool-http.mjs` may share a parser module there.
 - A request refused before sending fails `request_refused` (code `invalid_request` or
   `unsupported_capability`, dispatch `not_sent`), and its message says "refused by the request
@@ -38,8 +39,8 @@ input:
    or detail page, in a `*-http.mjs` probe (`explore/document-http.mjs`), or its saved copy when
    `captures/routes.json` names an `exampleDocument`. Look for the example's
    IDs and values in embedded state: `<script id=…>` state blocks, `<script
-   type="application/json">`, `<script type="application/ld+json">`, and framework or
-   deferred-state blocks. Check that the state is filled for this input. An empty search state or
+   type="application/json">`, `<script type="application/ld+json">`, JSON in an attribute, and
+   state a script assigns (`window.__STATE__ = {...}`, `self.__DATA = JSON.parse("...")`). Check that the state is filled for this input. An empty search state or
    a null price means the page fills it later from a request: go on to 2.
 2. **The page's own data request.** Search `captures/routes.json` and the saved bodies for one of
    the example's IDs (Reading the captures, below). The response that holds it is the request to
@@ -81,8 +82,10 @@ they used another location are a failed test, not a difference to note.
 - **`site_refused_on_both_transports`:** a 401, 403 or 419 on curl and on the page's fetch that
   the captures can't explain.
 
-`requestId` is the capture route the signal rests on, and `note` says what showed it. Don't write,
-run or delete a stub to make the point. A route this tool's HTTP version already ran successfully
+`requestId` is the capture route the signal rests on, and `note` says what showed it. Don't write
+or run a stub to make the point. If a `src/tool-http.mjs` you wrote and tested meets one of these
+signals, delete it and give `httpVersion`: every file in `src/` publishes, and a failed HTTP
+version never ships. A route this tool's HTTP version already ran successfully
 ports: in maintenance, repair it (below).
 
 ## 2. Write it
@@ -99,9 +102,12 @@ script: it has no `SiteHttp`, and the host refuses it in a `*-http.mjs` file bef
 - `readText(http, request)` answers `{ text, response }`: `const { text } = yield*
   readText(http, request)`.
 - `readEmbeddedJson(http, request, select, schema)` reads a page and decodes one embedded state
-  block. When a curl answer lacks the block, it asks once more over the page's fetch, then fails
-  `parsing` naming the block and the page's title. `embeddedJson(text, select)` reads a block from
-  text you already have.
+  block. `select` is `{ id }` for a `<script id=…>` block, `{ type: "ld+json" }` or
+  `{ type: "json" }` for every script of that type, `{ attribute }` for JSON in an attribute, or
+  `{ assignment: "__STATE__" }` for the object or array a script assigns to that global, or the
+  string it passes to `JSON.parse`. When a live curl answer lacks the block, it asks once more
+  over the page's fetch, then fails `parsing` naming the block and the page's title.
+  `embeddedJson(text, select)` reads a block from text you already have.
 - `parseHtml(text)` gives an inert tree for a page without a state block: `select(css)`,
   `selectOne(css)`, and on each node `text()`, `attr(name)` and `html()`. It runs no script and
   makes no request.
@@ -221,7 +227,8 @@ refuses literal tokens.
   - `transport`: the relay, proxy or provider failed, not your request. Test again; if it repeats,
     ask for a browser recovery for new egress.
   - A challenge, a block page, or a 401/403/419/429 on curl: send that request with
-    `requires: ["page-environment"]`, or rely on `readText`'s one retry over the page's fetch.
+    `requires: ["page-environment"]`. `readText` retries over the page's fetch by itself only for
+    a challenge the host recognizes, never for a status or a block page it doesn't.
     A wall on one execution method is a reason to try another, not to stop. Stop only for a
     signal under "When it can't port".
   - Compare with the example: same records, IDs, fields and units. Differences in order, ranking,

@@ -3254,6 +3254,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
               );
+              if (proposed.httpVersion !== undefined && buildEffect === "write") {
+                const reason = "http_version_on_write";
+                pendingDecision = hostRefusalDecision(reason, undefined, true);
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    "httpVersion is only for a read published without an HTTP version. A write's HTTP version is tested offline against its session's recorded exchanges. Call finish_build again without httpVersion.",
+                  executionContext: yield* executionContext(),
+                });
+              }
               yield* Effect.try({
                 try: () => relativeSourcePath(proposed.entrypoint),
                 catch: (error) =>

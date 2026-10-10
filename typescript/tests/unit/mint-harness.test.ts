@@ -5319,3 +5319,35 @@ it("refuses an HTTP version reason without a known signal before publication", a
   await f.run();
   expect(published).toBe(1);
 });
+
+it("refuses an HTTP version reason on a write build before publication", async () => {
+  let published = 0;
+  const answers: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        answers.push(
+          JSON.parse(
+            yield* turn.actions.finish({
+              ...publication,
+              httpVersion: {
+                outcome: "ruled_out",
+                signal: "streaming_response",
+                note: "Results arrive only as server-sent events.",
+              },
+            }),
+          ),
+        );
+      }),
+    {
+      publish: () =>
+        Effect.sync(() => {
+          published++;
+          return { publicationRef: "published", diagnostics: [] };
+        }),
+    },
+  );
+  await f.run({ ...request, effect: "write" });
+  expect(answers).toMatchObject([{ status: "not_published", reason: "http_version_on_write" }]);
+  expect(published).toBe(0);
+});

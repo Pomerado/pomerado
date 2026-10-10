@@ -31,11 +31,15 @@ export interface HtmlDocument {
   readonly title: () => string | undefined;
 }
 
+/** An attribute the element itself has, never a name inherited from `Object.prototype`. */
+const ownAttribute = (element: Element, name: string): string | undefined =>
+  Object.hasOwn(element.attribs, name) ? element.attribs[name] : undefined;
+
 const collapsed = (node: AnyNode) => textContent(node).replace(/\s+/gu, " ").trim();
 
 const node = (element: Element): HtmlNode => ({
   text: () => collapsed(element),
-  attr: (name) => element.attribs[name.toLowerCase()],
+  attr: (name) => ownAttribute(element, name.toLowerCase()),
   html: () => getOuterHTML(element),
   select: (css) => selectAll<AnyNode, Element>(css, element).map(node),
   selectOne: (css) => {
@@ -68,13 +72,15 @@ export const parseHtml = (text: string): HtmlDocument => {
 
 /**
  * Where a page keeps JSON: a `<script>` element by its `id`, every `<script>` of a JSON type
- * (`ld+json` is `application/ld+json`, `json` is `application/json`), or an attribute such as
- * `data-state` that holds JSON.
+ * (`ld+json` is `application/ld+json`, `json` is `application/json`), an attribute such as
+ * `data-state` that holds JSON, or a global a script assigns, such as `__APP_STATE__` in
+ * `window.__APP_STATE__ = {...}` or `self.__APP_STATE__ = JSON.parse("...")`.
  */
 export type EmbeddedJsonSelector =
   | { readonly id: string }
   | { readonly type: "ld+json" | "json" }
-  | { readonly attribute: string };
+  | { readonly attribute: string }
+  | { readonly assignment: string };
 
 /**
  * `embeddedJson` found no JSON where the selector points: `missing` when nothing is there or it is
@@ -91,7 +97,120 @@ const selectorText = (select: EmbeddedJsonSelector) =>
     ? `<script id="${select.id}">`
     : "type" in select
       ? `<script type="application/${select.type}">`
-      : `[${select.attribute}]`;
+      : "attribute" in select
+        ? `[${select.attribute}]`
+        : `a <script> assigning ${select.assignment}`;
+
+const escapedPattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/**
+ * Where a script assigns `name`: `name =`, `window.name =`, `self.name =`, `globalThis.name =` or
+ * `window["name"] =`, never `==`, a longer name or another object's property. The match ends at
+ * the `=`.
+ */
+const assignmentPattern = (name: string) =>
+  new RegExp(
+    `(?:(?:^|[^\\w$.])(?:(?:window|self|globalThis)\\.)?${escapedPattern(name)}|(?:window|self|globalThis)\\[\\s*(["'])${escapedPattern(name)}\\1\\s*\\])\\s*=(?![=>])`,
+    "gu",
+  );
+
+/**
+ * The end of a quoted JavaScript string that starts at `start` with its quote, just past the
+ * closing quote, or undefined when it never closes.
+ */
+const stringEnd = (text: string, start: number): number | undefined => {
+  const quote = text[start];
+  for (let index = start + 1; index < text.length; index++) {
+    if (text[index] === "\\") index++;
+    else if (text[index] === quote) return index + 1;
+  }
+  return undefined;
+};
+
+/** The balanced `{...}` or `[...]` that starts at `start`, skipping brackets inside strings. */
+const balancedValue = (text: string, start: number): string | undefined => {
+  let depth = 0;
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"' || char === "'" || char === "`") {
+      const end = stringEnd(text, index);
+      if (end === undefined) return undefined;
+      index = end - 1;
+    } else if (char === "{" || char === "[") depth++;
+    else if (char === "}" || char === "]") {
+      depth--;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return undefined;
+};
+
+const simpleEscapes: Readonly<Record<string, string>> = {
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  "0": "\0",
+};
+
+/** A JavaScript string literal's value: its escapes decoded, `\` + newline dropped. */
+const decodedString = (literal: string): string | undefined => {
+  let value = "";
+  for (let index = 1; index < literal.length - 1; index++) {
+    const char = literal[index] ?? "";
+    if (char !== "\\") {
+      value += char;
+      continue;
+    }
+    const next = literal[++index] ?? "";
+    if (next === "x" || next === "u") {
+      const braced = next === "u" && literal[index + 1] === "{";
+      const close = braced ? literal.indexOf("}", index) : -1;
+      const hex = braced
+        ? literal.slice(index + 2, close)
+        : literal.slice(index + 1, index + (next === "x" ? 3 : 5));
+      if (!/^[0-9a-fA-F]+$/u.test(hex) || (!braced && hex.length !== (next === "x" ? 2 : 4)))
+        return undefined;
+      const code = Number.parseInt(hex, 16);
+      if (code > 0x10ffff) return undefined;
+      value += String.fromCodePoint(code);
+      index = braced ? close : index + hex.length;
+    } else if (next === "\n") continue;
+    else if (next === "\r") {
+      if (literal[index + 1] === "\n") index++;
+    } else value += simpleEscapes[next] ?? next;
+  }
+  return value;
+};
+
+/**
+ * The JSON text a script assigns to `name`: the object or array literal after the `=`, or the
+ * string a `JSON.parse("...")` there decodes, for each assignment in document order.
+ */
+const assignedValues = (script: string, name: string): string[] => {
+  const values: string[] = [];
+  for (const match of script.matchAll(assignmentPattern(name))) {
+    const after = match.index + match[0].length;
+    const rest = script.slice(after);
+    const start = after + (rest.length - rest.trimStart().length);
+    const parse = /^JSON\.parse\(\s*/u.exec(script.slice(start));
+    if (parse !== null) {
+      const quoted = start + parse[0].length;
+      const end = stringEnd(script, quoted);
+      const literal = end === undefined ? undefined : script.slice(quoted, end);
+      const decoded =
+        literal === undefined || !/^["'`]/u.test(literal) ? undefined : decodedString(literal);
+      if (decoded !== undefined) values.push(decoded);
+      continue;
+    }
+    if (script[start] !== "{" && script[start] !== "[") continue;
+    const value = balancedValue(script, start);
+    if (value !== undefined) values.push(value);
+  }
+  return values;
+};
 
 /** Comment and CDATA wrappers, with an optional `//` before each marker, and a trailing `;`. */
 const wrappers = [
@@ -127,9 +246,14 @@ const candidates = (document: Document, select: EmbeddedJsonSelector) => {
         element.name === "script" && scriptType(element) === `application/${select.type}`,
       document,
     ).map((element) => textContent(element));
+  if ("assignment" in select)
+    return findAll(
+      (element) => element.name === "script" && ownAttribute(element, "src") === undefined,
+      document,
+    ).flatMap((element) => assignedValues(textContent(element), select.assignment));
   const name = select.attribute.toLowerCase();
-  return findAll((element) => element.attribs[name] !== undefined, document).map(
-    (element) => element.attribs[name] ?? "",
+  return findAll((element) => ownAttribute(element, name) !== undefined, document).map(
+    (element) => ownAttribute(element, name) ?? "",
   );
 };
 
@@ -185,9 +309,10 @@ export const embeddedJson = (
  * JSON a page embeds, decoded with `schema`: `readText`, then `embeddedJson` at `select`. When a
  * safe read's answer did not come over the page's fetch and lacks the block, as a page that fills
  * it in only for a browser does, it reads once more over the page's fetch
- * (`requires: ["page-environment"]`) where the host can carry it. Each failure is an
- * `OperationFailure` of class `parsing` that names the selector, the page's title, and the URL,
- * status and transport of the answer it read.
+ * (`requires: ["page-environment"]`) where the host can carry it, never from an offline replay.
+ * When that read fails, the block's own failure stands and names the fetch's failure. Each
+ * failure is an `OperationFailure` of class `parsing` that names the selector, the page's title,
+ * and the URL, status and transport of the answer it read.
  */
 export const readEmbeddedJson = <A, I, R>(
   http: SiteHttpService,
@@ -198,25 +323,38 @@ export const readEmbeddedJson = <A, I, R>(
   Effect.gen(function* () {
     let read = yield* readText(http, request);
     let found = embeddedJson(read.text, select);
+    /** Why the page's fetch gave no answer to read, when it was asked and failed. */
+    let retryFailure: string | undefined;
     if (
       Either.isLeft(found) &&
       found.left.reason === "missing" &&
+      // A replay holds only the answers the live test recorded; asking it again finds none.
       read.response.transport !== "page-fetch" &&
+      read.response.transport !== "saved-http" &&
       safeMethods.has(request.method) &&
       request.requires?.includes("page-environment") !== true &&
       http.capabilities.includes("page-environment")
     ) {
-      read = yield* readText(http, {
-        ...request,
-        requires: [...(request.requires ?? []), "page-environment"],
-      });
-      found = embeddedJson(read.text, select);
+      const retried = yield* Effect.either(
+        readText(http, {
+          ...request,
+          requires: [...(request.requires ?? []), "page-environment"],
+        }),
+      );
+      if (Either.isRight(retried)) {
+        read = retried.right;
+        found = embeddedJson(read.text, select);
+      } else
+        retryFailure =
+          retried.left._tag === "HttpFailure"
+            ? `${retried.left.code} (dispatch ${retried.left.dispatch})`
+            : retried.left.message.slice(0, 300);
     }
     const { response } = read;
     if (Either.isLeft(found))
       return yield* Effect.fail(
         unexpected(
-          `${found.left.message} ${described(request, response)}`,
+          `${found.left.message}${retryFailure === undefined ? "" : ` Reading it again over the page's fetch failed: ${retryFailure}.`} ${described(request, response)}`,
           answer("parsing", request, response),
           found.left,
         ),

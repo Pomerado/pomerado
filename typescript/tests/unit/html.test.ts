@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { embeddedJson, parseHtml, readEmbeddedJson } from "../../src/browser/index.js";
 import { makeEffectJournal } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
+import { HttpFailure } from "../../src/runtime/site-http.js";
 import type {
   HttpTransport,
   SiteHttpRequest,
@@ -95,6 +96,51 @@ describe("embeddedJson", () => {
     ).toEqual(Either.right({ size: "M" }));
   });
 
+  it("reads state a script assigns, as an object literal or a JSON.parse string", () => {
+    const assigned = `<html><head><title>Lamps</title>
+<script src="/app.js"></script>
+<script>var other = 1; window.__APP_STATE__ = {"query":"lamp","items":[{"id":"p-1","name":"Brass \\"lamp\\" {large}"}],"note":"a};b"};
+window.__APP_STATE__.ready = true;</script>
+<script>self.__PAGE_DATA = JSON.parse("{\\"page\\":2,\\"label\\":\\"caf\\u00e9 \\\\\\\\ \\u2603\\"}");</script>
+<script>globalThis["__LIST__"]=[1,[2,3],{"k":"]"}]</script>
+</head></html>`;
+    expect(embeddedJson(assigned, { assignment: "__APP_STATE__" })).toEqual(
+      Either.right({
+        query: "lamp",
+        items: [{ id: "p-1", name: 'Brass "lamp" {large}' }],
+        note: "a};b",
+      }),
+    );
+    expect(embeddedJson(assigned, { assignment: "__PAGE_DATA" })).toEqual(
+      Either.right({ page: 2, label: "caf\u00e9 \\ \u2603" }),
+    );
+    expect(embeddedJson(assigned, { assignment: "__LIST__" })).toEqual(
+      Either.right([1, [2, 3], { k: "]" }]),
+    );
+    const missing = embeddedJson(assigned, { assignment: "__NEXT__" });
+    expect(missing).toMatchObject({ left: { reason: "missing" } });
+    expect(Either.isLeft(missing) && missing.left.message).toMatch(/__NEXT__.*"Lamps"/);
+    // A comparison or a longer name is not the assignment.
+    expect(
+      embeddedJson(`<script>if (x.__S == 1) {} var my__S = {"a":1};</script>`, {
+        assignment: "__S",
+      }),
+    ).toMatchObject({ left: { reason: "missing" } });
+    // A literal that is not JSON is there but unparsable.
+    expect(
+      embeddedJson(`<script>window.__S = {a: 1};</script>`, { assignment: "__S" }),
+    ).toMatchObject({ left: { reason: "unparsable" } });
+  });
+
+  it("reads only an attribute the element has, never an inherited name", () => {
+    const document = parseHtml(`<div data-a="1"></div>`);
+    expect(document.selectOne("div")?.attr("constructor")).toBeUndefined();
+    expect(document.selectOne("div")?.attr("__proto__")).toBeUndefined();
+    expect(embeddedJson(`<div data-a="1"></div>`, { attribute: "constructor" })).toMatchObject({
+      left: { reason: "missing" },
+    });
+  });
+
   it("names the selector and the page title when the block is missing or empty", () => {
     const missing = embeddedJson(page, { id: "cart-state" });
     expect(missing).toMatchObject({ left: { _tag: "EmbeddedJsonFailure", reason: "missing" } });
@@ -140,13 +186,23 @@ const site = async (options: {
   readonly direct: string;
   readonly page: string;
   readonly capabilities?: HttpTransport["capabilities"];
+  /** A replay of one recorded answer, which a second request finds no recording for. */
+  readonly replay?: true;
+  /** The page's fetch fails before the site answers. */
+  readonly pageFails?: true;
 }) => {
   const sent: SiteHttpRequest[] = [];
   const transport: HttpTransport = {
-    name: "kernel-curl",
+    name: options.replay === true ? "saved-http" : "kernel-curl",
     capabilities: options.capabilities ?? ["session-cookies", "page-environment"],
     send: (request) => {
       sent.push(request);
+      if (options.replay === true)
+        return sent.length === 1
+          ? Promise.resolve(htmlAnswer(options.direct, "saved-http"))
+          : Promise.reject(new HttpFailure({ code: "not_recorded", dispatch: "not_sent" }));
+      if (request.requires?.includes("page-environment") === true && options.pageFails === true)
+        return Promise.reject(new HttpFailure({ code: "transport_failed", dispatch: "unknown" }));
       return Promise.resolve(
         request.requires?.includes("page-environment") === true
           ? htmlAnswer(options.page, "page-fetch")
@@ -203,6 +259,37 @@ describe("readEmbeddedJson", () => {
     expect(failure.message).toContain('<script id="app-state">');
     expect(failure.message).toContain('"Lamps"');
     expect(failure.message).toContain("https://shop.example/search");
+    expect(shop.sent).toHaveLength(2);
+  });
+
+  it("fails a replay's missing block as parsing, and never asks the replay for another answer", async () => {
+    const shop = await site({ direct: shell, page, replay: true });
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        readEmbeddedJson(shop.http, { url: "/search", method: "GET" }, { id: "app-state" }, State),
+      ),
+    );
+    expect(failure).toMatchObject({
+      _tag: "OperationFailure",
+      http: { class: "parsing", transport: "saved-http" },
+    });
+    expect(failure.message).toContain('<script id="app-state">');
+    expect(shop.sent).toHaveLength(1);
+  });
+
+  it("keeps the missing block's parsing failure when the page's fetch fails", async () => {
+    const shop = await site({ direct: shell, page, pageFails: true });
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        readEmbeddedJson(shop.http, { url: "/search", method: "GET" }, { id: "app-state" }, State),
+      ),
+    );
+    expect(failure).toMatchObject({
+      _tag: "OperationFailure",
+      http: { class: "parsing", transport: "kernel-curl" },
+    });
+    expect(failure.message).toContain('<script id="app-state">');
+    expect(failure.message).toContain("transport_failed");
     expect(shop.sent).toHaveLength(2);
   });
 

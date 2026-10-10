@@ -178,6 +178,22 @@ export default packaged.defineOperation(
   expect(result).toMatchObject({ _tag: "Right", right: { output: { same: true } } });
 }, 30_000);
 
+it("refuses a Kernel script in an HTTP version's file before it runs", async () => {
+  const site = jsonSite({});
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: `import { Schema } from "effect";
+import { defineOperation } from "pomerado/runtime";
+export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct({}) }, async () => ({}));`,
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Left",
+    left: { message: expect.stringContaining("defineHttpOperation") },
+  });
+  expect(site.sent).toHaveLength(0);
+}, 30_000);
+
 it("refuses an import of the package's internal modules", async () => {
   const result = await run({
     entrypoint: "src/tool.mjs",
