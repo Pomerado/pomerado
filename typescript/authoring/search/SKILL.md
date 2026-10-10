@@ -39,6 +39,8 @@ committed state: the applied-filter chips, the selected sort, an option the site
 or the results header. A URL naming the input does not show it applied. When a filter did not
 apply, the tool throws `OperationFailure` naming it, so the run fails and the tool gets repaired;
 it never returns unfiltered results as filtered.
+An HTTP version reads each input back from the answer instead: the echoed query, sort, filters
+and store or location in its own state.
 
 For a control inside a drawer or collapsed group, open the group first and wait for its panel to
 show and any loading overlay to clear; click the visible label or option, never a hidden input;

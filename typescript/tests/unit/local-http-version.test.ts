@@ -106,6 +106,34 @@ it("runs the HTTP version reference as the workspace holds it", async () => {
   expect(site.sent.map((request) => new URL(request.url).host)).toEqual(["api.shop.example"]);
 }, 30_000);
 
+it("fails the HTTP version reference as invalid input, with the site's choices, when the site refuses a value", async () => {
+  const reference = await readFile("typescript/authoring/examples/http-version.ts", "utf8");
+  const site = jsonSite({
+    error: {
+      param: "order",
+      message: "Unknown sort order: cheapest",
+      allowed: ["relevance", "price_low_high", "newest"],
+    },
+  });
+  const result = await run({
+    entrypoint: "src/tool-http.mjs",
+    source: stripTypeScriptTypes(reference, { mode: "transform" }).replaceAll(
+      '"../../src/',
+      '"../../',
+    ),
+    input: { query: "lamp", sort: "cheapest" },
+    http: site.transport,
+  });
+  expect(result).toMatchObject({
+    _tag: "Left",
+    left: {
+      tag: "InvalidInput",
+      refusal: { field: "sort", available: ["relevance", "price_low_high", "newest"] },
+    },
+  });
+  expect(result._tag === "Left" ? result.left.message : "").toContain("Unknown sort order");
+}, 30_000);
+
 it("fails an HTTP version with the failure its host's transport reported", async () => {
   const transport: HttpTransport = {
     name: "saved-http",

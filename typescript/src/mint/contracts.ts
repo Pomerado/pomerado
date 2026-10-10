@@ -707,6 +707,38 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   ),
 });
 
+/**
+ * Why a read's HTTP version can't port, as the http-mcp skill's "When it can't port" names it.
+ */
+export const HttpVersionSignal = Schema.Literal(
+  "per_request_hash_or_page_id",
+  "bot_wall_on_page_fetch",
+  "unobtainable_session_token",
+  "streaming_response",
+  "location_not_applicable",
+  "site_refused_on_both_transports",
+);
+export type HttpVersionSignal = typeof HttpVersionSignal.Type;
+
+/**
+ * The minter's decision not to publish an HTTP version of a read: the signal, the captured request
+ * it rests on, and a short note. It answers the host's ask for an HTTP version; the host records it
+ * beside its own evidence and decides publication from its own records.
+ */
+export const HttpVersionDecision = Schema.Struct({
+  outcome: Schema.Literal("ruled_out"),
+  signal: HttpVersionSignal,
+  requestId: Schema.optional(
+    Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_.:-]{1,100}$/)).annotations({
+      description: "The captures/routes.json requestId of the request the signal rests on",
+    }),
+  ),
+  note: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
+    description: "What showed the signal, in one or two sentences",
+  }),
+});
+export type HttpVersionDecision = typeof HttpVersionDecision.Type;
+
 export const PublicationRequest = Schema.Struct({
   entrypoint: Schema.String,
   executionId: Schema.String,
@@ -737,6 +769,16 @@ export const PublicationRequest = Schema.Struct({
     Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(500)).annotations({
       description:
         "Only for a write step whose result the host did not accept after it read the confirmation: why no act step can read that confirmation or the saved state back, such as the site showing neither again",
+    }),
+  ),
+  /**
+   * A read with no HTTP version: why it can't port. Give it instead of writing, running and
+   * deleting a version that can't work.
+   */
+  httpVersion: Schema.optional(
+    HttpVersionDecision.annotations({
+      description:
+        "Only for a read published without src/tool-http.mjs: the signal from the http-mcp skill's \"When it can't port\" that rules an HTTP version out, the captured requestId it rests on, and a short note",
     }),
   ),
   /**
