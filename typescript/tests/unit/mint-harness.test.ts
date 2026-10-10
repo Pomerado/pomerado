@@ -3594,7 +3594,8 @@ it("joins an in-flight editor promise before asking and refuses edits after the 
       return result;
     },
   });
-  expect(await f.run()).toMatchObject({
+  // A write repair's unanswered question still ends the build, so later edits are refused.
+  expect(await f.run({ ...request, mode: "maintenance", effect: "write" })).toMatchObject({
     build: "incomplete",
     noResponse: { possibleCommit: false },
   });
@@ -3652,7 +3653,8 @@ it("answers request_input in place through the actual pinned Runner and SandboxA
         content: "Use request_input for clarification.",
       },
     ],
-    // The first request is answered in place; the second goes unanswered and ends the build.
+    // The first request is answered in place; the second goes unanswered, which ends a write
+    // repair.
     askInput: (submitted) =>
       Effect.suspend(() => {
         asked.push(submitted);
@@ -3663,7 +3665,7 @@ it("answers request_input in place through the actual pinned Runner and SandboxA
           : Effect.fail(unanswered());
       }),
   });
-  const outcome = await f.run();
+  const outcome = await f.run({ ...request, mode: "maintenance", effect: "write" });
   expect(outcome).toMatchObject({
     build: "incomplete",
     noResponse: { possibleCommit: false },
@@ -3707,10 +3709,11 @@ it("asks after a write example whose effect is possible and continues with the a
           ),
         ).toMatchObject({ status: "answered", answers: { seen: "no order yet" } });
         expect(turn.isComplete()).toBe(false);
+        // Left unanswered, the second question goes back to the minter, and the build goes on.
         expect(
           JSON.parse(yield* turn.actions.requestInput(textQuestion("Retry now?", "retry"))),
-        ).toMatchObject({ status: "no_response" });
-        expect(turn.isComplete()).toBe(true);
+        ).toMatchObject({ status: "no_answer", userInputRequired: false });
+        expect(turn.isComplete()).toBe(false);
       }),
     {
       reviewAndExecute: () =>
@@ -3729,12 +3732,10 @@ it("asks after a write example whose effect is possible and continues with the a
         }),
     },
   );
-  // The unanswered second question reports that the uncertain write may have committed.
-  expect(await f.run({ ...request, effect: "write" })).toMatchObject({
-    build: "incomplete",
-    noResponse: { possibleCommit: true },
-    example: { effect: "possible" },
-  });
+  // The uncertain write stays on the outcome; the unanswered question did not end the build.
+  const outcome = await f.run({ ...request, effect: "write" });
+  expect(outcome).toMatchObject({ build: "incomplete", example: { effect: "possible" } });
+  expect(outcome).not.toHaveProperty("noResponse");
   expect(asked).toHaveLength(2);
 });
 
@@ -4344,7 +4345,7 @@ it("allows ordinary input after a stopped failed read without discarding its rec
         yield* turn.actions.execute(execution);
         expect(
           JSON.parse(yield* turn.actions.requestInput(textQuestion("Which observed option?"))),
-        ).toMatchObject({ status: "no_response" });
+        ).toMatchObject({ status: "no_answer" });
       }),
     {
       repeatableRead: true,
@@ -4358,9 +4359,251 @@ it("allows ordinary input after a stopped failed read without discarding its rec
     },
   );
   const outcome = await f.run();
-  expect(outcome).toMatchObject({ build: "incomplete", noResponse: { possibleCommit: false } });
+  expect(outcome).toMatchObject({ build: "incomplete" });
+  expect(outcome).not.toHaveProperty("noResponse");
   expect(outcome.executions).toMatchObject([{ executionId: "read_failed", effect: "possible" }]);
 });
+
+// No answer is neither an ending nor consent: the minter hears no_answer and decides how to go on.
+it("hands an unanswered question back as no_answer, and the build goes on to publish", async () => {
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which format?"))),
+        ).toMatchObject({ status: "no_answer", userInputRequired: false });
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.execute(execution);
+        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+          status: "published",
+        });
+      }),
+    {
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  expect(outcome).not.toHaveProperty("noResponse");
+  expect(asked).toBe(1);
+});
+
+it("refuses a task update whose confirmedBy names a question left unanswered", async () => {
+  let reviews = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput(textQuestion("May this build save the note?", "save")),
+          ),
+        ).toMatchObject({ status: "no_answer" });
+        expect(
+          JSON.parse(
+            yield* turn.actions.updateTask!({
+              summary: "Save the note on the site instead of only reading the notes.",
+              changes: [{ setting: "effect", effect: "write" }],
+              confirmedBy: ["save"],
+              recommend: "update",
+            }),
+          ),
+        ).toMatchObject({ status: "clarification_required", source: "host", unanswered: ["save"] });
+        expect(turn.isComplete()).toBe(false);
+      }),
+    {
+      reviewTaskUpdate: () =>
+        Effect.sync(() => {
+          reviews++;
+          return { outcome: "allow" as const, rationale: "Unexpected review." };
+        }),
+      applyTaskUpdate: () => Effect.die("An unconfirmed update must not apply"),
+    },
+  );
+  await f.run({ ...request, siteOrigin: "https://notes.example.test" });
+  expect(reviews).toBe(0);
+});
+
+// In a write repair a question could gate the repair's write, so no answer still ends it.
+it("ends a write repair as no_response when its question goes unanswered", async () => {
+  const f = await fixture((turn) =>
+    Effect.gen(function* () {
+      expect(
+        JSON.parse(yield* turn.actions.requestInput(textQuestion("Which order should it change?"))),
+      ).toMatchObject({ status: "no_response" });
+      expect(turn.isComplete()).toBe(true);
+    }),
+  );
+  expect(await f.run({ ...request, mode: "maintenance", effect: "write" })).toMatchObject({
+    build: "incomplete",
+    noResponse: { possibleCommit: false },
+  });
+});
+
+// A tool that runs signed in acts as the account's owner, so a question could gate what it does
+// there: no answer ends the build, for the minter's own question and for its script's alike.
+it("ends a signed-in build as no_response when the minter's question goes unanswered", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which account page?"))),
+        ).toMatchObject({ status: "no_response" });
+        expect(turn.isComplete()).toBe(true);
+      }),
+    { websiteCredentialsAvailable: true },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    noResponse: { possibleCommit: false },
+  });
+});
+
+it("ends a signed-in build as no_response when its example's script question goes unanswered", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const receipt: unknown = JSON.parse(yield* turn.actions.execute(execution));
+        expect(receipt).not.toHaveProperty("scriptQuestion");
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      websiteCredentialsAvailable: true,
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "asked",
+          status: "failed" as const,
+          effect: "not_sent" as const,
+          noResponse: { possibleCommit: false },
+          observations: "The script's question expired unanswered.",
+        }),
+    },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    noResponse: { possibleCommit: false },
+  });
+});
+
+it("hands an example's unanswered script question back to the minter without ending the build", async () => {
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const receipt: unknown = JSON.parse(yield* turn.actions.execute(execution));
+        expect(receipt).toMatchObject({
+          status: "failed",
+          scriptQuestion: { outcome: "unanswered" },
+        });
+        expect(receipt).toHaveProperty("scriptQuestion.instruction");
+        expect(turn.isComplete()).toBe(false);
+      }),
+    {
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "asked",
+          status: "failed" as const,
+          effect: "not_sent" as const,
+          noResponse: { possibleCommit: false },
+          observations: "The script's question expired unanswered.",
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete" });
+  expect(outcome).not.toHaveProperty("noResponse");
+});
+
+// An absent caller cannot hold a build open by being asked again and again: the minter's own
+// questions and its scripts' share one limit of two hand-backs, and the next unanswered one ends
+// the build.
+it("hands back at most two unanswered questions per build, a script's included, then ends it as no_response", async () => {
+  let asked = 0;
+  const replies: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        replies.push(JSON.parse(yield* turn.actions.requestInput(textQuestion("Which format?"))));
+        replies.push(JSON.parse(yield* turn.actions.execute(execution)));
+        expect(turn.isComplete()).toBe(false);
+        replies.push(
+          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which period?", "period"))),
+        );
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "asked",
+          status: "failed" as const,
+          effect: "not_sent" as const,
+          noResponse: { possibleCommit: false },
+          observations: "The script's question expired unanswered.",
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(replies).toMatchObject([
+    { status: "no_answer" },
+    { status: "failed", scriptQuestion: { outcome: "unanswered" } },
+    { status: "no_response" },
+  ]);
+  expect(outcome).toMatchObject({ build: "incomplete", noResponse: { possibleCommit: false } });
+  expect(asked).toBe(2);
+});
+
+// The read-or-write and capability questions decide what the build may do, so no answer to either
+// ends the build, while an ordinary question in the same kind of build would go back.
+it.each([
+  {
+    question: "read-or-write",
+    effect: "ask" as const,
+    overrides: {},
+    asking: {
+      questions: [
+        {
+          id: "effect",
+          type: "choice" as const,
+          prompt: "Will this tool change something on the website?",
+          options: [
+            { id: "read", label: "read" },
+            { id: "write", label: "write" },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    question: "capability",
+    effect: "read" as const,
+    overrides: { capabilityQuestion: "What result do you need?" },
+    asking: textQuestion("What result do you need?", "need"),
+  },
+])(
+  "ends the build as no_response when the $question question goes unanswered",
+  async ({ effect, overrides, asking }) => {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(JSON.parse(yield* turn.actions.requestInput(asking))).toMatchObject({
+            status: "no_response",
+          });
+          expect(turn.isComplete()).toBe(true);
+        }),
+      overrides,
+    );
+    expect(await f.run({ ...request, effect })).toMatchObject({
+      build: "incomplete",
+      noResponse: { possibleCommit: false },
+    });
+  },
+);
 
 // publication tells the minter what to fix, with no cap on fixable refusals.
 it("tells the minter how to fix a registry refusal, with no cap, and publishes once it is fixed", async () => {

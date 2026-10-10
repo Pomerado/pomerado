@@ -14,16 +14,17 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-// Left unanswered, the question ends the synthetic attempt as no_response.
-const requestInput: ModelResponse = {
+// The minter ends the synthetic attempt blocked, which stops the model at once.
+const reportBlocked: ModelResponse = {
   usage: new Usage({ requests: 1, inputTokens: 2, outputTokens: 1, totalTokens: 3 }),
   output: [
     {
       type: "function_call",
-      name: "request_input",
-      callId: "ask",
+      name: "report_blocked",
+      callId: "blocked",
       arguments: JSON.stringify({
-        questions: [{ id: "report", type: "text", prompt: "Which report?" }],
+        reason: "site_lacks_capability",
+        explanation: "The synthetic site offers nothing to read.",
         intent: "End the synthetic attempt.",
       }),
       status: "completed",
@@ -60,7 +61,7 @@ it("offers execute with signInStep to the model on an autofill site", async () =
       getModel: () => ({
         getResponse: async (request) => {
           requests.push(request);
-          return requestInput;
+          return reportBlocked;
         },
         getStreamedResponse: () => {
           throw new Error("Unused stream");
@@ -70,12 +71,10 @@ it("offers execute with signInStep to the model on an autofill site", async () =
     preflight: () => Effect.succeed({ supported: true }),
     reviewQuestion: () =>
       Effect.succeed({ outcome: "allow_business" as const, rationale: "Synthetic question." }),
-    claimExample: Effect.die("The question must not claim the example"),
+    claimExample: Effect.die("The attempt must not claim the example"),
     authorizeResidual: Effect.fail(new MintFailure({ code: "ReconciliationRequired" })),
-    reviewAndExecute: () => Effect.die("The question must not execute"),
-    publish: () => Effect.die("The question must not publish"),
-    askInput: () =>
-      Effect.fail(new MintFailure({ code: "Unavailable", noResponse: { possibleCommit: false } })),
+    reviewAndExecute: () => Effect.die("The attempt must not execute"),
+    publish: () => Effect.die("The attempt must not publish"),
   };
   await Effect.runPromise(
     runMint({

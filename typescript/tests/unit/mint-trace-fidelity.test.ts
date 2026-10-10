@@ -66,15 +66,14 @@ const respond = (...output: ModelResponse["output"]): ModelResponse => ({
   output,
 });
 
-const requestInput = (callId = "input_one") =>
-  functionCall(
-    "request_input",
-    {
-      questions: [{ id: "report", type: "text", prompt: "Which report?" }],
-      intent: "Ask which report is needed.",
-    },
-    callId,
-  );
+/** The minter ends the attempt blocked, which stops the model at once. */
+const blocked = {
+  reason: "site_lacks_capability",
+  explanation: "The synthetic site offers nothing to read.",
+  intent: "End the synthetic attempt.",
+};
+
+const reportBlocked = (callId = "blocked_one") => functionCall("report_blocked", blocked, callId);
 
 /** Every executed request and every diagnostic the host emits, for one attempt. */
 const recorded = () => {
@@ -123,8 +122,8 @@ it("rejects a custom tool call without intent before dispatch while native tools
       [
         respond(functionCall("execute", execution, "call_without_intent")),
         respond(functionCall("exec_command", { cmd: "ls" }, "call_native")),
-        respond(requestInput()),
-      ][index] ?? respond(requestInput("input_fallback")),
+        respond(reportBlocked()),
+      ][index] ?? respond(reportBlocked("blocked_fallback")),
     host.overrides,
   );
   expect(await f.run()).toMatchObject({ build: "incomplete" });
@@ -163,7 +162,7 @@ it("continues past the former 80-call cutoff across SDK segment ceilings", async
               `read_${index}`,
             ),
           )
-        : respond(requestInput()),
+        : respond(reportBlocked()),
     host.overrides,
     {},
     { segmentTurns: 32 },
@@ -252,17 +251,14 @@ it("requests encrypted reasoning and carries it across minter turns through the 
       {
         type: "function_call",
         id: "fc_two",
-        call_id: "input_one",
-        name: "request_input",
-        arguments: JSON.stringify({
-          questions: [{ id: "report", type: "text", prompt: "Which report?" }],
-          intent: "Ask which report is needed.",
-        }),
+        call_id: "blocked_one",
+        name: "report_blocked",
+        arguments: JSON.stringify(blocked),
         status: "completed",
       },
     ],
   ]);
-  const f = await fixture(() => respond(requestInput()), {
+  const f = await fixture(() => respond(reportBlocked()), {
     model: makeOpenAIMinter(provider, "medium"),
   });
   try {

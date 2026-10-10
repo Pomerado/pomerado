@@ -646,8 +646,9 @@ export type CaptureRequest = typeof CaptureRequest.Type;
  * Why a script's question reached nobody, as the agent is told. `reword` and `authentication` are
  * Guardian's corrections, with its rationale, which the agent answers by revising the script's
  * declared question. `invalid` is a request the host could not accept, and `unavailable` a review
- * or delivery the host could not finish. An unanswered question is `noResponse` instead. The originating cause stays in the
- * host's failure report.
+ * or delivery the host could not finish. `unanswered` is a question the caller was asked and left
+ * unanswered (with `noResponse`), which the agent hears when the build goes on; the harness adds it
+ * when the host gives none. The originating cause stays in the host's failure report.
  */
 export type ScriptQuestionOutcome =
   | {
@@ -659,6 +660,10 @@ export type ScriptQuestionOutcome =
   | {
       readonly requestId: string;
       readonly outcome: "invalid" | "unavailable";
+    }
+  | {
+      readonly requestId?: string;
+      readonly outcome: "unanswered";
     };
 
 /** An execution's refusal of the caller's value: the input and the page's choices for it. */
@@ -773,6 +778,10 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
       Schema.Struct({
         requestId: Schema.String,
         outcome: Schema.Literal("invalid", "unavailable"),
+      }),
+      Schema.Struct({
+        requestId: Schema.optionalWith(Schema.String, { exact: true }),
+        outcome: Schema.Literal("unanswered"),
       }),
     ),
     { exact: true },
@@ -906,8 +915,9 @@ export type PublicationRequest = typeof PublicationRequest.Type;
 /**
  * How the minter ends a build its task makes impossible as asked:
  * `site_lacks_capability`, the site does not offer what the task needs; `policy`, Guardian
- * denied or escalated something in this attempt, or the owner answered no, and nothing within
- * authority gets past it. The host refuses `policy` without such a refusal on record. A target on
+ * denied or escalated something in this attempt, or the owner answered no or left a question
+ * unanswered, and nothing within authority gets past it. The host refuses `policy` without such a
+ * refusal or unanswered question on record. A target on
  * another registrable domain is never a reason by itself: Guardian reviews such work.
  */
 export const blockedExplanationLimit = 500;
@@ -1434,6 +1444,12 @@ export interface MintHarnessSnapshot {
    * refusal a `policy` block needs unless the owner answered no.
    */
   readonly guardianRefused?: true;
+  /**
+   * Unanswered questions handed back to the minter as no answer in this build, which a `policy`
+   * block also stands on. Optional so a rollout's old and new workers each restore the other's
+   * checkpoint.
+   */
+  readonly noAnswerHandBacks?: number;
   readonly destinationEvidenceRefusals: number;
   readonly inputFeedbackRounds: number;
   readonly inputFeedbackPublicTool: boolean;
@@ -1572,6 +1588,7 @@ export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.St
   invalidOutcomes: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   blockedReviewUnavailable: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   guardianRefused: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  noAnswerHandBacks: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   destinationEvidenceRefusals: Schema.NonNegativeInt,
   inputFeedbackRounds: Schema.NonNegativeInt,
   inputFeedbackPublicTool: Schema.Boolean,
@@ -1841,8 +1858,8 @@ export interface MintDependencies {
   /**
    * Whether the host's own guidance names this `policy` ending, so it needs no refusal on record,
    * such as a repair's verdict that the caller's input caused its run's failure. It gets the
-   * screened explanation. Without it, `policy` needs a Guardian deny or escalation, or the owner's
-   * no to a confirm question, in the attempt.
+   * screened explanation. Without it, `policy` needs a Guardian deny or escalation, the owner's
+   * no to a confirm question, or a question handed back unanswered, in the attempt.
    */
   readonly policyBlockAllowed?: (explanation: string) => boolean;
   /** Trusted registered invocation receipt, loaded from its durable recovery record. */

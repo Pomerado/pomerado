@@ -110,17 +110,24 @@ it("asks in place, returns the answer to the model and continues to publication"
   expect(JSON.stringify(inputTool)).not.toContain('"credential"');
 });
 
-it("ends as no_response when the caller leaves a question unanswered", async () => {
-  const f = await fixture((_request, index) =>
-    index === 0 ? call("request_input", ask("Which public report?")) : prose(),
+// No answer is not an ending: the minter hears no_answer as the tool result and decides how to go
+// on, here by publishing without it.
+it("hands an unanswered question back as no_answer and the minter goes on to publish", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", ask("Which public report?")),
+        call("execute", execution),
+        call("finish_build", publication),
+      ][index] ?? prose(),
   );
-  expect(await f.run()).toMatchObject({
-    build: "incomplete",
-    noResponse: { possibleCommit: false },
-  });
-  expect(f.counts()).toEqual({ executed: 0, published: 0, asked: 1 });
-  // The attempt ended with the unanswered question; the model was not asked again.
-  expect(f.requests).toHaveLength(1);
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published_revision" });
+  expect(outcome).not.toHaveProperty("noResponse");
+  expect(f.counts()).toEqual({ executed: 1, published: 1, asked: 1 });
+  const handedBack = JSON.stringify(f.requests[1]?.input);
+  expect(handedBack).toContain('\\"status\\":\\"no_answer\\"');
+  expect(handedBack).toContain('\\"userInputRequired\\":false');
 });
 
 it("cancels a continued model request within the original invocation", async () => {
@@ -522,6 +529,31 @@ it("ends a policy block once the owner answered no", async () => {
     build: "incomplete",
     blocked: { reason: "policy", explanation },
   });
+});
+
+// No answer is no consent, so a write build whose confirmation went unanswered may stop safely
+// with a policy block instead of being steered on past what it asked, and nothing runs on the site.
+it("ends a write build with a policy block once its confirmation went unanswered, running nothing", async () => {
+  const explanation = "The owner did not confirm submitting the form, so this build stops.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "policy", explanation }, "before"),
+        call("request_input", {
+          questions: [{ id: "proceed", type: "confirm", prompt: "May this build submit the form?" }],
+        }),
+        call("report_blocked", { reason: "policy", explanation }, "after"),
+      ][index] ?? prose("Stopping."),
+    {},
+    { effect: "write" },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "policy", explanation },
+  });
+  // Before the question went unanswered nothing refused this, so the first report was refused.
+  expect(JSON.stringify(f.requests[1]?.input)).toContain("policy_not_refused");
+  expect(f.counts()).toEqual({ executed: 0, published: 0, asked: 1 });
 });
 
 // A report Guardian could not review within the review outage budget reaches the caller only as
@@ -1079,11 +1111,14 @@ it("preserves finite reconciliation errors through the actual SDK tool boundary"
   const f = await fixture((_request, index) =>
     index === 0
       ? call("execute", { ...execution, purpose: "residual" })
-      : call("request_input", ask("Which report?")),
+      : call("report_blocked", {
+          reason: "site_lacks_capability",
+          explanation: "The synthetic site offers nothing to read.",
+        }),
   );
   expect(await f.run()).toMatchObject({
     build: "incomplete",
-    noResponse: { possibleCommit: false },
+    blocked: { reason: "site_lacks_capability" },
   });
   expect(JSON.stringify(f.requests[1]?.input)).toContain("ReconciliationRequired");
   expect(JSON.stringify(f.requests[1]?.input)).toContain("intent_input");
@@ -1145,13 +1180,14 @@ it("keeps installed skills readable and protected from editing after prose conti
           ],
         },
         call("read_source", read, "read_skill_after"),
-        call("request_input", ask("Which public report?")),
+        call("execute", execution),
+        call("finish_build", publication),
       ][index] ?? prose(),
   );
   const result = await f.run();
   expect(result.diagnostics).toEqual([]);
-  expect(result).toMatchObject({ build: "incomplete", noResponse: { possibleCommit: false } });
-  expect(f.requests).toHaveLength(5);
+  expect(result).toMatchObject({ build: "published", publicationRef: "published_revision" });
+  expect(f.requests).toHaveLength(6);
   const input = f.requests[4]?.input;
   if (!Array.isArray(input)) throw new Error("Missing continued history");
   expect(
@@ -1477,7 +1513,10 @@ it("keeps Guardian rationale and identity through a nested SDK error", async () 
     (_request, index) =>
       index === 0
         ? call("execute", execution)
-        : call("request_input", ask("Which existing order?")),
+        : call("report_blocked", {
+            reason: "site_lacks_capability",
+            explanation: "The synthetic site offers nothing to read.",
+          }),
     {
       preflight: () =>
         Effect.die(
@@ -1492,7 +1531,7 @@ it("keeps Guardian rationale and identity through a nested SDK error", async () 
   );
   expect(await f.run()).toMatchObject({
     build: "incomplete",
-    noResponse: { possibleCommit: false },
+    blocked: { reason: "site_lacks_capability" },
   });
   const feedback = JSON.stringify(f.requests[1]?.input);
   expect(feedback).toContain(rationale);

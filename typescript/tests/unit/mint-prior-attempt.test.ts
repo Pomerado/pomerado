@@ -15,16 +15,17 @@ afterEach(async () => {
 });
 
 const usage = () => new Usage({ requests: 1, inputTokens: 2, outputTokens: 1, totalTokens: 3 });
-// Left unanswered, the question ends the synthetic attempt as no_response.
-const requestInput: ModelResponse = {
+// The minter ends the synthetic attempt blocked, which stops the model at once.
+const reportBlocked: ModelResponse = {
   usage: usage(),
   output: [
     {
       type: "function_call",
-      name: "request_input",
-      callId: "ask",
+      name: "report_blocked",
+      callId: "blocked",
       arguments: JSON.stringify({
-        questions: [{ id: "report", type: "text", prompt: "Which report?" }],
+        reason: "site_lacks_capability",
+        explanation: "The synthetic site offers nothing to read.",
         intent: "End the synthetic attempt.",
       }),
       status: "completed",
@@ -86,7 +87,7 @@ const attempt = async (overrides: Partial<MintDependencies>) => {
       getModel: () => ({
         getResponse: async (request) => {
           requests.push(request);
-          return requestInput;
+          return reportBlocked;
         },
         getStreamedResponse: () => {
           throw new Error("Unused stream");
@@ -100,8 +101,6 @@ const attempt = async (overrides: Partial<MintDependencies>) => {
     authorizeResidual: Effect.fail(new MintFailure({ code: "ReconciliationRequired" })),
     reviewAndExecute: () => Effect.die("The attempt must not execute"),
     publish: () => Effect.die("The attempt must not publish"),
-    askInput: () =>
-      Effect.fail(new MintFailure({ code: "Unavailable", noResponse: { possibleCommit: false } })),
     ...overrides,
   };
   await Effect.runPromise(
