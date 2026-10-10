@@ -35,6 +35,8 @@ export const mint = async (options: {
   readonly input?: Readonly<Record<string, unknown>>;
   readonly intent?: string;
   readonly browser?: PlaywrightOptions;
+  /** The attempt's time limit; 60 s by default. */
+  readonly timeoutMs?: number;
 }) => {
   const requests: ModelRequest[] = [];
   const asked: InputRequest[] = [];
@@ -56,7 +58,7 @@ export const mint = async (options: {
               return options.answer?.(request) ?? {};
             }),
           ),
-          timeoutMs: 60_000,
+          timeoutMs: options.timeoutMs ?? 60_000,
         });
         return yield* service.mint({
           url: options.url,

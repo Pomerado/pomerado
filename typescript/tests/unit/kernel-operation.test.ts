@@ -322,6 +322,27 @@ it.each([
     "OutcomeWaitFailure: outcome_timeout after 300 ms: results 0 visible of 0",
     "BrowserActionTimeout",
   ],
+  [
+    false,
+    "OutcomeWaitFailure: outcome_unknown after 8012 ms, 8000 ms without progress, no outcome showing: results 0 visible of 0; no progress seen",
+    "BrowserActionTimeout",
+  ],
+  [
+    false,
+    "values_loading after 8100 ms, 8000 ms without progress: price still loading in row 1; no progress seen",
+    "BrowserActionTimeout",
+  ],
+  [
+    false,
+    "ValueWaitFailure: values_timeout after 15000 ms: price still loading in row 1; progress seen: loading sign 0.0 s–15.0 s",
+    "BrowserActionTimeout",
+  ],
+  [
+    false,
+    "change_unknown after 8000 ms, 8000 ms without progress: total missing; no progress seen",
+    "BrowserActionTimeout",
+  ],
+  [false, "values_unavailable after 300 ms: price", "OperationFailure"],
   [false, "outcome_ambiguous: results 2 visible of 2", "OperationFailure"],
   [true, "TimeoutError: locator.waitFor: Timeout 5000ms exceeded", "OperationFailure"],
 ] as const)(

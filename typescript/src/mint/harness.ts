@@ -25,15 +25,28 @@ import {
   diagnosticStorageFailure,
 } from "../models/model-diagnostic-failure.js";
 import { createHash, randomUUID } from "node:crypto";
-import { Cause, Clock, Deferred, Effect, Exit, FiberSet, Option, Schema, Scope } from "effect";
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Effect,
+  Either,
+  Exit,
+  FiberSet,
+  Option,
+  Schema,
+  Scope,
+} from "effect";
 import {
   AgentRequest,
   blockedExplanationLimit,
+  BlockedReport,
   BuildBlocked,
   CaptureRequest,
   ExecutionRefusal,
   ExecutionRequest,
   isReadOrWriteChoice,
+  LiveTestsRequest,
   MintFailure,
   MintRequest,
   MintServices,
@@ -79,6 +92,25 @@ import {
 } from "./outcome-review.js";
 import { readImportClosure } from "./operation-source.js";
 import { contentDigest } from "./step-checks.js";
+import {
+  caseDigest,
+  caseView,
+  checklistOf,
+  cursorPairOf,
+  decodeCasesFile,
+  itemViews,
+  judgeCase,
+  liveTestCasesPath,
+  liveTestsEvidence,
+  liveTestsEvidencePath,
+  liveTestsEvidenceProblem,
+  maximumBatchCases,
+  outputExcerpt,
+  primaryListOf,
+  type ChecklistItem,
+  type LiveTestCasesFile,
+  type LiveTestRecord,
+} from "./live-tests.js";
 import type {
   LiveMinterHistory,
   OutcomeEvidence,
@@ -89,6 +121,7 @@ import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import { registryRefusal } from "./registry-feedback.js";
 import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
+import { outputChecksRefusal } from "./output-notes.js";
 import {
   inputFeedbackInstruction,
   maximumInputFeedbackRounds,
@@ -443,6 +476,7 @@ const withHostNotices = (
     ...(actions.reportBlocked === undefined ? {} : { reportBlocked: wrap(actions.reportBlocked) }),
     ...(actions.updateTask === undefined ? {} : { updateTask: wrap(actions.updateTask) }),
     ...(actions.captchaState === undefined ? {} : { captchaState: wrap(actions.captchaState) }),
+    ...(actions.liveTests === undefined ? {} : { liveTests: wrap(actions.liveTests) }),
     ...(actions.requestBrowserRecovery === undefined
       ? {}
       : { requestBrowserRecovery: wrap(actions.requestBrowserRecovery) }),
@@ -779,7 +813,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       };
       const availabilityInstruction = () => {
         if (executionClosed)
-          return "Live execution has ended for this attempt, but its eligible retained receipt can still be published. Correct source if needed and call finish_build with that receipt's executionId; do not execute again. request_input is still available when publication needs something only the user knows. ";
+          return "Live execution has ended for this attempt, but its eligible retained receipt can still be published: call finish_build with that receipt's executionId while the source it ran is unchanged; do not execute again. Any source correction, the schemas included, needs a fresh example, which needs live execution, so end with report_blocked reason host_unavailable, never policy. request_input is still available when publication needs something only the user knows. ";
         switch (dependencies.executionAvailability?.()) {
           case "host_unavailable":
             return "The execution host is unavailable. End this attempt; preserve existing receipts and unresolved effects. Source edits or user input cannot restore this host. ";
@@ -2974,6 +3008,342 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
           return yield* updatedAnswer(submitted.changes, result.notice);
         });
+      /** Each live test case's latest result, by case id; a takeover restores them. */
+      const liveTestRecords = new Map<string, LiveTestRecord>(
+        (recovered?.liveTests ?? [])
+          .filter((record) => record.retired !== true)
+          .map((record) => [record.id, record]),
+      );
+      /**
+       * Failing results the minter replaced by changing their case, so the publication review
+       * still sees them. Bounded: the oldest go first.
+       */
+      const liveTestReplaced: LiveTestRecord[] = (recovered?.liveTests ?? []).filter(
+        (record) => record.retired === true,
+      );
+      /**
+       * Whether the attempt ran out of time for live tests: a batch refused for time, or a case
+       * stopped by a batch deadline the attempt's own end set. A batch's ten-minute cap never
+       * counts, so the size of a batch cannot set it.
+       */
+      let liveTestsOutOfTime = recovered?.liveTestsOutOfTime === true;
+      /** Each case's latest screened output, by case id: this attempt's runs only. */
+      const liveTestOutputs = new Map<string, unknown>();
+      /** Whether a passing example's receipt already carried the test plan. */
+      let testPlanSent = (recovered?.liveTests ?? []).length > 0;
+      /** A read that signed in tests one input at a time, at most four (execute testInput). */
+      const signedIn = () =>
+        executions.some((entry) => entry.authentication?.state === "authenticated");
+      const liveTestsOffered = () =>
+        dependencies.liveTests !== undefined && buildEffect === "read" && !signedIn();
+      /** The agent's cases file as it stands, or why it cannot be used. */
+      const readCasesFile = Effect.promise(async () => {
+        try {
+          if ((await session.pathExists?.(liveTestCasesPath)) !== true)
+            return decodeCasesFile(undefined);
+          const text: unknown = await session.readFile?.({ path: liveTestCasesPath });
+          return decodeCasesFile(typeof text === "string" ? text : undefined);
+        } catch {
+          return Either.left(`${liveTestCasesPath} could not be read.`);
+        }
+      });
+      /** The checklist for `entrypoint`'s current schemas, with its cursor, or why there is none. */
+      /** Schemas the host read, by entrypoint and source digest, so one source is read once. */
+      const liveTestSchemas = new Map<string, { readonly input: unknown; readonly output: unknown }>();
+      const liveTestChecklist = (entrypoint: string) =>
+        Effect.gen(function* () {
+          const host = dependencies.liveTests;
+          if (host === undefined) return { problem: "This host runs no live test batches." };
+          const key = `${entrypoint}\n${(yield* stepDigest(entrypoint)) ?? ""}`;
+          const known = liveTestSchemas.get(key);
+          const schemas =
+            known === undefined ? yield* Effect.either(host.schemas(entrypoint)) : Either.right(known);
+          if (Either.isLeft(schemas))
+            return {
+              problem: `The host could not read ${entrypoint}'s input and output schemas offline, so it built no checklist. Make the source import cleanly and declare both schemas, then plan again.`,
+            };
+          liveTestSchemas.set(key, schemas.right);
+          const { input, output } = schemas.right;
+          return {
+            checklist: checklistOf(input, output),
+            cursor: cursorPairOf(input, output),
+            list: primaryListOf(input, output),
+          };
+        });
+      const emptyCases: LiveTestCasesFile = { cases: [] };
+      /** What the agent reads about its tests: the checklist, its cases and their results. */
+      const liveTestPlanView = (
+        entrypoint: string,
+        options: { readonly show?: readonly string[]; readonly ran?: readonly string[] } = {},
+      ) =>
+        Effect.gen(function* () {
+          const planned = yield* liveTestChecklist(entrypoint);
+          const read = yield* readCasesFile;
+          const file = Either.isRight(read) ? read.right : emptyCases;
+          const digest = yield* stepDigest(entrypoint);
+          const checklist: readonly ChecklistItem[] | undefined =
+            "checklist" in planned ? planned.checklist : undefined;
+          const items =
+            checklist === undefined ? [] : itemViews(checklist, file, liveTestRecords, digest);
+          const cases = file.cases.map((testCase) => ({
+            ...caseView(testCase, liveTestRecords.get(testCase.id), digest),
+            ...(options.show?.includes(testCase.id) && liveTestOutputs.has(testCase.id)
+              ? { output: liveTestOutputs.get(testCase.id) }
+              : {}),
+          }));
+          const open = items.filter(
+            (item) =>
+              item.status !== "covered" &&
+              item.status !== "not_applicable" &&
+              item.status !== "declined",
+          );
+          return {
+            kind: "host_live_tests",
+            entrypoint,
+            ...("problem" in planned ? { checklistProblem: planned.problem } : {}),
+            ...(Either.isLeft(read) ? { casesFileProblem: read.left } : {}),
+            ...(planned.cursor === undefined ? {} : { cursor: planned.cursor }),
+            checklist: items,
+            cases:
+              options.ran === undefined
+                ? cases
+                : cases.filter((testCase) => options.ran?.includes(testCase.id)),
+            ...(options.ran === undefined ? {} : { otherCases: file.cases.length - options.ran.length }),
+            openItems: open.map((item) => item.item),
+            instruction:
+              open.length === 0 && cases.every((testCase) => testCase.status === "pass")
+                ? "Every checklist item is covered or skipped with a reason. Check what the outputs mean (filters applied to every item, the order, the applied location), then make your last edit, run the cases again, run the example last and call finish_build."
+                : `Write or fix ${liveTestCasesPath} so each open item has passing cases with real values the site offers (or a skipped entry with status not_applicable or declined and the reason), fix the code for each failing case at its frame, then call live_tests with action run. Publication review reads ${liveTestsEvidencePath}, the host's record of these results on the source you publish.`,
+          };
+        });
+      /**
+       * The batch's end: ten minutes at most, and two minutes before the attempt's deadline;
+       * `attemptBound` when the attempt's end, not the cap, set it.
+       */
+      const liveTestDeadline = Effect.map(Clock.currentTimeMillis, (now) => {
+        const remaining = dependencies.deadline?.remainingMs() ?? Number.POSITIVE_INFINITY;
+        const attemptLeft = remaining - 2 * 60_000;
+        return {
+          deadlineAt: now + Math.min(10 * 60_000, attemptLeft),
+          attemptBound: attemptLeft <= 10 * 60_000,
+        };
+      });
+      const runLiveTests = (request: LiveTestsRequest) =>
+        Effect.gen(function* () {
+          const host = dependencies.liveTests;
+          if (host === undefined) return yield* new MintFailure({ code: "Unavailable" });
+          const read = yield* readCasesFile;
+          if (Either.isLeft(read))
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "invalid_cases",
+              problem: read.left,
+              instruction: `Fix ${liveTestCasesPath}, then run again. Nothing was executed.`,
+            });
+          const file = read.right;
+          const unknown = (request.cases ?? []).filter(
+            (id) => !file.cases.some((testCase) => testCase.id === id),
+          );
+          if (unknown.length > 0)
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "unknown_cases",
+              cases: unknown,
+              instruction: `Name only case ids ${liveTestCasesPath} lists, or pass cases null to run them all. Nothing was executed.`,
+            });
+          const selected =
+            request.cases === null
+              ? file.cases
+              : file.cases.filter((testCase) => request.cases?.includes(testCase.id));
+          if (selected.length === 0 || selected.length > maximumBatchCases)
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "batch_size",
+              instruction:
+                selected.length === 0
+                  ? `${liveTestCasesPath} has no cases to run. Plan them first (action plan). Nothing was executed.`
+                  : `A batch runs at most ${maximumBatchCases} cases; name the ones to run in cases. Nothing was executed.`,
+            });
+          const planned = yield* liveTestChecklist(request.entrypoint);
+          const cursor = planned.cursor;
+          if (selected.some((testCase) => testCase.next_page === true) && cursor === undefined)
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "no_cursor",
+              instruction:
+                "A next_page case needs an input field named cursor (or page_token) and an output field such as next_cursor, both strings or numbers, in the tool's schemas. Add them, or drop next_page. Nothing was executed.",
+            });
+          const digest = yield* stepDigest(request.entrypoint);
+          if (digest === undefined)
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "source_unreadable",
+              instruction: `The host could not read ${request.entrypoint} and its imports. Nothing was executed.`,
+            });
+          const { deadlineAt, attemptBound } = yield* liveTestDeadline;
+          if (deadlineAt - (yield* Clock.currentTimeMillis) < 60_000) {
+            liveTestsOutOfTime = true;
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "no_time",
+              instruction:
+                "Too little of this attempt is left to run a batch. Run the example last and publish, and say in coverage which cases did not run; the host's record says time ran out. Nothing was executed.",
+            });
+          }
+          const workers = Math.max(1, Math.min(request.maxWorkers ?? host.maxWorkers, host.maxWorkers));
+          const result = yield* host.run({
+            entrypoint: request.entrypoint,
+            sourceDigest: digest,
+            cases: selected.map((testCase) => ({
+              id: testCase.id,
+              input: testCase.input,
+              ...(testCase.next_page === true && cursor !== undefined ? { nextPage: cursor } : {}),
+            })),
+            workers,
+            deadlineAt,
+          });
+          if (result.status === "review_denied")
+            return JSON.stringify({
+              kind: "host_live_tests",
+              status: "review_denied",
+              ...(result.reviewId === undefined ? {} : { reviewId: result.reviewId }),
+              rationale: yield* screenRationale(result.rationale),
+              instruction:
+                "Guardian denied this batch, so nothing ran. Fix what the rationale names (often an input that names or guesses a private value, or a case that would change the site), then run again.",
+            });
+          // The source the batch ran: a change while it ran leaves its results stale.
+          const after = yield* stepDigest(request.entrypoint);
+          const sourceDigest = after === digest ? digest : "changed_while_running";
+          const verdicts: Record<string, number> = {};
+          for (const run of result.cases) {
+            const testCase = selected.find((entry) => entry.id === run.id);
+            if (testCase === undefined) continue;
+            const judged = judgeCase(testCase, run, "list" in planned ? planned.list : undefined);
+            const screened =
+              judged.output === undefined
+                ? undefined
+                : yield* dependencies.projection
+                    .json(judged.output)
+                    .pipe(Effect.orElseSucceed(() => "[output withheld: screening failed]"));
+            if (screened === undefined) liveTestOutputs.delete(run.id);
+            else liveTestOutputs.set(run.id, screened);
+            const message =
+              judged.message === undefined
+                ? undefined
+                : yield* screenMintText(dependencies, judged.message).pipe(
+                    Effect.orElseSucceed(() => "[message withheld]"),
+                  );
+            const excerpt = outputExcerpt(screened);
+            const digestOfCase = caseDigest(testCase);
+            const previous = liveTestRecords.get(run.id);
+            if (
+              previous !== undefined &&
+              previous.verdict === "fail" &&
+              previous.caseDigest !== digestOfCase &&
+              !liveTestReplaced.some(
+                (entry) => entry.id === previous.id && entry.caseDigest === previous.caseDigest,
+              )
+            ) {
+              liveTestReplaced.push({ ...previous, retired: true });
+              liveTestReplaced.splice(0, Math.max(0, liveTestReplaced.length - maximumBatchCases));
+            }
+            liveTestRecords.set(run.id, {
+              id: run.id,
+              caseDigest: digestOfCase,
+              sourceDigest,
+              verdict: judged.verdict,
+              got: judged.got,
+              ...(judged.detail === undefined ? {} : { detail: judged.detail }),
+              ...(judged.errorClass === undefined ? {} : { errorClass: judged.errorClass }),
+              ...(message === undefined ? {} : { message }),
+              ...(judged.frame === undefined ? {} : { frame: judged.frame }),
+              ...(judged.refusal === undefined ? {} : { refusal: judged.refusal }),
+              ...(excerpt === undefined ? {} : { excerpt }),
+              durationMs: Math.max(0, Math.round(run.durationMs)),
+              ...(run.lane === undefined ? {} : { lane: run.lane }),
+              input: testCase.input,
+              covers: testCase.covers,
+              expect: testCase.expect,
+            });
+            verdicts[judged.verdict] = (verdicts[judged.verdict] ?? 0) + 1;
+            if (attemptBound && judged.verdict === "inconclusive" && judged.got === "deadline")
+              liveTestsOutOfTime = true;
+          }
+          yield* reportBestEffort(
+            dependencies.diagnostics?.emit("mint.live_tests", {
+              cases: selected.length,
+              lanes: result.lanes,
+              challengeStops: result.challengeStops ?? 0,
+              ...verdicts,
+            }) ?? Effect.void,
+            {
+              component: "mint",
+              operation: "diagnostics.emit",
+              phase: "mint.live_tests",
+              correlation: dependencies.reportCorrelation ?? "process",
+            },
+          );
+          return JSON.stringify({
+            status: "ran",
+            ...(result.reviewId === undefined ? {} : { reviewId: result.reviewId }),
+            lanes: result.lanes,
+            ...(sourceDigest === digest
+              ? {}
+              : {
+                  notice:
+                    "The source changed while the batch ran, so these results describe other code. Run the cases again.",
+                }),
+            ...(yield* liveTestPlanView(request.entrypoint, {
+              ran: selected.map((testCase) => testCase.id),
+            })),
+          });
+        });
+      /** The publication review's record of a read's live tests, and its coverage line. */
+      const liveTestsForPublication = (entrypoint: string) =>
+        Effect.gen(function* () {
+          if (dependencies.liveTests === undefined || buildEffect !== "read" || signedIn())
+            return undefined;
+          const read = yield* readCasesFile;
+          // A read that planned and ran nothing gets a record that says so, without the
+          // offline schema read the checklist needs.
+          const nothing =
+            Either.isRight(read) &&
+            read.right.cases.length === 0 &&
+            (read.right.skipped ?? []).length === 0 &&
+            liveTestRecords.size === 0 &&
+            liveTestReplaced.length === 0;
+          const outOfTime = liveTestsOutOfTime;
+          if (nothing)
+            return liveTestsEvidence({
+              checklist: undefined,
+              file: emptyCases,
+              records: liveTestRecords,
+              sourceDigest: yield* stepDigest(entrypoint),
+              nothingPlanned: true,
+              outOfTime,
+            });
+          const planned = yield* liveTestChecklist(entrypoint);
+          return liveTestsEvidence({
+            checklist: "checklist" in planned ? planned.checklist : undefined,
+            file: Either.isRight(read) ? read.right : emptyCases,
+            ...(Either.isLeft(read) ? { fileProblem: read.left } : {}),
+            records: liveTestRecords,
+            replaced: liveTestReplaced,
+            sourceDigest: yield* stepDigest(entrypoint),
+            outOfTime,
+          });
+        }).pipe(
+          // A record the host could not build says so, rather than vanishing from the review.
+          Effect.catchAllCause((cause) =>
+            Cause.isInterruptedOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.succeed(
+                  liveTestsEvidenceProblem(
+                    "an error stopped it; judge coverage from the example and the minter's account",
+                  ),
+                ),
+          ),
+        );
       const actions: MintActions = {
         retainCapture: (input) =>
           serial.withPermits(1)(
@@ -3196,7 +3566,33 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 ),
               );
               yield* observeExecution(submitted, evidence, allowed, evidence.status);
-              return yield* executionResult(evidence, submitted.purpose);
+              const result = yield* executionResult(evidence, submitted.purpose);
+              // The first passing example settles the schemas: its receipt carries the test plan,
+              // so the agent refines its cases against the checklist.
+              if (
+                submitted.purpose !== "example" ||
+                evidence.status !== "completed" ||
+                testPlanSent ||
+                !liveTestsOffered()
+              )
+                return result;
+              testPlanSent = true;
+              // A cheap reminder: the checklist needs the schemas read offline, which the agent
+              // asks for with action plan.
+              const read = yield* readCasesFile;
+              const planned = Either.isRight(read) ? read.right.cases.length : 0;
+              const parsed = yield* Effect.option(
+                Effect.try(() => JSON.parse(result) as Readonly<Record<string, unknown>>),
+              );
+              return Option.isNone(parsed)
+                ? result
+                : JSON.stringify({
+                    ...parsed.value,
+                    testPlan: {
+                      plannedCases: planned,
+                      instruction: `Your example passed, so the tool's schemas are settled. Call live_tests with action plan for the checklist, refine ${liveTestCasesPath} with real values the site offers, run the cases with action run and fix every failing case. Then make your last edit, run the cases again and run the example last.`,
+                    },
+                  });
             }).pipe(
               // The owner never answered a sign-in request: the build ends as no_response.
               Effect.catchIf(
@@ -3254,6 +3650,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
               );
+              if (proposed.httpVersion !== undefined && buildEffect === "write") {
+                const reason = "http_version_on_write";
+                pendingDecision = hostRefusalDecision(reason, undefined, true);
+                yield* diagnose({ phase: "publication", code: "PublicationUnavailable", reason });
+                return JSON.stringify({
+                  status: "not_published",
+                  code: "PublicationUnavailable",
+                  reason,
+                  userInputRequired: false,
+                  instruction:
+                    "httpVersion is only for a read published without an HTTP version. A write's HTTP version is tested offline against its session's recorded exchanges. Call finish_build again without httpVersion.",
+                  executionContext: yield* executionContext(),
+                });
+              }
               yield* Effect.try({
                 try: () => relativeSourcePath(proposed.entrypoint),
                 catch: (error) =>
@@ -3387,11 +3797,33 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   executionContext: yield* executionContext(),
                 });
               }
-              const coverage = yield* screenMintText(dependencies, proposed.coverage);
+              const minterCoverage = yield* screenMintText(dependencies, proposed.coverage);
               const assumptions = yield* screenAssumptions(proposed.assumptions);
               const readBackUnavailable = withheld
                 ? yield* screenMintText(dependencies, proposed.readBackUnavailable ?? "")
                 : undefined;
+              const httpVersion =
+                proposed.httpVersion === undefined
+                  ? undefined
+                  : {
+                      ...proposed.httpVersion,
+                      note: yield* screenMintText(dependencies, proposed.httpVersion.note),
+                    };
+              const outputOverrides =
+                proposed.outputOverrides === undefined
+                  ? undefined
+                  : yield* Effect.forEach(proposed.outputOverrides, (override) =>
+                      screenMintText(dependencies, override.reason).pipe(
+                        Effect.map((reason) => ({ ...override, reason })),
+                      ),
+                    );
+              // The host's own record of a read's live tests on this source goes to the review
+              // as evidence, and its line to coverage. It never refuses publication by itself.
+              const liveTests = yield* liveTestsForPublication(proposed.entrypoint);
+              const coverage =
+                liveTests === undefined
+                  ? minterCoverage
+                  : `${minterCoverage}\n${liveTests.coverage}`;
               const publication = yield* dependencies
                 .publish(
                   {
@@ -3400,8 +3832,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     metadata: proposed.metadata,
                     coverage,
                     ...(readBackUnavailable === undefined ? {} : { readBackUnavailable }),
+                    ...(httpVersion === undefined ? {} : { httpVersion }),
+                    ...(outputOverrides === undefined ? {} : { outputOverrides }),
                   },
                   evidence,
+                  ...(liveTests === undefined ? [] : [{ liveTests: liveTests.record }]),
                 )
                 .pipe(Effect.either);
               const reviewId =
@@ -3674,6 +4109,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     {},
                     "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
                   );
+                if (error.reason === "output_checks_blocked")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    { outputFindings: error.outputFindings ?? [] },
+                    outputChecksRefusal(error.outputFindings ?? []),
+                  );
                 if (error.reason === "variants_unsupported")
                   return notPublished(
                     error.code,
@@ -3691,8 +4133,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     {},
                     (error.reason === "http_implementation_stale"
                       ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
-                      : "Not published yet: this read has no HTTP implementation that passed a live test, so try one once. Read .agents/http-mcp/SKILL.md, write src/tool-http.mjs from captures/routes.json and the example, and run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Iterate until its output matches the example's, then call finish_build again with the same executionId.") +
-                      " To publish the Playwright version alone instead, delete src/tool-http.mjs, say why in coverage and call finish_build again. The host asks only once, only while live capture is open, and never after you delete a src/tool-http.mjs you ran.",
+                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; there is no limit on these tests, and a request refused before sending never counts. Then call finish_build again with the same executionId.") +
+                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host asks only once, only while live capture is open.",
                   );
                 if (error.reason === "login_url_one_time")
                   return notPublished(
@@ -4048,7 +4490,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active("publication");
-                    const submitted = yield* decode(BuildBlocked, input);
+                    const report = yield* decode(BlockedReport, input);
+                    // The host's own end, not the task's: no explanation reaches the caller, so
+                    // none is reviewed, and the outcome names the host's cause.
+                    if (report.reason === "host_unavailable") {
+                      if (!hostIsUnavailable())
+                        return JSON.stringify({
+                          status: "blocked_refused",
+                          reason: "host_available",
+                          userInputRequired: false,
+                          instruction:
+                            "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.",
+                        });
+                      terminal ??= unavailableHostTerminal();
+                      yield* diagnose({ phase: "blocked", reason: "host_unavailable" });
+                      return JSON.stringify({
+                        status: "host_unavailable",
+                        notice:
+                          "The build ended because the host has no live execution for what it still needs. It ends as the host's failure, not as blocked; nothing more runs in this attempt.",
+                      });
+                    }
+                    const submitted = { ...report, reason: report.reason };
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, submitted.explanation),
                     );
@@ -4300,6 +4762,40 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
             }),
+        // A read's planned live tests: the checklist, the cases and their results, and batches
+        // run in parallel browsers after one Guardian review. It holds the execution permit, since
+        // a batch uses the build's own browser too.
+        ...(dependencies.liveTests === undefined || questionOnly
+          ? {}
+          : {
+              liveTests: (input: unknown) =>
+                serial.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* active();
+                    const request = yield* decode(LiveTestsRequest, input);
+                    yield* Effect.try({
+                      try: () => relativeSourcePath(request.entrypoint),
+                      catch: () => new MintFailure({ code: "ScopeDenied" }),
+                    });
+                    if (!liveTestsOffered())
+                      return JSON.stringify({
+                        kind: "host_live_tests",
+                        status: "unavailable",
+                        instruction:
+                          buildEffect === "write"
+                            ? "A write build never runs live tests; test it offline (pureFiles, savedDOM or savedHTTP)."
+                            : "This read signed in, so it runs up to four live tests one at a time: execute purpose test, target liveBrowser, with testInput.",
+                      });
+                    if (request.action === "plan")
+                      return JSON.stringify(
+                        yield* liveTestPlanView(request.entrypoint, {
+                          show: request.cases ?? [],
+                        }),
+                      );
+                    return yield* runLiveTests(request);
+                  }),
+                ),
+            }),
       };
       /** The minter's history from before a compaction, which its run state no longer holds. */
       const historyArchive =
@@ -4508,6 +5004,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** The harness checkpoint, with `task` as its effective task. */
       const captureHarness = (task: TaskState = taskState): MintHarnessSnapshot => ({
         executions: [...executions],
+        // Replaced failures come first, so an older worker that keys records by id keeps the
+        // latest.
+        ...(liveTestRecords.size === 0 && liveTestReplaced.length === 0
+          ? {}
+          : { liveTests: [...liveTestReplaced, ...liveTestRecords.values()] }),
+        ...(liveTestsOutOfTime ? { liveTestsOutOfTime: true } : {}),
         ...(reviewer.tracked().length === 0 ? {} : { outcomeWrites: reviewer.tracked() }),
         purposes: [...purposes].map(([executionId, purpose]) => {
           const taskRevision = revisions.get(executionId);

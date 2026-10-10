@@ -63,6 +63,10 @@ the source files, never captures.
   a read's example, or on each write act step that needs it (the first act step that passes it
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input.
+- `live_tests` plans and runs a read's live tests when the host offers it: the checklist it
+  derives from your schemas, your cases in `test/cases.json` and every result, run in parallel
+  batches on fresh browsers. Plan them as soon as you know the page and its inputs, and read
+  .agents/testing/SKILL.md first.
 - `retain_capture`, `finish_build` and `request_input` are described below and in their
   tool descriptions.
 - `report_blocked` ends the build as blocked when its task is impossible as asked (below).
@@ -85,7 +89,10 @@ our automation.
 Not finding a value where you first looked is not that evidence. Before you call a value
 unavailable, check where the site would show it for the requested scope, such as the requested
 date's calendar or the results for the requested search. Settled evidence for the requested
-option, such as the site showing it as sold out or not offered, is enough.
+option, such as the site not listing it, is enough, and so is the site showing it sold out or
+unavailable for a write. A read that finds the requested option greyed out or sold out returns it
+as unavailable data with the page's alternatives instead (.agents/core/SKILL.md, "Configure,
+then read").
 
 When the site does not match the request exactly, tell two cases apart:
 
@@ -148,21 +155,32 @@ other business effects still need their existing authority.
 
 **Work through the page's own controls.** In the Playwright version and your browser probes,
 type into the site's search boxes and forms, pick its suggestions and options, and click its
-links and buttons. URLs built from caller values are brittle for many kinds of input, so the
-page's controls are usually the easier and more reliable way. A URL the caller supplied, on the
+links and buttons. URLs built from caller values are brittle for many kinds of input, so build
+the flow through the page's controls first. A URL the caller supplied, on the
 tool's site, may be opened unchanged: the build's start page, or a URL input such as a product
 or listing page, which a details tool takes as input and opens directly. A stable identifier
 route the site itself uses may be opened from the caller's identifier when it is clearly better
 than the controls, such as a record page at `/items/<id>` instead of crawling a directory.
-Either way, read the page's identity back from the page and fail if it does not match. Never
-build or iterate on search, filter or sort parameters from caller values to reverse-engineer the
-site's search in place of its controls.
+Either way, read the page's identity back from the page and fail if it does not match.
+
+When the controls flow lands on a URL the site produced, and two runs with different inputs show
+which parts of it carry which input, such as the query, dates, guests or party size, sort, page
+or a record's own identifier route, the tool may open that URL with the caller's values in those
+parts, built with `URLSearchParams` for a query part or `encodeURIComponent` for a path part and
+every other part copied as the site wrote it, once the build checked that it gives the same answer as the controls. At run time it reads every input
+back from the page, and when the landing is not an answer it named or a read-back differs, it
+runs the controls flow once instead, in a named function such as `throughControls`
+(`references/navigation.ts`). Never guess a parameter, never iterate on URL variants, and take an
+opaque filter code only from a link the page produced in this run. A POST form, a URL that
+carries a per-session token, a value that needs a typeahead pick to resolve, a location or store
+the site keeps in cookies, and every step on a write's path go through the controls.
 
 A URL the site produced in this run is fine to read, return, reload or follow, such as the
 results page your search landed on or a link's own `href`. So is the site's entry page, or a
 fixed page the site links to, opened by its exact `href`. Never trim or guess a link: a link
-with its query removed is a URL you wrote. When a site control does not offer the caller's
-value, wait for it, retry it or use another of the site's own controls, and return
+with its query removed is a URL you wrote. A record's identifier route the site itself uses, such
+as the canonical link its page declares, is not a trimmed link. When a site control does not
+offer the caller's value, wait for it, retry it or use another of the site's own controls, and return
 `InvalidInput` when the site shows the value does not exist. Never fall back to a guessed URL.
 This holds for `src/tool.mjs`, every fallback in it and your own probes. It does not cover the
 HTTP version (`src/tool-http.mjs`), which may build its requests from the caller's input.
@@ -170,10 +188,15 @@ HTTP version (`src/tool-http.mjs`), which may build its requests from the caller
 **Read back every input before returning.** Read the page's own display of each input the
 site shows, such as the date picker, selected time, party size, passengers, cabin, applied
 filters, sort and selected options, and refuse a mismatch: the tool's code fails the run
-(`OperationFailure`) and never returns results for an input that did not apply. Echoed input, a
+(`OperationFailure`) and never returns results for an input that did not apply. Two cases return
+results with what applied instead: a number on a scale the site steps returns its applied bound,
+and a filter group the page disables for the results is reported as not offered
+(.agents/search/SKILL.md). Echoed input, a
 URL the tool built, a URL parameter, a box checked before the site applied it or the option's
 name elsewhere on the page does not show an input applied; read the site's committed state, such
-as the applied chip, the selected control or the results' own state. A detail read also checks
+as the applied chip, the selected control or the results' own state, and compare its text with
+the input normalized for case and whitespace. A location the caller supplied that did not apply
+throws `LocationNotApplied` instead (.agents/core/SKILL.md). A detail read also checks
 the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing
 tool: read .agents/search/SKILL.md before you settle its inputs.
 
@@ -417,11 +440,12 @@ write's task is done once, in its act session, and uncertain private-field submi
 fenced, regardless of the read flag. An authentication submission with an unknown outcome is
 always fenced.
 
-Test every control you expose before publishing (.agents/testing/SKILL.md); beyond that,
-choose meaningful tests, with no fixed count or promotion tier. A read may run up to four live
-tests with an input you choose (`testInput`), spent on the riskiest controls; run them before
-the first `finish_build`. Report skipped,
-unsupported or missing bodies honestly.
+Testing a read is your job, never the caller's (.agents/testing/SKILL.md). A read signed out
+plans its tests at the start, from the checklist `live_tests` derives from its schemas, refines
+them once the example passes, and runs as many as it needs, in parallel batches. A signed-in read
+runs up to four live tests with an input you choose (`testInput`), spent on the riskiest controls.
+Finish in this order: your last edit, the cases again, then the example last, before
+`finish_build`. Report skipped, unsupported or missing bodies honestly.
 
 <!-- pomerado:section agents.implementations -->
 
@@ -438,8 +462,10 @@ leaves the next live execution a fresh browser on a new, empty profile: read `pa
 and sign in again when the build signs in. A write build reads back first whether its earlier
 commit took effect and never submits one that did. `host_unavailable`
 ends live execution: preserve receipts and unresolved effects; do not retry execution or request
-user input to restore the host. An eligible retained receipt may still receive source
-correction and `finish_build`; without one the attempt ends. `open` still requires every
+user input to restore the host. An eligible retained receipt may still publish with
+`finish_build` while the source it ran is unchanged. Any source correction, the schemas
+included, needs a fresh example, which needs live execution: end with `report_blocked` reason
+`host_unavailable`, never `policy`. Without a receipt the attempt ends. `open` still requires every
 existing authorization and review check. An absent field does not promise availability.
 
 <!-- pomerado:section agents.maintenance-heading -->
@@ -478,6 +504,12 @@ feedback you can act on, a sign-in problem (a passkey-only sign-in is not one:
 .agents/auth/SKILL.md), a browser<!-- pomerado:section agents.report-blocked --> or host problem, a choice or fact
 only the caller knows (ask with `request_input`), or a timeout. A target on another
 registrable domain is not a reason by itself: proceed, and Guardian reviews that work.
+
+`report_blocked` also takes `host_unavailable`, which is not a block: `executionAvailability` is
+`host_unavailable` and what the build still needs cannot run without live execution, such as the
+fresh example a source correction needs. The attempt ends as the host's failure, with no
+explanation review. A host fault is never `policy`, even after a review denied something you
+could still fix.
 
 ## Publication
 

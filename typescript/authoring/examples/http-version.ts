@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { defineHttpOperation, readJson } from "../../src/browser/index.js";
+import { defineHttpOperation, operationErrors, readJson } from "../../src/browser/index.js";
 
 // An HTTP version, src/tool-http.mjs. In the workspace, import from "../../runtime/index.js" and
 // reuse the Playwright version's contract: `import tool from "./tool.mjs"`, then
@@ -8,6 +8,9 @@ const contract = {
   name: "search_products",
   input: Schema.Struct({
     query: Schema.NonEmptyString.annotations({ description: "Text to search products for" }),
+    sort: Schema.optional(
+      Schema.String.annotations({ description: "How the site orders results, as it names it" }),
+    ),
   }),
   output: Schema.Struct({
     products: Schema.Array(
@@ -35,6 +38,15 @@ const SearchResponse = Schema.Struct({
     ),
   }),
 });
+// The site's own refusal of a value, as a captured answer showed it: its message and the choices
+// it offers.
+const SiteRefusal = Schema.Struct({
+  error: Schema.Struct({
+    param: Schema.String,
+    message: Schema.String,
+    allowed: Schema.optional(Schema.Array(Schema.String)),
+  }),
+});
 
 export default defineHttpOperation({
   ...contract,
@@ -48,10 +60,24 @@ export default defineHttpOperation({
       api.hostname = `api.${api.hostname.replace(/^www\./, "")}`;
       api.pathname = "/v1/search";
       api.searchParams.set("keyword", input.query);
+      if (input.sort !== undefined) api.searchParams.set("order", input.sort);
       // readJson sends through Kernel browser curl, retries once over the page's fetch if curl got
       // a bot challenge page, then checks the status and decodes the JSON; each failure says what
       // came back.
-      const found = yield* readJson(http, { url: api.href, method: "GET" }, SearchResponse);
+      const found = yield* readJson(
+        http,
+        { url: api.href, method: "GET" },
+        Schema.Union(SearchResponse, SiteRefusal),
+      );
+      // The site refused the caller's value: fail as invalid input with the site's words, the
+      // tool's input field and every choice the site offers, so the caller can pick again.
+      if ("error" in found)
+        return yield* Effect.fail(
+          new operationErrors.InvalidInput(found.error.message, {
+            field: found.error.param === "order" ? "sort" : "query",
+            available: found.error.allowed ?? [],
+          }),
+        );
       return {
         products: found.data.items.map((item) => ({
           id: item.product_id,

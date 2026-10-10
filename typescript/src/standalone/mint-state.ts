@@ -227,6 +227,8 @@ export const mintState = (
         /** The agent's exampleInput the step ran because the caller sent none. */
         readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
         readonly output: unknown;
+        /** The names of the expand controls on the page the step left, for the output check. */
+        readonly controlLabels?: readonly string[];
         readonly purpose: ExecutionRequest["purpose"];
         readonly journal: LocalOperationJournal;
         /** Guardian's label of the step's website effect. */

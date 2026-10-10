@@ -286,6 +286,11 @@
       "import": "./dist/typescript/src/mint/invocation.js",
       "default": "./dist/typescript/src/mint/invocation.js"
     },
+    "./core/mint/live-tests": {
+      "types": "./dist/typescript/src/mint/live-tests.d.ts",
+      "import": "./dist/typescript/src/mint/live-tests.js",
+      "default": "./dist/typescript/src/mint/live-tests.js"
+    },
     "./core/mint/login-url": {
       "types": "./dist/typescript/src/mint/login-url.d.ts",
       "import": "./dist/typescript/src/mint/login-url.js",
@@ -300,6 +305,11 @@
       "types": "./dist/typescript/src/mint/operation-source.d.ts",
       "import": "./dist/typescript/src/mint/operation-source.js",
       "default": "./dist/typescript/src/mint/operation-source.js"
+    },
+    "./core/mint/output-notes": {
+      "types": "./dist/typescript/src/mint/output-notes.d.ts",
+      "import": "./dist/typescript/src/mint/output-notes.js",
+      "default": "./dist/typescript/src/mint/output-notes.js"
     },
     "./core/mint/outcome-review": {
       "types": "./dist/typescript/src/mint/outcome-review.d.ts",
@@ -561,6 +571,16 @@
       "import": "./dist/typescript/src/runtime/site-http-host.js",
       "default": "./dist/typescript/src/runtime/site-http-host.js"
     },
+    "./core/runtime/list-cursor": {
+      "types": "./dist/typescript/src/runtime/list-cursor.d.ts",
+      "import": "./dist/typescript/src/runtime/list-cursor.js",
+      "default": "./dist/typescript/src/runtime/list-cursor.js"
+    },
+    "./core/runtime/list-page": {
+      "types": "./dist/typescript/src/runtime/list-page.d.ts",
+      "import": "./dist/typescript/src/runtime/list-page.js",
+      "default": "./dist/typescript/src/runtime/list-page.js"
+    },
     "./core/runtime/kernel-operation": {
       "types": "./dist/typescript/src/runtime/kernel-operation.d.ts",
       "import": "./dist/typescript/src/runtime/kernel-operation.js",
@@ -585,6 +605,11 @@
       "types": "./dist/typescript/src/runtime/operation-failure.d.ts",
       "import": "./dist/typescript/src/runtime/operation-failure.js",
       "default": "./dist/typescript/src/runtime/operation-failure.js"
+    },
+    "./core/runtime/output-lint": {
+      "types": "./dist/typescript/src/runtime/output-lint.d.ts",
+      "import": "./dist/typescript/src/runtime/output-lint.js",
+      "default": "./dist/typescript/src/runtime/output-lint.js"
     },
     "./core/runtime/policy-metadata": {
       "types": "./dist/typescript/src/runtime/policy-metadata.d.ts",
@@ -791,6 +816,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.2.0",
+    "css-select": "7.0.0",
+    "domhandler": "6.0.1",
+    "domutils": "4.0.2",
+    "htmlparser2": "12.0.0",
     "openai": "7.23.0",
     "oxc-parser": "0.152.0",
     "playwright": "1.63.0",

@@ -52,10 +52,34 @@ export {
 export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/errors.js";
 export { CalendarDate, formControlsCode } from "./form-controls.js";
 export { outcomeWaitCode } from "./outcome-wait.js";
+export { visibleTextCode } from "./visible-text.js";
+export { normalizeText } from "../runtime/text.js";
+export { waitCode } from "./wait.js";
+export {
+  CursorRefusal,
+  finishList,
+  listCallBounds,
+  listCursorTtlMs,
+  listDepth,
+  listInputFields,
+  listLimitDefault,
+  listLimitMax,
+  ListMechanism,
+  listOutputFields,
+  ListPosition,
+  selectRows,
+  startList,
+} from "../runtime/list-page.js";
+export type { ListOutput, ListStart } from "../runtime/list-page.js";
 export { FileInput, FileOutput, FileRefused, defaultFileLimits } from "../runtime/files.js";
 export type { FileObject, FileLimits, PlacedFile, ScriptFiles } from "../runtime/files.js";
 export type { FormControlShape } from "./form-controls.js";
-export type { OutcomeObservation } from "./outcome-wait.js";
+export type {
+  OutcomeObservation,
+  WaitProgress,
+  WaitProgressSign,
+  WaitRecord,
+} from "./wait.js";
 export { NativeDialogs, makeNativeDialogs } from "./dialogs/service.js";
 export { DialogFailure } from "./dialogs/contracts.js";
 export type { DialogActionPort } from "./dialogs/action.js";
@@ -63,6 +87,8 @@ export { SiteHttp, SiteHttpRequest, HttpFailure } from "../runtime/site-http.js"
 export type {
   HttpCapability,
   HttpExchange,
+  HttpRequestRefusal,
+  HttpRequestRule,
   HttpResponseGap,
   HttpTransport,
   SiteHttpResponse,
@@ -76,6 +102,13 @@ export {
   readText,
   requestPastChallenge,
 } from "../runtime/http-operation.js";
+export {
+  EmbeddedJsonFailure,
+  embeddedJson,
+  parseHtml,
+  readEmbeddedJson,
+} from "../runtime/html.js";
+export type { EmbeddedJsonSelector, HtmlDocument, HtmlNode } from "../runtime/html.js";
 export {
   OfflineFixtureUnavailable,
   SavedCaptureEvidence,

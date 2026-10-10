@@ -7,6 +7,7 @@ import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
 import type { InputAsker } from "../runtime/input-request.js";
 import type { FileLimits } from "../runtime/files.js";
+import type { ListCursorKeys } from "../runtime/list-cursor.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 export interface PomeradoOptions {
   readonly ask: InputAsker;
@@ -24,6 +25,13 @@ export interface PomeradoOptions {
    * the process exits. `limits` caps the bytes (`defaultFileLimits`).
    */
   readonly files?: { readonly downloads?: string; readonly limits?: FileLimits };
+  /**
+   * How a list tool's cursors are signed and timed. `keys` sign them; without keys, this process
+   * signs with a random key, so its cursors work until it exits. `now` is the clock that dates
+   * them, `Date.now` by default. A cursor works for an hour, and a run refuses one this host did
+   * not sign for that tool and those inputs before it signs in or loads a page.
+   */
+  readonly listCursors?: { readonly keys?: ListCursorKeys; readonly now?: () => number };
 }
 
 export interface PomeradoRequest {

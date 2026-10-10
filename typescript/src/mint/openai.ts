@@ -34,13 +34,14 @@ import { Deadline } from "../runtime/deadline.js";
 import { signInRootCode } from "./sign-in-failure.js";
 import {
   AgentRequest,
-  BuildBlocked,
+  BlockedReport,
   CaptureRequest,
   ExecutionRequest,
   ManagedSignInExecutionRequest,
   MintFailure,
   PublicationRequest,
   SignedInMarkerCheckRequest,
+  LiveTestsRequest,
   TaskUpdateRequest,
 } from "./contracts.js";
 import type { MintModel } from "./contracts.js";
@@ -585,12 +586,16 @@ export const makeOpenAIMinter = (
               errorFunction: (_context: unknown, error: unknown) =>
                 toolFailure(error, failureInstruction),
             });
+            const liveTestsSentence =
+              turn.actions.liveTests === undefined
+                ? "A read's live tests may run inputs you choose, one at a time (testInput); the host may limit how many."
+                : "A read's live tests may run inputs you choose: a read signed out tests as much as it needs, planning its cases in test/cases.json and running them in parallel batches with live_tests; a signed-in read runs at most 4 per attempt, one at a time (testInput).";
             const signInDescription = turn.autofillSignIn
               ? "trusted host credentials, signing in by host autofill with a signInStep for each sign-in screen"
               : "trusted host credentials";
             const executeTool = hostTool(
               "execute",
-              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for ${signInDescription} (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it. Up to 2 of a read's live tests may run an input you choose instead (testInput). Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty, an act step passes exampleInput the same way, and each act step that passes it runs it. A write build tests only offline. intent states what this execution should establish; it never authorizes the execution.`,
+              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for ${signInDescription} (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it. ${liveTestsSentence} Live tests of src/tool-http.mjs have no limit. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty, an act step passes exampleInput the same way, and each act step that passes it runs it. A write build tests only offline. intent states what this execution should establish; it never authorizes the execution.`,
               "Execution did not succeed. Diagnose the root cause and retained evidence. Correct request/source errors within existing authority; preserve prior effects. Another example read requires explicit host repeatableRead:true; never replay a nonrepeatable example or a write that may have committed. After a failed authenticate, fix its cause and call authenticate again.",
               (request) => turn.actions.execute(request),
             );
@@ -620,7 +625,7 @@ export const makeOpenAIMinter = (
             const finish = tool({
               ...hostTool(
                 "finish_build",
-                "Request current-source review and publication against a completed read example or the write session step that confirmed the write. Coverage describes checks actually run and gaps. A not_published response may allow source correction and another finish_build request. A new example read requires explicit host repeatableRead:true; nonrepeatable examples remain fenced. intent states why this source and execution satisfy the request.",
+                "Request current-source review and publication against a completed read example or the write session step that confirmed the write. Coverage describes checks actually run and gaps. outputOverrides names each output check finding whose value is correct as returned, such as intended code or page text that only resembles code, with why; the reviewer checks them. A not_published response may allow source correction and another finish_build request. A new example read requires explicit host repeatableRead:true; nonrepeatable examples remain fenced. intent states why this source and execution satisfy the request.",
                 "Publication did not succeed. Correct supported source or metadata errors and submit finish_build again when justified. Existing execution results remain valid independently. A new example read requires explicit host repeatableRead:true; never replay a nonrepeatable example, a write that may have committed or an uncertain authentication action.",
                 (request) => turn.actions.finish(request),
               ),
@@ -633,11 +638,11 @@ export const makeOpenAIMinter = (
                 : tool({
                     ...hostTool(
                       "report_blocked",
-                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs, policy only when Guardian denied or escalated something in this attempt, or the owner answered no to a confirm question, and nothing within your authority gets past it; your own instructions are never a policy block, and the host refuses policy without such a refusal, unless the host's guidance names that policy ending. explanation tells the caller in one or two plain sentences what is missing or refused; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable: a failed execution, review feedback, a sign-in problem, a browser or host problem, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. intent states the evidence that the task is impossible as asked.",
+                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs, policy only when Guardian denied or escalated something in this attempt, or the owner answered no to a confirm question, and nothing within your authority gets past it; your own instructions are never a policy block, and the host refuses policy without such a refusal, unless the host's guidance names that policy ending. explanation tells the caller in one or two plain sentences what is missing or refused; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable: a failed execution, review feedback, a sign-in problem, a browser or host problem the host can still recover, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. Use host_unavailable only when executionAvailability is host_unavailable and what the build still needs cannot run without live execution, such as a fresh example after a source correction: it ends the attempt as the host's failure, never as blocked, with no explanation review, so never call a host fault policy. intent states the evidence that the task is impossible as asked, or that the host ended live execution.",
                       "The blocked ending was not recorded. Inspect the finite failure; correct the request or continue the build.",
                       (request) => reportBlocked(request),
                     ),
-                    parameters: parameters(withIntent(BuildBlocked)),
+                    parameters: parameters(withIntent(BlockedReport)),
                   });
             const requestInput = tool({
               ...hostTool(
@@ -714,6 +719,19 @@ export const makeOpenAIMinter = (
                     ),
                     parameters: parameters(withIntent(SignedInMarkerCheckRequest)),
                   });
+            const runLiveTests = turn.actions.liveTests;
+            const liveTests =
+              runLiveTests === undefined
+                ? undefined
+                : tool({
+                    ...hostTool(
+                      "live_tests",
+                      `A read's planned live tests (read the testing skill). Plan them as soon as you know the page and the inputs, and again once the example passes: write the tool's input and output schemas in the entrypoint, then action plan returns the checklist the host derives from them (each input, combinations, a value the site does not offer, no results, the next page, other records or retailers, location applied and impossible, the example repeated from fresh browsers), your cases in ${"test/cases.json"} and each case's latest status, result and failure with its source line; name cases to see their full outputs. Action run runs the named cases, or all when cases is null, as one batch after one Guardian review: each case starts on a fresh page like the example, up to maxWorkers (1 to 3) at once on separate fresh browsers, and you get every result. Results count only for the source and the case as they ran; publication review reads the host's record of them. intent states what these cases should establish.`,
+                      "The live tests did not run. Inspect the finite failure; fix the cases file or the source, then plan or run again.",
+                      (request) => runLiveTests(request),
+                    ),
+                    parameters: parameters(withIntent(LiveTestsRequest)),
+                  });
             const skillCapability = skills({ skills: [...turn.skills] });
             const installSkills = skillCapability.processManifest.bind(skillCapability);
             let skillsInstalled = turn.recovery?.initial !== undefined;
@@ -763,6 +781,7 @@ export const makeOpenAIMinter = (
                     ...(captchaState === undefined ? [] : [captchaState]),
                     ...(requestBrowserRecovery === undefined ? [] : [requestBrowserRecovery]),
                     ...(checkSignedInMarker === undefined ? [] : [checkSignedInMarker]),
+                    ...(liveTests === undefined ? [] : [liveTests]),
                   ]
               ).map((entry) => recoverFunction(entry)),
               toolUseBehavior: () =>

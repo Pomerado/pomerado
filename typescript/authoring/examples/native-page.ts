@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { defineOperation } from "../../src/browser/index.js";
+import { defineOperation, waitCode } from "../../src/browser/index.js";
 
 // One execute call does all the browser work. Kernel runs the code on its own `page`, so outside
 // values, such as the host's site origin, are written into the code with JSON.stringify.
@@ -17,6 +17,7 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 60,
       code: `
+        ${waitCode}
         // Read the page already open once it is on the site: any https host on the host's site
         // domain, else the site origin alone.
         const siteDomain = ${JSON.stringify(siteDomain ?? null)};
@@ -24,9 +25,10 @@ export default defineOperation(
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         const current = new URL(page.url());
         if (!onSite(current)) return null;
+        // Read the heading once it shows filled in and holding on two looks.
         const heading = page.getByRole("heading", { name: "Invoices", exact: true });
-        await heading.waitFor({ state: "visible", timeout: 30000 });
-        return (await heading.textContent())?.trim() || null;
+        const { values } = await waitForValues({ heading });
+        return values.heading;
       `,
     });
     if (!answer.success)
