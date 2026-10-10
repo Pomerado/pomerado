@@ -206,9 +206,15 @@ export const confirmedRun = (view: RunEvidence) =>
   (view.status === "completed" || view.status === "cleanup_pending") &&
   (view.effect === "verified" || view.effect === "not_started");
 
-/** Whether a step may already have changed the website: the job says so, or its effect is unsettled. */
+/**
+ * Whether a step may already have changed the website: the job says so, its effect is unsettled,
+ * or its write read back its confirmation, so the website did change. Only a read's verified
+ * effect changed nothing.
+ */
 export const possibleCommit = (view: RunEvidence) =>
-  view.possible_commit === true || unsettledEffect(view);
+  view.possible_commit === true ||
+  unsettledEffect(view) ||
+  (view.effect === "verified" && view.tool_effect !== "read");
 
 /** A rejected login's details: whether a step may have committed, and the field it named. */
 export const rejectedDetails = (view: RunEvidence, committed: boolean) => ({

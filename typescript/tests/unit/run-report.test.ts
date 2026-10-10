@@ -204,7 +204,8 @@ describe("a run that failed in its operation", () => {
       outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
     },
     // A refusal makes unentered marks prove nothing applied only while the write may have
-    // dispatched. A recorded confirmation keeps the write applied, as the other host's job view does.
+    // dispatched. A recorded confirmation keeps the write applied, as the other host's job view
+    // does, so the caller reads the site back before any retry.
     {
       case: "a refused input after a recorded confirmation, whose commit was never entered",
       error: new LocalOperationFailure(
@@ -212,12 +213,12 @@ describe("a run that failed in its operation", () => {
         confirmedUnentered,
         "InvalidInput",
       ),
-      outcome: { code: "input_rejected", writeStatus: "applied", possibleCommit: false },
+      outcome: { code: "input_rejected", writeStatus: "applied", possibleCommit: true },
     },
     {
       case: "a rejected login after a recorded confirmation, whose commit was never entered",
       error: new LocalOperationFailure("password", confirmedUnentered, "CredentialsRejected"),
-      outcome: { code: "credentials_rejected", writeStatus: "applied", possibleCommit: false },
+      outcome: { code: "credentials_rejected", writeStatus: "applied", possibleCommit: true },
     },
     {
       case: "a sign-in failure raised during the operation",

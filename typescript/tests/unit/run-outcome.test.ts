@@ -196,7 +196,10 @@ describe("run failures", () => {
     { run: evidence({ possible_commit: true }), possible: true },
     { run: evidence({ effect: "may_have_dispatched" }), possible: true },
     { run: evidence({ status: "outcome_unknown" }), possible: true },
-    { run: evidence({ effect: "verified" }), possible: false },
+    // An applied write changed the website, so its caller must never read it as safe to retry.
+    { run: evidence({ effect: "verified" }), possible: true },
+    { run: evidence({ effect: "verified", tool_effect: undefined }), possible: true },
+    { run: evidence({ effect: "verified", tool_effect: "read" }), possible: false },
     { run: evidence({ effect: "rejected" }), possible: false },
   ])("possible commit is $possible", ({ run, possible }) => {
     expect(possibleCommit(run)).toBe(possible);
@@ -247,6 +250,19 @@ describe("run outcomes", () => {
       possibleCommit: true,
       retry: "never",
     });
+  });
+
+  it("reports a write applied before its run failed as a possible commit, not a clean retry", () => {
+    // The write read back its confirmation, then the job failed for another reason.
+    const applied = { effect: "verified", output: "failed" } as const;
+    expect(writeStatusOf(evidence(applied))).toBe("applied");
+    expect(possibleCommit(evidence(applied))).toBe(true);
+    for (const failure_reason of ["no_response", "credentials_rejected", "invalid_input"])
+      expect(classifyRun(evidence({ ...applied, failure_reason }))).toMatchObject({
+        details: { possible_commit: true },
+        writeStatus: "applied",
+        possibleCommit: true,
+      });
   });
 
   it("reports a refused input that sent nothing as not applied and safe to correct", () => {
