@@ -234,6 +234,7 @@
 - Guardian's execution policy treats accepting the terms a site requires to finish the requested action, such as a required "I agree" box at checkout or a notice that signing in accepts the site's terms, as part of that action, with no other authority. Terms the action doesn't require, such as a partner's terms or a marketing consent, are not. Terms on a sign-in screen no longer need authority in trusted intent; remember-device and other lasting account preferences still do.
 - The forms skill tells the minter to prefer matching an existing record by a case-insensitive exact name, and to prefer never picking an "Add new" row when an existing record matches, so a picker doesn't create a near-duplicate of a record whose name differs from the caller's only in case.
 - Guardian's publication policy asks the review to list every finding it sees in the bundle, not only the first, so the minter can fix them together. A publication review now has 240 seconds, up from 120; other reviews keep 120, and a development public read keeps 600.
+- The writes skill and the workspace guide say a refused publication keeps live execution on the same browser, still signed in, so the minter does not sign in again. Only a publication whose capture failed leaves a fresh browser on a new, empty profile. The `http-mcp` skill says a refused publication does not skip the HTTP-version ask.
 
 ### Fixes
 
