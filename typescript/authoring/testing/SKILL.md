@@ -24,8 +24,8 @@ at that URL and completes the recorded steps. Do not clear a live session or rep
 
 ## Test a read signed out as much as it needs
 
-A read signed out has no limit on live tests, and the host runs them for you in parallel. Testing
-is your job, not the caller's: never wait to be told to try another record, retailer or value.
+Where the host offers `live_tests`, a read signed out has no limit on live tests, and the host runs
+them for you in parallel. Testing is your job, not the caller's: never wait to be told to try another record, retailer or value.
 
 Plan the tests at the start. As soon as you know the page and its inputs, write the tool's input
 and output schemas in the entrypoint (the run code can come later) and call `live_tests` with
@@ -35,8 +35,9 @@ action `plan`. It returns the checklist the host derives from the schemas:
   the non-default side of a switch, or another value the site offers;
 - `all_inputs` (every optional input at once) and `combination` (controls that share a panel,
   a drawer or a reload);
-- `unoffered_value`: a value the site does not offer, expecting `invalid_input` that lists the
-  page's choices;
+- `unoffered_value`: a value the site does not list at all, expecting `invalid_input` that lists
+  the page's choices. An option the page lists but greys out, such as a sold-out size, is offered:
+  a read returns it as unavailable data;
 - for a list: `no_results` (expecting `empty`, never a throw) and `next_page`;
 - for a details read: `other_record`, two or more records from a listing you opened whose pages
   differ from the example's (options, a single option, a grouped or multi-item page, sold out,
@@ -84,11 +85,14 @@ add any case that catches a real risk.
 Results count only for the source and the case as they ran: an edit makes them stale. Finish in
 this order: make your last edit, run the cases again, run the example last, then call
 `finish_build`. Publication review reads the host's record of your cases (`publication/tests.json`),
-not your account of them, and judges missing, failing and stale items.
+not your account of them, and judges missing, failing and stale items. Deleting or changing a
+case after it failed does not hide the failure: the record keeps its last result as retired. When
+`live_tests` answers `no_time`, run the example last and publish; the record says time ran out.
 
 A signed-in read tests one input at a time instead: up to four live tests per attempt with an
 input you choose (`testInput`, the tool's input as JSON text, with purpose `test` and target
-`liveBrowser`), spent on the riskiest controls and a record whose page differs.
+`liveBrowser`), spent on the riskiest controls and a record whose page differs. When the host offers no
+`live_tests`, a read signed out tests the same way, one input at a time; the host may limit how many.
 
 The example uses the caller's input, or your `exampleInput` when that input is empty, and offline
 tests always use the caller's input. If a test shows the schema must widen, widen it in source;

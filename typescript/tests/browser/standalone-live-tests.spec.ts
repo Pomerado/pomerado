@@ -108,14 +108,14 @@ test("runs a read's planned cases on reset pages after one review, and hands pub
       frame: `src/tool.mjs:${brokenLine}`,
     });
 
-    // One Guardian review covered the whole batch, with every case's input.
+    // One Guardian review covered the whole batch, with every case's id and input.
     const batch = executions(guardian.reviews).filter(
       (review) => currentOf(review)?.["input"] === "agent_chosen_batch",
     );
     expect(batch).toHaveLength(1);
     const submitted = batch[0]?.input["submitted_call"] as { readonly input: string };
     expect(JSON.parse(submitted.input)).toEqual({
-      cases: cases.cases.map((entry) => entry.input),
+      cases: cases.cases.map((entry) => ({ id: entry.id, input: entry.input })),
     });
 
     // A failing case does not refuse publication by itself; the review reads the host's record.

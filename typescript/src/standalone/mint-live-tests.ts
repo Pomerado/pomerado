@@ -3,6 +3,7 @@ import { Clock, Effect, Either } from "effect";
 import { LocalOperationFailure, runLocalOperation } from "../execution/local-operation.js";
 import { MintFailure, type LiveTestHost } from "../mint/contracts.js";
 import {
+  batchReviewInput,
   runLiveTestCase,
   type LiveTestCaseRun,
   type LiveTestOutcome,
@@ -79,7 +80,7 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
             {
               entrypoint: `operation/${batch.entrypoint}`,
               sources: new Map(sources.map(([path, text]) => [`operation/${path}`, text])),
-              input: { cases: batch.cases.map(({ input }) => input) },
+              input: batchReviewInput(batch.cases),
               currentExecution: {
                 purpose: "test",
                 target: "liveBrowser",

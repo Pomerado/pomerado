@@ -102,8 +102,10 @@ import {
   liveTestCasesPath,
   liveTestsEvidence,
   liveTestsEvidencePath,
+  liveTestsEvidenceProblem,
   maximumBatchCases,
   outputExcerpt,
+  primaryListOf,
   type ChecklistItem,
   type LiveTestCasesFile,
   type LiveTestRecord,
@@ -3006,8 +3008,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       /** Each live test case's latest result, by case id; a takeover restores them. */
       const liveTestRecords = new Map<string, LiveTestRecord>(
-        (recovered?.liveTests ?? []).map((record) => [record.id, record]),
+        (recovered?.liveTests ?? [])
+          .filter((record) => record.retired !== true)
+          .map((record) => [record.id, record]),
       );
+      /**
+       * Failing results the minter replaced by changing their case, so the publication review
+       * still sees them. Bounded: the oldest go first.
+       */
+      const liveTestReplaced: LiveTestRecord[] = (recovered?.liveTests ?? []).filter(
+        (record) => record.retired === true,
+      );
+      /** Whether a batch was refused for time; a case that ended at the deadline also counts. */
+      let liveTestsRefusedForTime = recovered?.liveTestsOutOfTime === true;
+      const liveTestsOutOfTime = () =>
+        liveTestsRefusedForTime ||
+        [...liveTestRecords.values()].some(
+          (record) => record.verdict === "inconclusive" && record.got === "deadline",
+        );
       /** Each case's latest screened output, by case id: this attempt's runs only. */
       const liveTestOutputs = new Map<string, unknown>();
       /** Whether a passing example's receipt already carried the test plan. */
@@ -3048,6 +3066,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             checklist: checklistOf(input, output),
             cursor: cursorPairOf(input, output),
+            list: primaryListOf(input, output),
           };
         });
       const emptyCases: LiveTestCasesFile = { cases: [] };
@@ -3154,13 +3173,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               instruction: `The host could not read ${request.entrypoint} and its imports. Nothing was executed.`,
             });
           const deadlineAt = yield* liveTestDeadline;
-          if (deadlineAt - (yield* Clock.currentTimeMillis) < 60_000)
+          if (deadlineAt - (yield* Clock.currentTimeMillis) < 60_000) {
+            liveTestsRefusedForTime = true;
             return JSON.stringify({
               kind: "host_live_tests",
               status: "no_time",
               instruction:
-                "Too little of this attempt is left to run a batch. Run the example last and publish, and say in coverage which cases did not run. Nothing was executed.",
+                "Too little of this attempt is left to run a batch. Run the example last and publish, and say in coverage which cases did not run; the host's record says time ran out. Nothing was executed.",
             });
+          }
           const workers = Math.max(1, Math.min(request.maxWorkers ?? host.maxWorkers, host.maxWorkers));
           const result = yield* host.run({
             entrypoint: request.entrypoint,
@@ -3189,7 +3210,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           for (const run of result.cases) {
             const testCase = selected.find((entry) => entry.id === run.id);
             if (testCase === undefined) continue;
-            const judged = judgeCase(testCase, run);
+            const judged = judgeCase(testCase, run, "list" in planned ? planned.list : undefined);
             const screened =
               judged.output === undefined
                 ? undefined
@@ -3205,9 +3226,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     Effect.orElseSucceed(() => "[message withheld]"),
                   );
             const excerpt = outputExcerpt(screened);
+            const digestOfCase = caseDigest(testCase);
+            const previous = liveTestRecords.get(run.id);
+            if (
+              previous !== undefined &&
+              previous.verdict === "fail" &&
+              previous.caseDigest !== digestOfCase
+            ) {
+              liveTestReplaced.push({ ...previous, retired: true });
+              liveTestReplaced.splice(0, Math.max(0, liveTestReplaced.length - maximumBatchCases));
+            }
             liveTestRecords.set(run.id, {
               id: run.id,
-              caseDigest: caseDigest(testCase),
+              caseDigest: digestOfCase,
               sourceDigest,
               verdict: judged.verdict,
               got: judged.got,
@@ -3219,6 +3250,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(excerpt === undefined ? {} : { excerpt }),
               durationMs: Math.max(0, Math.round(run.durationMs)),
               ...(run.lane === undefined ? {} : { lane: run.lane }),
+              input: testCase.input,
+              covers: testCase.covers,
+              expect: testCase.expect,
             });
             verdicts[judged.verdict] = (verdicts[judged.verdict] ?? 0) + 1;
           }
@@ -3263,7 +3297,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             Either.isRight(read) &&
             read.right.cases.length === 0 &&
             (read.right.skipped ?? []).length === 0 &&
-            liveTestRecords.size === 0;
+            liveTestRecords.size === 0 &&
+            liveTestReplaced.length === 0;
+          const outOfTime = liveTestsOutOfTime();
           if (nothing)
             return liveTestsEvidence({
               checklist: undefined,
@@ -3271,6 +3307,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               records: liveTestRecords,
               sourceDigest: yield* stepDigest(entrypoint),
               nothingPlanned: true,
+              outOfTime,
             });
           const planned = yield* liveTestChecklist(entrypoint);
           return liveTestsEvidence({
@@ -3278,9 +3315,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             file: Either.isRight(read) ? read.right : emptyCases,
             ...(Either.isLeft(read) ? { fileProblem: read.left } : {}),
             records: liveTestRecords,
+            replaced: liveTestReplaced,
             sourceDigest: yield* stepDigest(entrypoint),
+            outOfTime,
           });
-        }).pipe(Effect.orElseSucceed(() => undefined));
+        }).pipe(
+          // A record the host could not build says so, rather than vanishing from the review.
+          Effect.catchAllCause((cause) =>
+            Cause.isInterruptedOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.succeed(
+                  liveTestsEvidenceProblem(
+                    "an error stopped it; judge coverage from the example and the minter's account",
+                  ),
+                ),
+          ),
+        );
       const actions: MintActions = {
         retainCapture: (input) =>
           serial.withPermits(1)(
@@ -4883,7 +4933,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** The harness checkpoint, with `task` as its effective task. */
       const captureHarness = (task: TaskState = taskState): MintHarnessSnapshot => ({
         executions: [...executions],
-        ...(liveTestRecords.size === 0 ? {} : { liveTests: [...liveTestRecords.values()] }),
+        // Replaced failures come first, so an older worker that keys records by id keeps the
+        // latest.
+        ...(liveTestRecords.size === 0 && liveTestReplaced.length === 0
+          ? {}
+          : { liveTests: [...liveTestReplaced, ...liveTestRecords.values()] }),
+        ...(liveTestsRefusedForTime ? { liveTestsOutOfTime: true } : {}),
         ...(reviewer.tracked().length === 0 ? {} : { outcomeWrites: reviewer.tracked() }),
         purposes: [...purposes].map(([executionId, purpose]) => {
           const taskRevision = revisions.get(executionId);

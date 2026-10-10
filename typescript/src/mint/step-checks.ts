@@ -54,7 +54,7 @@ export const preflightTestInput = (
   const chosen = scope.executionHistory.filter((entry) => entry.input === "agent_chosen").length;
   return chosen >= maximumAgentTestInputs
     ? refused(
-        `This attempt already ran ${maximumAgentTestInputs} live tests with an input you chose, the most a signed-in read allows. Run a live test with the caller's input (omit testInput) or publish. Nothing was executed.`,
+        `This attempt already ran ${maximumAgentTestInputs} live tests with an input you chose, the most ${scope.signedIn === true ? "a signed-in read" : "this host"} allows. Run a live test with the caller's input (omit testInput) or publish. Nothing was executed.`,
       )
     : undefined;
 };

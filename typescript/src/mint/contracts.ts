@@ -537,7 +537,7 @@ export const ExecutionRequest = Schema.Struct({
   testInput: Schema.optional(
     Schema.String.pipe(Schema.minLength(2), Schema.maxLength(16_384)).annotations({
       description:
-        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. A signed-in read runs at most 4 per attempt; a read signed out has no limit, and runs a planned batch in parallel with live_tests. Omit it to run the caller's input.",
+        "Only with purpose test and target liveBrowser on a read build: the tool's input you chose, as JSON text, to show the tool works for values other than the caller's, such as another route or passenger count. Public values only. The host may limit how many run per attempt: a signed-in read runs at most 4. Where the host offers live_tests, a read signed out has no limit and runs its planned cases in batches with it. Omit it to run the caller's input.",
     }),
   ),
   /** Only on authenticate, and only where the host offers autofill sign-in. */
@@ -1291,6 +1291,8 @@ export interface MintHarnessSnapshot {
    * and new workers each restore the other's checkpoint.
    */
   readonly liveTests?: readonly LiveTestRecord[];
+  /** Whether a live test batch was refused because too little of the attempt was left. */
+  readonly liveTestsOutOfTime?: boolean;
   /**
    * The writes Guardian labelled that the outcome reviewer tracks, with their entrypoints and
    * source digests, so a takeover tracks them, and refuses their repeats, even when the
@@ -1457,6 +1459,7 @@ const HarnessTerminal = Schema.Struct({
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({
   executions: Schema.Array(ExecutionEvidence),
   liveTests: Schema.optionalWith(Schema.Array(LiveTestRecord), { exact: true }),
+  liveTestsOutOfTime: Schema.optionalWith(Schema.Boolean, { exact: true }),
   outcomeWrites: Schema.optionalWith(Schema.Array(OutcomeWrite), { exact: true }),
   purposes: Schema.Array(
     Schema.Struct({

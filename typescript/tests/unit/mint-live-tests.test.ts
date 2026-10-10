@@ -352,6 +352,100 @@ it("marks results stale in the publication record when the source changed after 
   ]);
 });
 
+it("keeps a failing case in the publication record after the minter deletes or changes it", async () => {
+  const { host, batches } = liveTestHost({
+    "sort-price": { status: "failed", errorClass: "TimeoutError", frame: "src/tool.ts:12" },
+  });
+  const published = publications();
+  let root = "";
+  // Without the failing sort case, and with the failing no-results case on another query.
+  const trimmed = {
+    ...cases,
+    cases: cases.cases
+      .filter((testCase) => testCase.id !== "sort-price")
+      .map((testCase) =>
+        testCase.id === "nothing" ? { ...testCase, input: { query: "zzqy" } } : testCase,
+      ),
+  };
+  const f = await fixture(
+    async (_request, index) => {
+      if (index === 1) await writeWorkspace(root, { "test/cases.json": JSON.stringify(trimmed) });
+      return (
+        [
+          call("live_tests", runAll, "first"),
+          call("live_tests", runAll, "second"),
+          call("execute", example, "example"),
+          call("finish_build", finish, "finish"),
+        ][index] ?? prose()
+      );
+    },
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    read,
+  );
+  root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+  await f.run();
+  expect(batches).toHaveLength(2);
+  const record = published.seen[0]?.liveTests as {
+    cases: { id: string }[];
+    retired: Record<string, unknown>[];
+  };
+  expect(record.cases.map((testCase) => testCase.id)).not.toContain("sort-price");
+  expect(record.retired).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "sort-price",
+        retiredBecause: "deleted from the cases file",
+        lastVerdict: "fail",
+        frame: "src/tool.ts:12",
+        input: { query: "lamp", sort: "price_low" },
+        onPublishedSource: true,
+      }),
+      expect.objectContaining({
+        id: "nothing",
+        retiredBecause: "changed after it failed",
+        lastVerdict: "fail",
+        input: { query: "zzqx" },
+      }),
+    ]),
+  );
+  expect(published.seen[0]?.coverage).toContain("2 retired cases (2 last failed)");
+});
+
+it("publishes with the gaps when too little time is left for a batch, and the record says so", async () => {
+  const { host, batches } = liveTestHost({});
+  const published = publications();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("live_tests", runAll, "run"),
+        call("execute", example, "example"),
+        call("finish_build", finish, "finish"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      // Less than the batch's margin before the attempt's end.
+      deadline: Deadline.after(2 * 60_000 + 30_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    read,
+  );
+  const root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+  await f.run();
+  expect(batches).toHaveLength(0);
+  expect(resultOf(f.requests[1], "run")).toMatchObject({ status: "no_time" });
+  expect(published.seen).toHaveLength(1);
+  expect(published.seen[0]?.liveTests).toMatchObject({ outOfTime: true });
+  expect(published.seen[0]?.coverage).toContain("ran out of time");
+});
+
 it("runs nothing when Guardian denies the batch, and says why", async () => {
   const { host, batches } = liveTestHost(
     {},

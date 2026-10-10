@@ -343,7 +343,7 @@ const formerSections: readonly (readonly [string, string])[] = [
   ["workspace/AGENTS.md", "Testing a read is your job, never the caller's (.agents/testing/SKILL.md)."],
   ["workspace/AGENTS.md", "- `src/`: your operation. It exists from the start and is empty until you write to it"],
   ["testing", "Choose cases that catch actual risk: applied filters, account scope, IDs, units"],
-  ["testing", "A read signed out has no limit on live tests, and the host runs them for you in parallel."],
+  ["testing", "Where the host offers `live_tests`, a read signed out has no limit on live tests, and the host runs them for you in parallel."],
 ];
 
 const renderedTexts = async (directory: string, render?: (text: string) => string) => {
@@ -713,7 +713,7 @@ it("renders the pinned standalone authoring", async () => {
     ["0d9c2907e5782f42e91fa5e897c0469069994f5af73983ad532ac98d5381e636", "core"],
     ["0841a8c299fe27b3342c2f5d87a70b3562c5c50024bf39b5531f0c643afba388", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
-    ["1c3e2d1d9fc48e63f395b336e8690a0cb516439f12c95a7f67b95b7fcf10e0a8", "testing"],
+    ["54f57d30c0c76075e509339be5a43439a024c8f98a60edc5864e6ec75fab3bf4", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
     ["bf93224e727fa574c22d4c3e47f8b88432b234a306990aa1acb50bfdf6d8f9f7", "forms"],
     ["6c3b0e8152250a208b2350eef8d30492e3ae9a9a9e62cc3f9e31d3339b2135e1", "writes"],

@@ -153,7 +153,19 @@ interface Field {
   readonly types: readonly string[];
   readonly members: readonly unknown[] | undefined;
   readonly text: string;
+  /** An array whose items are objects, or not described. */
+  readonly listOfRecords: boolean;
 }
+
+/** An array branch whose items are objects, or say nothing about their type. */
+const holdsRecords = (branch: Json, root: Json) => {
+  if (typeOf(branch) !== "array") return false;
+  if (!isRecord(branch["items"])) return true;
+  const items = branchesOf(resolved(branch["items"], root), root);
+  return items.some(
+    (item) => typeOf(item) === "object" || isRecord(item["properties"]) || typeOf(item) === undefined,
+  );
+};
 
 /** An object schema's properties, its local references resolved. */
 const objectFields = (raw: unknown): readonly Field[] => {
@@ -182,6 +194,7 @@ const objectFields = (raw: unknown): readonly Field[] => {
       types: branches.map((branch) => typeOf(branch) ?? "any"),
       members: memberLists.every((list) => list !== undefined) ? memberLists.flat() : undefined,
       text,
+      listOfRecords: branches.some((branch) => holdsRecords(branch, root)),
     };
   });
 };
@@ -215,15 +228,72 @@ const freeTextName = /^(?:q|query|search|search_?term|keywords?|terms?|text)$/iu
 const recordName =
   /(?:^|_)(?:url|link|href|id|sku|slug|asin|listing|product|item|record|code|handle)(?:$|_)/iu;
 const selectorName =
-  /(?:^|_)(?:retailer|store|seller|merchant|vendor|marketplace|market|region|site|shop|warehouse|branch)(?:$|_)/iu;
+  /(?:^|_)(?:retailer|store|seller|merchant|vendor|marketplace|market|region|shop|warehouse|branch)(?:$|_)/iu;
 const locationName =
-  /(?:^|_)(?:zip|zipcode|postal|postcode|post_?code|location|address|city|lat|latitude|lng|lon|longitude|geo|near|area|delivery)(?:$|_)/iu;
+  /(?:^|_)(?:zip|zipcode|postal|postcode|post_?code|location|address|city|lat|latitude|lng|lon|longitude|geo)(?:$|_)/iu;
+/** Inputs that shape the list itself, not what it holds: never a control to test on its own. */
+const listContractName =
+  /^(?:limit|page_?size|per_?page|max_?results|cursor|page_?token|next_?cursor|include)$/iu;
+/** What a list's results usually sit under. */
+const listName = /^(?:results?|items|products|listings?|hits|entries|records|rows|matches|data|list)$/iu;
 const locationText = /\b(?:zip|postal|post code|postcode|location|address|deliver)/iu;
 /** Words split from a name such as `zipCode` or `store_id`. */
 const words = (name: string) => name.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase();
 
-const listFields = (outputSchema: unknown) =>
-  objectFields(outputSchema).filter((field) => field.types.includes("array"));
+const isRecordInput = (field: Field) =>
+  recordName.test(words(field.name)) &&
+  !selectorName.test(words(field.name)) &&
+  !freeTextName.test(field.name);
+const isLocationInput = (field: Field) =>
+  locationName.test(words(field.name)) || locationText.test(field.text);
+/** The inputs a case sets to test the tool, without the list's own paging and size fields. */
+const controlsOf = (inputSchema: unknown, cursor: CursorPair | undefined) =>
+  objectFields(inputSchema).filter(
+    (field) => field.name !== cursor?.inputField && !listContractName.test(field.name),
+  );
+
+/** Where a list read's results sit: `field` of the output, or the output itself when absent. */
+export interface PrimaryList {
+  readonly field?: string;
+}
+
+/**
+ * The list a read returns, judged by its shape, or undefined for a details read. An output that
+ * is an array is the list. Otherwise the list is an array of records beside the cursor, or, for a
+ * tool no input of which names a record, the array named like results, or its only array of
+ * records. A details record keeps its images, variants or reviews as values, never as its list.
+ */
+export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): PrimaryList | undefined => {
+  if (isRecord(outputSchema)) {
+    const root = resolved(outputSchema, outputSchema);
+    if (branchesOf(root, outputSchema).some((branch) => typeOf(branch) === "array")) return {};
+  }
+  const fields = objectFields(outputSchema);
+  const arrays = fields.filter((field) => field.listOfRecords);
+  const named = fields.find((field) => field.types.includes("array") && listName.test(field.name));
+  const cursor = cursorPairOf(inputSchema, outputSchema);
+  if (cursor !== undefined) {
+    const list = named ?? arrays[0];
+    return list === undefined ? undefined : { field: list.name };
+  }
+  const inputs = objectFields(inputSchema);
+  const details =
+    inputs.some((field) => field.required && isRecordInput(field)) &&
+    !inputs.some((field) => freeTextName.test(field.name));
+  if (details) return undefined;
+  if (named !== undefined) return { field: named.name };
+  return arrays.length === 1 && arrays[0] !== undefined ? { field: arrays[0].name } : undefined;
+};
+
+/** An input whose values are choices the site offers or withholds: a size, store, option or date. */
+const isChoice = (field: Field) =>
+  !field.types.includes("boolean") &&
+  !freeTextName.test(field.name) &&
+  !isRecordInput(field) &&
+  !isLocationInput(field) &&
+  ((field.members !== undefined && field.members.length > 0) ||
+    selectorName.test(words(field.name)) ||
+    (field.types.length > 0 && field.types.every((type) => type === "string")));
 
 const fieldHint = (field: Field) => {
   if (field.types.includes("boolean"))
@@ -248,11 +318,10 @@ const fieldNeeds = (field: Field) => {
  * `other_record`, `other_value:<field>`, `location_applied` and `location_impossible`.
  */
 export const checklistOf = (inputSchema: unknown, outputSchema: unknown): readonly ChecklistItem[] => {
-  const fields = objectFields(inputSchema);
   const cursor = cursorPairOf(inputSchema, outputSchema);
-  const controls = fields.filter((field) => field.name !== cursor?.inputField);
+  const controls = controlsOf(inputSchema, cursor);
   const optional = controls.filter((field) => !field.required);
-  const lists = listFields(outputSchema);
+  const list = primaryListOf(inputSchema, outputSchema);
   const items: ChecklistItem[] = [
     {
       item: "repeat_example",
@@ -281,14 +350,14 @@ export const checklistOf = (inputSchema: unknown, outputSchema: unknown): readon
       hint: "Pair two or more controls that share a panel, a drawer or a page reload, other than the all-inputs case.",
       needs: 1,
     });
-  if (controls.some((field) => !freeTextName.test(field.name) && !field.types.includes("boolean")))
+  if (controls.some(isChoice))
     items.push({
       item: "unoffered_value",
-      hint: "Send a value the site does not offer for a choice (a size, store, option or date it lacks). The tool must refuse with InvalidInput listing the page's choices, never pick another value.",
+      hint: "Send a value the site does not list at all for a choice (a size, store, option or date it lacks). The tool must refuse with InvalidInput listing the page's choices, never pick another value. An option the page lists but greys out, such as a sold-out size, is offered: a read returns it as unavailable data.",
       needs: 1,
       expect: "invalid_input",
     });
-  if (lists.length > 0)
+  if (list !== undefined)
     items.push({
       item: "no_results",
       hint: "A query or filter set the site has no results for. The tool returns an empty list, never a throw.",
@@ -302,7 +371,7 @@ export const checklistOf = (inputSchema: unknown, outputSchema: unknown): readon
       needs: 1,
       expect: "result",
     });
-  if (lists.length === 0 && controls.some((field) => recordName.test(words(field.name))))
+  if (controls.some(isRecordInput))
     items.push({
       item: "other_record",
       hint: "Read two or more other records, picked from a listing you opened, whose pages differ from the example's: other options, a single option, a grouped or multi-item page, sold out or unavailable, another layout or type.",
@@ -317,11 +386,7 @@ export const checklistOf = (inputSchema: unknown, outputSchema: unknown): readon
       expect: "result",
       field: field.name,
     });
-  if (
-    controls.some(
-      (field) => locationName.test(words(field.name)) || locationText.test(field.text),
-    )
-  )
+  if (controls.some(isLocationInput))
     items.push(
       {
         item: "location_applied",
@@ -349,6 +414,20 @@ export interface LiveTestBatchCase {
   /** Present when the case also runs the next page. */
   readonly nextPage?: CursorPair;
 }
+
+/**
+ * What Guardian's review of a batch reads in `submitted_call.input`: each case's id and input,
+ * and, for a case that also runs its next page, the input field the host sets to page 1's cursor.
+ */
+export const batchReviewInput = (cases: readonly LiveTestBatchCase[]) => ({
+  cases: cases.map((testCase) => ({
+    id: testCase.id,
+    input: testCase.input,
+    ...(testCase.nextPage === undefined
+      ? {}
+      : { next_page: { cursorInput: testCase.nextPage.inputField } }),
+  })),
+});
 
 export type LiveTestInconclusiveReason =
   /** The site challenged the browser and the host stopped the case. */
@@ -441,14 +520,37 @@ const listsOf = (output: unknown): readonly (readonly unknown[])[] =>
       ? Object.values(output).filter((value): value is unknown[] => Array.isArray(value))
       : [];
 
-const resultShape = (output: unknown) => {
-  const lists = listsOf(output);
-  if (output === null || output === undefined) return { empty: true, got: "no output" };
-  if (lists.length === 0) return { empty: false, got: "a result" };
-  const count = Math.max(...lists.map((list) => list.length));
-  return count === 0
+const counted = (items: readonly unknown[]) =>
+  items.length === 0
     ? { empty: true, got: "empty" }
-    : { empty: false, got: `results (${count})` };
+    : { empty: false, got: `results (${items.length})` };
+
+/** A value that says something: not null, an empty string or an empty list. */
+const filled = (value: unknown) =>
+  value !== null &&
+  value !== undefined &&
+  value !== "" &&
+  !(Array.isArray(value) && value.length === 0);
+
+/**
+ * Whether an output holds results: a list read's by its results list, a details read's by its
+ * values, so a record whose images or variants happen to be empty is still a result.
+ */
+const resultShape = (output: unknown, list: PrimaryList | undefined) => {
+  if (output === null || output === undefined) return { empty: true, got: "no output" };
+  if (list !== undefined) {
+    const items =
+      list.field === undefined ? output : isRecord(output) ? output[list.field] : undefined;
+    return Array.isArray(items)
+      ? counted(items)
+      : { empty: true, got: list.field === undefined ? "no list" : `no ${list.field} list` };
+  }
+  if (Array.isArray(output)) return counted(output);
+  if (isRecord(output))
+    return Object.values(output).some(filled)
+      ? { empty: false, got: "a result" }
+      : { empty: true, got: "no values" };
+  return { empty: false, got: "a result" };
 };
 
 const inconclusiveDetail: Readonly<Record<LiveTestInconclusiveReason, string>> = {
@@ -459,8 +561,15 @@ const inconclusiveDetail: Readonly<Record<LiveTestInconclusiveReason, string>> =
   no_next_page: "Page 1 returned no cursor, so the host could not run a next page. Use a query with more than one page of results, or fix how the tool returns its cursor.",
 };
 
-/** A case's verdict from its runs and what it expected. */
-export const judgeCase = (testCase: Pick<LiveTestCase, "expect">, run: LiveTestCaseRun): JudgedCase => {
+/**
+ * A case's verdict from its runs and what it expected. `list` is where a list read's results sit
+ * (`primaryListOf`); undefined judges a details read by its values.
+ */
+export const judgeCase = (
+  testCase: Pick<LiveTestCase, "expect">,
+  run: LiveTestCaseRun,
+  list: PrimaryList | undefined,
+): JudgedCase => {
   const outcome =
     run.outcome.status === "completed" && run.followUp !== undefined ? run.followUp : run.outcome;
   const page = run.followUp !== undefined && outcome === run.followUp ? "Page 2: " : "";
@@ -472,11 +581,11 @@ export const judgeCase = (testCase: Pick<LiveTestCase, "expect">, run: LiveTestC
         detail: `${page}${inconclusiveDetail[outcome.reason]}`,
       };
     case "completed": {
-      const shape = resultShape(outcome.output);
+      const shape = resultShape(outcome.output, list);
       const base = { got: shape.got, output: outcome.output };
       if (testCase.expect === "result")
         return shape.empty
-          ? { ...base, verdict: "fail", detail: `${page}Expected results, but the output's lists are empty.` }
+          ? { ...base, verdict: "fail", detail: `${page}Expected results, but the tool returned ${shape.got}.` }
           : { ...base, verdict: "pass" };
       if (testCase.expect === "empty")
         return shape.empty
@@ -548,10 +657,20 @@ const canonical = (value: unknown): string =>
       : entry,
   );
 
-/** A digest of what a case asks for, so an edited case's earlier result is stale. */
+/**
+ * A digest of what a case asks for and what it claims to cover, so an edited or relabelled case's
+ * earlier result is stale.
+ */
 export const caseDigest = (testCase: LiveTestCase) =>
   createHash("sha256")
-    .update(canonical([testCase.input, testCase.expect, testCase.next_page === true]))
+    .update(
+      canonical([
+        testCase.input,
+        testCase.expect,
+        testCase.next_page === true,
+        [...testCase.covers].sort(),
+      ]),
+    )
     .digest("hex")
     .slice(0, 16);
 
@@ -572,6 +691,12 @@ export interface LiveTestRecord {
   readonly excerpt?: string;
   readonly durationMs: number;
   readonly lane?: number;
+  /** The case as it ran, so a result outlives the case's removal or edit. */
+  readonly input?: Input;
+  readonly covers?: readonly string[];
+  readonly expect?: LiveTestExpectation;
+  /** A failing result the minter replaced by changing the case; kept for the publication review. */
+  readonly retired?: true;
 }
 
 export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
@@ -594,6 +719,12 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
   excerpt: Schema.optionalWith(Schema.String, { exact: true }),
   durationMs: Schema.NonNegativeInt,
   lane: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  input: Schema.optionalWith(Schema.Record({ key: Schema.String, value: Schema.Unknown }), {
+    exact: true,
+  }),
+  covers: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+  expect: Schema.optionalWith(LiveTestExpectation, { exact: true }),
+  retired: Schema.optionalWith(Schema.Literal(true), { exact: true }),
 });
 
 /** The first few items of an output, as compact text, for an excerpt. */
@@ -757,6 +888,49 @@ const tally = (statuses: readonly string[]) => {
 };
 
 /**
+ * Results the cases file no longer shows: a case the minter deleted, with its last result, and
+ * a failing result the minter replaced by changing the case.
+ */
+const retiredViews = (
+  file: LiveTestCasesFile,
+  records: ReadonlyMap<string, LiveTestRecord>,
+  replaced: readonly LiveTestRecord[],
+  sourceDigest: string | undefined,
+) => {
+  const current = new Map(file.cases.map((testCase) => [testCase.id, caseDigest(testCase)]));
+  const deleted = [...records.values()].filter((record) => !current.has(record.id));
+  const changed = replaced.filter((record) => current.get(record.id) !== record.caseDigest);
+  return [
+    ...deleted.map((record) => [record, "deleted from the cases file"] as const),
+    ...changed.map(
+      (record) =>
+        [
+          record,
+          current.has(record.id)
+            ? "changed after it failed"
+            : "changed after it failed, then deleted",
+        ] as const,
+    ),
+  ].map(([record, because]) => ({
+    id: record.id,
+    retiredBecause: because,
+    ...(record.covers === undefined ? {} : { covers: record.covers }),
+    ...(record.expect === undefined ? {} : { expect: record.expect }),
+    ...(record.input === undefined ? {} : { input: record.input }),
+    lastVerdict: record.verdict,
+    onPublishedSource: record.sourceDigest === sourceDigest,
+    got: record.got,
+    ...(record.detail === undefined ? {} : { detail: record.detail }),
+    ...(record.errorClass === undefined ? {} : { errorClass: record.errorClass }),
+    ...(record.frame === undefined ? {} : { frame: record.frame }),
+    ...(record.excerpt === undefined ? {} : { excerpt: record.excerpt }),
+  }));
+};
+
+const outOfTimeNote =
+  "The attempt ran out of time for live tests: a batch was refused for time, or a case ended at the deadline.";
+
+/**
  * The host's record of a read's live tests on the source it publishes, for the publication
  * review (`publication/tests.json`), and the line it adds to coverage. Undefined checklist means
  * the host could not read the tool's schemas.
@@ -766,23 +940,31 @@ export const liveTestsEvidence = (options: {
   readonly file: LiveTestCasesFile;
   readonly fileProblem?: string;
   readonly records: ReadonlyMap<string, LiveTestRecord>;
+  /** Failing results the minter replaced by changing their case. */
+  readonly replaced?: readonly LiveTestRecord[];
   readonly sourceDigest: string | undefined;
   /** The minter planned, skipped and ran no case, so the host built no checklist. */
   readonly nothingPlanned?: boolean;
+  /** The attempt ran out of time for live tests. */
+  readonly outOfTime?: boolean;
 }) => {
   const { checklist, file, records, sourceDigest } = options;
+  const outOfTime = options.outOfTime === true;
   if (options.nothingPlanned === true)
     return {
       record: {
         kind: "host_live_tests",
         note: "Written by the host, never by the minter. The minter planned, skipped and ran no live test case, so beyond the example nothing was tested live.",
         ...(sourceDigest === undefined ? {} : { sourceDigest }),
+        ...(outOfTime ? { outOfTime: true } : {}),
         checklist: [],
         cases: [],
+        retired: [],
         counts: { items: {}, cases: {} },
       },
-      coverage:
-        "Host live tests on the published source: none planned or run; beyond the example, nothing was tested live.",
+      coverage: `Host live tests on the published source: none planned or run; beyond the example, nothing was tested live.${
+        outOfTime ? ` ${outOfTimeNote}` : ""
+      }`,
     };
   const items = checklist === undefined ? [] : itemViews(checklist, file, records, sourceDigest);
   const cases = file.cases.map((testCase) => ({
@@ -790,6 +972,8 @@ export const liveTestsEvidence = (options: {
     input: testCase.input,
     ...(testCase.note === undefined ? {} : { note: testCase.note }),
   }));
+  const retired = retiredViews(file, records, options.replaced ?? [], sourceDigest);
+  const retiredFailures = retired.filter((entry) => entry.lastVerdict === "fail").length;
   const itemCounts = tally(items.map((item) => item.status));
   const caseCounts = tally(cases.map((testCase) => testCase.status));
   const gaps = items.filter(
@@ -806,19 +990,39 @@ export const liveTestsEvidence = (options: {
           .slice(0, 12)
           .map((item) => `${item.item} (${item.status})`)
           .join(", ")}${gaps.length > 12 ? ", …" : ""}.`
-  }${options.fileProblem === undefined ? "" : ` ${options.fileProblem}`}${
+  }${
+    retired.length === 0
+      ? ""
+      : ` ${retired.length} retired case${retired.length === 1 ? "" : "s"} (${retiredFailures} last failed).`
+  }${outOfTime ? ` ${outOfTimeNote}` : ""}${options.fileProblem === undefined ? "" : ` ${options.fileProblem}`}${
     checklist === undefined ? " The host could not read the tool's schemas, so it built no checklist." : ""
   }`;
   return {
     record: {
       kind: "host_live_tests",
-      note: "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch. status is against the source being published: stale means the source or the case changed after the case ran.",
+      note: "Written by the host from its own runs, never by the minter. Each case ran on a fresh page after one Guardian review of its batch. status is against the source being published: stale means the source or the case changed after the case ran. retired lists cases the minter deleted, and failures it replaced by changing the case, with their last result.",
       ...(sourceDigest === undefined ? {} : { sourceDigest }),
+      ...(outOfTime ? { outOfTime: true } : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),
       checklist: items,
       cases,
+      retired,
       counts: { items: itemCounts, cases: caseCounts },
     },
     coverage: summary,
   };
 };
+
+/** The record when the host could not build it, so the publication review knows why it is bare. */
+export const liveTestsEvidenceProblem = (problem: string) => ({
+  record: {
+    kind: "host_live_tests",
+    note: "Written by the host, never by the minter.",
+    problem,
+    checklist: [],
+    cases: [],
+    retired: [],
+    counts: { items: {}, cases: {} },
+  },
+  coverage: `Host live tests on the published source: the host could not build its record (${problem}).`,
+});

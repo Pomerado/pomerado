@@ -5,6 +5,7 @@ import {
   cursorPairOf,
   decodeCasesFile,
   judgeCase,
+  primaryListOf,
 } from "../../src/mint/live-tests.js";
 
 // The checklist and the verdicts are pure and full of edge cases: schema shapes the host must
@@ -76,6 +77,48 @@ describe("checklistOf", () => {
     expect(list).not.toContain("no_results");
   });
 
+  it("reads a details record with image and variant lists as a details read", () => {
+    const input = object({ url: { type: "string" }, size: { type: "string" } }, ["url"]);
+    const output = object({
+      title: { type: "string" },
+      price: { type: "number" },
+      images: { type: "array", items: { type: "string" } },
+      variants: { type: "array", items: object({ name: { type: "string" } }) },
+    });
+    expect(primaryListOf(input, output)).toBeUndefined();
+    const list = items(input, output);
+    expect(list).toContain("other_record");
+    expect(list).not.toContain("no_results");
+    // A record's address is not a choice the site offers or withholds.
+    expect(list).toContain("unoffered_value");
+    expect(items(object({ url: { type: "string" } }, ["url"]), output)).not.toContain(
+      "unoffered_value",
+    );
+  });
+
+  it("finds the results list of a search beside other arrays, and leaves list controls out", () => {
+    const input = object(
+      {
+        query: { type: "string" },
+        limit: { type: "integer" },
+        include: { type: "array", items: { enum: ["reviews", "offers"] } },
+        max_price: { type: "number" },
+      },
+      ["query"],
+    );
+    const output = object({
+      facets: { type: "array", items: object({ name: { type: "string" } }) },
+      results: { type: "array", items: object({ title: { type: "string" } }) },
+    });
+    expect(primaryListOf(input, output)).toEqual({ field: "results" });
+    const list = items(input, output);
+    expect(list).toContain("no_results");
+    expect(list).not.toContain("input:limit");
+    expect(list).not.toContain("input:include");
+    // A number on a scale is not a choice the site offers or withholds.
+    expect(list).not.toContain("unoffered_value");
+  });
+
   it("finds a location by its description and resolves local references", () => {
     const input = {
       $defs: { Where: { type: "string", description: "Postal code to deliver to" } },
@@ -100,19 +143,23 @@ describe("judgeCase", () => {
     durationMs: 1,
   });
 
-  it("judges results against the expectation, by the output's lists", () => {
-    expect(judgeCase({ expect: "result" }, completed({ results: [{}] })).verdict).toBe("pass");
-    expect(judgeCase({ expect: "result" }, completed({ results: [] })).verdict).toBe("fail");
-    expect(judgeCase({ expect: "empty" }, completed({ results: [] })).verdict).toBe("pass");
-    expect(judgeCase({ expect: "empty" }, completed({ results: [{}] }))).toMatchObject({
-      verdict: "fail",
-      got: "results (1)",
-    });
-    // A details read returns no list: any output is a result.
-    expect(judgeCase({ expect: "result" }, completed({ title: "Lamp" })).verdict).toBe("pass");
-    expect(judgeCase({ expect: "invalid_input" }, completed({ title: "Lamp" })).verdict).toBe(
+  it("judges a list read by its results list", () => {
+    const results = { field: "results" };
+    const judge = (expectation: "result" | "empty", output: unknown) =>
+      judgeCase({ expect: expectation }, completed(output), results);
+    expect(judge("result", { results: [{}], facets: [] }).verdict).toBe("pass");
+    expect(judge("result", { results: [], facets: [{}] }).verdict).toBe("fail");
+    expect(judge("empty", { results: [], facets: [{}] }).verdict).toBe("pass");
+    expect(judge("empty", { results: [{}] })).toMatchObject({ verdict: "fail", got: "results (1)" });
+  });
+
+  it("judges a details record by its values, never by its empty lists", () => {
+    const record = { title: "Lamp", price: 10, images: [], variants: [] };
+    expect(judgeCase({ expect: "result" }, completed(record), undefined).verdict).toBe("pass");
+    expect(judgeCase({ expect: "result" }, completed({ title: null, images: [] }), undefined).verdict).toBe(
       "fail",
     );
+    expect(judgeCase({ expect: "invalid_input" }, completed(record), undefined).verdict).toBe("fail");
   });
 
   it("passes a refusal only where one was expected, and a loud failure but not a timeout", () => {
