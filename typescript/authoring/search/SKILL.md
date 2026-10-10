@@ -29,9 +29,9 @@ their order, such as a layout or language switch.
   offers, only after reading them. A control the tool could not find, open or apply makes it
   throw `OperationFailure`.
 - A price or other numeric range is a number, never a label to match: a slider's labels and
-  steps often change with the result set. Set the nearest step the control offers, the range's
-  end for a value outside it, read the applied bound back and return it beside the results
-  (core skill, "Configure, then read").
+  steps often change with the result set. Set the nearest step inside the caller's bound (down
+  for a maximum, up for a minimum), the range's end for a value outside it, read the applied
+  bound back and return it beside the results (core skill, "Configure, then read").
 - A filter group the page disables for this result set, such as a price filter when only one
   result shows, is part of the answer: check that a group is enabled before opening it, never
   wait on a disabled one, and return the results with that filter reported as not offered.

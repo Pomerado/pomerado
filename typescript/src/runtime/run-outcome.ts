@@ -220,6 +220,12 @@ const lostWorker = (view: RunEvidence): RunFailure =>
     ? failure("worker_lost")
     : failure("outcome_unknown");
 
+/** A location that did not apply ends a run that may run again: a read, or a site left untouched. */
+const locationRetryable = (view: RunEvidence) =>
+  view.possible_commit !== true &&
+  !unsettledEffect(view) &&
+  (view.tool_effect === "read" || view.effect === "not_started" || view.effect === "rejected");
+
 /** Why a settled run failed. */
 export const runError = (view: RunEvidence): RunFailure => {
   switch (view.failure_reason) {
@@ -237,8 +243,9 @@ export const runError = (view: RunEvidence): RunFailure => {
           : { available: view.refusal_available }),
       });
     case "location_not_applied":
-      // A run that may have changed the website keeps that outcome, so nothing repeats it.
-      if (unsettledEffect(view)) break;
+      // Only a read or an untouched site may run again as is; a write that applied or may have,
+      // or a run that judged a step may have committed, keeps its own outcome.
+      if (!locationRetryable(view)) break;
       return failure("location_not_applied", {
         possible_commit: false,
         ...(view.refusal_reason === undefined ? {} : { reason: view.refusal_reason }),

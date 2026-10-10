@@ -586,7 +586,7 @@ it("has the minter read back a write, accept recent-search saves and look before
     "Telemetry, analytics and bot-sensor POSTs are normal and need no change. So is an anonymous recent-search, prefill or search-state save the site fires when you submit a search.",
   );
   expect(guide.instructions.replace(/\s+/g, " ")).toContain(
-    "Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of our automation. Not finding a value where you first looked is not that evidence. Before you call a value unavailable, check where the site would show it for the requested scope, such as the requested date's calendar or the results for the requested search. Settled evidence for the requested option, such as the site showing it as sold out or not offered, is enough.",
+    "Do not infer invalid input from a timeout, missing observation, lost authentication, or failure of our automation. Not finding a value where you first looked is not that evidence. Before you call a value unavailable, check where the site would show it for the requested scope, such as the requested date's calendar or the results for the requested search. Settled evidence for the requested option, such as the site not listing it, is enough, and so is the site showing it sold out or unavailable for a write. A read that finds the requested option greyed out or sold out returns it as unavailable data with the page's alternatives instead",
   );
 });
 
@@ -651,8 +651,8 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["29550912bbee2e8a8b81b937f92909fe089297ec12ad5fe621b5ce9a2254bdb2", "core"],
-    ["10622ef1d549c96ed32427cc21771364dc2ee01b660c0a5bab6a693c23f6313d", "search"],
+    ["6cee02a0f2cdb61c64a9008c7fcbf58e3e485f647cef097dc98d5d29681e3e9d", "core"],
+    ["9fa829e945f03781baa415866c62a42923f7e69dc258e76464b64a40bee6628d", "search"],
     ["fb38da33920193937b44e85e9ecf00c628311a13b9218868a054207209f19be4", "auth"],
     ["a1ad333d0244bd6e65e275a887245d53b5bc153533dafd5fb3bd195d6c68f66b", "testing"],
     ["9950488e2fe7907774479c528a6378d368d7d618b375d3450882ba2d9f49e240", "pagination"],
@@ -661,7 +661,7 @@ it("renders the pinned standalone authoring", async () => {
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["ffe902731a47362f1c174cf1291899167a28bc97dd2264a154442fbe2e0861be", "caller-input"],
     ["c057d668b445fe0d9691bc088e70790b1473e2d46c5b46b22849cc196c4e1a9f", "publication"],
-    ["27c3508e0d290c8a3ef43c659fc17f816bf629d4da74ebd360b14bea202e3637", "workspace/AGENTS.md"],
+    ["5560c21ade5a940c02e7b4a60a41b6bf2cd3445184a99709a5a98019806040e1", "workspace/AGENTS.md"],
     ["e023d1b6f7bc3673118d4310d9813cfa878c554b68a353413e73592054d2704d", "workspace/README.md"],
   ]);
 });

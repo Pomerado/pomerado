@@ -73,7 +73,10 @@ const sentences: {
     const location = requested === undefined ? "the requested location" : `location ${requested}`;
     return {
       message: `The website did not apply ${location}${applied === undefined ? "" : `; the page stayed on ${applied}`}, so the run returned no results for another place.${siteMessage === undefined ? "" : ` The website said: ${siteMessage}`}`,
-      remediation: then(outcome, "Run it again in a few minutes."),
+      remediation: then(
+        outcome,
+        "Run it again only when the website's message points to a passing problem; otherwise change the location in the input.",
+      ),
     };
   },
   login_identity_conflict: (outcome) => ({

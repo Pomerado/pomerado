@@ -103,8 +103,11 @@ export interface LocationNotAppliedDetail {
   readonly siteMessage?: string;
 }
 
-const boundedText = (value: unknown, limit: number) =>
-  typeof value === "string" && value.trim() !== "" ? value.trim().slice(0, limit) : undefined;
+/** A part's text, a finite number such as a numeric ZIP code included. */
+const boundedText = (value: unknown, limit: number) => {
+  const text = typeof value === "number" && Number.isFinite(value) ? String(value) : value;
+  return typeof text === "string" && text.trim() !== "" ? text.trim().slice(0, limit) : undefined;
+};
 
 /**
  * The detail as a host may carry it, each part bounded; undefined when it lacks the field, the

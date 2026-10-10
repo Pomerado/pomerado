@@ -325,9 +325,10 @@ that depends on them:
      state, then drop the options the input alone rules out. Never list options read before
      the input they depend on applied.
    - A number on a scale the site steps, such as a price range slider or price boxes, is a
-     number, not a choice: never refuse it because no label matches. Set the nearest step the
-     control offers, its end when the value is outside the range, read the applied value back
-     and return it, such as `applied_max_price`, beside the results. The rule above for a value
+     number, not a choice: never refuse it because no label matches. Set the nearest step inside
+     the caller's bound, down for a maximum and up for a minimum, so a maximum of 47 on steps of
+     10 applies 40, never 50; use the control's end when the value is outside its range. Read the
+     applied value back and return it, such as `applied_max_price`, beside the results. The rule above for a value
      the page does not offer covers choice lists only.
 3. Confirm. Read each choice back from the page's selected state, then wait until the values
    that depend on it have changed or settled; a value read before the page updates belongs to

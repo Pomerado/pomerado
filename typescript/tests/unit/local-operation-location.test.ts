@@ -19,7 +19,15 @@ const browser = {
   sessionId: "local",
   executeResponse: () => Effect.succeed({ success: true, result: null }),
 };
-const outcomeOf = (detail: string) =>
+/** A synthetic pickup write that reads the page's store first, then finds it kept another. */
+const unappliedWrite = `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({ zip: Schema.String }), output: Schema.Struct({ store: Schema.String }), write: { confirmation: "readback" } },
+  async ({ input, errors, kernel, sessionId }) => {
+    await kernel.browsers.playwright.execute(sessionId, { code: "return null" });
+    throw new errors.LocationNotApplied("The page kept its own store after ZIP " + input.zip, { field: "zip", requested: input.zip, applied: "Example Store, 00002", step: "store_save" });
+  });`;
+const outcomeOf = (detail: string, write = false) =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -27,10 +35,13 @@ const outcomeOf = (detail: string) =>
         return yield* runLocalOperation({
           workspace,
           entrypoint,
-          sources: [[entrypoint, unapplied(detail)]],
+          sources: [[entrypoint, write ? unappliedWrite : unapplied(detail)]],
           input: { zip: "00001" },
           browser,
-        }).pipe(Effect.flip, Effect.map(runOutcomeFailure("read", "operation")));
+        }).pipe(
+          Effect.flip,
+          Effect.map(runOutcomeFailure(write ? "write" : "read", "operation")),
+        );
       }),
     ),
   );
@@ -65,4 +76,14 @@ it("reports a location the page showed none for without an applied value", async
     requested: "00001",
     step: "zip_entry",
   });
+});
+
+it("keeps a write whose browser step may have changed the site from a same-request retry", async () => {
+  const failure = await outcomeOf("", true);
+  expect(failure.outcome).toMatchObject({ code: "outcome_unknown", retry: "never" });
+});
+
+it("keeps a numeric location the script passed as its text", async () => {
+  const failure = await outcomeOf(`{ field: "zip", requested: 1, applied: 2, step: "store_save" }`);
+  expect(failure.outcome.details).toMatchObject({ requested: "1", applied: "2" });
 });
