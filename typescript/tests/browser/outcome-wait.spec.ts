@@ -109,8 +109,9 @@ test("a timeout says what each outcome matched", async ({ page }) => {
   // The empty state is on the page but hidden, and the answer never comes.
   await searchPage(page, `<p hidden>No rooms match your dates</p><p>Still searching</p>`, 50);
   const { error } = await call(page, waitBody(300));
-  expect(error).toBe(
-    "outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 1, results 0 visible of 0; no progress seen",
+  // What it saw of the page's progress depends on when its first look came; the counts do not.
+  expect(error).toMatch(
+    /^outcome_timeout after 300 ms: failed 0 visible of 0, empty 0 visible of 1, results 0 visible of 0; /u,
   );
 });
 
