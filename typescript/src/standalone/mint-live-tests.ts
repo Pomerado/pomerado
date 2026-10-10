@@ -9,9 +9,11 @@ import {
   type LiveTestOutcome,
 } from "../mint/live-tests.js";
 import { InputRequestFailure } from "../runtime/input-request.js";
+import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { siteDomain } from "../runtime/same-site.js";
 import type { MintState } from "./mint-state.js";
 import { mintError } from "./errors.js";
+import { mintListScope, refusedCursor } from "./list-cursors.js";
 
 /** How long one case may run. */
 const caseTimeoutMs = 60_000;
@@ -104,8 +106,13 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
           return yield* Effect.fail(failure);
         }
         const domain = siteDomain(context.siteOrigin);
+        // A case's cursor is checked and its output's next cursor signed as an example step's
+        // are, so a next-page case's page two runs from the position its page one returned.
+        const listScope = () => mintListScope(state.session, context.siteOrigin, batch.entrypoint);
         const runInput = (input: Readonly<Record<string, unknown>>) =>
           Effect.gen(function* () {
+            const admission = admitListCursor(input, listScope());
+            if (!admission.ok) return outcomeOf(Either.left(refusedCursor(admission)));
             const reset = yield* Effect.either(
               start.before({ purpose: "test", target: "liveBrowser" }),
             );
@@ -116,6 +123,7 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
                 entrypoint: batch.entrypoint,
                 sources,
                 input,
+                list: admission.list,
                 browser,
                 siteOrigin: context.siteOrigin,
                 ...(domain === undefined ? {} : { siteDomain: domain }),
@@ -126,7 +134,12 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
                 // A test asks nobody: a case whose script asks a question is not judged.
                 ask: () => Effect.fail(new InputRequestFailure({ code: "Unavailable" })),
                 signIn: state.sessionSignIn.hook(() => undefined),
-              }),
+              }).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  output: sealListOutput(result.output, input, listScope()).output,
+                })),
+              ),
             );
             return outcomeOf(executed);
           });

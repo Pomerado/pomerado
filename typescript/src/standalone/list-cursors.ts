@@ -35,6 +35,16 @@ export const localListScope = (
   now: session.options.listCursors?.now?.() ?? Date.now(),
 });
 
+/**
+ * A minter step's cursor scope: the build's site and the entrypoint it runs. A live test case's
+ * page two takes the cursor its page one returned, checked as an example step's is.
+ */
+export const mintListScope = (
+  session: Pick<StandaloneSession, "options">,
+  siteOrigin: string,
+  entrypoint: string,
+) => localListScope(session, `mint\0${siteOrigin}\0${entrypoint}`, siteOrigin);
+
 /** An artifact's cursors are bound to its site and its files, which a new build replaces. */
 const artifactScope = (
   session: StandaloneSession,

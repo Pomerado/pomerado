@@ -131,3 +131,79 @@ test("runs a read's planned cases on reset pages after one review, and hands pub
     await site.close();
   }
 });
+
+/** A list tool on the runtime's cursor contract: five rows on one page, read in windows. */
+const listTool = `import { Schema } from "effect";
+import { defineOperation, finishList, listInputFields, listOutputFields, selectRows, startList } from "../runtime/index.js";
+const Row = Schema.Struct({ id: Schema.String });
+export default defineOperation({name:"list_fixture",input:Schema.Struct({query:Schema.String,...listInputFields}),output:Schema.Struct({results:Schema.Array(Row),...listOutputFields})},
+async ({kernel,sessionId,input}) => {
+  const list = startList(input, { mechanism: "offset" });
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return ['a','b','c','d','e']",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  const keyOf = (row) => row.id;
+  const read = response.result.map((id) => ({ id }));
+  const selected = selectRows(list, read, keyOf);
+  const results = selected.rows.slice(0, list.limit);
+  const last = results.at(-1);
+  const more = selected.rows.length > results.length;
+  const next = more && last !== undefined ? { offset: read.findIndex((row) => row.id === last.id) + 1 } : null;
+  return { results, ...finishList(list, { rows: results, keyOf, next, hasMore: more, totalResults: read.length, listChanged: selected.listChanged }) };
+});`;
+
+test("runs a list case's page two from the cursor its page one returned, checked and signed by the host", async () => {
+  // Chromium runs the case's two pages in their own child processes after one batch review.
+  test.setTimeout(60_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>List</title><h1>List</h1>"),
+  );
+  try {
+    const guardian = recordingGuardian();
+    const { requests } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "List the fixture rows",
+      timeoutMs: 600_000,
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": listTool,
+            "test/cases.json": JSON.stringify({
+              cases: [
+                {
+                  id: "page-2",
+                  covers: ["next_page"],
+                  input: { query: "rows", limit: 2 },
+                  expect: "result",
+                  next_page: true,
+                },
+              ],
+            }),
+          }),
+        () => [
+          call("live_tests", {
+            intent: "Run the next-page case",
+            action: "run",
+            entrypoint: "src/tool.mjs",
+            cases: null,
+            maxWorkers: 1,
+          }),
+        ],
+      ],
+    });
+    const ran = toolResult(requests[2], "live_tests") as {
+      readonly status: string;
+      readonly cases: readonly Readonly<Record<string, unknown>>[];
+    };
+    expect(ran.status).toBe("ran");
+    // Page two continues after page one's last row: without the host's cursor, page one has no
+    // next cursor and the case cannot run its next page.
+    expect(ran.cases[0]).toMatchObject({ id: "page-2", status: "pass", got: "results (2)" });
+    const excerpt = String(ran.cases[0]?.["excerpt"]);
+    expect(excerpt).toContain('{"id":"c"},{"id":"d"}');
+    expect(excerpt).not.toContain('"id":"a"');
+  } finally {
+    await site.close();
+  }
+});

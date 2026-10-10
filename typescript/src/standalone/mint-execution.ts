@@ -42,7 +42,7 @@ import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
-import { localListScope, refusedCursor } from "./list-cursors.js";
+import { mintListScope, refusedCursor } from "./list-cursors.js";
 import { commitUncertain, verifyFirstNotice } from "../mint/write-session.js";
 import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
@@ -605,11 +605,7 @@ const authoredExecution = (
           : undefined;
         // A minter's page two runs with the cursor its page one returned, checked as a run's is.
         const listScope = () =>
-          localListScope(
-            state.session,
-            `mint\0${context.siteOrigin}\0${execution.entrypoint}`,
-            context.siteOrigin,
-          );
+          mintListScope(state.session, context.siteOrigin, execution.entrypoint);
         const admission = admitListCursor(input, listScope());
         const executed = yield* Effect.either(
           !admission.ok
