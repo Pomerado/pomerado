@@ -13,16 +13,20 @@ import {
 
 const readBackAdvice = "read the site back before any retry";
 
+const readBackSentence = `${readBackAdvice.charAt(0).toUpperCase()}${readBackAdvice.slice(1)}.`;
+
 /**
  * What the outcome means for the website, then `step`: the next step when nothing changed or
- * after a read-back, or `confirmed` when the website confirmed the action. A write that may have
- * applied needs the read-back even when its code carries no possible commit.
+ * after a read-back, or `confirmed` when the website confirmed the action. A write the website
+ * confirmed is never told to run again, since that would repeat it; with a possible commit it
+ * also reads the site back. A write that may have applied needs the read-back even when its code
+ * carries no possible commit.
  */
 const then = (outcome: RunOutcome, step: string, confirmed = "") => {
+  if (outcome.writeStatus === "applied")
+    return `The website confirmed the action, so running the tool again would repeat it.${outcome.possibleCommit ? ` ${readBackSentence}` : ""}${confirmed === "" ? "" : ` ${confirmed}`}`;
   if (outcome.possibleCommit || outcome.writeStatus === "may_have_applied")
     return `A step may already have changed the website, so ${readBackAdvice}. Then ${step.charAt(0).toLowerCase()}${step.slice(1)}`;
-  if (outcome.writeStatus === "applied")
-    return `The website confirmed the action, so running the tool again would repeat it.${confirmed === "" ? "" : ` ${confirmed}`}`;
   return `Nothing changed on the website. ${step}`;
 };
 const detail = (outcome: RunOutcome, key: string) => {

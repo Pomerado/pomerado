@@ -159,6 +159,20 @@ describe("a write session's publication check", () => {
     ).toBe("contract_input_mismatch");
   });
 
+  it("accepts any short identifier as a mark name, and still refuses one with a space", () => {
+    for (const name of ["place_order", "placeOrder", "place-order"]) {
+      const extracted = contract({ confirmation: "readback", commits: [name] });
+      const entered: WriteSessionMarks = { enteredMarks: [name], confirmation: "readback" };
+      expect(check([entered], extracted).result).toEqual(
+        Exit.succeed({ extracted, declared: "readback" }),
+      );
+    }
+    const spaced: WriteSessionMarks = { enteredMarks: ["place order"], confirmation: "readback" };
+    expect(
+      reason(check([spaced], contract({ confirmation: "readback", commits: ["place order"] })).result),
+    ).toBe("commit_marks_undeclared");
+  });
+
   it("returns the declared confirmation and the extracted contract", () => {
     const extracted = contract({ confirmation: "readback", commits: ["place-order"] });
     const { result, extractions } = check([confirmed], extracted);
