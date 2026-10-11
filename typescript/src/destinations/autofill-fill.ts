@@ -12,6 +12,7 @@ import {
   FoundIn,
   judgedOrigins,
   locatedRefusal,
+  lostTypingPhase,
   namedAfterTyping,
   refused,
   targetEvidence,
@@ -160,31 +161,54 @@ const filledReport = (
   ...(progress.typed ? { typed: true as const } : {}),
 });
 
+/** The labels a failed call that held a value keeps of its error, by their names in its context. */
+const errorLabels = { code: "errorCode", reason: "errorReason", method: "errorMethod" } as const;
+
+/**
+ * An error's string labels, such as a DevTools command's finite reason and its method, each kept
+ * only when no value of the step appears in it. Never the error's message or parameters.
+ */
+const valueFreeLabels = (error: Error, values: readonly string[]) => {
+  const held = values.filter((value) => value !== "").map((value) => value.toLowerCase());
+  const labels: Record<string, string> = {};
+  for (const [key, name] of Object.entries(errorLabels)) {
+    const label: unknown = Reflect.get(error, key);
+    if (typeof label === "string" && !held.some((value) => label.toLowerCase().includes(value)))
+      labels[name] = label;
+  }
+  return labels;
+};
+
 /**
  * A failed focus can refuse before typing. A date or submit can already have changed the site
  * even when it was the first call, so a lost reply stays uncertain. A date's call held the date,
- * so its failure keeps finite facts only.
+ * and a typing call its value (`held`, the step's values), so their failures keep finite facts
+ * only. A typing call's failure has the phase `lostTypingPhase`: the host clicks the submit only
+ * after every field.
  */
 const failedCall = (
   progress: FillProgress,
   error: Error,
-  call: { readonly heldValue: boolean; readonly mayMutate: boolean },
+  call: {
+    readonly held?: readonly string[];
+    readonly mayMutate: boolean;
+    readonly typing?: true;
+  },
 ): AutofillStepReport => {
-  const detail = call.heldValue
-    ? failureDetail("autofill_step_failed", {
-        operation: "autofill.fill",
-        context: {
-          errorName: error.name,
-          ...("code" in error && typeof error.code === "string" ? { errorCode: error.code } : {}),
-        },
-      })
-    : failureDetail("autofill_step_failed", { operation: "autofill.fill", error });
+  const detail =
+    call.held === undefined
+      ? failureDetail("autofill_step_failed", { operation: "autofill.fill", error })
+      : failureDetail("autofill_step_failed", {
+          operation: "autofill.fill",
+          ...(call.typing === true ? { phase: lostTypingPhase } : {}),
+          context: { errorName: error.name, ...valueFreeLabels(error, call.held) },
+        });
   return progress.typed || call.mayMutate
     ? {
         outcome: "uncertain",
         reason: "fill_call_failed",
         failureDetail: detail,
-        ...(progress.typed || call.heldValue ? { typed: true as const } : {}),
+        ...(progress.typed || call.held !== undefined ? { typed: true as const } : {}),
       }
     : { ...refused("page_unavailable"), failureDetail: detail };
 };
@@ -379,7 +403,7 @@ const fillField = (
     );
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
-        heldValue: format !== undefined,
+        ...(format === undefined ? {} : { held: input.values }),
         mayMutate: format !== undefined,
       });
     const answer = answered.right;
@@ -449,7 +473,11 @@ const afterFieldCall = (
         ),
       );
       if (typing._tag === "Left")
-        return failedCall(progress, typing.left, { heldValue: true, mayMutate: true });
+        return failedCall(progress, typing.left, {
+          held: input.values,
+          mayMutate: true,
+          typing: true,
+        });
       if (typing.right === "inserted") {
         progress.typed = true;
         progress.statuses.push("filled");
@@ -513,10 +541,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       }),
     );
     if (clicked._tag === "Left")
-      return failedCall(progress, clicked.left, {
-        heldValue: false,
-        mayMutate: step.submit !== undefined,
-      });
+      return failedCall(progress, clicked.left, { mayMutate: step.submit !== undefined });
     const answer = clicked.right;
     if ("refusal" in answer || "checked" in answer)
       return stopped(step, progress, answer, "submit");

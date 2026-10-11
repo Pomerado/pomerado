@@ -212,6 +212,16 @@ export const maySend = (stepReport: AutofillStepReport) =>
   (stepReport.outcome === "filled" &&
     (stepReport.submit === "clicked" || stepReport.clicked === true));
 
+/** A failed fill's diagnostic phase when the call that lost its answer was a field's typing. */
+export const lostTypingPhase = "typing";
+
+/**
+ * A fill whose lost answer was a field's typing call's: that field may hold its value, and the
+ * host never clicked the submit, which it clicks only after every field.
+ */
+export const lostTyping = (stepReport: AutofillStepReport) =>
+  stepReport.outcome === "uncertain" && stepReport.failureDetail.phase === lostTypingPhase;
+
 /**
  * A host refusal while typing into an autofill sign-in screen, value-free. Two are identical
  * when every field is: the same check, cause, field and screen.

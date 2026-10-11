@@ -163,9 +163,7 @@ it("types nothing when a host's binding world fails", async () => {
   const keyboard = makeCredentialKeyboard(cdp, undefined, () =>
     Effect.fail(new Error("World unavailable")),
   );
-  expect(await Effect.runPromise(Effect.either(keyboard.insertText(target, "s3cret")))).toMatchObject(
-    { _tag: "Left", left: { message: "World unavailable" } },
-  );
+  expect(await Effect.runPromise(keyboard.insertText(target, "s3cret"))).toBe("binding_unresolved");
   expect(sent.map(({ method }) => method)).toEqual(["DOM.getDocument"]);
 });
 

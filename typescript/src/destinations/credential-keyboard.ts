@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 
 /** Keyboard remains decodable for older control documents, but is temporarily unsupported. */
 export type CredentialTypingMode = "paste" | "keyboard";
@@ -13,11 +13,11 @@ interface CredentialTarget {
 
 /** Why native insertion inserted nothing, as one finite cause: never the binding key, a selector or a value. */
 export const InsertionRefusal = Schema.Literal(
-  /** No node in the target's sessions carries the binding's marker. */
+  /** No node carries the binding's marker in the target's sessions the host could read and walk. */
   "binding_not_found",
   /** More than one node carries it, in one session or across sessions. */
   "binding_ambiguous",
-  /** The marked node no longer resolves in the private world. */
+  /** The host could not find the binding's world or resolve the marked node in it. */
   "binding_unresolved",
   /** The marked node holds no binding in the private world: page code copied the marker. */
   "binding_not_in_world",
@@ -42,7 +42,10 @@ export type InsertionRefusal = typeof InsertionRefusal.Type;
 /** A native insertion's answer: inserted, or why not. */
 export const CredentialInsertion = Schema.Union(Schema.Literal("inserted"), InsertionRefusal);
 
-/** Inserts only into the original field, or refuses with the finite cause. */
+/**
+ * Inserts only into the original field, or refuses with the finite cause. It fails only at or after
+ * the call that carries the value, so a failure may have typed it.
+ */
 export interface CredentialKeyboard {
   readonly insertText: (
     target: CredentialTarget,
@@ -175,6 +178,14 @@ const resultOf = (value: unknown) => {
   return decoded.value.result;
 };
 
+/**
+ * The one field the target's binding marks, resolved in its world, or why not, sending no value.
+ * A session whose document the browser refuses to read, or the host cannot walk, such as a large
+ * third-party frame's, is skipped: when it held the field, the binding is not found, and a marker
+ * copied elsewhere holds no binding in the private world. A binding world that fails and a node
+ * the browser refuses to resolve leave the binding unresolved. So nothing before the insertion
+ * fails.
+ */
 const findBinding = (
   cdp: PrivateCredentialCdp,
   target: CredentialTarget,
@@ -184,39 +195,42 @@ const findBinding = (
     let found:
       { sessionId: string; backendNodeId: number; frameId: string | undefined } | undefined;
     for (const sessionId of cdp.sessions(target.targetId)) {
-      const value = yield* command(cdp, sessionId, "DOM.getDocument", { depth: -1, pierce: true });
-      const node = yield* Effect.try({
-        try: () => findMarkedNode(value, target.bindingKey),
-        catch: (error) =>
-          error instanceof Error ? error : new Error("Credential target binding unavailable"),
-      });
+      const read = yield* Effect.either(
+        command(cdp, sessionId, "DOM.getDocument", { depth: -1, pierce: true }),
+      );
+      if (read._tag === "Left") continue;
+      const walked = yield* Effect.either(
+        Effect.try(() => findMarkedNode(read.right, target.bindingKey)),
+      );
+      if (walked._tag === "Left") continue;
+      const node = walked.right;
       if (node === undefined) continue;
       if (node === "binding_ambiguous" || found !== undefined) return "binding_ambiguous" as const;
       found = { sessionId, ...node };
     }
     if (found === undefined) return "binding_not_found" as const;
     let executionContextId: number | undefined;
-    if (bindingWorld !== undefined)
-      executionContextId = yield* bindingWorld(cdp, {
-        sessionId: found.sessionId,
-        frameId: found.frameId,
-      });
-    const value = yield* command(cdp, found.sessionId, "DOM.resolveNode", {
-      backendNodeId: found.backendNodeId,
-      ...(executionContextId === undefined ? {} : { executionContextId }),
-    });
-    const { object } = yield* Effect.try({
-      try: () => {
-        const decoded = Schema.decodeUnknownOption(ResolvedNode)(value);
-        if (decoded._tag === "None") throw new Error("Credential target binding unavailable");
-        return decoded.value;
-      },
-      catch: (error) =>
-        error instanceof Error ? error : new Error("Credential target binding unavailable"),
-    });
-    return object.objectId === undefined
+    if (bindingWorld !== undefined) {
+      const world = yield* Effect.either(
+        bindingWorld(cdp, { sessionId: found.sessionId, frameId: found.frameId }),
+      );
+      if (world._tag === "Left") return "binding_unresolved" as const;
+      executionContextId = world.right;
+    }
+    const resolved = yield* Effect.either(
+      command(cdp, found.sessionId, "DOM.resolveNode", {
+        backendNodeId: found.backendNodeId,
+        ...(executionContextId === undefined ? {} : { executionContextId }),
+      }),
+    );
+    const objectId =
+      resolved._tag === "Left"
+        ? undefined
+        : Option.getOrUndefined(Schema.decodeUnknownOption(ResolvedNode)(resolved.right))?.object
+            .objectId;
+    return objectId === undefined
       ? ("binding_unresolved" as const)
-      : { sessionId: found.sessionId, objectId: object.objectId };
+      : { sessionId: found.sessionId, objectId };
   });
 
 /**

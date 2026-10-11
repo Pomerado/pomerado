@@ -319,7 +319,11 @@ export type AutofillStepReport =
       readonly reason: "fill_call_failed";
       /** Host-only: a value may have reached the page. */
       readonly typed?: true;
-      /** Host diagnostics only; finite facts alone when the failed call was a date's, whose code held it. */
+      /**
+       * Host diagnostics only; finite facts alone when the failed call held a value, a date's or a
+       * typing call's. A typing call's has the phase `typing` (`lostTyping`): the host never
+       * clicked the submit.
+       */
       readonly failureDetail: FailureDetail;
     };
 
