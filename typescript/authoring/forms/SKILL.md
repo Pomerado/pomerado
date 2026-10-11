@@ -75,8 +75,8 @@ the option's value or its observed label pattern, and read back that the field t
 Never click a label or option copied from the example, and never reject an input value
 the schema accepts. Enums and typeahead matching follow the core skill's input schema; a
 caller's answer picks an option but does not show which exist. Prefer matching an existing
-record by a case-insensitive exact name, and prefer never picking an "Add new" row when an
-existing record matches.
+record by a fuzzy match on its name (core skill), and prefer never picking an "Add new"
+row when an existing record matches.
 
 Fill every dropdown and date control with the SDK's form controls: import
 `formControlsCode` from the runtime, put it at the top of the call's code, and call its
