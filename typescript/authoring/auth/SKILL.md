@@ -45,9 +45,9 @@ one-time parameters: record the link you clicked, not the page you landed on.
 On a site that signs each account in to its own workspace host (sign in at `app.example.com`,
 work at `acme.example.com`), record `loginUrl` on the shared sign-in host. Never type or hard-code
 a workspace or tenant host or slug in a page address, selector or source: the host records a
-workspace screen itself, and each run's sign-in goes to that account's own workspace. A sign-in
-that goes on to an identity provider on another domain is filled with `signInStep` like any other
-screen: the host asks Guardian once whether that provider may be trusted, then types there.
+workspace screen itself, and each run's sign-in goes to that account's own workspace. Its
+`loginUrl` carries no return address: no other URL, host or path to go to after sign-in in its
+query, fragment or path, since a host refuses such a link for a workspace site.
 
 # Discover the entry before authenticating
 

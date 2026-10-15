@@ -29,7 +29,6 @@ import {
 } from "../runtime/sign-in-replay.js";
 import type { SignInReplayTiming } from "../runtime/sign-in-replay-steps.js";
 import { askingValueHooks } from "../runtime/sign-in-values.js";
-import { approvedSignInOrigins } from "../runtime/workspace-origin.js";
 import { localSignInLogin, makeSignInBrowser, repeatedLoginFailure } from "./authentication.js";
 import type { StandaloneSession } from "./session.js";
 
@@ -436,8 +435,8 @@ export const mintSessionSignInFailure = (failed: SessionSignInFailed): MintFailu
  * A run's sign-in with its artifact's recorded sign-in: `before` signs in before the operation
  * runs, as every signed-in run does, and `hook` signs in again on the same browser whenever the
  * script's `ensureSignedIn` finds the page signed out, with the login `before` read. A run never
- * restores a saved session, so it saves none. The recipe's approved sign-in origins join the
- * run's, and `workspace` holds the workspace origin the run's sign-in learned, for this run only.
+ * restores a saved session, so it saves none. `workspace` holds the workspace origin the run's
+ * sign-in learned, for this run only.
  */
 export const makeRunSignIn = (
   session: StandaloneSession,
@@ -454,9 +453,7 @@ export const makeRunSignIn = (
     page: browser,
     keyboard: browser.keyboard,
     siteOrigin,
-    authenticationOrigins: [
-      ...new Set([...authenticationOrigins, ...approvedSignInOrigins(signIn.recipe, siteOrigin)]),
-    ],
+    authenticationOrigins,
     onRequest: browser.onRequest,
     typing: session.signInTyping,
   });

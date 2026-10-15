@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   admitScreenOrigin,
-  approvedSignInOrigins,
-  providerOrigin,
+  entryNamesAddress,
   signedInCheckOrigin,
   workspaceHost,
   workspaceRelation,
@@ -14,12 +13,30 @@ const site = "https://app.example.com";
 const parent = "example.com";
 
 describe("workspaceHost", () => {
-  it.each(["https://acme.example.com", "https://globex.example.com", "https://a.b.example.com"])(
-    "accepts the same-site sibling %s",
-    (candidate) => {
-      expect(workspaceHost(site, parent, candidate)).toBe(true);
-    },
-  );
+  it.each([
+    "https://acme.example.com",
+    "https://globex.example.com",
+    "https://a.b.example.com",
+    // An internationalized host in its canonical punycode form.
+    "https://xn--bcher-kva.example.com",
+    // The URL parser keeps a trailing dot, and the public suffix list reads the same domain.
+    "https://acme.example.com.",
+    // The apex is another host on the site's registrable domain.
+    "https://example.com",
+  ])("accepts the same-site sibling %s", (candidate) => {
+    expect(workspaceHost(site, parent, candidate)).toBe(true);
+  });
+
+  it("accepts a sibling of a site whose host is its registrable domain", () => {
+    expect(workspaceHost("https://example.com", parent, "https://acme.example.com")).toBe(true);
+  });
+
+  it("accepts a sibling on the port of a site on a non-default port, and no other port", () => {
+    const portSite = "https://app.example.com:8443";
+    expect(workspaceHost(portSite, parent, "https://acme.example.com:8443")).toBe(true);
+    expect(workspaceHost(portSite, parent, "https://acme.example.com")).toBe(false);
+    expect(workspaceHost(portSite, parent, "https://acme.example.com:9443")).toBe(false);
+  });
 
   it.each([
     ["the site's own host", site, site, parent],
@@ -34,42 +51,21 @@ describe("workspaceHost", () => {
     ["a parent that is not the site's", site, "https://acme.example.com", "example.org"],
     ["a parent that is a suffix of the site's", site, "https://acme.example.com", "com"],
     ["text that is not an origin", site, "acme.example.com", parent],
+    // The parser writes a unicode host as punycode, so the text is not its exact origin.
+    ["a raw unicode host", site, "https://bücher.example.com", parent],
+    ["the site's own host on another port", site, "https://app.example.com:8443", parent],
+    ["a sibling with an explicit port", site, "https://acme.example.com:8443", parent],
   ])("refuses %s", (_case, siteOrigin, candidate, relationParent) => {
     expect(workspaceHost(siteOrigin, relationParent, candidate)).toBe(false);
   });
 });
 
-describe("providerOrigin", () => {
-  it("accepts an exact cross-site https origin", () => {
-    expect(providerOrigin(site, "https://id.example.net")).toBe(true);
-  });
-
-  it.each([
-    "https://id.example.com",
-    "http://id.example.net",
-    "https://user@id.example.net",
-    "https://id.example.net/signin",
-    "not an origin",
-  ])("refuses %s", (candidate) => {
-    expect(providerOrigin(site, candidate)).toBe(false);
-  });
-});
-
-describe("a recipe's relations for its site", () => {
+describe("a recipe's workspace relation for its site", () => {
   it("keeps a workspace relation only on the site's own registrable domain", () => {
     expect(workspaceRelation({ version: 4, workspace: { parent } }, site)).toEqual({ parent });
     expect(workspaceRelation({ version: 4, workspace: { parent: "example.org" } }, site)).toBeUndefined();
     expect(workspaceRelation({ version: 4, workspace: { parent: "github.io" } }, "https://github.io")).toBeUndefined();
     expect(workspaceRelation({ version: 1 }, site)).toBeUndefined();
-  });
-
-  it("keeps only cross-site sign-in origins", () => {
-    expect(
-      approvedSignInOrigins(
-        { version: 4, signInOrigins: ["https://id.example.net", "https://auth.example.com"] },
-        site,
-      ),
-    ).toEqual(["https://id.example.net"]);
   });
 });
 
@@ -99,12 +95,23 @@ describe("admitScreenOrigin", () => {
       reason: "workspace_unverified",
       sibling: true,
     });
-    expect(
-      admitScreenOrigin(context({ pinned: "https://acme.example.com" }), shared, "https://evil.example.com"),
-    ).toEqual({ admitted: false, reason: "screen_origin_changed", sibling: true });
     expect(admitScreenOrigin(context({ relation: undefined }), shared, "https://evil.example.com")).toEqual(
       { admitted: false, reason: "screen_origin_changed", sibling: true },
     );
+  });
+
+  it("refuses another workspace than the pinned one as unverified until the identifier went out", () => {
+    // Before this login sent anything, another workspace may be one the site remembers: the run
+    // clears and replays once. After its identifier went out, the recorded screen moved.
+    const pinned = context({ pinned: "https://acme.example.com" });
+    expect(admitScreenOrigin(pinned, shared, "https://evil.example.com")).toEqual({
+      admitted: false,
+      reason: "workspace_unverified",
+      sibling: true,
+    });
+    expect(
+      admitScreenOrigin({ ...pinned, identifierSent: true }, shared, "https://evil.example.com"),
+    ).toEqual({ admitted: false, reason: "screen_origin_changed", sibling: true });
   });
 
   it("learns a workspace host only after the identifier went out on an exact screen", () => {
@@ -119,6 +126,15 @@ describe("admitScreenOrigin", () => {
     expect(
       admitScreenOrigin(context({ candidate: "https://acme.example.com" }), workspace, "https://acme.example.com"),
     ).toEqual({ admitted: true });
+  });
+
+  it("learns at most one workspace host per replay", () => {
+    const learned = context({ identifierSent: true, candidate: "https://acme.example.com" });
+    expect(admitScreenOrigin(learned, workspace, "https://globex.example.com")).toEqual({
+      admitted: false,
+      reason: "workspace_unverified",
+      sibling: true,
+    });
   });
 
   it("refuses a workspace screen without a valid relation, and off the site", () => {
@@ -160,9 +176,58 @@ describe("signedInCheckOrigin", () => {
     expect(signedInCheckOrigin(base)).toBe(site);
   });
 
-  it("pins only a workspace host other than the site's", () => {
-    expect(workspaceToPin(site, { parent }, "https://acme.example.com")).toBe("https://acme.example.com");
-    expect(workspaceToPin(site, { parent }, site)).toBeUndefined();
-    expect(workspaceToPin(site, undefined, "https://acme.example.com")).toBeUndefined();
+  it("pins only a workspace host this login's own sign-in explains", () => {
+    const acme = "https://acme.example.com";
+    const globex = "https://globex.example.com";
+    expect(workspaceToPin({ ...base, candidate: acme })).toBe(acme);
+    expect(workspaceToPin({ ...base, pinned: acme, current: acme })).toBe(acme);
+    expect(workspaceToPin({ ...base, pinned: acme, current: globex, credentialsSent: true })).toBe(globex);
+    expect(workspaceToPin({ ...base, current: acme, credentialsSent: true })).toBe(acme);
+    // A session that merely shows an unpinned workspace host runs its check there, never pins it.
+    expect(signedInCheckOrigin({ ...base, current: acme })).toBe(acme);
+    expect(workspaceToPin({ ...base, current: acme })).toBeUndefined();
+    expect(workspaceToPin({ ...base, current: site, credentialsSent: true })).toBeUndefined();
+    expect(workspaceToPin({ ...base, relation: undefined, candidate: acme })).toBeUndefined();
+  });
+});
+
+describe("entryNamesAddress", () => {
+  it.each([
+    `${site}/login`,
+    `${site}/login?lang=en&step=1`,
+    `${site}/login?next=%2Fhome`,
+    `${site}/login#password`,
+    // A host on another domain that is not an address the site could follow.
+    `${site}/login?ref=newsletter`,
+    `${site}/signin/identifier`,
+    `${site}/u/login/identifier?state=abc123`,
+  ])("lets %s open", (url) => {
+    expect(entryNamesAddress(url, parent)).toBe(false);
+  });
+
+  it.each([
+    `${site}/login?next=https://evil.example.com/login`,
+    `${site}/login?next=//evil.example.net`,
+    `${site}/login?next=https%3A%2F%2Fevil.example.net`,
+    `${site}/login?next=https%25253A%25252F%25252Fevil.example.net`,
+    `${site}/login?next=%5Cevil.example.net`,
+    `${site}/login?tenant=evil.example.com`,
+    `${site}/login?tenant=EVIL.Example.COM`,
+    `${site}/login#next=acme.example.com`,
+    `${site}/login?next=example.com`,
+    // An address in the path, or written with another full stop.
+    `${site}/r/evil.example.com/login`,
+    `${site}/r/https%3A%2F%2Fevil.example.net/login`,
+    `${site}/login?tenant=evil\u3002example\u3002com`,
+    `${site}/login?tenant=evil\uFF0Eexample\uFF0Ecom`,
+    `${site}/login?tenant=evil\uFF61example\uFF61com`,
+    // Fullwidth letters a URL parser would read as ASCII.
+    `${site}/login?next=\uFF45\uFF56\uFF49\uFF4C\uFF0E\uFF45\uFF58\uFF41\uFF4D\uFF50\uFF4C\uFF45\uFF0E\uFF43\uFF4F\uFF4D`,
+    // More layers of encoding than a host reads through, or text that does not decode.
+    `${site}/login?next=%2525252525252F`,
+    `${site}/login?next=%E0%A4%A`,
+    "not a url",
+  ])("refuses %s", (url) => {
+    expect(entryNamesAddress(url, parent)).toBe(true);
   });
 });

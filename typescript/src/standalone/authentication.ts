@@ -21,11 +21,11 @@ import type {
 import { MintFailure } from "../mint/contracts.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
 import { failureDetail } from "../runtime/failure-detail.js";
+import { primaryPageCode } from "../runtime/host-execute.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { sameSite } from "../runtime/same-site.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { SignInReplayBrowser } from "../runtime/sign-in-replay.js";
-import { resetPageCode } from "../runtime/start-state.js";
 
 /**
  * Whether the host typed a sign-in value into the session browser's page. It lasts for the
@@ -86,6 +86,84 @@ return false;`,
       Effect.map((visible) => visible === true),
     );
 };
+
+/** The browser's cookie domains and the origins it holds storage or frames for. */
+const SiteDataInventory = Schema.Struct({
+  domains: Schema.Array(Schema.String),
+  origins: Schema.Array(Schema.String),
+});
+
+/**
+ * Clears the site's own data from the session browser: the cookies of every domain on the site's
+ * registrable domain (`sameSite`), and the storage of each such origin, its tab session storage
+ * included, then leaves the tab blank for the replay to open its entry again. Other sites'
+ * cookies and storage stay, and no other tab is closed.
+ */
+const clearSiteData = (page: AutofillPage, siteOrigin: string) =>
+  page
+    .execute(
+      `const state = await context.storageState();
+const origins = new Set(state.origins.map((entry) => entry.origin));
+for (const tab of context.pages())
+  for (const frame of tab.frames()) {
+    try { origins.add(new URL(frame.url()).origin); } catch {}
+  }
+return { domains: [...new Set(state.cookies.map((cookie) => cookie.domain))], origins: [...origins] };`,
+      15,
+    )
+    .pipe(
+      Effect.flatMap(Schema.decodeUnknown(SiteDataInventory)),
+      Effect.flatMap((inventory) => {
+        const onSite = (url: URL | null) => url !== null && sameSite(siteOrigin, url);
+        const domains = inventory.domains.filter((domain) =>
+          onSite(URL.parse(`https://${domain.startsWith(".") ? domain.slice(1) : domain}`)),
+        );
+        const origins = [
+          ...new Set([
+            siteOrigin,
+            ...inventory.origins.filter(
+              (origin) => URL.parse(origin)?.origin === origin && onSite(URL.parse(origin)),
+            ),
+          ]),
+        ];
+        return page.execute(
+          `${primaryPageCode(page.targetId)}
+const domains = ${JSON.stringify(domains)};
+const origins = ${JSON.stringify(origins)};
+const session = await context.newCDPSession(primary);
+try {
+  await session.send("Page.stopLoading");
+  for (const origin of origins)
+    await session.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+} finally {
+  await session.detach();
+}
+for (const domain of domains) await context.clearCookies({ domain });
+// The tab keeps each origin's session storage across navigations: an inert document on each
+// origin clears it without loading the website.
+const local = (route) => route.fulfill({ contentType: "text/html", body: "<html></html>" });
+const navigation = await context.newCDPSession(primary);
+await navigation.send("Network.setBypassServiceWorker", { bypass: true });
+try {
+  for (const origin of origins) {
+    await primary.route(origin + "/**", local);
+    try {
+      await primary.goto(origin + "/", { waitUntil: "domcontentloaded", timeout: 10_000 });
+      await primary.evaluate(() => sessionStorage.clear());
+    } finally {
+      await primary.unroute(origin + "/**", local);
+    }
+  }
+} finally {
+  await navigation.send("Network.setBypassServiceWorker", { bypass: false });
+  await navigation.detach();
+}
+await primary.goto("about:blank", { timeout: 10_000 });`,
+          60,
+        );
+      }),
+      Effect.asVoid,
+    );
 
 /**
  * The local host's sign-in browser on the session's page, for a build's recorder and a run's
@@ -158,12 +236,7 @@ export const makeSignInBrowser = (options: {
       return signInOrigins();
     },
     open: (url) => openAutofillLogin({ page, url }),
-    // Clears every cookie and the storage of every origin the browser visited, and leaves the tab
-    // blank for the replay to open its entry again.
-    clearSiteData: () =>
-      page
-        .execute(resetPageCode(page.targetId, siteOrigin, "clear", undefined, [], [], true), 60)
-        .pipe(Effect.asVoid),
+    clearSiteData: () => clearSiteData(page, siteOrigin),
     markerVisible: (selector, screenPage, popup) =>
       markerVisible({
         selector,

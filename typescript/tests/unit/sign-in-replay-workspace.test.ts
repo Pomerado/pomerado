@@ -13,18 +13,17 @@ import {
   type WorkspaceOriginEvent,
 } from "../../src/runtime/sign-in-replay.js";
 import { askingValueHooks } from "../../src/runtime/sign-in-values.js";
-import { approvedSignInOrigins } from "../../src/runtime/workspace-origin.js";
 import { localSignInLogin } from "../../src/standalone/authentication.js";
 
 // A run's sign-in on a synthetic workspace SaaS: the identifier screen is on the shared host
 // app.example.com, and the site then sends each account to its own workspace host for the
-// password (acme. or globex.), or to a cross-site identity provider. Every host is synthetic.
+// password (acme. or globex.). Every host is synthetic.
 
-const site = "https://app.example.com";
+const defaultSite = "https://app.example.com";
+const site = defaultSite;
 const acme = "https://acme.example.com";
 const globex = "https://globex.example.com";
 const evil = "https://evil.example.com";
-const provider = "https://id.example.net";
 const password = "synthetic-password";
 const accounts: Record<string, string> = { "ada-owner": acme, "grace-owner": globex };
 
@@ -37,18 +36,21 @@ interface SiteOptions {
   readonly clearable?: boolean;
   /** The session is already signed in on this workspace. */
   readonly signedInOn?: string;
-  /** The sign-in origins the host trusts besides the site. */
-  readonly authenticationOrigins?: readonly string[];
+  /** Where the correct password sends the session instead of its account page. */
+  readonly afterPassword?: string;
+  /** The site's own origin, when it is not the default one. */
+  readonly origin?: string;
 }
 
 const screens: Record<string, readonly string[]> = {
   "/login": ["#username", "#next"],
   "/login/password": ["#password", "#sign-in"],
-  "/signin": ["#password", "#sign-in"],
+  "/login/continue": ["#continue"],
   "/home": [],
 };
 
 const fakeSite = (options: SiteOptions = {}) => {
+  const site = options.origin ?? defaultSite;
   const state = {
     at: new URL(`${site}/login`),
     signedInOn: options.signedInOn,
@@ -56,9 +58,9 @@ const fakeSite = (options: SiteOptions = {}) => {
   };
   const fills: string[] = [];
   const checkedOn: (string | undefined)[] = [];
+  const opened: string[] = [];
   const listeners = new Set<(request: SignInRequest) => void>();
-  const authenticationOrigins = options.authenticationOrigins ?? [];
-  const trusted = (url: URL) => sameSite(site, url) || authenticationOrigins.includes(url.origin);
+  const trusted = (url: URL) => sameSite(site, url);
   const shows = (selector: string) => (screens[state.at.pathname] ?? []).includes(selector);
   const page = () => `${state.at.origin}${state.at.pathname}`;
   const browser: SignInReplayBrowser<Error> = {
@@ -81,7 +83,7 @@ const fakeSite = (options: SiteOptions = {}) => {
           page: page(),
           targets: { fields: step.fields.map(() => target), submit: step.submit === undefined ? null : target },
           siteOrigin: site,
-          authenticationOrigins: [...authenticationOrigins],
+          authenticationOrigins: [],
           screen: {
             origin: state.at.origin,
             fields: step.fields.map((field) => ({
@@ -122,11 +124,18 @@ const fakeSite = (options: SiteOptions = {}) => {
           const username = values[0] ?? "";
           const next = options.passwordOn?.(username) ?? `${accounts[username] ?? site}/login/password`;
           state.at = new URL(next);
+        } else if (state.at.pathname === "/login/continue") {
+          state.signedInOn = state.at.origin;
+          state.at = new URL(`${state.at.origin}/home`);
+        } else if (
+          screens[state.at.pathname]?.includes("#password") === true &&
+          values[0] === password &&
+          options.afterPassword !== undefined
+        ) {
+          state.at = new URL(options.afterPassword);
         } else if (screens[state.at.pathname]?.includes("#password") === true && values[0] === password) {
-          // A provider sends the session back to the site; a workspace keeps it.
-          const home = sameSite(site, state.at) ? state.at.origin : site;
-          state.signedInOn = home;
-          state.at = new URL(`${home}/home`);
+          state.signedInOn = state.at.origin;
+          state.at = new URL(`${state.at.origin}/home`);
         }
         return {
           outcome: "filled" as const,
@@ -150,9 +159,10 @@ const fakeSite = (options: SiteOptions = {}) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    authenticationOrigins,
+    authenticationOrigins: [],
     open: (url) =>
       Effect.sync(() => {
+        opened.push(url);
         state.at =
           state.leftover !== undefined
             ? new URL(state.leftover)
@@ -166,13 +176,18 @@ const fakeSite = (options: SiteOptions = {}) => {
         if (options.clearable === true) state.leftover = undefined;
       }),
   };
-  return { browser, state, fills, checkedOn };
+  return { browser, state, fills, checkedOn, opened };
 };
 
 const identifierStep = {
   page: `${site}/login`,
   fields: [{ selector: "#username", accepts: ["username" as const] }],
   submit: "#next",
+};
+const passwordStep = {
+  page: `${site}/login/password`,
+  fields: [{ selector: "#password", slot: "password" as const }],
+  submit: "#sign-in",
 };
 const workspaceRecipe: SignInRecipe = {
   version: 4,
@@ -187,15 +202,6 @@ const workspaceRecipe: SignInRecipe = {
     },
   ],
   signedIn: { selector: "#account", openPath: "/home" },
-};
-const providerRecipe: SignInRecipe = {
-  version: 4,
-  signInOrigins: [provider],
-  steps: [
-    identifierStep,
-    { page: `${provider}/signin`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
-  ],
-  signedIn: { selector: "#account" },
 };
 
 const owner = (username: string) =>
@@ -216,20 +222,22 @@ const signIn = (
   username = "ada-owner",
   workspaceOrigin?: string,
   events: WorkspaceOriginEvent[] = [],
+  at: { readonly siteOrigin?: string; readonly entryUrl?: string } = {},
 ) => {
+  const siteOrigin = at.siteOrigin ?? site;
   const secrets = makeRunSecrets();
   const ask = owner(username);
   return Effect.runPromise(
     Effect.either(
       signInForRun({
         recipe,
-        entryUrl: `${site}/login`,
+        entryUrl: at.entryUrl ?? `${siteOrigin}/login`,
         browser: fake.browser,
-        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
-        values: askingValueHooks({ ask, register: secrets.register, site: "app.example.com", siteOrigin: site }),
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin }),
+        values: askingValueHooks({ ask, register: secrets.register, site: "app.example.com", siteOrigin }),
         carries: secrets.carries,
         site: "app.example.com",
-        siteOrigin: site,
+        siteOrigin,
         ...(workspaceOrigin === undefined ? {} : { workspaceOrigin }),
         onWorkspaceEvent: (event) => events.push(event),
         timing: { stepWaitMs: 60, pollMs: 2 },
@@ -300,27 +308,96 @@ it("refuses a workspace password screen the site showed before the identifier we
   expect(fake.fills).toEqual([]);
 });
 
-it("opens the account page on the workspace a signed-in session is on, and pins it", async () => {
+it("checks on the workspace a signed-in session is on, but pins nothing this login sent nothing for", async () => {
+  // The session shows an unpinned workspace host and this replay sent nothing: the check runs
+  // there, and the run goes on, but the host may be leftover cookies, so it is not the login's.
   const fake = fakeSite({ signedInOn: acme });
-  expect(await signIn(workspaceRecipe, fake)).toEqual(
-    Either.right({ alreadySignedIn: true, workspaceOrigin: acme }),
-  );
+  expect(await signIn(workspaceRecipe, fake)).toEqual(Either.right({ alreadySignedIn: true }));
   expect(fake.checkedOn).toEqual([acme]);
   expect(fake.fills).toEqual([]);
 });
 
-it("types on an approved identity provider, and refuses the same screen on any other origin", async () => {
-  const origins = approvedSignInOrigins(providerRecipe, site);
-  expect(origins).toEqual([provider]);
-  const approved = fakeSite({ authenticationOrigins: origins, passwordOn: () => `${provider}/signin` });
-  expect(await signIn(providerRecipe, approved)).toEqual(Either.right({ alreadySignedIn: false }));
-  expect(approved.fills).toEqual([`${site}/login`, `${provider}/signin`]);
-
-  const other = fakeSite({ authenticationOrigins: origins, passwordOn: () => "https://id.example.org/signin" });
-  expect(await signIn(providerRecipe, other)).toEqual(
-    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "credential_target_refused" })),
+it("keeps the pinned workspace a signed-in session is on", async () => {
+  const fake = fakeSite({ signedInOn: acme });
+  expect(await signIn(workspaceRecipe, fake, "ada-owner", acme)).toEqual(
+    Either.right({ alreadySignedIn: true, workspaceOrigin: acme }),
   );
-  expect(other.fills).toEqual([`${site}/login`]);
+  expect(fake.checkedOn).toEqual([acme]);
+});
+
+it("learns one workspace host per replay, and refuses a second one the site shows after it", async () => {
+  const recipe: SignInRecipe = {
+    ...workspaceRecipe,
+    steps: [
+      ...workspaceRecipe.steps,
+      { origin: "workspace", page: "/login/continue", fields: [], submit: "#continue" },
+    ],
+  };
+  const events: WorkspaceOriginEvent[] = [];
+  const fake = fakeSite({ afterPassword: `${globex}/login/continue` });
+  expect(await signIn(recipe, fake, "ada-owner", undefined, events)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "workspace_unverified" })),
+  );
+  expect(fake.fills.some((page) => page.startsWith(globex))).toBe(false);
+  expect(events).toContainEqual({ kind: "unrecognized_sibling", origin: globex });
+});
+
+it("clears and replays once when a pinned login is shown another workspace before it sent anything", async () => {
+  const fake = fakeSite({ leftover: `${globex}/login`, clearable: true });
+  expect(await signIn(workspaceRecipe, fake, "ada-owner", acme)).toEqual(
+    Either.right({ alreadySignedIn: false, workspaceOrigin: acme }),
+  );
+  expect(fake.fills).toEqual([`${site}/login`, `${acme}/login/password`]);
+});
+
+it("learns no workspace from an identifier sent on the pinned workspace instead of the shared host", async () => {
+  // Only an identifier sent on a screen's own recorded origin anchors a new workspace: one typed
+  // on the pinned workspace says nothing about where else the site may send this login.
+  const fake = fakeSite({ leftover: `${acme}/login`, passwordOn: () => `${globex}/login/password` });
+  expect(await signIn(workspaceRecipe, fake, "ada-owner", acme)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "workspace_unverified" })),
+  );
+  expect(fake.fills.some((page) => page.startsWith(globex))).toBe(false);
+});
+
+it("opens no login URL that names another address, and types nothing", async () => {
+  for (const entryUrl of [
+    `${site}/login?next=https://evil.example.com/login/password`,
+    `${site}/login?next=https%253A%252F%252Fevil.example.com`,
+    `${site}/login#return=evil.example.com`,
+  ]) {
+    const fake = fakeSite({ passwordOn: () => `${evil}/login/password` });
+    expect(await signIn(workspaceRecipe, fake, "ada-owner", undefined, [], { entryUrl })).toEqual(
+      Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "entry_names_address" })),
+    );
+    expect(fake.opened).toEqual([]);
+    expect(fake.fills).toEqual([]);
+  }
+  // A recipe without a workspace relation opens such a URL as before.
+  const plain = fakeSite({ passwordOn: () => `${site}/login/password` });
+  const entryUrl = `${site}/login?next=https://app.example.com/home`;
+  const recipe: SignInRecipe = {
+    version: 4,
+    steps: [identifierStep, passwordStep],
+    signedIn: workspaceRecipe.signedIn,
+  };
+  expect(await signIn(recipe, plain, "ada-owner", undefined, [], { entryUrl })).toEqual(
+    Either.right({ alreadySignedIn: false }),
+  );
+});
+
+it("signs in on a workspace host on the site's own non-default port", async () => {
+  const portSite = "https://app.example.com:8443";
+  const portAcme = "https://acme.example.com:8443";
+  const fake = fakeSite({ origin: portSite, passwordOn: () => `${portAcme}/login/password` });
+  const recipe: SignInRecipe = {
+    ...workspaceRecipe,
+    steps: [{ ...identifierStep, page: `${portSite}/login` }, ...workspaceRecipe.steps.slice(1)],
+  };
+  expect(await signIn(recipe, fake, "ada-owner", undefined, [], { siteOrigin: portSite })).toEqual(
+    Either.right({ alreadySignedIn: false, workspaceOrigin: portAcme }),
+  );
+  expect(fake.fills).toEqual([`${portSite}/login`, `${portAcme}/login/password`]);
 });
 
 it("refuses a workspace step whose relation names another registrable domain", async () => {

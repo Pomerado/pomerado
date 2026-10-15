@@ -101,7 +101,7 @@ export interface RecordedSignInStep {
 
 /**
  * A verified sign-in's recipe, as `autofillRecipe` writes it, with only the signed-in indicator's
- * parts that are set, and version 4's workspace relation and sign-in origins when given.
+ * parts that are set, and version 4's workspace relation when given.
  */
 export const signInRecipe = (
   steps: readonly RecordedSignInStep[],
@@ -144,9 +144,9 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's `workspace` and
- * `signInOrigins`, then each screen in `recipeStep`'s key order (a workspace screen's `origin`
- * first), indented two spaces, with no final newline. The same recipe is the same bytes from any
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's `workspace`, then each
+ * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
+ * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
  */
 export const signInRecipeText = (recipe: SignInRecipe) =>
@@ -156,9 +156,6 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
       ...(recipe.version !== 4 || recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),
-      ...(recipe.version !== 4 || recipe.signInOrigins === undefined
-        ? {}
-        : { signInOrigins: recipe.signInOrigins }),
       steps: recipe.steps.map(inStepOrder),
       signedIn: {
         ...(recipe.signedIn.selector === undefined ? {} : { selector: recipe.signedIn.selector }),

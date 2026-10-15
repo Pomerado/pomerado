@@ -89,15 +89,13 @@ describe("decodeSignInRecipe", () => {
       },
     ],
     [
-      "version 4 with a workspace step and an approved identity provider",
+      "version 4 with a workspace step",
       {
         version: 4,
         workspace: { parent: "example.com" },
-        signInOrigins: ["https://id.example.net"],
         steps: [
           { ...steps[0], page: "https://app.example.com/login" },
           { origin: "workspace", ...steps[1], page: "/login/password" },
-          { page: "https://id.example.net/signin", fields: [], submit: "#continue" },
         ],
         signedIn: { selector: "#account-menu", openPath: "/settings" },
       },
@@ -148,11 +146,25 @@ describe("decodeSignInRecipe", () => {
         signedIn,
       }),
     ],
+    ...[
+      ["a backslash", "/\\evil.example.com/login"],
+      ["a query", "/login?tenant=acme"],
+      ["a fragment", "/login#password"],
+      ["a dot segment", "/org/../login"],
+      ["an empty segment that opens with //", "//login"],
+    ].map(([name, page]) => [
+      `a version 4 workspace step whose page has ${String(name)}`,
+      JSON.stringify({
+        version: 4,
+        workspace: { parent: "example.com" },
+        steps: [{ origin: "workspace", page, fields: [] }],
+        signedIn,
+      }),
+    ]),
     [
       "a version 4 workspace step without the recipe's workspace",
       JSON.stringify({
         version: 4,
-        signInOrigins: ["https://id.example.net"],
         steps: [{ origin: "workspace", page: "/login", fields: [] }],
         signedIn,
       }),
@@ -165,17 +177,10 @@ describe("decodeSignInRecipe", () => {
       "a version 4 parent that is not a lower-case host name",
       JSON.stringify({ version: 4, workspace: { parent: "Example.com" }, steps, signedIn }),
     ],
-    ...[
-      ["a sign-in origin with a path", ["https://id.example.net/signin"]],
-      ["an http sign-in origin", ["http://id.example.net"]],
-      ["a sign-in origin with user info", ["https://user@id.example.net"]],
-      ["a repeated sign-in origin", ["https://id.example.net", "https://id.example.net"]],
-      ["no sign-in origin in the list", []],
-      ["five sign-in origins", [1, 2, 3, 4, 5].map((n) => `https://id${n}.example.net`)],
-    ].map(([name, signInOrigins]) => [
-      `a version 4 recipe with ${String(name)}`,
-      JSON.stringify({ version: 4, signInOrigins, steps, signedIn }),
-    ]),
+    [
+      "a version 4 recipe with a key this host does not know",
+      JSON.stringify({ version: 4, signInOrigins: ["https://id.example.net"], steps, signedIn }),
+    ],
   ])("refuses %s as invalid", (_name, text) => {
     expect(decodeSignInRecipe(text)).toBe("invalid");
   });
@@ -248,7 +253,7 @@ describe("signInRecipe", () => {
     ).toBe(1);
   });
 
-  it("writes version 4 only for a workspace step, a workspace relation or a sign-in origin", () => {
+  it("writes version 4 only for a workspace step or a workspace relation", () => {
     const shared = { ...recorded, page: "https://app.example.com/login" };
     const workspace = {
       origin: "workspace" as const,
@@ -258,20 +263,14 @@ describe("signInRecipe", () => {
     };
     const relation = { workspace: { parent: "example.com" } };
     expect(signInRecipe([shared], signedIn, {}).version).toBe(1);
-    expect(signInRecipe([shared], signedIn, { signInOrigins: [] }).version).toBe(1);
-    expect(signInRecipe([shared, workspace], signedIn, relation).version).toBe(4);
-    expect(signInRecipe([shared], signedIn, { signInOrigins: ["https://id.example.net"] }).version).toBe(4);
-    const recipe = signInRecipe([shared, workspace], signedIn, {
-      ...relation,
-      signInOrigins: ["https://id.example.net"],
-    });
+    expect(signInRecipe([shared], signedIn, relation).version).toBe(4);
+    const recipe = signInRecipe([shared, workspace], signedIn, relation);
     const text = signInRecipeText(recipe);
     expect(decodeSignInRecipe(text)).toEqual(recipe);
     // The relation names the site's registrable domain and a path, never a workspace host.
     expect(Object.keys(JSON.parse(text) as object)).toEqual([
       "version",
       "workspace",
-      "signInOrigins",
       "steps",
       "signedIn",
     ]);

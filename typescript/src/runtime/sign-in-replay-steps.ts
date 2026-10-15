@@ -159,8 +159,8 @@ export interface SignInReplayInput<E> {
   readonly retry: ReplayRetryState;
   readonly timing: SignInReplayTiming;
   /**
-   * The site the run is authorized for. A recipe's workspace relation and sign-in origins are
-   * checked against it; without it, a workspace step is refused.
+   * The site the run is authorized for. A recipe's workspace relation is checked against it;
+   * without it, a workspace step is refused.
    */
   readonly siteOrigin?: string;
   /** The login's pinned workspace origin, ignored unless it passes `workspaceHost`. */

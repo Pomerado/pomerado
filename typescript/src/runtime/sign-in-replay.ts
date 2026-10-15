@@ -24,12 +24,14 @@ import type { CredentialRejectedField, WebsiteCredentials } from "./authenticati
 import { trustedUrl } from "./sign-in-origins.js";
 import {
   admitScreenOrigin,
+  entryNamesAddress,
   pinnedWorkspaceOrigin,
   recordedScreenPage,
   signedInCheckOrigin,
   workspaceHost,
   workspaceRelation,
   workspaceToPin,
+  type SignedInCheckContext,
 } from "./workspace-origin.js";
 import {
   askOne,
@@ -91,10 +93,13 @@ const makeReplayWorkspace = <E>(input: SignInReplayInput<E>) => {
         : pinnedWorkspaceOrigin(siteOrigin, relation, input.workspaceOrigin),
     /** The workspace origin this replay admitted, which replaces the pinned one for it. */
     candidate: undefined as string | undefined,
-    /** The slots of the fields this replay ran on exact-origin screens. */
+    /**
+     * The slots of the fields this replay ran on exact-origin screens shown on their own recorded
+     * origin, never on the pinned workspace.
+     */
     exactSlots: new Set<AutofillSlot>(),
-    /** Where the latest passing signed-in check found the session. */
-    verifiedOn: undefined as string | undefined,
+    /** What the latest passing signed-in check knew when it chose where to run. */
+    verified: undefined as SignedInCheckContext | undefined,
   };
   const current = () => workspace.candidate ?? workspace.pinned;
   const screens: ReplayScreenPages = {
@@ -189,32 +194,27 @@ const makeReplaySession = <E>(input: SignInReplayInput<E>) => {
       if (relation === undefined || siteOrigin === undefined)
         return yield* input.browser.confirm(indicator, steps, steps);
       yield* sent.settled;
-      const checkOrigin = (current: string | undefined) =>
-        signedInCheckOrigin({
-          siteOrigin,
-          relation,
-          pinned: workspace.pinned,
-          candidate: workspace.candidate,
-          current,
-          credentialsSent: exactSent(provesLogin),
-        });
-      const opens =
-        indicator.openPath === undefined
-          ? undefined
-          : checkOrigin(originOf((yield* checkHere).url));
+      const context = (current: string | undefined): SignedInCheckContext => ({
+        siteOrigin,
+        relation,
+        pinned: workspace.pinned,
+        candidate: workspace.candidate,
+        current,
+        credentialsSent: exactSent(provesLogin),
+      });
+      const before =
+        indicator.openPath === undefined ? undefined : context(originOf((yield* checkHere).url));
+      const opens = before === undefined ? undefined : signedInCheckOrigin(before);
       const check = yield* input.browser.confirm(indicator, steps, steps, opens);
-      workspace.verifiedOn = check.signedIn
-        ? (opens ?? checkOrigin(originOf(check.url)))
-        : undefined;
+      workspace.verified = check.signedIn ? (before ?? context(originOf(check.url))) : undefined;
       return check;
     });
-  /** A signed-in outcome, with the workspace origin the host pins to the login, if any. */
+  /**
+   * A signed-in outcome, with the workspace origin the host pins to the login, if any: only one
+   * this login's own sign-in explains (`workspaceToPin`).
+   */
   const signedIn = (alreadySignedIn: boolean): SignInReplayOutcome => {
-    const { siteOrigin, relation, verifiedOn } = workspace;
-    const pin =
-      siteOrigin === undefined || verifiedOn === undefined
-        ? undefined
-        : workspaceToPin(siteOrigin, relation, verifiedOn);
+    const pin = workspace.verified === undefined ? undefined : workspaceToPin(workspace.verified);
     return {
       outcome: "signed_in",
       alreadySignedIn,
@@ -392,15 +392,19 @@ const admitOrigin = <E>(replay: Replay<E>, recorded: SignInRecipeStep, page: str
       return recorded.origin !== "workspace" && live === originOf(recorded.page)
         ? undefined
         : session.outcome("screen_origin_changed");
-    // Only a workspace screen asks whether the identifier already went out.
-    if (recorded.origin === "workspace") yield* session.sent.settled;
+    // A workspace screen, or an exact screen off its own origin and the pinned one, asks whether
+    // the identifier already went out.
+    const asks =
+      recorded.origin === "workspace" ||
+      (live !== originOf(recorded.page) && live !== workspace.pinned);
+    if (asks) yield* session.sent.settled;
     const admission = admitScreenOrigin(
       {
         siteOrigin: workspace.siteOrigin,
         relation: workspace.relation,
         pinned: workspace.pinned,
         candidate: workspace.candidate,
-        identifierSent: recorded.origin === "workspace" && session.exactSent(isIdentifier),
+        identifierSent: asks && session.exactSent(isIdentifier),
       },
       recorded,
       live,
@@ -476,8 +480,10 @@ const runScreen = <E>(
     const { step } = inspected;
     let { inspection } = inspected;
     const { session } = replay;
-    // What an exact-origin screen sends is what lets the site move this login to its workspace.
-    if (recorded.origin !== "workspace")
+    // What an exact-origin screen sends on its own recorded origin is what lets the site move
+    // this login to its workspace; the same screen admitted on the pinned workspace counts for
+    // nothing here.
+    if (recorded.origin !== "workspace" && originOf(inspection.page) === originOf(recorded.page))
       for (const field of step.fields) session.workspace.exactSlots.add(field.slot);
     // The screen shows and needs the login: a value-free replay stops before anything is sent.
     if (replay.valueFree && (recorded.approval !== undefined || step.fields.length > 0))
@@ -743,13 +749,16 @@ const afterRejection = <E>(
  * the login once (`login`), replays with it, asking for any code, date of birth, ZIP or security
  * answer the screens need (`values`), and corrects a rejected username or password at most twice
  * per field, never sending a rejected value again. Values stay in memory for the run. A recipe it
- * cannot read fails `MissingRecipe`, and an entry page off the site fails before anything opens.
+ * cannot read fails `MissingRecipe`, and an entry page off the site fails before anything opens,
+ * as does, for a recipe with a workspace relation, one whose query or fragment names another
+ * address (`entryNamesAddress`).
  *
  * A recipe with a workspace relation may sign in on the login's own workspace host
  * (`workspaceOrigin`, the one pinned to the login, or one this run learns), and the result names
- * the workspace origin to pin. A replay that finds another workspace's sign-in before this login
- * sent anything (`workspace_unverified`) clears the site's data and starts again once, when the
- * browser can, and otherwise fails the run.
+ * the workspace origin to pin, only one this login's own sign-in explains (`workspaceToPin`). A
+ * replay that finds another workspace's sign-in before this login sent anything
+ * (`workspace_unverified`) clears the site's data and starts again once, when the browser can,
+ * and otherwise fails the run.
  */
 export const signInForRun = <E>(input: {
   readonly recipe: SignInRecipe;
@@ -778,6 +787,11 @@ export const signInForRun = <E>(input: {
       return yield* new SignInRunFailed({ code: "MissingRecipe", reason: recipe });
     if (!trustedUrl(input.siteOrigin, input.browser.authenticationOrigins, input.entryUrl))
       return yield* new SignInRunFailed({ code: "RecipeFailed", reason: "entry_off_site" });
+    // A recipe whose sign-in may move to a per-account workspace host opens no login URL that
+    // names another address: the site could send every account on to a host the URL chose.
+    const relation = workspaceRelation(recipe, input.siteOrigin);
+    if (relation !== undefined && entryNamesAddress(input.entryUrl, relation.parent))
+      return yield* new SignInRunFailed({ code: "RecipeFailed", reason: "entry_names_address" });
     const unanswered = () => new SignInRunFailed({ code: "NeedsInput", reason: "login" });
     const login: SignInLogin<SignInRunFailed> = {
       held: input.login.held,
