@@ -174,7 +174,13 @@ pomerado:section publication.saved-files:end -->.
      payment is explicit, never left to the page's default;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
-     declares, without committing twice.
+     declares, without committing twice, and its checks reject no correct write: a
+     before-and-after comparison that compares whole objects or serialized text, reads through
+     another query after the commit than before it, or counts a field the site maintains as a
+     change, a branch the session did not run that confirms through its own code (its own commit
+     call is fine), and a throw after a confirmed commit whose requested fields read back as asked,
+     are findings too, as is a coverage claim that a check passed offline over a body that was not
+     saved whole.
 
 ## Never put these in published files
 

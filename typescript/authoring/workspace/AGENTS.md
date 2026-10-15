@@ -500,9 +500,10 @@ Finish in this order: your last edit, every case again on each version you ship,
 last, before `finish_build`. A signed-in read and a write do the original task: the read's
 example, or the write's act session, is the one run that proves the tool. They design no tests and
 run no live tests or offline test suites beyond it, and check their HTTP version once, against
-that run. The scope follows what the tool is now: a read that signs in or becomes a write keeps to
-the one run from then on, and a repair that rebuilds one as a read signed out tests it fully.
-Report skipped, unsupported or missing bodies honestly.
+that run. A write still checks its composed script's read-back and comparison offline over what
+the session read (writes skill). The scope follows what the tool is now: a read that signs in or
+becomes a write keeps to the one run from then on, and a repair that rebuilds one as a read
+signed out tests it fully. Report skipped, unsupported or missing bodies honestly.
 
 <!-- pomerado:section agents.implementations -->
 

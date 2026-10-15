@@ -14,7 +14,9 @@ composes its script from what happened (the `writes` skill). Only a read signed 
 and runs tests beyond its example, live test cases included (the `testing` skill). A signed-in
 read proves its tool with its example and a write with its act session; neither reads the
 `testing` skill or designs further tests, and each checks its HTTP version once, against that
-run. The scope follows what the tool is now, not what the build started as: a read that signs in
+run. That forbids running the write again or testing it live, not writing checks: a write's
+script checks its own result, and its read-back and comparison are checked offline over what the
+session read (the `writes` skill). The scope follows what the tool is now, not what the build started as: a read that signs in
 or becomes a write, in a new build or a repair, keeps to the one run from then on, and a repair
 that rebuilds a signed-in tool or a write as a read signed out tests it fully. Credentials and
 sign-in codes

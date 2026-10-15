@@ -644,7 +644,7 @@ it("has a write confirm from its first matching read-back, never from state befo
     " ",
   );
   expect(writes).toContain(
-    "- When a read-back is needed, the first one that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the values entered), and every field the caller asked for that the view shows agrees (the read before the commit already checked what you entered). Sites reformat what they save, such as line breaks, spaces and dates in the viewer's format, so compare text after the commit normalized as before it (the core skill's Confirm step): pass the caller's text through `normalizeText` from `pomerado/runtime`, as `visibleText` already does with the page's. Compare a chosen option's value only where the view shows that value; otherwise compare the label it shows. When the write changed state that already existed, the same read also checks that only the requested change happened. Write each read-back step to check that match in its own code and call `verified()` when it holds, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row, and prefer finding each value in it by a stable id, its column header or a `data-` attribute over its cell's position. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
+    "- When a read-back is needed, the first one that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the values entered), and every field the caller asked for that the view shows agrees (the read before the commit already checked what you entered). Sites reformat what they save, such as line breaks, spaces and dates in the viewer's format, so compare text after the commit normalized as before it (the core skill's Confirm step): pass the caller's text through `normalizeText` from `pomerado/runtime`, as `visibleText` already does with the page's. Compare a chosen option's value only where the view shows that value; otherwise compare the label it shows. When the write changed state that already existed, the same read is also the after read of the before-and-after comparison, which runs after `verified()` (\"Check the read-back\"). Write each read-back step to check the requested fields in its own code and call `verified()` when they hold, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row, and prefer finding each value in it by a stable id, its column header or a `data-` attribute over its cell's position. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
   );
   // Entered values find a record but never prove it new.
   expect(writes).toContain(
@@ -727,18 +727,18 @@ it("renders the pinned standalone authoring", async () => {
     ...skills.map((skill) => [sha256(JSON.stringify(skill)), skill.name]),
     ...[...guide.files].map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["43584490ff7ba23654d82db0204d925af7c6c18d58787b921d25e875b89411a4", "core"],
+    ["9e3145dc882e56d5986bb744cec8f0a145973ea3222ff9e8728e0d828a78de0a", "core"],
     ["5ce6bc814111f4ca395d0ea2e20b409fe44af198d587d24129e9f9b25a9a4f35", "search"],
     ["bdaee6534a37bee08a029db4cfb1e411504286df38b4d719f6962ac4a679227d", "auth"],
-    ["a881b02be82a5f206bf342beff5c77b4f586dda61a24625b77e86d6be6f75a38", "testing"],
+    ["db6f049fc7e754bf88696428804ed26718abc7ef9636549f04ede5dfdc0b0cd6", "testing"],
     ["ab913e2169b9be4ac767df8a88b29cf2e3e5f28779f29bfe9d7e175f07e56f8d", "pagination"],
     ["c69314e80c3982132b17c76d2b50654c5e5fd831d9cfad86edc7660b62ac5f9f", "records"],
     ["e7366f7bb289454dc3957aac9f857abe940ad0f3a6c8ced193bf920c119f2098", "forms"],
-    ["b7fca09f3f1ff855512d727d0a8529b076d43b55c612984e0d9a4374b0705fc7", "writes"],
+    ["937219282e139505a644c5ec2eb9b4044fc9f0b2f959fda9625a0c53058762c2", "writes"],
     ["0bc4d6c765154139547ec2e4500d14bbd1d086995fdd6b385b8f53f4e7ae7255", "cart"],
     ["bc41516483534bb879e2f9548218bbe8ed3e8cf825cfb7c7b7e9ff21fe73ba99", "caller-input"],
-    ["25977e8469cd13d988648365920a4a5a92b80a4fbed542c8b31bb342424014fe", "publication"],
-    ["c1368bfc29b47f71e34855d660162358d7099ccc1aa6701fda67cd8d180ac3fd", "workspace/AGENTS.md"],
+    ["dbe165110887e02d0d4940493ee9ed2f496083b021256018867e5981e2759b1f", "publication"],
+    ["a0a2fe8c5578b56981ee91bb4c9b5d4e40d6ff03207168f93672b9f89dde459e", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });

@@ -78,8 +78,12 @@ During the session:
   field filled with a secret handle.
 - When the write changes state that already exists, such as a saved record or a cart
   (.agents/cart/SKILL.md), read that state before the committing step and again after it,
-  in the session and in the composed script, and check that only the requested change
-  happened. Fail when it did not.
+  in the session and in the composed script. Fail when a field the input sets did not change
+  as asked. Any other difference follows "Check the read-back" below: the script still calls
+  `verified()` and reports the difference in its output. Read both through the same query or
+  view, selecting the same fields: two read paths, such as a list's row and the record's own
+  detail view, can return the same unchanged field in different shapes, and a comparison
+  across them then reports a change that never happened.
 - If a step meets an option the input does not settle, stop that step before choosing
   it and ask. A `request_input` question during the session waits in place; a choice
   that exists only on the page mid-flow, such as a seat on the flight just chosen, is
@@ -172,9 +176,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   Confirm step): pass the caller's text through `normalizeText` from `pomerado/runtime`, as
   `visibleText` already does with the page's. Compare a chosen option's value only where the
   view shows that value; otherwise compare the label it shows. When the write changed state
-  that already existed, the same read also checks that only the requested change happened.
-  Write each read-back step to check that match in its own code and call `verified()` when it
-  holds, so the first one that matches is the confirming step. Read one
+  that already existed, the same read is also the after read of the before-and-after
+  comparison, which runs after `verified()` ("Check the read-back"). Write each read-back step
+  to check the requested fields in its own code and call `verified()` when they hold, so the
+  first one that matches is the confirming step. Read one
   confirmation, list or detail view: find the record there by that identity, never by its
   position, such as the first or newest row, and prefer finding each value in it by a stable
   id, its column header or a `data-` attribute over its cell's position. Read only that record,
@@ -212,8 +217,31 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
 Once the session has started, a live `explore` or `test` is refused, and a write
 build never runs a live `example`: read what the composed script will need, such as a lookup's
 list, in an `act` step that changes nothing. The session is the one run that proves the write:
-design no tests and build no offline test suite for it. Its HTTP version gets one offline replay of
-the session (http-mcp skill), and the testing skill is not for a write.
+never run the write again, and run no live test of it. Its HTTP version gets one offline replay of
+the session (http-mcp skill), and the testing skill is not for a write. That rule is about
+running the write, not about writing checks: a write's script is expected to check its own
+result, with a confirmation or read-back, a before-and-after comparison where it changes existing
+state, and an offline check of that code.
+
+The composed script's own checks never run live before publishing, so check them offline.
+Keep the read-back match and the before-and-after comparison as plain functions in the module
+the script imports, and before `finish_build` run them with Node in `exec_command` over what
+the session read. They must pass for the write that happened, and must not flag a field the
+site maintains or the same value in another form. This quick check sends nothing to the site
+and is not a second write.
+
+- Check against the before and after reads your `act` steps returned first. Use response bodies
+  under `captures/` only for what those outputs lack.
+- Only a body saved whole counts. A body the capture marks pending, incomplete, omitted, withheld
+  or unavailable, an empty body where the site sends one, a truncated step output, or a field
+  that carries a mask or redaction note leaves that part not checked, never passed: name it in
+  `coverage`.
+- An exchange you cannot find in `captures/` is not evidence that it was not sent. Read the
+  capture index's gaps, the host's capture notices (a lost publication, a new browser) and every
+  capture session before concluding anything from its absence.
+- Pick the after body by the commit's time and the record's identity, never by its URL alone,
+  and skip a duplicate a service worker served.
+- Compare values, never serialized text: a screened body may be serialized again.
 
 ## Check the read-back
 
@@ -238,10 +266,33 @@ the caller asked for, in the form the site saves it.
   ask the owner in the build's one bundled `request_input` question, or follow the rules above:
   never call `verified()` on a read-back that cannot tell, and publish the write `unverifiable`
   when no read-back can.
-- When the write changed state that already existed, compare values, not object identity or the
-  order of an object's keys: the same person or record returned as a new object is unchanged. A
-  field the site itself maintains on every save, such as an updated-at time, a version counter or
-  an edit history, is not an unrequested change; a field the caller can set still counts.
+- When the write changed state that already existed, check that every field the input sets
+  now matches it. For every other field, flag only a change the session's own confirmed write
+  did not make too. The session read the record before and after that write: a field the site
+  changed there on its own, without being asked, such as an updated-at time, a version counter,
+  an edit history, a last editor or text the site derives from what was written, changes on
+  every correct save, so leave it out of the comparison. A field the flow itself cleared or
+  reset by mistake, such as one a form sent back empty, is not one the site maintains: fix the
+  flow, never leave it out. Compare the remaining fields by value, after
+  bringing both reads to one shape, never by object identity, serialized text or the order of
+  an object's keys: the same person or record returned as a new object is unchanged. Compare a
+  reference, such as a person or a linked record, by its stable id.
+- Once the commit is confirmed and every field the input sets reads back as asked, the write
+  applied: call `verified()` then. Run the before-and-after comparison after it, over the reads
+  the call already made, and report a difference it finds in the output, in a field the output
+  schema declares for it, never by throwing. A throw after a confirmed save reports a write that
+  landed as possibly completed and sends it to maintenance. When the script confirms from the
+  commit response, take the comparison's after read through the before read's query in the same
+  call, before `verified()`, so that `verified()` stays the last call to the site.
+- A write with branches, such as create when nothing matches and update when one does, runs
+  one branch in the session. Each branch may make its own commit call, such as a create call
+  and an update call; keep their confirmation and comparison in shared code that reads back
+  through the same calls. Check a branch the session did not run offline,
+  as above, against captured shapes: a record from the session's before read, or from a list
+  response, has the shape an update reads back. When no captured shape can stand in for it,
+  ask the owner in the build's bundled `request_input` question, before the session's first
+  commit, which branch the session should run live. Never run a second write only to try
+  another branch. Name in `coverage` the branch the session ran.
 
 ## Compose and publish
 
@@ -356,7 +407,7 @@ Perform the authorized task once through live `act` steps, preserving the shared
 
 Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Mark only the step whose click saves or submits. Opening or filling an unsaved form is not a commit step. Mark every such step, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
 
-Compose `src/tool.mjs` from the original reviewed steps and confirming observation. Design no tests for it, and never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
+Compose `src/tool.mjs` from the original reviewed steps and confirming observation. Design no tests for it beyond an offline check of its read-back and comparison over what the session read, and never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
 
 If the composed contract names the wrong commit marks, correct it to match the marks the session actually entered. If the completed session entered no marks, it cannot finish: changing its source or entering a mark in a later read cannot show that the earlier commit was marked. End the build and explain that the task completed but its commit steps were not marked; never repeat the write to add them.
 

@@ -8,11 +8,12 @@ description: Design and run live test cases for a read signed out. A signed-in r
 This skill is for a read signed out only. A signed-in read or a write does the original task: it
 proves its tool with one run, the read's example (run again after each fix, as the core skill
 says) or the write's act session (writes skill). It designs no tests beyond that run: no
-`test/cases.json`, no live test on an input it chose and no offline test suite. Its HTTP version
-is checked once, against that run (http-mcp skill). Report what that run did not exercise as
-untested in `coverage`. The scope follows what the tool is now: a read that signs in or becomes
-a write mid-build, a repair included, stops designing and running tests from then on, and a
-repair that rebuilds a signed-in tool or a write as a read signed out tests it fully. Stop reading
+`test/cases.json`, no live test on an input it chose and no offline test suite. A write still
+checks its composed script's read-back and comparison offline over what the session read (writes
+skill). Its HTTP version is checked once, against that run (http-mcp skill). Report what that
+run did not exercise as untested in `coverage`. The scope follows what the tool is now: a read
+that signs in or becomes a write mid-build, a repair included, stops designing and running tests
+from then on, and a repair that rebuilds a signed-in tool or a write as a read signed out tests it fully. Stop reading
 here unless the build is a read that has not signed in.
 
 Use execute with purpose=test, target, relative entrypoint/test file, fixtureRefs,
