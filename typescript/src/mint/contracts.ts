@@ -60,6 +60,7 @@ import {
   TaskChange,
   type PendingTaskUpdate,
   type ReviewedTaskUpdate,
+  type TaskUpdateConfirmer,
   type TaskUpdateDecision,
 } from "../guardian/task-update.js";
 import {
@@ -1931,11 +1932,14 @@ export interface MintDependencies {
   ) => Effect.Effect<TaskUpdateHostResult, MintFailure>;
   /**
    * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
-   * `owner` when the person the repair's questions reach may manage the tool, otherwise `none`.
-   * The harness asks it before review; `none`, a failure or an absent hook refuses the update as
-   * `owner_unavailable`, so a repair without the owner keeps the registered contract.
+   * `owner` when the person the repair's questions reach may manage the tool, `owner_request`
+   * when, in addition, the maintenance is that owner's own request to change the tool, otherwise
+   * `none`. The harness asks it before review; `none`, a failure or an absent hook refuses an
+   * update that loosens the contract as `owner_unavailable`, so a repair without the owner keeps
+   * it. With `owner_request`, an update that cites no answer goes to Guardian, which accepts the
+   * owner's request as confirmation of an output change the request plainly names.
    */
-  readonly taskUpdateConfirmer?: () => Effect.Effect<"owner" | "none", MintFailure>;
+  readonly taskUpdateConfirmer?: () => Effect.Effect<TaskUpdateConfirmer, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
   readonly capabilityAnswered?: (answer: string) => Effect.Effect<void, MintFailure>;
   readonly diagnostics?: MintDiagnostics;

@@ -207,6 +207,73 @@ it("keeps a write whose result was lost unknown and never runs it again", async 
   expect(review.recorded).toMatchObject([{ outcome: "unknown" }]);
 });
 
+// Fails when a step the host reports as never sent is tracked as a lost write: its resubmission
+// is refused as a repeat, and the build ends with a write that may have applied.
+it("runs a write step again after the host reports the first submission was never sent", async () => {
+  const reviewer = scriptedReviewer(() => respond(message("Nothing to assess.")));
+  const review = reviewHost(reviewer.provider);
+  const runs: string[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        minter("execute", step("src/book.ts"), "first"),
+        minter("execute", step("src/book.ts"), "again"),
+        minter("finish_build", publication("booked")),
+      ][index] ?? respond(message("Booked.")),
+    {
+      reviewAndExecute: allowedStep((entrypoint) =>
+        Effect.suspend(() => {
+          runs.push(entrypoint);
+          // The job sandbox's copy of the step did not match the reviewed source, so the host
+          // stopped before anything reached the site.
+          return runs.length === 1
+            ? Effect.fail(
+                new MintFailure({
+                  code: "Unavailable",
+                  reason: "executor_unavailable",
+                  execution: {
+                    phase: "execute",
+                    reason: "invalid_request",
+                    dispatch: "not_sent",
+                    stage: "operation_files",
+                    workspace: {
+                      operation: "stage",
+                      reason: "digest_mismatch",
+                      fileCount: 1,
+                      mismatched: ["src/book.ts"],
+                    },
+                  },
+                }),
+              )
+            : Effect.succeed({
+                executionId: "booked",
+                status: "completed" as const,
+                effect: "possible" as const,
+                confirmation: "message",
+                resultRef: "booking_result",
+                observations: { page: "Table booked." },
+              });
+        }),
+      ),
+      outcomeReview: review.host,
+    },
+    { effect: "write" },
+  );
+  const outcome = await f.run();
+
+  expect(toolOutput(f.requests[1] as ModelRequest, "first")).toMatchObject({
+    status: "execution_unavailable",
+  });
+  expect(runs).toEqual(["src/book.ts", "src/book.ts"]);
+  expect(toolOutput(f.requests[2] as ModelRequest, "again")).toMatchObject({
+    executionId: "booked",
+    status: "completed",
+  });
+  // Only the step that ran is a write; the one never sent is no write at all.
+  expect(outcome.writes?.map((entry) => entry.write.executionId)).toEqual(["booked"]);
+  expect(outcome).toMatchObject({ build: "published" });
+});
+
 // Fails when a write's digest follows the host runtime's relative import out of the workspace:
 // the workspace refuses that path, so the digest was undefined and a copy of the step under
 // another name ran the write again.

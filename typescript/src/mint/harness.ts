@@ -2992,14 +2992,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               confirmation,
               effect: buildEffect === "write" ? "write" : "read",
               ...(yield* publicationRefusals),
-              // The harness reviews a maintenance update only once the owner may confirm it,
-              // unless it only adds or tightens output fields, which nobody needs to confirm.
+              // Who can confirm, as the host says; a change that only adds or tightens output
+              // fields reaches review even when nobody can.
               ...(request.mode === "maintenance"
-                ? {
-                    maintenance: {
-                      confirmer: keepsContract(submitted) ? ("none" as const) : ("owner" as const),
-                    },
-                  }
+                ? { maintenance: { confirmer: yield* maintenanceConfirmer } }
                 : {}),
             },
             {
@@ -3784,15 +3780,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       (result.cause.error.code === "ReviewDenied" ||
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
+                    // The host stopped after the dispatch fence but before anything reached the
+                    // site, such as a sandbox copy of the source that did not match the review:
+                    // no write went out, so none is tracked, fenced or reconciled.
+                    const hostNotSent =
+                      Cause.isFailType(result.cause) &&
+                      result.cause.error.execution?.dispatch === "not_sent";
+                    const ran = crossedDispatchBoundary && !hostNotSent;
                     const lost: ExecutionEvidence = {
                       executionId: `unresolved_${randomUUID()}`,
                       status: "failed",
                       effect:
                         submitted.purpose === "example" || submitted.purpose === "act"
-                          ? crossedDispatchBoundary
+                          ? ran
                             ? "possible"
                             : "not_sent"
-                          : reviewPreventedExecution || submitted.purpose === "authenticate"
+                          : reviewPreventedExecution ||
+                              hostNotSent ||
+                              submitted.purpose === "authenticate"
                             ? "not_sent"
                             : "possible",
                       ...(submitted.purpose === "authenticate" && !reviewPreventedExecution
@@ -3815,9 +3820,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         "Execution did not produce a result. Reconcile using the host's durable execution journal.",
                     };
                     record(lost, submitted.purpose);
-                    // Only an execution that crossed its dispatch fence ran; a write whose result
-                    // was lost is exactly what the outcome reviewer settles.
-                    return crossedDispatchBoundary
+                    // Only an execution that crossed its dispatch fence and was sent ran; a write
+                    // whose result was lost is exactly what the outcome reviewer settles.
+                    return ran
                       ? observeExecution(submitted, lost, allowed, "result_lost")
                       : Effect.void;
                   }),
@@ -4933,13 +4938,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       // Only the tool's owner confirms a change that takes from the registered
                       // contract; adding or tightening an output field takes nothing away.
                       const confirmer = yield* maintenanceConfirmer;
-                      if (confirmer !== "owner")
+                      if (confirmer === "none")
                         return taskUpdateAnswer("update_refused", {
                           reason: "owner_unavailable",
                           instruction:
                             "No one who owns this tool can confirm a change that loosens or removes an output, or changes a requirement or the purpose, now, so nothing changed. Keep the registered contract: publish a repair that still returns every required output field (adding or tightening a field needs no confirmation), or end with report_blocked, reason site_lacks_capability, naming the field the site no longer shows.",
                         });
-                      if (submitted.confirmedBy.length === 0)
+                      // The owner's own request may confirm what it names, which Guardian judges.
+                      if (confirmer === "owner" && submitted.confirmedBy.length === 0)
                         return taskUpdateAnswer("clarification_required", {
                           source: "host",
                           reason: "confirmation_required",

@@ -137,6 +137,41 @@ it("asks for the owner's confirmation before reviewing a contract change that ci
   expect(host.reviews).toEqual([]);
 });
 
+// Fails when the host asks for an answer the owner's own request already gives: the owner
+// asked for the change, so a question confirming it is redundant and nothing could apply it.
+it("sends an output change the owner requested to Guardian without asking them again", async () => {
+  const host = updateHost();
+  const colorFormats = {
+    summary: "Return each note's color as a name or as a hex code, as the owner asked.",
+    changes: [
+      {
+        setting: "output",
+        field: "notes[].color",
+        change: "widen",
+        text: "A note's color may be a name or a hex code.",
+      },
+    ],
+    confirmedBy: [],
+    recommend: "update",
+  };
+  const result = await propose(
+    colorFormats,
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("owner_request") },
+    {
+      ...repair,
+      intent: "Change the notes tool as its owner asks: return each color as a name or a hex code.",
+    },
+  );
+  expect(result).toMatchObject({ status: "updated", task: { revision: 1 } });
+  // Guardian judges the request as the confirmation, knowing the owner asked for the change.
+  expect(host.reviews[0]?.update).toMatchObject({
+    changes: [{ field: "notes[].color", change: "widen" }],
+    confirmation: [],
+    maintenance: { confirmer: "owner_request" },
+  });
+  expect(host.applied[0]?.update.changes).toEqual(colorFormats.changes);
+});
+
 it.each([
   { setting: "input", change: { setting: "input", values: { day: "2026-11-02" } } },
   { setting: "effect", change: { setting: "effect", effect: "write" } },
@@ -295,4 +330,26 @@ it("sends a removal with its reason to Guardian, which may refuse it", async () 
   });
   expect(result).toMatchObject({ status: "reword" });
   expect(applied).toEqual([]);
+});
+
+it("tells Guardian who can confirm an addition, though it needs no confirmation", async () => {
+  const host = updateHost();
+  const { result } = await repairAndPublish(
+    {
+      summary: "Add each note's label.",
+      changes: [
+        {
+          setting: "output",
+          field: "notes[].label",
+          change: "add",
+          text: "Each note's label as the notes page shows it.",
+        },
+      ],
+      confirmedBy: [],
+      recommend: "update",
+    },
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("owner_request") },
+  );
+  expect(result).toMatchObject({ status: "updated" });
+  expect(host.reviews[0]?.update).toMatchObject({ maintenance: { confirmer: "owner_request" } });
 });
