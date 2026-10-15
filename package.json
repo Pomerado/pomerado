@@ -246,6 +246,11 @@
       "import": "./dist/typescript/src/guardian/sign-in-origin-reviews.js",
       "default": "./dist/typescript/src/guardian/sign-in-origin-reviews.js"
     },
+    "./core/guardian/sign-in-version-review": {
+      "types": "./dist/typescript/src/guardian/sign-in-version-review.d.ts",
+      "import": "./dist/typescript/src/guardian/sign-in-version-review.js",
+      "default": "./dist/typescript/src/guardian/sign-in-version-review.js"
+    },
     "./core/guardian/source": {
       "types": "./dist/typescript/src/guardian/source.d.ts",
       "import": "./dist/typescript/src/guardian/source.js",

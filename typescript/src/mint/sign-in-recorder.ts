@@ -38,6 +38,7 @@ import { InputRequestFailure } from "../runtime/input-request.js";
 import { makeSignInValues, type AnsweredLoginFields } from "../runtime/sign-in-values.js";
 import { MintFailure, type SignInStep } from "./contracts.js";
 import { autofillRefusalFailure } from "./sign-in-failure.js";
+import { namesIdentity, namesMaskedContact } from "./sign-in-guards.js";
 
 /** What one sign-in step gave the minter, and what it means for the build. */
 export interface SignInStepResult {
@@ -146,23 +147,11 @@ const identityValues = (
     ...known,
   ].flatMap((value) => (value === undefined || value.length < 3 ? [] : [value.toLowerCase()]));
 
-/** Whether a text names a known identity value, or the placeholder the minter saw for one. */
-const namesIdentity = (text: string, values: readonly string[]) => {
-  const lower = text.toLowerCase();
-  return values.some((value) => lower.includes(value)) || lower.includes("[private]");
-};
-
-/**
- * A selector that copies a masked contact detail, as choice buttons show one ("Text (***) ***-1234",
- * "j•••@example.com"): a run of mask characters, or four or more digits in a row.
- */
-const namesContact = (selector: string) => /[*•●]{2,}|\d{4,}/u.test(selector);
-
 /** A refusal of a method choice whose selector copies a masked contact detail, or undefined. */
 const maskedMethodRefusal = (step: Pick<AutofillStep, "methods" | "submit">) => {
   if (step.methods === undefined) return undefined;
-  const masked = step.methods.findIndex((option) => namesContact(option.selector));
-  if (masked === -1 && !namesContact(step.submit ?? "")) return undefined;
+  const masked = step.methods.findIndex((option) => namesMaskedContact(option.selector));
+  if (masked === -1 && !namesMaskedContact(step.submit ?? "")) return undefined;
   return refusedStep(
     "selector_names_contact",
     Math.max(masked, 0),
