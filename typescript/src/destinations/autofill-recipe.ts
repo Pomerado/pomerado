@@ -93,9 +93,65 @@ export const PopupAutofillRecipe = Schema.Struct({
   version: Schema.Literal(2),
   steps: Schema.Array(PopupRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
 });
-export const AutofillRecipe = Schema.Union(LegacyAutofillRecipe, PopupAutofillRecipe);
+/**
+ * A version 2 step that may run on the login's own workspace host: with `origin: "workspace"`, its
+ * `page` is a path only, and each run resolves it against the workspace origin it verified.
+ */
+const WorkspaceRecipeStep = Schema.Struct({
+  origin: Schema.optional(Schema.Literal("workspace")),
+  ...PopupRecipeStep.fields,
+});
+/** A lower-case host name, as a registrable domain is written. */
+const HostName = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(253),
+  Schema.pattern(/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/u),
+);
+const absolutePage = (page: string) => URL.parse(page) !== null;
+/**
+ * A canonical pathname, which the URL parser keeps unchanged: it starts with one "/", and has no
+ * host, backslash, query, fragment, dot segment or character the parser rewrites.
+ */
+const pathOnlyPage = (page: string) => URL.parse(page, "https://h.invalid")?.pathname === page;
+/**
+ * Version 4: a sign-in that may move to a per-account workspace host on the site's registrable
+ * domain (`workspace`). It names no tenant: `workspace.parent` is the site's own registrable
+ * domain, and a workspace step names a path only. A host checks them against the tool's site
+ * origin at use, never here. A host that does not know version 4 refuses it, and a version 4
+ * recipe with a key this host does not know is refused, so no host drops what a writer adds.
+ */
+export const WorkspaceAutofillRecipe = Schema.Struct({
+  ...LegacyAutofillRecipe.fields,
+  version: Schema.Literal(4),
+  workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+  steps: Schema.Array(WorkspaceRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+})
+  .annotations({ parseOptions: { onExcessProperty: "error" } })
+  .pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps.every((step) =>
+        step.origin === "workspace" ? pathOnlyPage(step.page) : absolutePage(step.page),
+      ) || "a workspace step's page is a path, and any other step's an absolute URL",
+  ),
+  Schema.filter(
+    (recipe) =>
+      recipe.workspace !== undefined ||
+      recipe.steps.every((step) => step.origin !== "workspace") ||
+      "a workspace step needs the recipe's workspace",
+  ),
+);
+export const AutofillRecipe = Schema.Union(
+  LegacyAutofillRecipe,
+  PopupAutofillRecipe,
+  WorkspaceAutofillRecipe,
+);
 export type AutofillRecipe = typeof AutofillRecipe.Type;
-export type AutofillRecipeStep = typeof PopupRecipeStep.Type;
+export type AutofillRecipeStep = typeof WorkspaceRecipeStep.Type;
+/** Where a version 4 recipe's sign-in may go besides the site's own host. */
+export interface AutofillRecipeOrigins {
+  readonly workspace?: { readonly parent: string } | undefined;
+}
 
 /** The bundle's recipe, or undefined when it has none or one this host cannot replay. */
 export const publishedAutofillRecipe = (
@@ -112,6 +168,8 @@ export const publishedAutofillRecipe = (
  * `minter` when the host's click failed and the minter clicked it itself.
  */
 interface RecordedRecipeStep {
+  /** `workspace` for a screen on the login's workspace host, whose `page` is then a path. */
+  readonly origin?: "workspace" | undefined;
   readonly popup?: AutofillRecipeStep["popup"] | undefined;
   readonly approval?: AutofillRecipeStep["approval"] | undefined;
   readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"] | undefined;
@@ -132,6 +190,7 @@ const isIdentifierKind = Schema.is(IdentifierKinds);
  * kind this login sent, which each run resolves against its own login.
  */
 export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
+  ...(step.origin === undefined ? {} : { origin: step.origin }),
   page: step.page,
   ...(step.approval === undefined ? {} : { approval: step.approval }),
   ...(step.popup === undefined ? {} : { popup: step.popup }),
@@ -156,16 +215,28 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
 });
 
 /**
- * A verified sign-in's recipe: version 2 only with a popup or an approval, else version 1. A
- * security answer's question selector rides in either.
+ * A verified sign-in's recipe: version 4 only when its sign-in may move to a workspace host
+ * (`origins.workspace`, or a workspace step), else version 2 only with a popup or an approval,
+ * else version 1. A security answer's question selector rides in any of them. Version 4 writes
+ * `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
   signedIn: SignedIn,
-) => ({
-  version: steps.some((step) => step.popup !== undefined || step.approval !== undefined)
-    ? (2 as const)
-    : (1 as const),
-  steps: steps.map(recipeStep),
-  signedIn,
-});
+  origins: AutofillRecipeOrigins = {},
+) => {
+  if (origins.workspace === undefined && steps.every((step) => step.origin === undefined))
+    return {
+      version: steps.some((step) => step.popup !== undefined || step.approval !== undefined)
+        ? (2 as const)
+        : (1 as const),
+      steps: steps.map(recipeStep),
+      signedIn,
+    };
+  return {
+    version: 4 as const,
+    ...(origins.workspace === undefined ? {} : { workspace: { parent: origins.workspace.parent } }),
+    steps: steps.map(recipeStep),
+    signedIn,
+  };
+};

@@ -414,7 +414,7 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
 });
 
 it.each([
-  ["an unknown version", { ...recipeOf(), version: 4 }, "unknown_version"],
+  ["an unknown version", { ...recipeOf(), version: 5 }, "unknown_version"],
   ["a recipe without steps", { ...recipeOf(), steps: [] }, "invalid"],
 ])("refuses %s with MissingRecipe before opening anything", async (_case, recipe, reason) => {
   const fake = fakeSite();

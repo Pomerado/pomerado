@@ -152,7 +152,8 @@ A site-relative URL such as `/api/search?q=...` resolves against the site origin
 in replay. `http.siteOrigin` is that origin, and each response's `requestUrl` is the
 absolute URL requested, so build other URLs from them, never from a sponsored link, a
 canonical tag or other page text, and never write the site's hostname as a literal (the core
-skill). A request may go to a sibling host on the site's registrable domain, such as
+skill). When the site signs each account in to its own workspace host, `http.siteOrigin` is
+that workspace's origin at run time, so an API on the workspace host is reached from it. A request may go to a sibling host on the site's registrable domain, such as
 `api.shop.example` or `data.shop.example` for `www.shop.example`, which many sites serve their
 data from. A host on another
 registrable domain is a third party: call it only with an https read that matches a call

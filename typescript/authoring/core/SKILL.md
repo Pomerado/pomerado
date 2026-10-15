@@ -530,6 +530,9 @@ caller's value may go in a URL), and write them into the code. Never embed the s
 or account-specific origin as a literal in authored source, schema examples, or logs, and never replace it with `page.url()`
 after a redirect. The host supplies the primary origin even when the model cannot see
 it. This value does not authorize other destinations or credential submission.
+For a tool whose sign-in moves each account to its own workspace host, `siteOrigin` is that
+account's workspace origin at run time, so a URL built from it, or from `siteDomain` for a
+fixed API host, reaches the right workspace, and one built from `page.url()` or a literal does not.
 The context's `siteDomain` is the site's registrable domain, which the host computed with
 the public suffix list: a page is on the site when it is `https:` and its hostname is
 `siteDomain` or ends with `"." + siteDomain`, and only `siteOrigin` itself is the site when

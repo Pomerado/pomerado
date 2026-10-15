@@ -53,12 +53,15 @@ export const runOperation = (
             ]),
           ]);
     if (signIn !== undefined) yield* signIn.before;
+    // A tool whose sign-in moved to the login's own workspace runs there: its start page, its
+    // script's siteOrigin and its relative URLs. The tool's site origin stays its identity.
+    const operationOrigin = signIn?.workspace.origin ?? siteOrigin;
     // A run starts at the site root, as its example did. It clears nothing: the CLI and each
     // served call run in a new browser context, and a library caller's scope keeps its session.
     yield* startPage(
       browser.execute,
       browser.targetId,
-      siteOrigin,
+      operationOrigin,
       { siteData: "keep" },
       localStartHooks(browser.execute, browser.targetId),
     );
@@ -70,7 +73,7 @@ export const runOperation = (
         downloads: localDownloads(options.files?.downloads),
       }),
       execute: browser.executeResponse,
-      siteOrigin,
+      siteOrigin: operationOrigin,
       resolve: (reference) => (references.has(reference) ? reference : undefined),
       ...(options.files?.limits === undefined ? {} : { limits: options.files.limits }),
     });
@@ -81,7 +84,7 @@ export const runOperation = (
       input: request.input ?? {},
       list,
       browser,
-      siteOrigin,
+      siteOrigin: operationOrigin,
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
       timeoutMs: options.timeoutMs ?? 1_200_000,
       ask,

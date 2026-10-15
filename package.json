@@ -241,6 +241,11 @@
       "import": "./dist/typescript/src/guardian/session.js",
       "default": "./dist/typescript/src/guardian/session.js"
     },
+    "./core/guardian/sign-in-origin-reviews": {
+      "types": "./dist/typescript/src/guardian/sign-in-origin-reviews.d.ts",
+      "import": "./dist/typescript/src/guardian/sign-in-origin-reviews.js",
+      "default": "./dist/typescript/src/guardian/sign-in-origin-reviews.js"
+    },
     "./core/guardian/source": {
       "types": "./dist/typescript/src/guardian/source.d.ts",
       "import": "./dist/typescript/src/guardian/source.js",
@@ -700,6 +705,11 @@
       "types": "./dist/typescript/src/runtime/variants.d.ts",
       "import": "./dist/typescript/src/runtime/variants.js",
       "default": "./dist/typescript/src/runtime/variants.js"
+    },
+    "./core/runtime/workspace-origin": {
+      "types": "./dist/typescript/src/runtime/workspace-origin.d.ts",
+      "import": "./dist/typescript/src/runtime/workspace-origin.js",
+      "default": "./dist/typescript/src/runtime/workspace-origin.js"
     },
     "./testing/canary": {
       "types": "./dist/typescript/tests/support/canary.d.ts",
