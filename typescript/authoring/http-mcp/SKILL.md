@@ -267,7 +267,11 @@ refuses literal tokens.
 - **Write:** the real write is the act session, which runs the Playwright version; the
   host refuses an act step or residual whose entrypoint is `*-http.mjs`. Write the HTTP
   version from the session's state-changing requests and captures, and never run a
-  second write to compare. Check it once, against the session: replay it offline with target
+  second write to compare. When the captures show a commit request's body unavailable, have the
+  `act` step that waits on its response return that request's method, path and body
+  (`response.request().postDataJSON()`, or `postData()` for a body that is not JSON), so the
+  HTTP version has evidence; never for a step that typed a credential, a secret handle or a
+  card. Check it once, against the session: replay it offline with target
   `savedHTTP`, selecting the session's capture (`capture.json`) or its response bodies as
   `fixtureRefs`, and `SiteHttp` replays the recorded exchanges. Fix and replay again until it
   passes; design no other tests. A passing replay is the only evidence a write's HTTP version

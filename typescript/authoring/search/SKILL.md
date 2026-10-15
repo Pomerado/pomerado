@@ -97,7 +97,10 @@ could reasonably use to choose among results, with full displayed values, and a 
 line in its own field, each fact once. Return only the site's results for these inputs, with
 related or recommended items, the filters the site offers and each card's whole text only as
 `include` sections (core skill, optional sections). When only some cards show a fact, its field
-is nullable and null exactly on the cards that don't. Read the results once the rows you return
+is nullable and null exactly on the cards that don't. A list of records whose fields are
+user-defined, such as a CRM's or a table app's, follows the records skill for its output
+instead: a small default keyed by field name, with every other field through its inputs. Read
+the results once the rows you return
 have their key fields, filled in and holding still (`waitForRows`). When the site marks results
 as suggestions rather than matches, such as "no exact matches, showing similar items", return
 that. Keep the matches apart from related items, recommendations and sponsored carousels, which

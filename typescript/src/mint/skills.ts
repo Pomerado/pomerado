@@ -42,6 +42,12 @@ const catalog = [
     references: ["pagination.ts"],
   },
   {
+    name: "records",
+    description:
+      "Read before building a tool that reads or writes records or table rows in an app whose fields are user-defined or found at run time, such as a CRM's objects, a database or spreadsheet's rows or an app's custom objects: a small default keyed by field names, a field projection, field definitions only on request, and output the site's write tools accept",
+    references: [],
+  },
+  {
     name: "forms",
     description: "Native/custom selection, resolvers, staged forms and expected terms",
     references: [

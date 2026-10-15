@@ -341,9 +341,11 @@ the task can't run without it (below).
 **Find contract gaps before your first example.** Compare the schema you plan with what the
 page offers: a control no input covers, an input you cannot wire, a value the request needs
 that the page does not show, or a needed field you would have to make nullable. Settle each
-then: wire it, ask the owner with `request_input` when the request reads two ways, or state in
-the description why the tool lacks it. Publication review blocks on the same gaps, and finding
-them at `finish_build` costs a full fix-and-resubmit round.
+then: wire it, ask the owner with `request_input` when the request reads two ways or you are
+unsure how to solve it, or, only for a part the site does not offer or the owner chose to leave
+out, state in the description why the tool lacks it (`AGENTS.md`, "Solve before you narrow"). Publication
+review blocks on the same gaps, and finding them at `finish_build` costs a full fix-and-resubmit
+round.
 
 **Never loosen a value the request needs.** The values the request needs are each value it
 names, the record's identifier as the site shows it, and the context those depend on as the page
@@ -381,6 +383,11 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   `card_text` section below.
 - A list that can run past one page returns one page per call and a cursor to the next, as the
   pagination skill says.
+- A tool that extracts records or table rows from an app whose fields are user-defined or found
+  at run time, such as a CRM's records or a table's rows, follows the records skill, which takes
+  precedence over the lean toward more fields above and one typed field per fact below: a small
+  default keyed by field name, with every other field through its `fields` and `include` inputs.
+  A record type whose fields are fixed and known keeps one typed field per fact.
 
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each

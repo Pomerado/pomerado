@@ -180,7 +180,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   id, its column header or a `data-` attribute over its cell's position. Read only that record,
   and the view's other rows only where the before-and-after check or another skill, such as
   the cart skill, compares them. Read another page, in that same step before `verified()`,
-  only for a field the view did not show and the tool's output promises.
+  only for a field the view did not show and the tool's output promises. A reference the site
+  saves as an ID follows "Check the read-back" below.
 - State from before the write never matches. Require something only the finished write can
   show: the number or reference it produced, or a value it changed from what you read before
   it, such as a status that now reads Sent or a row that was not there. A list still showing
@@ -209,9 +210,38 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   A step that never calls `verified` does not end a session.
 
 Once the session has started, a live `explore` or `test` is refused, and a write
-build never runs a live `example`. The session is the one run that proves the write: design
-no tests and build no offline test suite for it. Its HTTP version gets one offline replay of
+build never runs a live `example`: read what the composed script will need, such as a lookup's
+list, in an `act` step that changes nothing. The session is the one run that proves the write:
+design no tests and build no offline test suite for it. Its HTTP version gets one offline replay of
 the session (http-mcp skill), and the testing skill is not for a write.
+
+## Check the read-back
+
+The read-back, as the session's rules above describe it, compares what the site saved with what
+the caller asked for, in the form the site saves it.
+
+- A reference, such as a person, an assignee, a linked record or a linked row, is often saved as
+  the referenced record's ID while the page shows its label. Take the caller's label or ID as the
+  input. Before the commit, look the ID up through the site's own list: the picker's options, the
+  member list or the linked table's rows, which a read of the same site often already returns.
+  Since nothing runs live after the session, prove the lookup in it: read the list in an `act`
+  step that changes nothing, before the commit step, or from the response of the site's own
+  lookup request in the session's captures. When a `not_published` asks for a lookup the session
+  did not run, prove it in an `act` step that only reads, while the session is open (below),
+  never by committing again.
+  When no entry matches, throw `InvalidInput` with `field` and `available`; when several match
+  equally, ask the caller (core skill, the input schema). Write that ID or pick that entry, and
+  compare the read-back by ID, never a label against an ID. Return the reference as
+  `{ id, label }` (records skill). Do not drop a reference field only because the site saves an
+  ID: the lookup is the fix. When the site shows no ID and offers no list to resolve one, compare
+  the label the read-back shows with the caller's, normalized as above. When neither can tell,
+  ask the owner in the build's one bundled `request_input` question, or follow the rules above:
+  never call `verified()` on a read-back that cannot tell, and publish the write `unverifiable`
+  when no read-back can.
+- When the write changed state that already existed, compare values, not object identity or the
+  order of an object's keys: the same person or record returned as a new object is unchanged. A
+  field the site itself maintains on every save, such as an updated-at time, a version counter or
+  an edit history, is not an unrequested change; a field the caller can set still counts.
 
 ## Compose and publish
 
