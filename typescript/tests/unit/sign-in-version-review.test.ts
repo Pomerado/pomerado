@@ -2,10 +2,11 @@
 // entry URL or marker that names that account or copies a masked contact or number; a marker a
 // signed-out page shows, or a URL path alone that a sign-in page has, passes; a step that signs
 // out passes; an entry URL that is one authorization request, or carries credentials, passes; an
-// origin outside its role, or a page, popup or recipe origin no role declares, passes; Guardian
-// is asked about a version the deterministic checks refuse; an allow without the shared label,
-// or a deny's reason, is lost; the review's evidence keeps the signed-out pages' documents or
-// queries, or misses what changed against the previous version.
+// entry URL, page or popup on another site, or a workspace step without a workspace relation for
+// the site, passes; a workspace step under a valid relation is refused; Guardian is asked about a
+// version the deterministic checks refuse; an allow without the shared label, or a deny's reason,
+// is lost; an allow carrying a deny's label becomes a verdict; the review's evidence keeps the
+// signed-out pages' documents or queries, or misses what changed against the previous version.
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { HostReview, PendingExecution, ReviewTurn } from "../../src/guardian/review.js";
@@ -40,10 +41,25 @@ const version: SignInVersion = {
     ],
     signedIn: { selector: "[data-testid=account-menu]", openPath: "/account" },
   },
-  signInOrigins: [
-    { role: "site", origin: "https://www.example.com" },
-    { role: "site", origin: "https://login.example.com" },
-  ],
+};
+
+/** A version whose sign-in continues on each login's own workspace host on the site's domain. */
+const workspaceVersion: SignInVersion = {
+  ...version,
+  recipe: {
+    version: 4,
+    workspace: { parent: "example.com" },
+    steps: [
+      version.recipe.steps[0]!,
+      {
+        origin: "workspace",
+        page: "/password",
+        fields: [{ selector: "#password", slot: "password" }],
+        submit: "#next",
+      },
+    ],
+    signedIn: version.recipe.signedIn,
+  },
 };
 
 const signedOut = {
@@ -153,6 +169,20 @@ describe("reviewSignInVersion", () => {
     expect(turns).toHaveLength(0);
   });
 
+  it("fails a review whose allow carries a denial's label rather than act on it", async () => {
+    const { guardian } = scriptedGuardian({
+      outcome: "allow",
+      label: "marker",
+      rationale: "Synthetic rationale.",
+    });
+
+    const failure = await Effect.runPromise(
+      Effect.flip(reviewSignInVersion(guardian, pending, input())),
+    );
+
+    expect(failure.code).toBe("InvalidDecision");
+  });
+
   it("returns Guardian's denial with its reason and rationale", async () => {
     const { guardian } = scriptedGuardian({
       outcome: "deny",
@@ -245,7 +275,6 @@ describe("checkSignInVersion", () => {
         ...version.recipe,
         steps: [{ ...version.recipe.steps[0]!, page: "https://www.example.com:8443/login" }],
       },
-      signInOrigins: [{ role: "site", origin: "https://www.example.com:8443" }],
     };
     expect(checkSignInVersion(input(() => ported))).toEqual([]);
   });
@@ -315,68 +344,51 @@ describe("checkSignInVersion", () => {
       [{ rule: "url_credentials", part: "entryUrl" }],
     ],
     [
-      "an undeclared origin",
+      "another site's origin",
       "https://www.example.org/login",
-      [{ rule: "origin_undeclared", part: "entryUrl" }],
+      [{ rule: "foreign_origin", part: "entryUrl" }],
+    ],
+    [
+      "the site's host over http",
+      "http://www.example.com/login",
+      [{ rule: "foreign_origin", part: "entryUrl" }],
     ],
   ] as const)("refuses an entry URL with %s", (_name, entryUrl, findings) => {
     expect(checkSignInVersion(input((base) => ({ ...base, entryUrl })))).toEqual(findings);
   });
 
-  it.each([
-    [
-      "a site origin on another site",
-      { role: "site", origin: "https://www.example.org" },
-    ],
-    ["a site origin that is not exact", { role: "site", origin: "https://www.example.com/login" }],
-    ["a fixed origin on the site itself", { role: "fixed", origin: "https://id.example.com" }],
-    ["a workspace on another domain", { role: "workspace", parent: "example.org" }],
-  ] as const)("refuses %s", (_name, origin) => {
+  it("refuses a step page on another site's origin", () => {
     expect(
-      checkSignInVersion(
-        input((base) => ({ ...base, signInOrigins: [...base.signInOrigins, origin] })),
-      ),
-    ).toEqual([{ rule: "origin_role", part: "signInOrigins[2]" }]);
+      checkSignInVersion(input(withStep(1, { page: "https://id.provider.example/sign-in" }))),
+    ).toEqual([{ rule: "foreign_origin", part: "recipe.steps[1].page" }]);
   });
 
-  it("accepts an approved provider and a workspace step, and refuses them undeclared", () => {
-    const provider: SignInVersion = {
-      ...version,
-      recipe: {
-        version: 4,
-        workspace: { parent: "example.com" },
-        signInOrigins: ["https://id.provider.example"],
-        steps: [
-          version.recipe.steps[0]!,
-          {
-            page: "https://id.provider.example/sign-in",
-            fields: [{ selector: "#password", slot: "password" }],
-            submit: "#next",
-          },
-          { origin: "workspace", page: "/verify", fields: [{ selector: "#code", slot: "code" }] },
-        ],
-        signedIn: version.recipe.signedIn,
-      },
-      signInOrigins: [
-        { role: "site", origin: "https://www.example.com" },
-        { role: "fixed", origin: "https://id.provider.example" },
-        { role: "workspace", parent: "example.com" },
-      ],
-    };
-    expect(checkSignInVersion(input(() => provider))).toEqual([]);
+  it("passes a workspace step under the site's own workspace relation", () => {
+    expect(checkSignInVersion(input(() => workspaceVersion))).toEqual([]);
+  });
+
+  it("refuses a workspace step without a workspace relation for the site", () => {
+    const { workspace: _workspace, ...unrelated } = workspaceVersion.recipe as Extract<
+      SignInVersion["recipe"],
+      { version: 4 }
+    >;
+    expect(checkSignInVersion(input(() => ({ ...workspaceVersion, recipe: unrelated })))).toEqual([
+      { rule: "foreign_origin", part: "recipe.steps[1].page" },
+    ]);
     expect(
       checkSignInVersion(
-        input(() => ({ ...provider, signInOrigins: [{ role: "site", origin: site }] })),
+        input(() => ({
+          ...workspaceVersion,
+          recipe: { ...unrelated, workspace: { parent: "example.org" } },
+        })),
       ),
     ).toEqual([
-      { rule: "origin_undeclared", part: "recipe.workspace" },
-      { rule: "origin_undeclared", part: "recipe.signInOrigins[0]" },
-      { rule: "origin_undeclared", part: "recipe.steps[1].page" },
-      { rule: "origin_undeclared", part: "recipe.steps[2].page" },
+      { rule: "workspace_parent", part: "recipe.workspace" },
+      { rule: "foreign_origin", part: "recipe.steps[1].page" },
     ]);
   });
 
-  it("refuses a popup on an undeclared origin", () => {
+  it("refuses a popup on another site's origin", () => {
     const popup: SignInVersion = {
       ...version,
       recipe: {
@@ -391,7 +403,7 @@ describe("checkSignInVersion", () => {
       },
     };
     expect(checkSignInVersion(input(() => popup))).toEqual([
-      { rule: "origin_undeclared", part: "recipe.steps[0].popup.origin" },
+      { rule: "foreign_origin", part: "recipe.steps[0].popup.origin" },
     ]);
   });
 });
