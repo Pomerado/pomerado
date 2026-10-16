@@ -1931,6 +1931,120 @@ if(!result.success||result.result!==true)throw new Error("Save not reached");ret
   }
 });
 
+test("a write that recorded its confirmation and then failed reports it applied and never to run again, from run and MCP", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "Three native writes through the library and one through the served stdio MCP; a real POST each",
+  });
+  test.setTimeout(120_000);
+  let writes = 0;
+  const calls: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.method === "POST") {
+      writes++;
+      response.end("saved");
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end(
+      `<button id="save" onclick="fetch('/save',{method:'POST'}).then(()=>document.body.innerHTML='<div id=saved>Saved</div>')">Save</button>`,
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing write address");
+  const url = `http://127.0.0.1:${address.port}/`;
+  // The save is confirmed and recorded with verified(); a later check on another field then
+  // fails, as the tool's own refusal or as a plain error, with no browser call after it. A browser
+  // call after verified() reopens the write, so a failure after it is no longer confirmed.
+  const reason = "The note field differs from the one read before the save.";
+  const source = `import {Schema} from "effect";
+import {defineOperation} from "../runtime/index.js";
+export default defineOperation({name:"save_fixture",input:Schema.Struct({then:Schema.Literal("refuse","throw","reread")}),output:Schema.Struct({saved:Schema.Boolean}),write:{confirmation:"readback",commits:["save"]}},async({kernel,sessionId,input,enteringCommit,verified,errors})=>{
+enteringCommit("save");const result=await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#save').click(); await page.locator('#saved').waitFor(); return true;",timeout_sec:2});
+if(!result.success||result.result!==true)throw new Error("Save not reached");verified();
+if(input.then==="refuse")throw new errors.InvalidInput(${JSON.stringify(reason)});
+if(input.then==="reread")await kernel.browsers.playwright.execute(sessionId,{code:"return document.body.innerText;",timeout_sec:2});
+throw new Error("Unexpected change after the save");});`;
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-confirmed-write-"));
+  const run = (then: "refuse" | "throw" | "reread") =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* createPomerado({
+            ask: makeInputAsker(() => Effect.succeed({})),
+            minterProvider: unreachableModel(calls, "minter"),
+            guardianProvider: unreachableModel(calls, "guardian"),
+            timeoutMs: 10_000,
+          });
+          return yield* service.run(
+            {
+              entrypoint: "src/tool.mjs",
+              files: [{ path: "src/tool.mjs", content: source }],
+              inputSchema: {},
+              outputSchema: {},
+            },
+            { url, intent: "Save the fixture once", effect: "write", input: { then } },
+          );
+        }),
+      ).pipe(Effect.flip),
+    );
+  try {
+    // The commit report a keyed job's record keeps shows the commit step confirmed.
+    const confirmed = { effect: "verified", commits: [{ name: "save", state: "confirmed" }] };
+    const refused = await run("refuse");
+    expect(refused).toBeInstanceOf(RunOutcomeFailure);
+    expect(refused).toMatchObject({
+      outcome: { details: { reason }, writeStatus: "applied", retry: "never" },
+      journal: confirmed,
+    });
+    const thrown = await run("throw");
+    expect(thrown).toBeInstanceOf(RunOutcomeFailure);
+    expect(thrown).toMatchObject({
+      outcome: { code: "execution_failed", writeStatus: "applied", retry: "never" },
+      journal: confirmed,
+    });
+    const reread = await run("reread");
+    expect(reread).toBeInstanceOf(RunOutcomeFailure);
+    expect(reread).toMatchObject({
+      outcome: { writeStatus: "may_have_applied" },
+      journal: { effect: "possible", commits: [{ name: "save", state: "sent" }] },
+    });
+    expect(writes).toBe(3);
+    const saved = await saveMcpFixture(directory, "save_fixture", url, "write", source, {
+      type: "object",
+      properties: { then: { type: "string", enum: ["refuse", "throw", "reread"] } },
+      required: ["then"],
+      additionalProperties: false,
+    });
+    const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/mcp-cli.js")).href;
+    const connection = await stdioMcp([join(saved, "mcp.mjs"), runtime]);
+    try {
+      const result = await connection.client.callTool({
+        name: "save_fixture",
+        arguments: { input: { then: "refuse" } },
+      });
+      expect(result.isError, JSON.stringify(result) + connection.stderr()).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining(reason),
+        write_status: "applied",
+        retry: "never",
+      });
+      expect(writes).toBe(4);
+    } finally {
+      await connection.client.close();
+    }
+    expect(calls).toEqual([]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 /*
  * A saved integration imports the SDK at `sdk` from src/ and at `nested` from a module in src/lib/.
  * Under 0.2.0's executor, an entrypoint in src/ reached the SDK one level up and a nested module two

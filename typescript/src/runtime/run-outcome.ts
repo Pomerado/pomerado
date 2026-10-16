@@ -174,7 +174,7 @@ export const runOutcomeCodes = [
 ] as const;
 export type RunOutcomeCode = (typeof runOutcomeCodes)[number];
 
-/** Each code's retry class. */
+/** Each code's retry class. A write that recorded its confirmation is `never`, whatever its code. */
 export const runOutcomeRetry: { readonly [Code in RunOutcomeCode]: RunRetryClass } = {
   no_response: "new_key",
   credentials_rejected: "fix_input",
@@ -197,6 +197,14 @@ const failure = (code: RunOutcomeCode, details?: Readonly<Record<string, unknown
   code,
   details: details ?? {},
 });
+
+/**
+ * A write that recorded its confirmation: the commit response or the page confirmed it. The write
+ * landed, so whatever failed after the confirmation, the run reports it applied and never runs it
+ * again.
+ */
+export const confirmedWrite = (view: RunEvidence) =>
+  view.tool_effect === "write" && view.effect === "verified";
 
 /** A run whose website effect may have changed the site without a confirmed outcome. */
 export const unsettledEffect = (view: RunEvidence) =>
@@ -225,9 +233,12 @@ export const rejectedDetails = (view: RunEvidence, committed: boolean) => ({
   ...(view.rejected_field === undefined ? {} : { field: view.rejected_field }),
 });
 
-/** Starting over is safe only for a read or an untouched site. */
+/**
+ * Starting over is safe only for a read or an untouched site. A confirmed write's outcome is
+ * known, and it never runs again.
+ */
 const lostWorker = (view: RunEvidence): RunFailure =>
-  view.tool_effect === "read" || view.effect === "not_started"
+  view.tool_effect === "read" || view.effect === "not_started" || confirmedWrite(view)
     ? failure("worker_lost")
     : failure("outcome_unknown");
 
@@ -286,7 +297,7 @@ export const runError = (view: RunEvidence): RunFailure => {
     case undefined:
       break;
   }
-  if (unsettledEffect(view)) return failure("outcome_unknown");
+  if (unsettledEffect(view) && !confirmedWrite(view)) return failure("outcome_unknown");
   return failure(view.output === "invalid" ? "invalid_output" : "execution_failed");
 };
 
@@ -294,8 +305,8 @@ export const runError = (view: RunEvidence): RunFailure => {
 export type WriteStatus = "not_attempted" | "may_have_applied" | "applied" | "not_applied";
 export const writeStatusOf = (view: RunEvidence): WriteStatus | null => {
   if (view.tool_effect !== "write") return null;
-  if (view.status === "outcome_unknown" || unsettledEffect(view)) return "may_have_applied";
   if (view.effect === "verified") return "applied";
+  if (unsettledEffect(view)) return "may_have_applied";
   if (view.effect === "rejected") return "not_applied";
   return "not_attempted";
 };
@@ -329,14 +340,17 @@ const outcomeMayHaveCommitted = (failed: RunFailure) => {
   return typeof stated === "boolean" ? stated : failed.code === "outcome_unknown";
 };
 
-/** A settled run's outcome when it did not end in a confirmed result. */
+/**
+ * A settled run's outcome when it did not end in a confirmed result. A confirmed write that then
+ * failed keeps the code that says why, and is never run again.
+ */
 export const failedRunOutcome = (view: RunEvidence): RunOutcome => {
   const failed = runError(view);
   return {
     ...failed,
     writeStatus: writeStatusOf(view),
     possibleCommit: outcomeMayHaveCommitted(failed),
-    retry: runOutcomeRetry[failed.code],
+    retry: confirmedWrite(view) ? "never" : runOutcomeRetry[failed.code],
   };
 };
 

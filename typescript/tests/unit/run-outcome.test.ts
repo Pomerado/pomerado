@@ -175,8 +175,17 @@ describe("run failures", () => {
       run: evidence({ effect: "may_have_dispatched", output: "valid" }),
       json: '{"code":"outcome_unknown","details":{}}',
     },
+    // A write that recorded its confirmation landed, so its outcome is never unknown.
     {
       run: evidence({ status: "outcome_unknown", effect: "verified", output: "valid" }),
+      json: '{"code":"execution_failed","details":{}}',
+    },
+    {
+      run: evidence({ failure_reason: "worker_lost", effect: "verified" }),
+      json: '{"code":"worker_lost","details":{}}',
+    },
+    {
+      run: evidence({ status: "outcome_unknown", effect: "verified", tool_effect: undefined }),
       json: '{"code":"outcome_unknown","details":{}}',
     },
     {
@@ -195,7 +204,8 @@ describe("run failures", () => {
   it.each([
     { run: evidence({ tool_effect: "read" }), status: null },
     { run: evidence({ tool_effect: undefined }), status: null },
-    { run: evidence({ status: "outcome_unknown", effect: "verified" }), status: "may_have_applied" },
+    { run: evidence({ status: "outcome_unknown", effect: "verified" }), status: "applied" },
+    { run: evidence({ status: "outcome_unknown", effect: "not_started" }), status: "may_have_applied" },
     { run: evidence({ effect: "may_have_dispatched" }), status: "may_have_applied" },
     { run: evidence({ effect: "unknown" }), status: "may_have_applied" },
     { run: evidence({ effect: "partial" }), status: "may_have_applied" },
@@ -277,6 +287,30 @@ describe("run outcomes", () => {
         writeStatus: "applied",
         possibleCommit: true,
       });
+  });
+
+  // A recorded confirmation makes the write a result: whatever failed after it, the run reports
+  // it applied and never runs it again, keeping why it failed.
+  it.each([
+    { failure_reason: undefined },
+    { failure_reason: "no_response" },
+    { failure_reason: "credentials_rejected" },
+    { failure_reason: "invalid_input" },
+    { failure_reason: "input_not_applied" },
+    { failure_reason: "login_identity_conflict" },
+    { failure_reason: "login_check_unavailable" },
+    { failure_reason: "worker_lost" },
+    { failure_reason: undefined, status: "outcome_unknown" },
+    { failure_reason: undefined, output: "invalid" },
+  ])("reports a confirmed write that then failed as applied, never to run again: %o", (fields) => {
+    const outcome = classifyRun(evidence({ effect: "verified", output: "failed", ...fields }));
+    expect(outcome).toMatchObject({ writeStatus: "applied", retry: "never" });
+    expect(outcome?.code).not.toBe("outcome_unknown");
+  });
+
+  it("never offers a confirmed write another run", () => {
+    for (const outcome of classifiedOutcomes())
+      if (outcome.writeStatus === "applied") expect(outcome.retry).toBe("never");
   });
 
   it("reports a refused input that sent nothing as not applied and safe to correct", () => {

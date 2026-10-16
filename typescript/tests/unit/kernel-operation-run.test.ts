@@ -12,6 +12,7 @@ import { Deadline } from "../../src/runtime/deadline.js";
 import { CaptureUnavailable } from "../../src/runtime/errors.js";
 import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
+import { commitReportOf } from "../../src/runtime/run-outcome.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { offlineKernel } from "../support/offline-kernel.js";
 
@@ -128,6 +129,45 @@ describe("executeKernelOperation", () => {
     expect(failureOf(called.exit)).toMatchObject(
       Option.some({ _tag: "OperationFailure", dispatch: "not_sent" }),
     );
+  });
+
+  // A confirmed write that then fails keeps its confirmed commit step in the runner's report, so a
+  // host reading it sees the write confirmed live; a browser call after verified() reopens it.
+  it.each([
+    { after: "throws", effect: "verified", confirmation: "readback", state: "confirmed" },
+    { after: "returns invalid output", effect: "verified", confirmation: "readback", state: "confirmed" },
+    { after: "calls the browser, then throws", effect: "may_have_dispatched", confirmation: undefined, state: "sent" },
+  ])("reports the commit step $state when a confirmed write $after", async (expected) => {
+    const write = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.Struct({ saved: Schema.Boolean }),
+        write: { confirmation: "readback", commits: ["save"] },
+      },
+      async ({ kernel, sessionId, enteringCommit, verified }) => {
+        enteringCommit("save");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 1;", timeout_sec: 5 });
+        verified();
+        if (expected.after === "returns invalid output")
+          return { saved: "yes" } as unknown as { saved: boolean };
+        if (expected.after === "calls the browser, then throws")
+          await kernel.browsers.playwright.execute(sessionId, { code: "return 2;", timeout_sec: 5 });
+        throw new Error("Another field differs after the save");
+      },
+    );
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const { exit, websiteEffect } = await run(
+      executeKernelOperation(write, {}, { kernel: answeringKernel, sessionId: "s" }),
+      Effect.succeed(journal),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(websiteEffect).toBe(expected.effect);
+    expect(await Effect.runPromise(journal.confirmation)).toBe(expected.confirmation);
+    const commits = await Effect.runPromise(journal.commits);
+    expect(commitReportOf({ commits })).toEqual({
+      evidence: "entered",
+      marks: [{ name: "save", state: expected.state }],
+    });
   });
 
   // A host may settle commit steps an earlier run sent or confirmed: entering one fails before its
