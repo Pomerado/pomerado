@@ -197,7 +197,8 @@ pomerado:section publication.saved-files:end -->.
      never required;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    - a write runs every check that can refuse, such as a limit on its total, before the mark of
-     the commit it guards, and refuses with `InvalidInput`, never as its output;
+     the commit it guards, and refuses with `InvalidInput`, or returns a refusal its output
+     schema declares before its first mark, never in an undeclared output shape;
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
      declares, without committing twice.
 

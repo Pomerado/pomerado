@@ -58,9 +58,10 @@ an input that tailors the answer, which a read returns labeled with the value th
      needs, such as the total the page shows beside the limit. That is a refusal: the run
      reports why, and that it changed nothing unless an earlier marked step ran, and the caller
      can run again with corrected input. It differs from a failure, a tool that broke, and from
-     a write that may have changed the site and could not confirm it (both below). Never return
-     a refusal as a write's output: a write that returns without `verified()` reports a possible
-     change.
+     a write that may have changed the site and could not confirm it (both below). A write
+     returns a refusal as its output only when its output schema declares that refusal, and
+     only before its first mark (writes skill): any other output a write returns without
+     `verified()` reports a possible change.
    - A write whose steps may have changed the site and then failed or could not confirm the
      change: let it end as a possible change, which is never retried. Never throw
      `InvalidInput` or `InputNotApplied` to make it look untouched (writes skill).

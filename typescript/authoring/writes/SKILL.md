@@ -81,8 +81,9 @@ During the session:
   may have saved something, and that is honest. Still mark that earlier step.
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
-  with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened").
-  Never return a refusal as the output. While building, a limit the session meets is the
+  with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
+  or returns a refusal its output schema declares before its first mark (below). Never return
+  a refusal in an output shape the schema does not declare. While building, a limit the session meets is the
   owner's to settle first: ask them to revise or stop, and end with `report_blocked` when they
   stop, as the cart skill's "Minimums and refusals" says.
 - A pop-up, banner or interstitial on the path, such as an upsell, is conditional unless the
@@ -347,7 +348,13 @@ pomerado:section writes.unverifiable-status:end --> too, and nothing repairs it.
 A script that throws `errors.InvalidInput` (core skill) fails as the caller's input; with
 `available`, the host ends the run at once with those choices. Before any commit
 mark is entered, the run reports that it changed nothing, so throw a refusal before the
-mark: returned as output, or thrown after the mark, it reports a possible change.
+mark. A write may instead declare its refusals in its output schema: a branch that requires
+`status` `"refused"` and a `reason` from a listed set of stable lowercase codes, such as
+`over_price_limit`, beside the values the caller needs, such as the total and the limit, with
+no other branch whose `status` could be `"refused"`. Returned before the first commit mark, a
+declared refusal completes the run with that output and reports the write not applied. A
+refusal returned in a shape the schema does not declare, or returned or thrown after a mark,
+reports a possible change.
 
 See `references/write-session.ts` for two steps and the composed script, and
 `references/write-readback.ts` for a write confirmed from its own commit request.

@@ -1,10 +1,15 @@
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
+import { contractJsonSchema } from "../../src/runtime/operation.js";
 import {
   classifyRun,
   commitReportOf,
   commitRetryRefusal,
   confirmedRun,
+  declaredRefusalOf,
+  declaredRefusalReasons,
   possibleCommit,
+  returnedRefusal,
   runError,
   runOutcomeCodes,
   runOutcomeRetry,
@@ -111,6 +116,7 @@ describe("write confirmation", () => {
     { revision: write("message"), effect: "may_have_dispatched", needs: "confirmation_missing" },
     { revision: write(), effect: "may_have_dispatched", needs: "confirmation_missing" },
     { revision: write("unverifiable"), effect: "may_have_dispatched", needs: "unverifiable" },
+    { revision: write("readback"), effect: "rejected", needs: "nothing" },
   ] as const)("a validated $effect write needs $needs", ({ revision, effect, needs }) => {
     expect(validatedWriteNeeds(revision, effect)).toBe(needs);
   });
@@ -376,5 +382,172 @@ describe("an input the page did not apply", () => {
       retry: "same_key",
       details: { field: "zip", requested: "00001", applied: "00002", step: "store_save" },
     });
+  });
+});
+
+describe("a refusal a write declares in its output", () => {
+  const Placed = Schema.Struct({ status: Schema.Literal("placed"), orderNumber: Schema.String });
+  const refused = <Reason extends string>(reason: Schema.Schema<Reason>) =>
+    Schema.Struct({ status: Schema.Literal("refused"), reason, total: Schema.String });
+  const overLimit = refused(Schema.Literal("over_price_limit", "out_of_stock"));
+  const schemaOf = <A, I>(schema: Schema.Schema<A, I>) => contractJsonSchema(schema);
+
+  it.each([
+    { case: "a union branch", schema: schemaOf(Schema.Union(Placed, overLimit)) },
+    {
+      case: "a branch behind a local reference",
+      schema: schemaOf(Schema.Union(Placed, overLimit.annotations({ identifier: "Refused" }))),
+    },
+    {
+      case: "reasons each with their own description",
+      schema: schemaOf(
+        Schema.Union(
+          Placed,
+          refused(
+            Schema.Union(
+              Schema.Literal("over_price_limit").annotations({ description: "Over the limit" }),
+              Schema.Literal("out_of_stock").annotations({ description: "Sold out" }),
+            ),
+          ),
+        ),
+      ),
+    },
+    {
+      case: "one branch per reason",
+      schema: schemaOf(
+        Schema.Union(
+          Placed,
+          refused(Schema.Literal("over_price_limit")),
+          refused(Schema.Literal("out_of_stock")),
+        ),
+      ),
+    },
+  ])("reads the reasons of $case", ({ schema }) => {
+    expect([...declaredRefusalReasons(schema)].sort()).toEqual(["out_of_stock", "over_price_limit"]);
+  });
+
+  it.each([
+    { case: "no refusal branch", schema: schemaOf(Placed) },
+    { case: "a free-text reason", schema: schemaOf(Schema.Union(Placed, refused(Schema.String))) },
+    {
+      case: "a reason that is not a stable code",
+      schema: schemaOf(Schema.Union(Placed, refused(Schema.Literal("Over the limit")))),
+    },
+    {
+      case: "an optional reason",
+      schema: schemaOf(
+        Schema.Union(
+          Placed,
+          Schema.Struct({
+            status: Schema.Literal("refused"),
+            reason: Schema.optional(Schema.Literal("over_price_limit")),
+          }),
+        ),
+      ),
+    },
+    {
+      case: "a status that admits more than refused",
+      schema: schemaOf(
+        Schema.Struct({
+          status: Schema.Literal("placed", "refused"),
+          reason: Schema.Literal("over_price_limit"),
+        }),
+      ),
+    },
+    // Another branch that admits a "refused" status could be the one the output matched, so no
+    // output of the schema proves itself a refusal.
+    {
+      case: "another branch whose free-text status admits refused",
+      schema: schemaOf(
+        Schema.Union(
+          Schema.Struct({
+            status: Schema.String,
+            reason: Schema.String,
+            orderNumber: Schema.String,
+          }),
+          overLimit,
+        ),
+      ),
+    },
+    {
+      case: "another branch whose listed status includes refused",
+      schema: schemaOf(
+        Schema.Union(
+          Schema.Struct({ status: Schema.Literal("placed", "refused"), orderNumber: Schema.String }),
+          overLimit,
+        ),
+      ),
+    },
+    {
+      case: "another branch that allows any extra property",
+      schema: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["orderNumber"],
+            properties: { orderNumber: { type: "string" } },
+          },
+          schemaOf(overLimit),
+        ],
+      },
+    },
+    {
+      case: "another branch whose pattern properties admit a status",
+      schema: {
+        anyOf: [
+          {
+            type: "object",
+            properties: { orderNumber: { type: "string" } },
+            patternProperties: { ".*": { type: "string" } },
+            additionalProperties: false,
+          },
+          schemaOf(overLimit),
+        ],
+      },
+    },
+    { case: "a reference that does not resolve", schema: { $ref: "#/$defs/Missing" } },
+    { case: "no schema", schema: undefined },
+  ])("declares none with $case", ({ schema }) => {
+    expect(declaredRefusalReasons(schema).size).toBe(0);
+  });
+
+  const schema = schemaOf(Schema.Union(Placed, overLimit));
+  it("finds a declared refusal only in an output that carries a declared reason", () => {
+    expect(
+      declaredRefusalOf(schema, { status: "refused", reason: "out_of_stock", total: "$1" }),
+    ).toEqual({ reason: "out_of_stock" });
+    expect(declaredRefusalOf(schema, { status: "refused", reason: "too_slow" })).toBeUndefined();
+    expect(declaredRefusalOf(schema, { status: "placed", orderNumber: "A-1" })).toBeUndefined();
+    expect(declaredRefusalOf(schema, "refused")).toBeUndefined();
+  });
+
+  const output = { status: "refused", reason: "over_price_limit", total: "$120" };
+  it.each([
+    { commits: "not_entered", runnerEffect: "may_have_dispatched", refusal: "over_price_limit" },
+    { commits: "entered", runnerEffect: "may_have_dispatched", refusal: undefined },
+    { commits: "undeclared", runnerEffect: "may_have_dispatched", refusal: undefined },
+    { commits: "unreported", runnerEffect: "may_have_dispatched", refusal: undefined },
+    // A write that recorded its confirmation applied, whatever it returned.
+    { commits: "not_entered", runnerEffect: "verified", refusal: undefined },
+  ] as const)(
+    "counts a refusal with $commits commit steps and a $runnerEffect runner: $refusal",
+    ({ commits, runnerEffect, refusal }) => {
+      expect(
+        returnedRefusal({ outputSchema: schema, output, commits, runnerEffect })?.reason,
+      ).toBe(refusal);
+    },
+  );
+
+  it("settles a write that returned its declared refusal as not applied, with no failure", () => {
+    const refusedRun = evidence({
+      effect: "rejected",
+      output: "valid",
+      declared_refusal: true,
+    });
+    expect(classifyRun(refusedRun)).toBeUndefined();
+    expect(writeStatusOf(refusedRun)).toBe("not_applied");
+    expect(possibleCommit(refusedRun)).toBe(false);
+    // A rejected effect with valid output and no declared refusal is no settled result.
+    expect(confirmedRun(evidence({ effect: "rejected", output: "valid" }))).toBe(false);
   });
 });

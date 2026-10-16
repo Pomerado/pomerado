@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect";
 import type { CommitMark } from "./context.js";
 import { commitMarkMaxLength, commitMarkPattern } from "./operation.js";
+import { inlineLocalRefs, UnresolvedSchemaReference } from "../registry/schema-references.js";
 
 /*
  * What a finished or failed run did to the website, and what its caller is told. These functions
@@ -89,17 +90,164 @@ export const runnerVerified = (
  * What a write run that returned a validated result still needs. `confirmation_missing`: the
  * script finished but never recorded its confirmation, so the run failed and whether the write
  * took effect is unknown. `unverifiable`: the site offers no confirmation, so the result is
- * possibly completed. Reads and verified writes need nothing.
+ * possibly completed. Reads, verified writes and writes that returned a declared refusal before
+ * committing (`rejected`, from `returnedRefusal`) need nothing.
  */
 export const validatedWriteNeeds = (
   revision: OutcomeRevision | undefined,
   websiteEffect: string,
 ): "nothing" | "confirmation_missing" | "unverifiable" =>
-  revision?.effect !== "write" || websiteEffect === "verified"
+  revision?.effect !== "write" || websiteEffect === "verified" || websiteEffect === "rejected"
     ? "nothing"
     : revision.writeConfirmation === "unverifiable"
       ? "unverifiable"
       : "confirmation_missing";
+
+/** The `status` a write's output carries when the tool refused the task before committing. */
+export const refusedStatus = "refused";
+/** A refusal's reason: a stable lowercase code, such as `over_price_limit`. */
+export const refusalReasonPattern = /^[a-z][a-z0-9_]*$/;
+export const refusalReasonMaxLength = 64;
+
+const isJsonRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Every value a JSON Schema admits when it admits only listed strings: a `const`, an `enum`, or
+ * an `anyOf` or `oneOf` of those, so each listed value may carry its own description. Undefined
+ * when the schema admits anything else.
+ */
+const listedStrings = (schema: unknown): readonly string[] | undefined => {
+  if (!isJsonRecord(schema)) return undefined;
+  if ("const" in schema) return typeof schema["const"] === "string" ? [schema["const"]] : undefined;
+  const listed = schema["enum"];
+  if (Array.isArray(listed))
+    return listed.length > 0 && listed.every((value) => typeof value === "string")
+      ? listed
+      : undefined;
+  const branches = schema["anyOf"] ?? schema["oneOf"];
+  if (!Array.isArray(branches) || branches.length === 0) return undefined;
+  const values = branches.map(listedStrings);
+  return values.every((value) => value !== undefined) ? values.flat() : undefined;
+};
+
+/**
+ * The reason codes one output schema branch declares as a refusal: an object schema that
+ * requires `status` and `reason`, whose `status` admits only `refused` and whose `reason` admits
+ * only listed reason codes. Undefined for any other branch.
+ */
+const refusalBranchReasons = (branch: unknown): readonly string[] | undefined => {
+  if (!isJsonRecord(branch)) return undefined;
+  const properties = branch["properties"];
+  const required = branch["required"];
+  if (!isJsonRecord(properties) || !Array.isArray(required)) return undefined;
+  if (!required.includes("status") || !required.includes("reason")) return undefined;
+  const status = listedStrings(properties["status"]);
+  if (status === undefined || status.length !== 1 || status[0] !== refusedStatus) return undefined;
+  const reasons = listedStrings(properties["reason"]);
+  return reasons !== undefined &&
+    reasons.every(
+      (reason) => reason.length <= refusalReasonMaxLength && refusalReasonPattern.test(reason),
+    )
+    ? reasons
+    : undefined;
+};
+
+/**
+ * Whether a branch that is not a refusal could still match an object whose `status` is `refused`:
+ * any object branch, unless its `status` lists only other strings, or it has no `status` property,
+ * no pattern properties, and admits no property it does not list.
+ */
+const admitsRefused = (branch: unknown): boolean => {
+  if (!isJsonRecord(branch)) return branch !== false;
+  const type = branch["type"];
+  if (typeof type === "string" && type !== "object") return false;
+  const properties = branch["properties"];
+  const status = isJsonRecord(properties) ? properties["status"] : undefined;
+  if (status === undefined)
+    return branch["additionalProperties"] !== false || branch["patternProperties"] !== undefined;
+  return listedStrings(status)?.includes(refusedStatus) ?? true;
+};
+
+/**
+ * The refusal reasons a tool's output JSON Schema declares, as it publishes it. A write declares
+ * a refusal as a branch of its output, the root schema or one of the root's `anyOf` or `oneOf`
+ * branches, with local `$ref`s resolved: an object that requires `status`, admitting only
+ * `refused`, and `reason`, admitting only listed reason codes, plus whatever values the caller
+ * needs, such as the total and the limit it exceeded:
+ *
+ * `Schema.Union(Placed, Schema.Struct({ status: Schema.Literal("refused"), reason:
+ * Schema.Literal("over_price_limit"), total: Schema.String, limit: Schema.String }))`
+ *
+ * Empty when the schema declares no refusal, as every schema published before the convention
+ * existed that has no such branch does, and when another branch could also match a `refused`
+ * status, such as one whose `status` is free text, since a matching output would not show which
+ * branch it is.
+ */
+export const declaredRefusalReasons = (outputSchema: unknown): ReadonlySet<string> => {
+  if (!isJsonRecord(outputSchema)) return new Set();
+  let root: Record<string, unknown>;
+  try {
+    root = inlineLocalRefs({ ...outputSchema });
+  } catch (error) {
+    if (error instanceof UnresolvedSchemaReference) return new Set();
+    throw error;
+  }
+  const union = root["anyOf"] ?? root["oneOf"];
+  const branches: readonly unknown[] = Array.isArray(union) ? union : [root];
+  const refusals = branches.map(refusalBranchReasons);
+  // An output proves itself a refusal only when no other branch could have matched it.
+  if (branches.some((branch, index) => refusals[index] === undefined && admitsRefused(branch)))
+    return new Set();
+  return new Set(refusals.flatMap((reasons) => reasons ?? []));
+};
+
+/** A refusal a write returned as its output: the reason code its output schema declares. */
+export interface DeclaredRefusal {
+  readonly reason: string;
+}
+
+/**
+ * The refusal a validated output is, when its `status` is `refused` and its `reason` is one the
+ * output schema declares; undefined for any other output, a refusal shape the schema does not
+ * declare included.
+ */
+export const declaredRefusalOf = (
+  outputSchema: unknown,
+  output: unknown,
+): DeclaredRefusal | undefined => {
+  if (!isJsonRecord(output) || output["status"] !== refusedStatus) return undefined;
+  const reason = output["reason"];
+  return typeof reason === "string" && declaredRefusalReasons(outputSchema).has(reason)
+    ? { reason }
+    : undefined;
+};
+
+/**
+ * The refusal a write that returned a validated output made before committing, or undefined
+ * when it must be classified as any other returned write. Only a declared refusal counts, and
+ * only when the runner proves nothing was committed: the write declared its commit steps and
+ * entered none (`not_entered`), and recorded no confirmation (`runnerEffect` is not `verified`).
+ * A refusal returned after a commit step was entered, by a write that declares no commit steps,
+ * or with a missing or unreadable report may have changed the website, so it stays unconfirmed.
+ *
+ * Two cautions for a host that passes `commits`:
+ * - The evidence must cover every channel the run could send the write through. A request a host
+ *   relays for the script, such as an HTTP transport that sends on its behalf, never enters a
+ *   mark, so a host whose relay may have sent anything other than a read must not call this.
+ * - A journal made with `makeEffectJournalWith({ settledCommits })` reports the settled marks as
+ *   `not_sent`, although an earlier run sent them. A maintenance or continuation run that uses one
+ *   must never be judged by its marks here.
+ */
+export const returnedRefusal = (returned: {
+  readonly outputSchema: unknown;
+  readonly output: unknown;
+  readonly commits: CommitEvidence;
+  readonly runnerEffect: string;
+}): DeclaredRefusal | undefined =>
+  returned.commits === "not_entered" && returned.runnerEffect !== "verified"
+    ? declaredRefusalOf(returned.outputSchema, returned.output)
+    : undefined;
 
 /**
  * Why a write may not run again on its own, from its commit evidence alone. Only a write whose
@@ -126,6 +274,11 @@ export interface RunEvidence {
   readonly failure_reason?: string | undefined;
   /** The run's own judgement that a step may have changed the website. */
   readonly possible_commit?: boolean | undefined;
+  /**
+   * The write returned, before committing, a refusal its output schema declares, as
+   * `returnedRefusal` found it; its effect is then `rejected`, and its output says why.
+   */
+  readonly declared_refusal?: boolean | undefined;
   /** The tool's or the site's own words, for a refused input or an input the page did not apply. */
   readonly refusal_reason?: string | undefined;
   /** The input a refusal named, when the tool named it. */
@@ -204,10 +357,16 @@ export const unsettledEffect = (view: RunEvidence) =>
   view.effect === "unknown" ||
   view.effect === "partial" ||
   view.effect === "may_have_dispatched";
+/**
+ * A run that ended in its result: a read, a confirmed write, a run that never touched the site,
+ * or a write that returned one of its declared refusals before committing, which changed nothing.
+ */
 export const confirmedRun = (view: RunEvidence) =>
   (view.output === "valid" || view.output_drift === true) &&
   (view.status === "completed" || view.status === "cleanup_pending") &&
-  (view.effect === "verified" || view.effect === "not_started");
+  (view.effect === "verified" ||
+    view.effect === "not_started" ||
+    (view.effect === "rejected" && view.declared_refusal === true));
 
 /**
  * Whether a step may already have changed the website: the job says so, its effect is unsettled,

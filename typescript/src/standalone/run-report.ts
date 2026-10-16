@@ -10,6 +10,7 @@ import {
   classifyRun,
   commitReportOf,
   failedRunOutcome,
+  returnedRefusal,
   runnerVerified,
   unconfirmedWrite,
   validatedWriteNeeds,
@@ -69,19 +70,36 @@ const unconfirmedLead = {
 } as const;
 
 /**
- * A run whose operation returned: its output when it is a read or a confirmed write, else the
+ * A run whose operation returned: its output when it is a read, a confirmed write or a refusal
+ * its output schema declares, returned before any commit step, else the
  * failure that says the write may have applied. A script that declares no write is a read unless
  * the request says it writes.
  */
 export const returnedRun = (declared: DeclaredEffect, result: LocalOperationOutput) => {
   const revision = revisionOf(declared ?? "read", result.write);
+  // A declared refusal returned before any commit step changed nothing, so the write did not apply.
+  const refusal =
+    revision.effect === "write"
+      ? returnedRefusal({
+          outputSchema: result.schemas.output,
+          output: result.output,
+          commits: commitReportOf(result).evidence,
+          runnerEffect: result.effect === "verified" ? "verified" : "may_have_dispatched",
+        })
+      : undefined;
   // A read holds no write authority, so its validated return completes it.
-  const effect = revision.effect === "read" ? "verified" : journalEffect(result, revision);
+  const effect =
+    revision.effect === "read"
+      ? "verified"
+      : refusal === undefined
+        ? journalEffect(result, revision)
+        : "rejected";
   const evidence: RunEvidence = {
     status: "completed",
     effect,
     output: "valid",
     tool_effect: revision.effect,
+    ...(refusal === undefined ? {} : { declared_refusal: true }),
   };
   const outcome = classifyRun(evidence);
   if (outcome === undefined) return Effect.succeed(result.output);
