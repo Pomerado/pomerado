@@ -220,7 +220,7 @@ export const failureDetailBounds = bounds;
 /** A route at the start of the text (`/v1/items?page=2`) is kept like a URL, ending as one does. */
 const diagnosticUrlSpans = (text: string) => {
   const spans = urlSpans(text);
-  if (!text.startsWith("/")) return spans;
+  if (!text.startsWith("/") || text.startsWith("//")) return spans;
   const route = urlSpanAt(text, 0);
   return [route, ...spans.filter((span) => span.start >= route.end)];
 };
@@ -231,7 +231,7 @@ const diagnosticUrlSpans = (text: string) => {
  */
 const legacyUrlSpans = (text: string): UrlSpan[] => {
   const reaches = urlReaches(text);
-  if (!text.startsWith("/")) return reaches;
+  if (!text.startsWith("/") || text.startsWith("//")) return reaches;
   const separator = text.search(/[\s"'<>`]/);
   const routeEnd = separator === -1 ? text.length : separator;
   return [{ start: 0, end: routeEnd }, ...reaches.filter((span) => span.start >= routeEnd)];

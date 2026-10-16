@@ -64,7 +64,7 @@ npm pack --dry-run
 bash tools/ci-scan.sh content
 ```
 
-Browser tests run the built `dist/`, so build before you run them. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
+Browser tests run the built `dist/`, so build before you run them. If you encounter test timeouts in resource-constrained or virtualized environments, reducing worker concurrency with `corepack pnpm test:browser --workers=2` may help. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
 
 ## Open a pull request
 

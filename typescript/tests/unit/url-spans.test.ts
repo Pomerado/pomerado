@@ -190,6 +190,34 @@ describe("URL boundaries", () => {
     expect(redactDiagnosticText(text)).not.toContain("AKIAFAKEFAKEFAKE1234");
   });
 
+  it.each([
+    [
+      "an AWS access key",
+      "//AKIAFAKEFAKEFAKE1234",
+      "AKIAFAKEFAKEFAKE1234",
+      "[redacted_aws_key]",
+    ],
+    [
+      "a GitHub token",
+      "//ghp_SyntheticTok0123456789abcdef",
+      "ghp_SyntheticTok0123456789abcdef",
+      "[redacted_token]",
+    ],
+    [
+      "a bearer credential",
+      "//bearer synthetic-bearer-0123456789",
+      "synthetic-bearer-0123456789",
+      "[redacted]",
+    ],
+  ])(
+    "screens credentials in text starting with double slashes: %s",
+    (_label, text, secret, marker) => {
+      const redacted = redactDiagnosticText(text);
+      expect(redacted).not.toContain(secret);
+      expect(redacted).toContain(marker);
+    },
+  );
+
   it("keeps a URL in a CSV row whole", () => {
     const text = "1,https://x.example/a?d=a,b&k=v,done";
     expect(spanTexts(text)).toEqual(["https://x.example/a?d=a,b&k=v,done"]);
