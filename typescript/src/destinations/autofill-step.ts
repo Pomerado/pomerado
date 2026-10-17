@@ -27,7 +27,7 @@ import {
   withEvidence,
 } from "./autofill-refusal.js";
 import { sameSite, siteDomain } from "../runtime/same-site.js";
-import { trustedUrl } from "../runtime/sign-in-origins.js";
+import { trustableSignInUrl, trustedUrl } from "../runtime/sign-in-origins.js";
 import { type CardSlot, isCardSlot, onPaymentFrameOrigin } from "./payment-frames.js";
 import type { PageControls } from "./page-controls.js";
 import type {
@@ -260,6 +260,11 @@ export interface AutofillInspection {
   /** What the host judged the targets against, which each fill call judges them against again. */
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
+  /**
+   * The host's own trust of more sign-in addresses for this sign-in step (`trustSignInUrl`), which
+   * each fill call asks again.
+   */
+  readonly trustSignInUrl?: ((url: URL) => boolean) | undefined;
   /** The payment frame origins a card field may also sit in, for a card-fill step only. */
   readonly paymentFrameOrigins?: readonly string[] | undefined;
   readonly screen: {
@@ -375,11 +380,39 @@ export interface AutofillPage {
 }
 
 /**
+ * The host's predicate for more sign-in addresses, when `trust` has one and `step` is a sign-in's,
+ * with no part of a payment card; else undefined.
+ */
+const signInUrlTrust = (
+  trust: { readonly trustSignInUrl?: ((url: URL) => boolean) | undefined },
+  step: AutofillStep<FillSlot>,
+) => (step.fields.some((field) => isCardSlot(field.slot)) ? undefined : trust.trustSignInUrl);
+
+/**
+ * Whether the host trusts `value` for a sign-in step by its own predicate: never an address core
+ * would not let it trust (`trustableSignInUrl`), which the predicate is never asked about. A
+ * predicate that throws trusts nothing.
+ */
+const hostTrusts = (predicate: ((url: URL) => boolean) | undefined, value: string) => {
+  if (predicate === undefined) return false;
+  const url = URL.parse(value);
+  if (url === null || !trustableSignInUrl(url)) return false;
+  try {
+    return predicate(url) === true;
+    // error-reporting-allow: typed-recovery a host predicate that throws trusts nothing, so the step is refused as untrusted
+  } catch {
+    return false;
+  }
+};
+
+/**
  * The first control that sits or submits off the site and its configured sign-in origins, or a
  * field still to be typed (from index `from`) that takes no typing: where its own frame, document,
  * form actions and link destination are, naming only `named` origins once anything was typed. A
  * field for a part of a payment card may also sit in a frame on one of `paymentFrameOrigins`,
- * exactly; no other field ever counts one as trusted.
+ * exactly; no other field ever counts one as trusted. A sign-in step's controls may also sit and
+ * submit on an address the host's own `trustSignInUrl` trusts, within core's floor for it (see
+ * `inspectAutofillStep`); a card-fill step's never do.
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
@@ -388,13 +421,16 @@ export const untrustedTarget = (
     readonly siteOrigin: string;
     readonly authenticationOrigins: readonly string[];
     readonly paymentFrameOrigins?: readonly string[] | undefined;
+    readonly trustSignInUrl?: ((url: URL) => boolean) | undefined;
   },
   from: number,
   named?: ReadonlySet<string>,
 ) => {
+  const predicate = signInUrlTrust(trust, step);
   const trusted = (url: string, card: boolean) =>
     trustedUrl(trust.siteOrigin, trust.authenticationOrigins, url) ||
-    (card && onPaymentFrameOrigin(url, trust.paymentFrameOrigins ?? []));
+    (card && onPaymentFrameOrigin(url, trust.paymentFrameOrigins ?? [])) ||
+    hostTrusts(predicate, url);
   const untrustedPart = (target: Target, action: string, card = false) => {
     if (!trusted(target.ownerUrl ?? "", card)) return "frame";
     if (!trusted(target.documentOrigin, card)) return "document_origin";
@@ -459,6 +495,9 @@ export const untrustedTarget = (
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
  * document is on the site, and its card fields may sit in a frame on `paymentFrameOrigins`.
+ * `trustSignInUrl` lets a sign-in step's controls and popup also sit on an address the host's own
+ * predicate trusts, asked only about one core's own floor allows; the inspection keeps it, so each
+ * fill call judges again by the same rule. Evidence names origins as before.
  */
 export const inspectAutofillStep = (input: {
   readonly step: AutofillStep<FillSlot>;
@@ -467,12 +506,27 @@ export const inspectAutofillStep = (input: {
   readonly authenticationOrigins: readonly string[];
   readonly paymentFrameOrigins?: readonly string[] | undefined;
   readonly judgedBeforeTyping?: readonly string[] | undefined;
+  /**
+   * The host's own trust of more sign-in addresses for a sign-in step, as when its user allowed the
+   * sign-in to go wherever the site sends it: asked about each address of a control or popup off
+   * the site and `authenticationOrigins` that core's own floor allows, never about a card-fill
+   * step's. The floor: an https address with no user name or password, on a host with a
+   * registrable domain under a listed public suffix; never plain http, an IP address, localhost, a
+   * bare public suffix, a name only a private network resolves (under .localhost, .internal,
+   * .local, .test or .invalid), or a host under .arpa or .onion. It is also asked after typing,
+   * about addresses the page shaped, which may hold what was typed: the host must never log, keep
+   * or forward a URL it is asked about, and answers from the URL alone. A predicate that throws
+   * trusts nothing. Unset, only the site and `authenticationOrigins`.
+   */
+  readonly trustSignInUrl?: ((url: URL) => boolean) | undefined;
 }): Effect.Effect<AutofillRefusal | AutofillInspection> =>
   Effect.gen(function* () {
     const { step, page, siteOrigin, authenticationOrigins } = input;
+    const predicate = signInUrlTrust(input, step);
     if (
       step.popup !== undefined &&
-      !trustedUrl(siteOrigin, authenticationOrigins, step.popup.origin)
+      !trustedUrl(siteOrigin, authenticationOrigins, step.popup.origin) &&
+      !hostTrusts(predicate, step.popup.origin)
     )
       return withCheck(refused("credential_target_refused"), "destination", {
         part: "popup",
@@ -527,6 +581,7 @@ export const inspectAutofillStep = (input: {
       targets,
       siteOrigin,
       authenticationOrigins,
+      ...(predicate === undefined ? {} : { trustSignInUrl: predicate }),
       ...(input.paymentFrameOrigins === undefined
         ? {}
         : { paymentFrameOrigins: input.paymentFrameOrigins }),
