@@ -167,6 +167,56 @@ it("reads a sign-in that ends on its own screens or form as no can't tell, whate
   expect(sessionOnPage(missing("https://example.test/login"), recipe)).toBe("unknown");
 });
 
+it("normalizes non-root trailing slashes on recorded screens and marker paths", () => {
+  const recipe = {
+    steps: [
+      { page: "https://example.test/login" },
+      { page: "https://example.test/auth/" },
+    ],
+    signedIn: { urlPath: "/account" },
+  };
+  const missing = (url: string) => ({ signedIn: false, url, failed: "indicator_not_visible" }) as const;
+
+  // Recorded sign-in screen /login, observed URL /login/
+  expect(markerCantTell(missing("https://example.test/login/"), recipe)).toBe(false);
+
+  // Recorded sign-in screen /login/, observed URL /login
+  expect(markerCantTell(missing("https://example.test/auth"), recipe)).toBe(false);
+
+  // Configured marker path /account, observed URL /account/
+  expect(sessionOnPage(missing("https://example.test/account/"), recipe)).toBe("signed_out");
+
+  // Configured marker path /account/, observed URL /account
+  const slashMarkerRecipe = {
+    steps: [{ page: "https://example.test/login" }],
+    signedIn: { urlPath: "/account/" },
+  };
+  expect(sessionOnPage(missing("https://example.test/account"), slashMarkerRecipe)).toBe("signed_out");
+
+  // Root path / remains unchanged
+  const rootRecipe = {
+    steps: [{ page: "https://example.test/" }],
+    signedIn: { urlPath: "/account" },
+  };
+  expect(markerCantTell(missing("https://example.test/"), rootRecipe)).toBe(false);
+  expect(markerCantTell(missing("https://example.test"), rootRecipe)).toBe(false);
+
+  // An unrecorded intermediate post-login page still retains the intended unknown / markerCantTell behavior
+  expect(markerCantTell(missing("https://example.test/choose-account"), recipe)).toBe(true);
+  expect(sessionOnPage(missing("https://example.test/choose-account"), recipe)).toBe("unknown");
+});
+
+it("preserves origin matching so trailing-slash normalization does not match across origins", () => {
+  const recipe = {
+    steps: [{ page: "https://example.test/login" }],
+    signedIn: { urlPath: "/account" },
+  };
+  const missing = (url: string) => ({ signedIn: false, url, failed: "indicator_not_visible" }) as const;
+
+  expect(markerCantTell(missing("https://example.test/login/"), recipe)).toBe(false);
+  expect(markerCantTell(missing("https://other.test/login/"), recipe)).toBe(true);
+});
+
 it("fills a login into an execution's browser only while that execution waits in its own sign-in", () => {
   const browser = { id: "attached" };
   const other = { id: "other" };

@@ -52,10 +52,15 @@ export const sessionSignInAllowance = (
     ? "allowed"
     : "session_not_kept";
 
+const pathOf = (value: string) => {
+  const path = URL.parse(value, "https://login.invalid")?.pathname;
+  return path === undefined ? undefined : path.length > 1 ? path.replace(/\/$/u, "") : path;
+};
+
 /** A recorded screen's page, which a signed-out page lands back on. */
 const placeOf = (page: string) => {
   const url = URL.parse(page);
-  return url === null ? undefined : `${url.origin}${url.pathname}`;
+  return url === null ? undefined : `${url.origin}${pathOf(url.pathname)}`;
 };
 
 /** Whether the page is one of the recorded sign-in screens. */
@@ -71,8 +76,10 @@ const markerFailure = (failed: string) =>
 
 /** A marker that names a path reads signed out only on that path. */
 const onMarkerPath = (url: string | undefined, urlPath: string) => {
-  const here = url === undefined ? undefined : URL.parse(url);
-  return here?.pathname === urlPath ? ("signed_out" as const) : ("unknown" as const);
+  const here = url === undefined ? undefined : URL.parse(url)?.pathname;
+  return here !== undefined && pathOf(here) === pathOf(urlPath)
+    ? ("signed_out" as const)
+    : ("unknown" as const);
 };
 
 /** What a session check reads of a recorded sign-in: its screens and its marker's path. */
