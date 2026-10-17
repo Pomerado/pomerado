@@ -22,6 +22,7 @@ import {
   type SignInValueHooks,
 } from "../destinations/sign-in-recipe.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "./authentication.js";
+import { sameSite } from "./same-site.js";
 import { markerCantTell } from "./session-sign-in.js";
 import { trustedUrl } from "./sign-in-origins.js";
 import {
@@ -221,12 +222,8 @@ const makeReplay = <E>(input: SignInReplayInput<E>) => {
     /** The run holds no login yet: this replay is its value-free sign-in check. */
     valueFree: input.credentials === undefined,
     pages: new Set(session.steps.map((step) => step.page)),
-    /** Where an unrecorded code screen may be: a recorded screen's origin or a sign-in origin. */
-    signInOrigins: new Set(
-      [...session.steps.map((step) => step.page), ...input.browser.authenticationOrigins].flatMap(
-        (page) => originOf(page) ?? [],
-      ),
-    ),
+    /** The recorded screens' origins, where an unrecorded code screen may be (`unrecordedCode`). */
+    recordedOrigins: new Set(session.steps.flatMap((step) => originOf(step.page) ?? [])),
     awaitScreen: makeReplayScreenWait(input, session.progress, input.timing, resolve, () =>
       screenRejection(session, extras),
     ),
@@ -553,10 +550,10 @@ const codeScreenOf = (inspection: AutofillInspection) => {
 
 /**
  * A code screen the recipe never recorded, looked for after its screens only while no code may
- * have gone out, on a recorded screen's origin or a sign-in origin. So it looks once: its code
- * goes out, or the full check decides. The screen this replay last submitted still showing is the
- * site's answer to it, such as a password screen shown again or a refused recovery code, so no
- * code goes into it. The code comes as a recorded code screen's does: a saved value, else the
+ * have gone out, on a recorded screen's origin or a sign-in origin off the site. So it looks once:
+ * its code goes out, or the full check decides. The screen this replay last submitted still showing
+ * is the site's answer to it, such as a password screen shown again or a refused recovery code, so
+ * no code goes into it. The code comes as a recorded code screen's does: a saved value, else the
  * owner's answer. `ran` once it was filled and submitted, else why it stopped: a code typed but
  * not sent never reads as signed in. `none` when none shows, or when the fill typed nothing, which
  * leaves the sign-in as it was for the full check.
@@ -567,8 +564,15 @@ const unrecordedCode = <E>(replay: Replay<E>, probe: { screen?: string | undefin
     if (sent.maySent.has("code")) return "none" as const;
     const inspected = yield* input.browser.inspect(unrecordedCodeStep);
     if ("outcome" in inspected) return "none" as const;
-    const at = originOf(inspected.page);
-    if (at === undefined || !replay.signInOrigins.has(at)) return "none" as const;
+    // A configured sign-in origin counts only off the site: an origin of the site holds its account
+    // pages too, so it counts only where a recorded screen ran.
+    const at = URL.parse(inspected.page);
+    const signInOrigin =
+      at !== null &&
+      (replay.recordedOrigins.has(at.origin) ||
+        (input.browser.authenticationOrigins.includes(at.origin) &&
+          !sameSite(inspected.siteOrigin, at)));
+    if (!signInOrigin) return "none" as const;
     const field = inspected.screen.fields[0];
     if (field !== undefined && namesWholeOtherWord(field)) return "none" as const;
     const submitted = progress.ran.at(-1);

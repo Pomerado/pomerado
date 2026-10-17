@@ -790,6 +790,9 @@ for (const [kind, attributes] of [
   ["a text box named code with no short numeric shape", 'name="code" type="text"'],
   ["a code box autocompleted tel-national", 'name="code" autocomplete="tel-national" inputmode="numeric" maxlength="6"'],
   ["a CAPTCHA box named captcha_code", 'name="captcha_code" inputmode="numeric" maxlength="6"'],
+  ["a nine-digit box named code", 'name="code" inputmode="numeric" maxlength="9"'],
+  ["a numeric code box autocompleted postal-code", 'name="code" autocomplete="postal-code" inputmode="numeric" maxlength="6"'],
+  ["a password box named otp", 'type="password" name="otp"'],
 ] as const)
   it(`types no code into ${kind} on the page a read's sign-in lands on that can't tell`, async () => {
     const fake = fakeSite({ unrecorded: [codeForm(attributes)] });
@@ -876,3 +879,26 @@ it("answers only the marked one-time-code field on a page that has one, never an
     { page: "unrecorded", values: [code] },
   ]);
 });
+
+for (const [where, accountOrigin] of [
+  ["its own origin", origin],
+  ["another origin of the site", `https://accounts.${site}`],
+] as const)
+  it(`types no code into an account page on ${where}, a configured sign-in origin no recorded screen ran on`, async () => {
+    // The recorded screens ran on an identity provider, and the run's sign-in origins also hold the
+    // site's, as a host's list may.
+    const provider = "https://id.example-sign-in.test";
+    const fake = fakeSite({
+      loginOrigin: provider,
+      unrecorded: [codeForm('name="code" inputmode="numeric" maxlength="6"')],
+      unrecordedOrigin: accountOrigin,
+      authenticationOrigins: [provider, accountOrigin],
+    });
+    const recipe = { ...recipeOf(), steps: [{ ...loginStep, page: `${provider}/login` }] };
+    const { ask, asked } = owner();
+    expect(await signIn(recipe, fake, ask, `${provider}/login`)).toEqual(
+      Either.right({ alreadySignedIn: false }),
+    );
+    expect(kinds(asked)).toEqual(["credential:missing_credentials"]);
+    expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
+  });
