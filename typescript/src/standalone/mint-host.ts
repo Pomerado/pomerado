@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
+import { localRelativePath } from "../execution/local-path.js";
 import { questionForReview } from "../guardian/question.js";
 import {
   MintFailure,
@@ -135,14 +136,20 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
     authorizeResidual: Effect.fail(new MintFailure({ code: "ScopeDenied" })),
     preflight: (execution) =>
       Effect.gen(function* () {
-        // An entrypoint that does not parse is refused before review, as it could never load. A
-        // sign-in step runs the host's own code, and a missing entrypoint fails when it runs.
-        if (execution.purpose !== "authenticate") {
-          const source = new Map(yield* workspace.snapshot).get(execution.entrypoint);
-          const syntax =
-            source === undefined
-              ? undefined
-              : mintSourceSyntaxFailure(source, execution.entrypoint);
+        // Missing authored source is a correctable step error, not a Guardian read outage.
+        // Sign-in and card-fill steps run host-owned code rather than an authored entrypoint.
+        if (execution.purpose !== "authenticate" && execution.purpose !== "card_fill") {
+          const entrypoint = yield* Effect.try({
+            try: () => localRelativePath(execution.entrypoint),
+            catch: mintError,
+          });
+          const source = new Map(yield* workspace.snapshot).get(entrypoint);
+          if (source === undefined)
+            return {
+              supported: false as const,
+              reason: `Entrypoint ${execution.entrypoint} does not exist. Create it before executing it.`,
+            };
+          const syntax = mintSourceSyntaxFailure(source, execution.entrypoint);
           if (syntax !== undefined) return { supported: false as const, reason: syntax };
         }
         if (execution.target !== "pureFiles" && execution.target !== "liveBrowser")
