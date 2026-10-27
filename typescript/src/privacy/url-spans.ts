@@ -23,9 +23,10 @@ import {
  * - a character reference to a quote or an angle bracket, such as `&lt;`, `&quot;` or `&#x22;`,
  *   or one escaped again for markup, such as `&amp;lt;`: what it stands for ends a URL;
  * - a `,`, `;` or `|` whose next field starts with a credential: a credential-named `key=` or
- *   `key:` (`,password=…`), an auth or cookie header field (`;authorization=…`), a bearer or basic credential, an AWS access key ID, a provider API key
- *   or a JSON Web Token, in the path, query or fragment alike. A `;` that closes any other
- *   character reference, such as `&amp;`, `&nbsp;` or the chained `&amp;amp;`, is no delimiter.
+ *   `key:` (`,password=…`), an auth or cookie header field (`;authorization=…`), a bearer or
+ *   basic credential, an AWS access key ID, a provider API key or a JSON Web Token, in the path,
+ *   query or fragment alike. A `;` that closes any other character reference, such as `&amp;`,
+ *   `&nbsp;` or the chained `&amp;amp;`, is no delimiter.
  *
  * Every other field stays part of the URL, so lists of dates, numbers, addresses or names in a
  * path or query (`?dates=2026-01-31,2026-02-07&otp=…`), matrix parameters (`;v=1`) and a URL in a
@@ -116,13 +117,16 @@ const startsCredential = (field: string) => {
   return providerKey !== undefined && isProviderKey(providerKey);
 };
 
-const headerField = new RegExp(`^(?:${credentialPolicy.jsonHeaderFields.join("|")})$`, "iu");
+const headerFields = new Set<string>(credentialPolicy.jsonHeaderFields);
+
+/** A `key=` or `key:` that names a credential or an auth or cookie header. */
+const isCredentialFieldKey = (key: string) =>
+  isCredentialAssignmentKey(key) || headerFields.has(key.toLowerCase());
 
 /** What follows the delimiter at `index` is a credential, not more of the URL. */
 const startsCredentialField = (text: string, index: number) => {
   const { field, key } = fieldAfter(text, index);
-  if (key !== undefined && (isCredentialAssignmentKey(key) || headerField.test(key))) return true;
-  return startsCredential(field);
+  return (key !== undefined && isCredentialFieldKey(key)) || startsCredential(field);
 };
 
 /** A URL scan's state: open bracket counts and the trim floor. */
