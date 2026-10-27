@@ -2,6 +2,7 @@ import { OpenAIProvider, setDefaultModelProvider } from "@openai/agents";
 import { Chunk, Effect, Fiber, Option, TestClock, TestContext } from "effect";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
+import type { GuardianModelOptions } from "../../src/guardian/openai.js";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { ReviewFailure, guardianOutageRetry, makeGuardian } from "../../src/guardian/review.js";
 import type {
@@ -436,7 +437,10 @@ const onTestClock = <A, E>(effect: Effect.Effect<A, E>) =>
   );
 
 /** Guardian's own model call failing every time with the provider's error `providerError`. */
-const failingModelReview = async (providerError: () => Error) => {
+const failingModelReview = async (
+  providerError: () => Error,
+  failureMetadata?: GuardianModelOptions["failureMetadata"],
+) => {
   let calls = 0;
   const retried: unknown[] = [];
   const record: GuardianDiagnostics["emit"] = (name, details) =>
@@ -459,7 +463,10 @@ const failingModelReview = async (providerError: () => Error) => {
       Effect.either(
         makeGuardian(
           {
-            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, {
+              ...native,
+              ...(failureMetadata === undefined ? {} : { failureMetadata }),
+            }),
             retry: guardianOutageRetry,
           },
           { emit: record, retainModelTranscript: record, retainScreenedSource: () => Effect.void },
@@ -471,6 +478,65 @@ const failingModelReview = async (providerError: () => Error) => {
     setDefaultModelProvider(new OpenAIProvider());
   }
 };
+
+it.each(["insufficient_quota", "credit_balance_exhausted"])(
+  "does not retry Guardian's spent quota (%s) wrapped in a cause",
+  async (code) => {
+    const review = await failingModelReview(
+      () => new Error("Synthetic provider wrapper", { cause: serverError(code) }),
+    );
+    expect(review.result).toMatchObject({
+      _tag: "Left",
+      left: {
+        code: "Unavailable",
+        modelQuotaExhausted: true,
+        failureDetail: { subCause: "model_quota_exhausted" },
+      },
+    });
+    expect(review.calls).toBe(1);
+    expect(review.retried).toEqual([]);
+  },
+);
+
+it.each(["insufficient_quota", "credit_balance_exhausted"])(
+  "does not retry spent quota (%s) supplied only by the host's failure metadata",
+  async (code) => {
+    // The raw error has neither a provider code nor a cause carrying one.
+    const error = new Error("Synthetic unclassified model failure");
+    const failureMetadata = vi.fn(() => ({ kind: "SyntheticProviderError", code }));
+    const review = await failingModelReview(() => error, failureMetadata);
+    expect(failureMetadata).toHaveBeenCalledWith(error);
+    expect(review.result).toMatchObject({
+      _tag: "Left",
+      left: {
+        code: "Unavailable",
+        modelQuotaExhausted: true,
+        failureDetail: { subCause: "model_quota_exhausted" },
+      },
+    });
+    expect(review.calls).toBe(1);
+    expect(review.retried).toEqual([]);
+  },
+);
+
+it.each([false, true])(
+  "still retries Guardian's rate_limit_exceeded within the outage budget (wrapped: %s)",
+  async (wrapped) => {
+    const review = await failingModelReview(() => {
+      const error = Object.assign(new Error("Synthetic rate limit"), {
+        name: "RateLimitError",
+        status: 429,
+        code: "rate_limit_exceeded",
+      });
+      return wrapped ? new Error("Synthetic provider wrapper", { cause: error }) : error;
+    });
+    expect(review.result).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
+    if (review.result._tag === "Left")
+      expect(review.result.left).not.toHaveProperty("modelQuotaExhausted");
+    expect(review.calls).toBe(9);
+    expect(review.retried).toHaveLength(8);
+  },
+);
 
 /** A provider's server error, as its SDK raises it, with the provider's own `code`. */
 const serverError = (code: string) =>

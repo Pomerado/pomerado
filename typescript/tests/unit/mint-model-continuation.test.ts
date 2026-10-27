@@ -2004,6 +2004,23 @@ it("retries a model call whose response stream was reset mid-flight, from the st
   expect(f.counts()).toEqual({ executed: 1, published: 1, asked: 0 });
 });
 
+it("retries rate_limit_exceeded with the same request, then publishes", async () => {
+  const f = await fixture(
+    (_request, index) => {
+      if (index === 0)
+        throw Object.assign(providerError("RateLimitError", 429), { code: "rate_limit_exceeded" });
+      return [call("execute", execution), call("finish_build", publication)][index - 1] ?? prose();
+    },
+    {},
+    {},
+    { modelRetry: quickModelRetry },
+  );
+  expect(await f.run()).toMatchObject({ build: "published", publicationRef: "published_revision" });
+  expect(f.requests).toHaveLength(3);
+  expect(JSON.stringify(f.requests[1]?.input)).toBe(JSON.stringify(f.requests[0]?.input));
+  expect(f.counts()).toEqual({ executed: 1, published: 1, asked: 0 });
+});
+
 it("does not retry a refused request", async () => {
   const f = await fixture(
     () => {
@@ -2034,6 +2051,29 @@ it.each(["insufficient_quota", "credit_balance_exhausted"])(
       stopReason: "model_quota_exhausted",
     });
     expect(f.requests).toHaveLength(1);
+  },
+);
+
+it.each(["insufficient_quota", "credit_balance_exhausted"])(
+  "ends on spent quota (%s) wrapped in a cause before any website action",
+  async (code) => {
+    const f = await fixture(
+      () => {
+        throw new Error("Synthetic provider wrapper", {
+          cause: Object.assign(providerError("RateLimitError", 429), { code }),
+        });
+      },
+      {},
+      {},
+      { modelRetry: quickModelRetry },
+    );
+    expect(await f.run()).toMatchObject({
+      build: "incomplete",
+      hostFailure: "model_quota_exhausted",
+      stopReason: "model_quota_exhausted",
+    });
+    expect(f.requests).toHaveLength(1);
+    expect(f.counts()).toEqual({ executed: 0, published: 0, asked: 0 });
   },
 );
 
