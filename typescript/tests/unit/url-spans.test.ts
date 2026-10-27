@@ -93,6 +93,21 @@ describe("URL boundaries", () => {
       "Synth3tic9",
     ],
     [
+      "an authorization header field glued by a semicolon",
+      "see https://portal.example/a;authorization=Bearer synthetic-bearer-0123456789 now",
+      "synthetic-bearer-0123456789",
+    ],
+    [
+      "a cookie field glued by a comma",
+      "see https://portal.example/a,cookie=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
+      "a capitalized cookie header glued by a pipe",
+      "see https://portal.example/a|Cookie: sid=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
       "a key after an escaped angle bracket",
       "see https://portal.example/a?q=1&amp;lt;password=Synthetic14 now",
       "Synthetic14",
@@ -171,6 +186,8 @@ describe("URL boundaries", () => {
     ["a scheme-relative URL", "//cdn.example/lib.js?v=1,2"],
     ["a key with a colon after a comma", "https://shop.example/a?f=x,date:2026-02-07"],
     ["a schemeless host", "www.shop.example/a?ids=4,5"],
+    ["a header name inside a path field", "https://shop.example/a,cookies/b"],
+    ["a header name inside a query value", "https://docs.example/a?topic=auth,authorization-code"],
     ["an escaped apostrophe", "https://wiki.example/wiki/Ender&#39;s_Game"],
     ["an escaped apostrophe in hex", "https://wiki.example/wiki/Ender&#x27;s_Game"],
   ])("keeps a real URL whole: %s", (_label, url) => {
@@ -232,6 +249,7 @@ describe("URL boundaries", () => {
       "https://portal.example/a;bearer synthetic-bearer-0123456789",
       "",
     ],
+    ["a header field after a semicolon", "https://portal.example/a;Proxy-Authorization=x", ""],
     ["an unbalanced bracket", "(https://portal.example/a)", "("],
     ["an escaped angle bracket", "https://portal.example/a&lt;b", ""],
     ["an angle bracket escaped twice", "https://portal.example/a&amp;lt;b", ""],
