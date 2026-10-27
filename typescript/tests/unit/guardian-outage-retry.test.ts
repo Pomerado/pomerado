@@ -399,7 +399,7 @@ it.each(["insufficient_quota", "credit_balance_exhausted"])(
         Effect.either(
           makeGuardian({
             ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
-            retry: quickRetry,
+            retry: { delays: ["1 millis"], budget: "20 millis" },
           }).review(pending, readSource),
         ),
       );
