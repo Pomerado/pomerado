@@ -137,8 +137,8 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
     preflight: (execution) =>
       Effect.gen(function* () {
         // Missing authored source is a correctable step error, not a Guardian read outage.
-        // Sign-in steps run host-owned code rather than an authored entrypoint.
-        if (execution.purpose !== "authenticate") {
+        // Sign-in and card-fill steps run host-owned code rather than an authored entrypoint.
+        if (execution.purpose !== "authenticate" && execution.purpose !== "card_fill") {
           const entrypoint = yield* Effect.try({
             try: () => localRelativePath(execution.entrypoint),
             catch: mintError,
