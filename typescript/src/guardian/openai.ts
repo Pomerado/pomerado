@@ -877,8 +877,7 @@ const reviewerWithPolicy = (shared: string, options: GuardianModelOptions): Open
                         : overContextWindow(finite)
                           ? "InputTooLarge"
                           : "Unavailable";
-                  quotaExhausted =
-                    providerQuotaExhausted(error) || spentQuotaCode(finite.code);
+                  quotaExhausted = providerQuotaExhausted(error) || spentQuotaCode(finite.code);
                   reviewComputationDetail =
                     !turn.session && turn.pending.publication === undefined
                       ? failureDetail(
