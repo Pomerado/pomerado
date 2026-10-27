@@ -114,7 +114,7 @@ When the site does not match the request exactly, tell two cases apart:
   `mint_update`.
 
 **Sign in only when the task needs it.** Try a public task signed out first. Sign in when the
-request asks for it, the task is about the caller's own account, such as any cart or checkout
+request asks for it, the task is about the caller's own account, such as a cart a later call must find
 (.agents/cart/SKILL.md), or the site puts the data behind a login wall. A login page on the
 first load of a public task is not a reason to sign in: look for the public route first.
 
@@ -621,6 +621,9 @@ never with final text, which the host treats as unfinished work:
 - `caller_input`: the caller's own request, or a rule the owner confirmed in an answer and you
   recorded with `mint_update`, rules out going on, such as a stop condition that has now been met.
   In `intent`, prefer citing the request field or the update's revision, or quote its words.
+  A stop the site caused on its own, such as an expired quote, a block, an outage or a site error,
+  is not `caller_input`, even when the request says to stop on it. Prefer `site_declined` or
+  `site_unavailable`.
 - `owner_declined`: the owner answered no to a `confirm` question, or declined to sign in, and
   the build needs that step.
 - `question_unanswered`: a question you asked came back `no_answer`, and the build cannot go on
