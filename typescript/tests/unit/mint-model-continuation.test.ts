@@ -2065,7 +2065,7 @@ it.each(["insufficient_quota", "credit_balance_exhausted"])(
       },
       {},
       {},
-      { modelRetry: quickModelRetry },
+      { modelRetry: { delaysMs: [1], budgetMs: 20, reserveMs: 0 } },
     );
     expect(await f.run()).toMatchObject({
       build: "incomplete",
