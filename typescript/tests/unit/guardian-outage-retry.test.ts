@@ -373,47 +373,50 @@ it("returns an outage at once for a reviewer with no retry", async () => {
   expect(f.runs()).toBe(1);
 });
 
-it("reports the provider's spent quota from Guardian's own model call, without reviewing again", async () => {
-  let calls = 0;
-  setDefaultModelProvider({
-    getModel: () => ({
-      getResponse: () => {
-        calls++;
-        return Promise.reject(
-          Object.assign(new Error("Synthetic spent quota"), {
-            name: "RateLimitError",
-            status: 429,
-            code: "insufficient_quota",
-          }),
-        );
-      },
-      getStreamedResponse: () => {
-        throw new Error("Unused stream");
-      },
-    }),
-  });
-  try {
-    const result = await Effect.runPromise(
-      Effect.either(
-        makeGuardian({
-          ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
-          retry: quickRetry,
-        }).review(pending, readSource),
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Left",
-      left: {
-        code: "Unavailable",
-        modelQuotaExhausted: true,
-        failureDetail: { subCause: "model_quota_exhausted" },
-      },
+it.each(["insufficient_quota", "credit_balance_exhausted"])(
+  "reports the provider's spent quota (%s) from Guardian's own model call, without reviewing again",
+  async (code) => {
+    let calls = 0;
+    setDefaultModelProvider({
+      getModel: () => ({
+        getResponse: () => {
+          calls++;
+          return Promise.reject(
+            Object.assign(new Error("Synthetic spent quota"), {
+              name: "RateLimitError",
+              status: 429,
+              code,
+            }),
+          );
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
     });
-    expect(calls).toBe(1);
-  } finally {
-    setDefaultModelProvider(new OpenAIProvider());
-  }
-});
+    try {
+      const result = await Effect.runPromise(
+        Effect.either(
+          makeGuardian({
+            ...makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+            retry: quickRetry,
+          }).review(pending, readSource),
+        ),
+      );
+      expect(result).toMatchObject({
+        _tag: "Left",
+        left: {
+          code: "Unavailable",
+          modelQuotaExhausted: true,
+          failureDetail: { subCause: "model_quota_exhausted" },
+        },
+      });
+      expect(calls).toBe(1);
+    } finally {
+      setDefaultModelProvider(new OpenAIProvider());
+    }
+  },
+);
 
 /**
  * Runs `effect` on the test clock, moving the clock to each wait it schedules once the review is

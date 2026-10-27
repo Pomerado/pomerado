@@ -2017,6 +2017,26 @@ it("does not retry a refused request", async () => {
   expect(f.requests).toHaveLength(1);
 });
 
+it.each(["insufficient_quota", "credit_balance_exhausted"])(
+  "ends on the provider's spent quota (%s) without retrying it",
+  async (code) => {
+    const f = await fixture(
+      () => {
+        throw Object.assign(providerError("RateLimitError", 429), { code });
+      },
+      {},
+      {},
+      { modelRetry: quickModelRetry },
+    );
+    expect(await f.run()).toMatchObject({
+      build: "incomplete",
+      hostFailure: "model_quota_exhausted",
+      stopReason: "model_quota_exhausted",
+    });
+    expect(f.requests).toHaveLength(1);
+  },
+);
+
 it("stops retrying a model outage when the attempt has too little time left to use it", async () => {
   const f = await fixture(
     () => {
