@@ -205,6 +205,28 @@ test("a notice drawn only once the fields hold input is dismissed when it catche
   expect(hosted.typed).toEqual([username, password]);
 });
 
+test("a submit enabled only by keyup that is covered by a notice is dismissed after keyed retyping and submits", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    "",
+    `document.getElementById("sign-in").disabled = true;
+document.getElementById("password").addEventListener("input", () => {
+  if (!document.getElementById("consent")) document.body.insertAdjacentHTML("beforeend", ${JSON.stringify(notice)});
+}, { once: true });
+document.getElementById("password").addEventListener("keyup", () => {
+  document.getElementById("sign-in").disabled = false;
+});`,
+  );
+  const hosted = await host(page);
+  const report = await fill(hosted, dismissed);
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(await page.evaluate(() => sessionStorage.getItem("events"))).toContain("accepted");
+  expect(await page.$("#consent")).toBeNull();
+  expect(received.map((body) => Object.fromEntries(body))).toEqual([{ username, password }]);
+});
+
 test("a dismiss the page does not show is skipped, and the step fills and submits as before", async ({
   page,
 }) => {

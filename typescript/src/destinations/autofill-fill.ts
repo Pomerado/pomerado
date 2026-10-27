@@ -876,14 +876,14 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         }
         return yield* submitStep(fill, progress, boxes, typed);
       });
-    const report = yield* submitStep(input, progress, boxes, typed);
+    let report = yield* submitStep(input, progress, boxes, typed);
     // The page may enable its submit only on key presses: the host types every field again by keys.
     if (
       report.outcome === "filled" &&
       report.submit === "stayed_disabled" &&
       typedFields(step, progress).length > 0
     )
-      return yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
+      report = yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
     if (!isBlocked(report) || step.dismiss === undefined) return report;
     const again = yield* dismissNotice(input, progress);
     // The dismiss emptied the fields before its click: the host types them all again.
