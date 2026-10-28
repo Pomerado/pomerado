@@ -471,7 +471,7 @@ export interface AutofillInspection {
  * phone field the host typed into kept other digits than the number's once the page reformatted
  * it, as under a country picker set to another country (`InsertionOptions.phone`), so the host
  * typed nothing after it and never clicked the submit. A keyboard that does not read back never
- * reports it. Such a field that kept just the start of what was typed also says `cutShort`.
+ * reports it. Such a field whose `maxLength` is shorter than what was typed also says `cutShort`.
  */
 export type AutofillFieldStatus = "filled" | "failed" | "not_attempted" | "changed";
 
@@ -490,8 +490,8 @@ export type AutofillStepReport =
         readonly slot: FillSlot;
         readonly status: AutofillFieldStatus;
         /**
-         * On a `changed` phone field: the keyboard read it back `cut_short`, as a box that takes
-         * fewer characters than the number as typed keeps only its start. Never a digit or length.
+         * On a `changed` phone field: the keyboard read it back `cut_short`, as the field's
+         * `maxLength` is shorter than the number as typed. Never a digit or length.
          */
         readonly cutShort?: true;
       }[];

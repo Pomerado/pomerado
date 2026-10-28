@@ -146,8 +146,8 @@ const filledNotices = {
 } as const;
 
 /**
- * After a phone field that kept just the start of the number the host typed, when the number says
- * its calling code: it names no digit of the number.
+ * After a phone field whose `maxLength` is shorter than the number the host typed, when the number
+ * says its calling code: it names no digit of the number.
  */
 const localNumberNotice =
   "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits.";
@@ -173,8 +173,8 @@ export const changedPhoneNotice = (number: string | undefined, local = false) =>
 
 /**
  * Whether the changed phone field at `index` (`changedField`) seems to take only the local
- * number: the host read it back cut short (`cutShort`), and its step did not already have the
- * number typed without its calling code (`format: "national"`).
+ * number: its `maxLength` is shorter than the number as typed (`cutShort`), and its step did not
+ * already have the number typed without its calling code (`format: "national"`).
  */
 export const takesLocalNumber = (
   stepReport: AutofillStepReport,

@@ -45,7 +45,7 @@ export const CredentialInsertion = Schema.Union(Schema.Literal("inserted"), Inse
 /**
  * An insertion's answer when the host asked it to read a phone field back (`InsertionOptions`):
  * also `changed`, inserted, but the field then held other digits than the number's, or
- * `cut_short`, changed so that the field kept just the start of the text (`phoneDigitsCode`).
+ * `cut_short`, changed in a field whose `maxLength` is shorter than the text (`phoneDigitsCode`).
  */
 export const CredentialReadBack = Schema.Union(
   CredentialInsertion,
@@ -94,10 +94,9 @@ export const phoneReadBackMs = 250;
  * calling code: what follows must be the rest of the number, every digit to the last. A number
  * dialed with an international prefix (`00`, or `011`) may also drop the prefix with them. A
  * number shifted into another country's digits or cut short is `changed`, and `cut_short` when the
- * field kept just the start of the text: its `maxLength` is shorter than the text, or its digits
- * are the first of the number's, as a box that takes only the local number keeps of a number
- * typed with its calling code. A field gone from its document, one with no text value or no
- * digits, or a number with no digits is `unread`, so a field the page emptied stays the
+ * field's `maxLength` is shorter than the text, as a box that takes only the local number may be
+ * for a number typed with its calling code. A field gone from its document, one with no text value
+ * or no digits, or a number with no digits is `unread`, so a field the page emptied stays the
  * empty-field failure the next call finds. Only digits 0 to 9 count.
  */
 export const phoneDigitsCode = `function(text) {
@@ -117,8 +116,7 @@ export const phoneDigitsCode = `function(text) {
         if (rest.length > 0 && rest === kept.slice(shown)) return "kept";
       }
   const limit = field.maxLength;
-  if ((typeof limit === "number" && limit >= 0 && limit < text.length) || typed.startsWith(kept))
-    return "cut_short";
+  if (typeof limit === "number" && limit >= 0 && limit < text.length) return "cut_short";
   return "changed";
 }`;
 

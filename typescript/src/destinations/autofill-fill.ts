@@ -253,7 +253,7 @@ const filledReport = (
   ...trustedByHost(progress),
 });
 
-/** A report whose phone field at `index` kept just the start of what was typed (`cut_short`). */
+/** A report whose phone field at `index` is shorter than what was typed (`cut_short`). */
 const cutShortAt = (report: AutofillStepReport, index: number): AutofillStepReport =>
   report.outcome !== "filled"
     ? report
@@ -901,10 +901,11 @@ const afterFieldCall = (
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
  * read back once typed (`InsertionOptions.phone`): one that kept other digits than the number, as
- * under a country picker set to another country, is `changed`, with `cutShort` when it kept just
- * the start of them, and the fill types nothing more and never clicks the submit. A phone field
- * whose step says `format: "national"` gets the number without its calling code, as the host's
- * `typedValues` gives it, and is read back against that. On a step with fields and no submit, a
+ * under a country picker set to another country, is `changed`, with `cutShort` when its
+ * `maxLength` is shorter than the number as typed, and the fill types nothing more and never
+ * clicks the submit. A phone field whose step says `format: "national"` gets the number without
+ * its calling code, as the host's `typedValues` gives it, and is read back against that. On a step
+ * with fields and no submit, a
  * page that moves on once every field is typed sent what was typed itself (`page`), never a
  * refusal:
  * the step's fields went away or were all disabled, its popup closed, its address moved to another
