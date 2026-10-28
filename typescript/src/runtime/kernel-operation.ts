@@ -10,7 +10,7 @@ import type {
   ScriptAnswerOf,
   ScriptQuestionDeclarations,
 } from "./script-input.js";
-import type { EffectJournal, WriteConfirmation } from "./context.js";
+import type { EffectJournal, NotCommittedOptions, WriteConfirmation } from "./context.js";
 import type { Deadline } from "./deadline.js";
 import { CommitAlreadySent, WriteConfirmationRefused, type Dispatch } from "./errors.js";
 import type { WriteDeclaration } from "./operation.js";
@@ -200,14 +200,17 @@ export interface KernelOperationContext<
    * but no question may ask those fields, such as a card number: call it, then throw
    * `InvalidInput` naming them, and never click again.
    * It also fits a click the site's own answer refused as a whole with nothing created, such as a
-   * commit response that reports an expired quote and returns no record: call it, then return the
-   * refusal, or refresh the quote, check it again and enter the step for one more click.
+   * commit response that reports an expired quote and returns no record: call it with
+   * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
+   * enter the step for one more click. Pass `siteRefused` only then, never after
+   * `blockingRequiredFields` returned fields; a host may refuse entering a step again after a call
+   * with neither proof.
    * It works once per step in a run, and only for a step in the contract's `write.commits` when it
    * declares any: a second call for the same step, another name, a step this run did not enter
    * from unsent, or one confirmed since throws `CommitAlreadySent`, which ends the run with the
    * step still sent. An offline run ignores it.
    */
-  readonly notCommitted: (name: string) => void;
+  readonly notCommitted: (name: string, options?: NotCommittedOptions) => void;
   /** Time left before the operation's deadline, for choosing `timeout_sec`. */
   readonly remainingMs: () => number;
   /** Inspect a value-free marker on the authorized page; throw only when it is visible. */
@@ -522,11 +525,15 @@ const makeKernelOperationContext = <Input>(
     if (entered._tag === "Left") throw entered.left;
   },
   // A host journal without it cannot record the click unsent, so the step stays sent.
-  notCommitted: (name) => {
+  // `siteRefused` goes to the host only as the script's own word, so a host that checks each
+  // step's proof can tell it from a bare call.
+  notCommitted: (name, said) => {
     if (options.journal === undefined) return;
     const revert = options.journal.notCommitted;
     if (revert === undefined) throw new CommitAlreadySent({ name });
-    const reverted = Effect.runSync(Effect.either(revert(name)));
+    const reverted = Effect.runSync(
+      Effect.either(said?.siteRefused === true ? revert(name, { siteRefused: true }) : revert(name)),
+    );
     if (reverted._tag === "Left") throw reverted.left;
   },
   remainingMs: () => options.deadline.remainingMs(),

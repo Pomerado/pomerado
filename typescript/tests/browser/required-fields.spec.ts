@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
-import { formControlsCode } from "../../src/browser/form-controls.js";
+import { blockingFieldsHook, formControlsCode } from "../../src/browser/form-controls.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 
 // The authoring library's required-field helpers, run as a Kernel call body runs them (`page` in
@@ -692,6 +692,38 @@ test("blockingRequiredFields with unaskable says when a click that saved nothing
   expect(await call(page, `return await blockingRequiredFields(${form}, ["Item"], { unaskable: true });`)).toEqual({
     result: null,
   });
+});
+
+test("blockingRequiredFields tells a host's hook the kind of result it returned, and never fails on it", async ({
+  page,
+}) => {
+  const form = `page.getByRole("form", { name: "Review" })`;
+  // A local Kernel call runs in this process, so its code sees the hook installed here.
+  const hosts = globalThis as Record<string, unknown>;
+  const judge = async (hidden: string) => {
+    await page.setContent(refusingReview(hidden));
+    const before = ((await call(page, `return await visibleFieldLabels(${form});`)) as { result: string[] }).result;
+    await page.getByRole("button", { name: "Place order" }).click();
+    return call(page, `return await blockingRequiredFields(${form}, ${JSON.stringify(before)}, { unaskable: true });`);
+  };
+  const phone = `<label>Delivery phone<input name="phone" data-flag></label>`;
+  const kinds: unknown[] = [];
+  hosts[blockingFieldsHook] = (kind: unknown) => {
+    kinds.push(kind);
+  };
+  try {
+    await judge(phone);
+    await judge(`<label>Card number<input name="card_number" autocomplete="cc-number" data-flag></label>`);
+    await judge(`<label>Delivery date<input type="date" name="date" data-flag></label>`);
+    expect(kinds).toEqual(["fields", "unaskable", "none"]);
+    // A hook that fails changes nothing the helper returns.
+    hosts[blockingFieldsHook] = () => {
+      throw new Error("host hook failed");
+    };
+    expect(await judge(phone)).toEqual({ result: { fields: [{ label: "Delivery phone", shape: "text" }] } });
+  } finally {
+    delete hosts[blockingFieldsHook];
+  }
 });
 
 test("unfilledRequiredFields with before lists only the labelled fields that answers showed or enabled", async ({

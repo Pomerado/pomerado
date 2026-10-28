@@ -67,6 +67,16 @@ export const CalendarDate = Schema.String.pipe(
 );
 
 /**
+ * The global name of an optional host hook. A host that runs Kernel calls may install a function
+ * under it, in the global scope its calls' code runs in. Just before `blockingRequiredFields`
+ * returns, it calls the hook with the kind of its result: `"fields"`, `"unaskable"` or `"none"`
+ * (for `null`), never a label or value. Anything the hook throws is ignored, and with no hook
+ * nothing is called. A host can then tell which of its calls proved a click saved nothing, such as
+ * before it lets a write enter the same commit step again.
+ */
+export const blockingFieldsHook = "__pomeradoBlockingFields";
+
+/**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
  * string, then call its functions with your verified Playwright locators. Every function reads
  * back that the page took the value and throws an Error whose message is a fixed reason, never a
@@ -547,10 +557,17 @@ const unfilledRequiredFields = async (scope, options = {}) => {
 };
 const visibleFieldLabels = async (scope, options = {}) =>
   formControlRequiredFields(scope, options.timeout ?? 10000, options.enabledOnly === true ? "enabled labels" : "labels");
+// A host's hook, when one is installed, learns the kind of result each call got, never a label.
+const formControlBlockingReport = (result) => {
+  try {
+    globalThis[${JSON.stringify(blockingFieldsHook)}]?.(result === null ? "none" : result.unaskable === true ? "unaskable" : "fields");
+  } catch {}
+  return result;
+};
 const blockingRequiredFields = async (scope, before, options = {}) => {
   if (!Array.isArray(before)) throw formControlFailure("labels_missing");
   const timeout = options.timeout ?? 10000;
-  if ((await scope.count()) !== 1 || !(await scope.isVisible())) return null;
+  if ((await scope.count()) !== 1 || !(await scope.isVisible())) return formControlBlockingReport(null);
   const { fields, flaggedFilled } = await formControlRequiredFields(scope, timeout, "flagged");
   // A field the page already showed before the click, by its label, name or id, may have been
   // cleared or flagged by a save. So may one whose label begins with a label shown before, as
@@ -561,18 +578,21 @@ const blockingRequiredFields = async (scope, before, options = {}) => {
   const extended = (label) => [...seen].some((key) => extendsKey(label, key));
   const stale = (field) =>
     field.keys.some((key) => seen.has(key)) || extended(field.label) || formControlMessageWords.test(field.label);
-  if (fields.length === 0 || flaggedFilled > 0 || fields.some(stale)) return null;
+  if (fields.length === 0 || flaggedFilled > 0 || fields.some(stale)) return formControlBlockingReport(null);
   // A click that hid or removed a field the form showed before may be a save that reset the
   // form, so it proves nothing. A label the page only extended, as with its error, is kept.
   const after = await formControlRequiredFields(scope, timeout, "labels");
-  if ([...seen].some((key) => !after.some((shown) => shown === key || extendsKey(shown, key)))) return null;
+  if ([...seen].some((key) => !after.some((shown) => shown === key || extendsKey(shown, key))))
+    return formControlBlockingReport(null);
   const unasked = fields.filter((field) => field.unsupported);
-  if (unasked.length === 0) return { fields: fields.map(({ control, keys, secret, ...field }) => field) };
+  if (unasked.length === 0)
+    return formControlBlockingReport({ fields: fields.map(({ control, keys, secret, ...field }) => field) });
   // The click still saved nothing, but no site-field question may ask a secret, such as a card
   // number. Any other kind, such as a date, is left to a repair that can teach the tool to fill
   // it. Only a labelled field can be told apart from one shown before, and named.
-  if (options.unaskable !== true || unasked.some((field) => field.label === "" || !field.secret)) return null;
-  return { unaskable: true, labels: unasked.map((field) => field.label) };
+  if (options.unaskable !== true || unasked.some((field) => field.label === "" || !field.secret))
+    return formControlBlockingReport(null);
+  return formControlBlockingReport({ unaskable: true, labels: unasked.map((field) => field.label) });
 };
 const fillRequiredField = async (scope, label, answer, options = {}) => {
   const timeout = options.timeout ?? 10000;
