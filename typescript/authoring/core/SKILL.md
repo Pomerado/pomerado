@@ -665,6 +665,16 @@ in an HTTP version. They start at 4 at once, send more after clean batches, halv
 and stop at a block. Send no more at once than the build showed the site handling without
 refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
 block at run time still fails the call, as the 429 rule above says.
+A site whose rate limit follows the cookie session rather than the network address is the one
+exception to failing on a 429: a session that reads quickly starts getting 429 or 503 on the
+page's own data requests while its pages still load, and a fresh session reads the same page
+normally at once. For a list of independent reads on such a site, such as a details read for each
+identifier the caller lists, prefer the runtime's `readWithSessions` (paste `sessionPoolCode`): it
+reads each item in one of several new browser contexts of the call's browser, opens them a few
+seconds apart, keeps each to a steady pace and replaces a walled session with a fresh one. Use it
+only where the build saw that trait, a walled session beside a fresh one that read at once, and
+pass the pace it saw the site take as `sessionIntervalMs` and `max`. When it stops as `blocked`
+or `ip_limited`, fail the call as the 429 rule says.
 Prefer the page's own structured data, its embedded JSON or the data response it renders from,
 to its rendered cards when it holds the same fields for the same records, and check on the
 example that it matches what the page shows. Embedded JSON holds the page as first rendered:

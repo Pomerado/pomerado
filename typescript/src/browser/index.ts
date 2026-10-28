@@ -147,6 +147,12 @@ export type {
   BatchReadResult,
 } from "../runtime/batch-read.js";
 export {
+  sessionPoolCode,
+  sessionPoolConcurrency,
+  sessionPoolDefaults,
+} from "../runtime/session-pool.js";
+export type { SessionLimitScope } from "../runtime/session-pool.js";
+export {
   EmbeddedJsonFailure,
   embeddedJson,
   parseHtml,

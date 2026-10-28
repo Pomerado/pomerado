@@ -227,7 +227,11 @@ it("computes site identity only in the same-site module", () => {
   const module = "typescript/src/runtime/same-site.ts";
   // Shipped page code a script runs in its own sandbox, with no suffix list: it matches the
   // siteDomain the host computed here and passed in, and guesses only when given none.
-  const sandboxed = new Set(["typescript/src/browser/wait.ts", "typescript/src/browser/picker.ts"]);
+  const sandboxed = new Set([
+    "typescript/src/browser/wait.ts",
+    "typescript/src/browser/picker.ts",
+    "typescript/src/runtime/session-pool.ts",
+  ]);
   const suffixList = /\bfrom\s+["']tldts["']|\brequire\(\s*["']tldts["']\s*\)|\bimport\(\s*["']tldts["']\s*\)/u;
   const hostSuffixCheck = /\.endsWith\(\s*(?:["']\.["']\s*\+|`\.\$\{)/u;
   const offenders = sourceFiles().filter(
