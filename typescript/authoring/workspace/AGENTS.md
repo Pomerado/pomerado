@@ -564,10 +564,12 @@ as a table app that saves view filters with the view, and changing one there is 
 page's own requests after the change show which: a save request beside the row fetch. A read
 prefers the page's own row query from the captures, the request the page sends for the rows<!-- pomerado:section agents.row-query-reference -->, to driving such a filter control. When it
 must use the control, the same step reads the prior value first and restores it in a
-finally-style block, so the revert runs on every path, errors and timeouts included. If the
-prior value cannot be read, use the page's own row query instead of the control. This holds
+finally-style block, so the revert runs on every path, errors and timeouts included. This holds
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
+
+If you changed something on the site by mistake, put it back to its earlier value before going
+on. When the owner asks you to undo a change you made, do it.
 
 Testing a read signed out is your job, never the caller's (.agents/testing/SKILL.md). It designs
 a wide, varied first batch of about 10 to 20 cases from what it saw on the site and its own code, and
