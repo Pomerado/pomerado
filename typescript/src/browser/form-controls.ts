@@ -568,10 +568,10 @@ const formControlBlockingReport = (result) => {
   } catch {}
   return result;
 };
-const blockingRequiredFields = async (scope, before, options = {}) => {
+const formControlBlockingFields = async (scope, before, options) => {
   if (!Array.isArray(before)) throw formControlFailure("labels_missing");
   const timeout = options.timeout ?? 10000;
-  if ((await scope.count()) !== 1 || !(await scope.isVisible())) return formControlBlockingReport(null);
+  if ((await scope.count()) !== 1 || !(await scope.isVisible())) return null;
   const { fields, flaggedFilled } = await formControlRequiredFields(scope, timeout, "flagged");
   // A field the page already showed before the click, by its label, name or id, may have been
   // cleared or flagged by a save. So may one whose label begins with a label shown before, as
@@ -582,22 +582,21 @@ const blockingRequiredFields = async (scope, before, options = {}) => {
   const extended = (label) => [...seen].some((key) => extendsKey(label, key));
   const stale = (field) =>
     field.keys.some((key) => seen.has(key)) || extended(field.label) || formControlMessageWords.test(field.label);
-  if (fields.length === 0 || flaggedFilled > 0 || fields.some(stale)) return formControlBlockingReport(null);
+  if (fields.length === 0 || flaggedFilled > 0 || fields.some(stale)) return null;
   // A click that hid or removed a field the form showed before may be a save that reset the
   // form, so it proves nothing. A label the page only extended, as with its error, is kept.
   const after = await formControlRequiredFields(scope, timeout, "labels");
-  if ([...seen].some((key) => !after.some((shown) => shown === key || extendsKey(shown, key))))
-    return formControlBlockingReport(null);
+  if ([...seen].some((key) => !after.some((shown) => shown === key || extendsKey(shown, key)))) return null;
   const unasked = fields.filter((field) => field.unsupported);
-  if (unasked.length === 0)
-    return formControlBlockingReport({ fields: fields.map(({ control, keys, secret, ...field }) => field) });
+  if (unasked.length === 0) return { fields: fields.map(({ control, keys, secret, ...field }) => field) };
   // The click still saved nothing, but no site-field question may ask a secret, such as a card
   // number. Any other kind, such as a date, is left to a repair that can teach the tool to fill
   // it. Only a labelled field can be told apart from one shown before, and named.
-  if (options.unaskable !== true || unasked.some((field) => field.label === "" || !field.secret))
-    return formControlBlockingReport(null);
-  return formControlBlockingReport({ unaskable: true, labels: unasked.map((field) => field.label) });
+  if (options.unaskable !== true || unasked.some((field) => field.label === "" || !field.secret)) return null;
+  return { unaskable: true, labels: unasked.map((field) => field.label) };
 };
+const blockingRequiredFields = async (scope, before, options = {}) =>
+  formControlBlockingReport(await formControlBlockingFields(scope, before, options));
 const fillRequiredField = async (scope, label, answer, options = {}) => {
   const timeout = options.timeout ?? 10000;
   const matched = (await formControlRequiredFields(scope, timeout)).filter((field) => field.label === label && !field.unsupported);

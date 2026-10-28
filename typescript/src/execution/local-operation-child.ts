@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import type { Deadline as RunDeadline } from "../runtime/deadline.js";
 import type { Operation } from "../runtime/operation.js";
-import type { NotCommittedOptions } from "../runtime/context.js";
 import type { ScriptInput as ScriptInputTag } from "../runtime/script-input.js";
 import type { SiteHttp as SiteHttpTag } from "../runtime/site-http.js";
 
@@ -168,12 +167,7 @@ const journal: typeof baseJournal = {
   enteringCommit: (name) => baseJournal.enteringCommit(name).pipe(Effect.tap(() => publishJournal)),
   ...(revertCommit === undefined
     ? {}
-    : {
-        notCommitted: (name: string, options?: NotCommittedOptions) =>
-          (options === undefined ? revertCommit(name) : revertCommit(name, options)).pipe(
-            Effect.tap(() => publishJournal),
-          ),
-      }),
+    : { notCommitted: (name: string) => revertCommit(name).pipe(Effect.tap(() => publishJournal)) }),
   confirmed: (confirmation) =>
     baseJournal.confirmed(confirmation).pipe(Effect.tap(() => publishJournal)),
   verified: baseJournal.verified.pipe(Effect.tap(() => publishJournal)),
