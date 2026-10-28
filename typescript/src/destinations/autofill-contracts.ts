@@ -70,7 +70,7 @@ export const stepFieldsMessage = `a sign-in step names at most ${maximumStepFiel
  * Identifier kinds a field may accept. `private_identifier` is any other identity field a sign-in
  * asks for, such as a national identity number or a PIN that is itself the sign-in identifier,
  * labelled as the site labels it (`PrivateIdentifierLabel`): the host keeps its value like a
- * password. A PIN entered after another identifier is the `password` slot.
+ * password. A PIN entered in place of a password after another identifier is the `password` slot.
  */
 export const IdentifierKinds = Schema.Literal(
   "username",
@@ -108,8 +108,8 @@ export const privateIdentifierMessage =
   "a private_identifier field accepts that kind alone, with the site's label for it; no other identifier field names a label";
 /**
  * Whether a step's fields name at most one `private_identifier` field: a login holds one private
- * identifier, so a second such field would be typed the same value. A PIN entered after another
- * identifier is the `password` slot.
+ * identifier, so a second such field would be typed the same value. A PIN entered in place of a
+ * password after another identifier is the `password` slot.
  */
 export const onePrivateIdentifier = (fields: readonly object[]) =>
   fields.filter(
@@ -120,7 +120,7 @@ export const onePrivateIdentifier = (fields: readonly object[]) =>
   ).length <= 1;
 /** Why a step's fields do not fit (`onePrivateIdentifier`). */
 export const onePrivateIdentifierMessage =
-  "a sign-in step names at most one private_identifier field; a PIN entered after another identifier is the password slot";
+  "a sign-in step names at most one private_identifier field; a PIN entered in place of a password after another identifier is the password slot";
 /** Secret slots a field may take. */
 export const SecretSlots = Schema.Literal(
   "password",
