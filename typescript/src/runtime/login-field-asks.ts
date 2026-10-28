@@ -5,8 +5,10 @@ import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import type { FailureContextValue } from "./failure-detail.js";
 import type { InputAsker, InputRequest, Question, ValidAnswers } from "./input-request.js";
 import {
+  asksPrivateIdentifier,
   kindNames,
   parsedAnswer,
+  privateIdentifierLimit,
   type AnsweredLoginField,
   type AnsweredLoginFields,
   type Asked,
@@ -23,6 +25,7 @@ const entities = {
   email: "EMAIL",
   phone: "PHONE",
   account_number: "ACCOUNT_NUMBER",
+  private_identifier: "PRIVATE_IDENTIFIER",
   date_of_birth: "DATE_OF_BIRTH",
   zip: "ZIP",
   recovery_code: "RECOVERY_CODE",
@@ -97,6 +100,17 @@ const question = (
       type: "secret",
       secretKind: "private_text",
       prompt: withNotice(`What's the ZIP or postal code on your ${site} account?`),
+    };
+  // Asked by the site's own label for the field, and kept like a password.
+  if (asksPrivateIdentifier(asked))
+    return {
+      id: "private_identifier",
+      type: "secret",
+      secretKind: "private_text",
+      maxLength: privateIdentifierLimit,
+      prompt: withNotice(
+        `Enter the ${cutTo(asked.privateIdentifier, 100)} you use to sign in to ${site}. Pomerado keeps it private, like a password.`,
+      ),
     };
   return {
     id: asked.join("_or_"),

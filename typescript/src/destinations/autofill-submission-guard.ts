@@ -210,13 +210,16 @@ const guardKey = `__pomerado_submission_${randomUUID()}`;
  * or recovery code inside any text, a code only where no digit adjoins it, since a short one turns
  * up inside a timestamp by chance. The guard joins a step's `"token"` fields that each hold one
  * character, its code's boxes, into one code. A date part or a ZIP is never matched by value, since
- * a dropdown's or a hidden field's own value may hold one.
+ * a dropdown's or a hidden field's own value may hold one. A private identifier, such as a
+ * national identity number or a short PIN, is found as a code is, so a short one is not found by
+ * chance inside a longer number.
  */
 const secretMatch: Partial<Record<FillSlot, "within" | "token">> = {
   password: "within",
   recovery_code: "within",
   private_answer: "within",
   code: "token",
+  private_identifier: "token",
 };
 
 /**

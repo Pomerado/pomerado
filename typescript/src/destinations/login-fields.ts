@@ -12,6 +12,7 @@ export const LoginField = Schema.Literal(
   "email",
   "phone",
   "account_number",
+  "private_identifier",
   "date_of_birth",
   "zip",
 );

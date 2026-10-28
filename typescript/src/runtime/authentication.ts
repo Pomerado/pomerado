@@ -6,6 +6,7 @@ export const credentialRejectedFields = [
   "email",
   "phone",
   "account_number",
+  "private_identifier",
   "password",
   "code",
   "date_of_birth",
@@ -45,6 +46,11 @@ export interface WebsiteCredentials {
   readonly email?: string | undefined;
   readonly phone?: string | undefined;
   readonly accountNumber?: string | undefined;
+  /**
+   * The login's private identifier, such as a national identity number or a PIN a site signs in
+   * with, kept like the password: the host fills it and masks it, and it is never a username.
+   */
+  readonly privateIdentifier?: string | undefined;
   readonly dateOfBirth?: string | undefined;
   readonly zip?: string | undefined;
   readonly recoveryCodes?: readonly string[] | undefined;
