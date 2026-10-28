@@ -22,7 +22,10 @@
  *   follows the address (`per_ip`), and the pool stops as `ip_limited`, since more sessions on the
  *   same address cannot help: fail the call, so a host may give the read another address.
  * - A block stops the pool at once: a read the script reports blocked, or a document the site
- *   refused with a 403. Nothing more starts; reads already running finish.
+ *   refused with a 403. Nothing more starts; reads already running finish. So does a session
+ *   that cannot open (`open_failed`), since every other would fail the same way.
+ * - A read still running after `readTimeoutMs` (60 s) is that item's failure: its session is
+ *   closed, so a page that hangs never holds the pool, and the slot opens a fresh one.
  * - Results come back in input order, one for every item: its value, or why it has none.
  */
 
@@ -37,6 +40,7 @@ export const sessionPoolDefaults = {
   maxAttempts: 2,
   maxFreshSessions: 8,
   expectTimeoutMs: 12_000,
+  readTimeoutMs: 60_000,
 } as const;
 
 /** How one read of one item ended, as the loop sorts it. */
@@ -68,7 +72,7 @@ export type SessionOutcome<A> =
   | {
       readonly index: number;
       readonly state: "not_read";
-      readonly reason: "blocked" | "ip_limited" | "walled" | "budget";
+      readonly reason: "blocked" | "ip_limited" | "walled" | "budget" | "open_failed";
       readonly attempts: number;
     };
 
@@ -77,7 +81,8 @@ export type SessionPoolStop =
   | { readonly reason: "blocked"; readonly index: number }
   | { readonly reason: "ip_limited"; readonly index: number }
   | { readonly reason: "walled" }
-  | { readonly reason: "budget" };
+  | { readonly reason: "budget" }
+  | { readonly reason: "open_failed"; readonly error: string };
 
 /**
  * What the walls showed: `per_session` when a fresh session read cleanly right after a wall,
@@ -111,6 +116,8 @@ export interface SessionPoolSettings extends SessionClock {
   readonly maxPerMinute: number;
   readonly maxAttempts: number;
   readonly maxFreshSessions: number;
+  /** How long one read may run before it is that item's failure and its session is closed. */
+  readonly readTimeoutMs: number;
   /** Start no read past this many milliseconds; none by default. */
   readonly budgetMs?: number | undefined;
 }
@@ -138,6 +145,8 @@ export async function sessionPool<S, A>(
     busy: boolean;
     /** A walled item this slot's fresh session reads first: the probe. */
     pending: number | undefined;
+    /** Whether the slot's last session ended in a wall, so its next one's first read probes. */
+    walled: boolean;
   }[] = [];
   const running = new Set<Promise<void>>();
   const closing: Promise<void>[] = [];
@@ -203,6 +212,7 @@ export async function sessionPool<S, A>(
     limit = Math.max(1, Math.floor(limit / 2));
     const session = slot.session;
     slot.session = undefined;
+    slot.walled = true;
     if (session !== undefined) closing.push(closeQuietly(session));
     if (probe) {
       scope = "per_ip";
@@ -224,25 +234,51 @@ export async function sessionPool<S, A>(
     attempts[index] = (attempts[index] ?? 0) + 1;
     peak = Math.max(peak, reading());
     const task = (async () => {
+      if (slot.session === undefined) {
+        const probing = slot.walled;
+        try {
+          slot.session = await driver.open();
+        } catch (caught) {
+          // No session opens, so every other would fail the same way: stop rather than fail
+          // each item one stagger at a time.
+          slot.busy = false;
+          stop({
+            reason: "open_failed",
+            error: caught instanceof Error ? caught.message : String(caught),
+          });
+          return;
+        }
+        opened += 1;
+        slot.number = opened;
+        slot.probe = probing;
+        slot.walled = false;
+        slot.reads = 0;
+        const at = starts.indexOf(held);
+        if (at !== -1) starts.splice(at, 1);
+        slot.lastStart = settings.now();
+        started(slot.lastStart);
+      }
+      const session = slot.session;
+      slot.reads += 1;
       let answer: SessionAnswer<A> | undefined;
       let error = "";
+      let timedOut = false;
       try {
-        if (slot.session === undefined) {
-          const replacing = slot.number !== 0;
-          slot.session = await driver.open();
-          opened += 1;
-          slot.number = opened;
-          slot.probe = replacing;
-          slot.reads = 0;
-          const at = starts.indexOf(held);
-          if (at !== -1) starts.splice(at, 1);
-          slot.lastStart = settings.now();
-          started(slot.lastStart);
-        }
-        slot.reads += 1;
-        answer = await driver.read(slot.session, index);
+        answer = await Promise.race([
+          driver.read(session, index),
+          settings.sleep(settings.readTimeoutMs).then(() => {
+            timedOut = true;
+            return undefined;
+          }),
+        ]);
       } catch (caught) {
         error = caught instanceof Error ? caught.message : String(caught);
+      }
+      if (timedOut) {
+        // A read that hangs is that item's failure; closing its session ends whatever it waits on.
+        error = `The read took longer than ${settings.readTimeoutMs} ms`;
+        slot.session = undefined;
+        closing.push(closeQuietly(session));
       }
       slot.busy = false;
       settle(slot, index, answer, error);
@@ -300,6 +336,7 @@ export async function sessionPool<S, A>(
         lastStart: 0,
         busy: false,
         pending: undefined,
+        walled: false,
       };
       slots.push(slot);
     }
@@ -371,13 +408,15 @@ export async function sessionPool<S, A>(
  * - `options.siteDomain` (required) is the site's registrable domain, the operation context's
  *   `siteDomain`; only answers from it or its subdomains count. `options` also takes `start`,
  *   `max`, `staggerMs`, `sessionIntervalMs`, `maxPerMinute`, `maxAttempts`, `maxFreshSessions`,
- *   `expectTimeoutMs` and `budgetMs`: pass the call's remaining time, less a margin, so it
+ *   `expectTimeoutMs`, `readTimeoutMs` (60 s, after which a read is that item's failure and its
+ *   context is closed) and `budgetMs`: pass the call's remaining time, less a margin, so it
  *   returns before the call's timeout with `not_read` for what it kept back. Pass the pace the
  *   build saw the site take without walling as `sessionIntervalMs` and `max`.
  * - `results` holds one entry per item, in input order: `{ ok: true, value, session, attempts }`,
  *   or `{ ok: false, error, message?, reason?, attempts }` with `error` one of `walled` (still
  *   walled after its tries), `blocked`, `failed` (the read threw) or `not_read`. `stopped` is
- *   null, or `{ reason, index? }` with `reason` `blocked`, `ip_limited`, `walled` or `budget`.
+ *   null, or `{ reason, index?, error? }` with `reason` `blocked`, `ip_limited`, `walled`,
+ *   `budget` or `open_failed` (no new context or tab would open; `error` says why).
  *   `limitScope` and `sessions` say what the walls showed and how many sessions opened.
  *
  * When `stopped` is `blocked` or `ip_limited`, fail the read in the script, after
@@ -396,6 +435,7 @@ const readWithSessions = async (items, readOne, options = {}) => {
     maxPerMinute: Math.max(1, options.maxPerMinute ?? ${sessionPoolDefaults.maxPerMinute}),
     maxAttempts: Math.max(1, options.maxAttempts ?? ${sessionPoolDefaults.maxAttempts}),
     maxFreshSessions: Math.max(0, options.maxFreshSessions ?? ${sessionPoolDefaults.maxFreshSessions}),
+    readTimeoutMs: Math.max(1, options.readTimeoutMs ?? ${sessionPoolDefaults.readTimeoutMs}),
     budgetMs: options.budgetMs,
   };
   const expectTimeoutMs = options.expectTimeoutMs ?? ${sessionPoolDefaults.expectTimeoutMs};
@@ -412,7 +452,13 @@ const readWithSessions = async (items, readOne, options = {}) => {
   const run = await sessionPool(items.length, {
     open: async () => {
       const context = await browser.newContext();
-      const tab = await context.newPage();
+      let tab;
+      try {
+        tab = await context.newPage();
+      } catch (error) {
+        await context.close().catch(() => {});
+        throw error;
+      }
       const session = { context, page: tab, throttled: 0, documentStatus: undefined };
       tab.on("response", (response) => {
         try {

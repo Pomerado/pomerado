@@ -125,6 +125,7 @@ const settings = (clock: Clock, overrides: Partial<SessionPoolSettings> = {}): S
   maxPerMinute: sessionPoolDefaults.maxPerMinute,
   maxAttempts: sessionPoolDefaults.maxAttempts,
   maxFreshSessions: sessionPoolDefaults.maxFreshSessions,
+  readTimeoutMs: sessionPoolDefaults.readTimeoutMs,
   now: clock.now,
   sleep: clock.sleep,
   ...overrides,
@@ -263,6 +264,64 @@ describe("sessionPool", () => {
   });
 });
 
+it("stops at once when no session opens, rather than failing each item a stagger apart", async () => {
+  const clock = virtualClock();
+  let opens = 0;
+  const run = await clock.run(
+    sessionPool(
+      10,
+      {
+        open: async () => {
+          opens += 1;
+          throw new Error("No new context");
+        },
+        read: async () => ({ kind: "answered" as const, value: 0 }),
+        close: async () => undefined,
+      },
+      settings(clock),
+    ),
+  );
+
+  expect(run.stopped).toEqual({ reason: "open_failed", error: "No new context" });
+  expect(opens).toBe(1);
+  expect(run.outcomes.every((outcome) => outcome.state === "not_read" && outcome.reason === "open_failed")).toBe(
+    true,
+  );
+  expect(clock.now()).toBeLessThan(sessionPoolDefaults.staggerMs);
+});
+
+it("fails a read that hangs past its time, closes its session and reads the rest in a fresh one", async () => {
+  const clock = virtualClock();
+  const sessions: { number: number; closed: boolean }[] = [];
+  const run = await clock.run(
+    sessionPool(
+      4,
+      {
+        open: async () => {
+          const session = { number: sessions.length + 1, closed: false };
+          sessions.push(session);
+          return session;
+        },
+        read: async (_session, index) => {
+          if (index === 1) await new Promise<never>(() => undefined);
+          await clock.sleep(100);
+          return { kind: "answered" as const, value: index };
+        },
+        close: async (session) => {
+          session.closed = true;
+        },
+      },
+      settings(clock, { start: 1, max: 1, readTimeoutMs: 5_000 }),
+    ),
+  );
+
+  expect(run.outcomes[1]).toMatchObject({ state: "failed", error: "The read took longer than 5000 ms" });
+  expect(run.outcomes.filter((outcome) => outcome.state === "answered").length).toBe(3);
+  expect(run.sessions).toMatchObject({ opened: 2, walls: 0 });
+  expect(run.limitScope).toBe("none_seen");
+  expect(sessions.every((session) => session.closed)).toBe(true);
+});
+
 /**
  * A browser for the page code: each context's tab answers a navigation with the site's script for
  * that URL, firing the document's and its data calls' responses as Playwright would.
@@ -397,6 +456,31 @@ describe("readWithSessions in a Kernel call", () => {
     const refused = await readInPage(browser, ["refused", "z"], { ...quick, start: 1, max: 1 });
     expect(refused.stopped).toEqual({ reason: "blocked", index: 0 });
     expect(contexts.every((context) => context.closed)).toBe(true);
+  });
+
+  it("closes a context whose tab will not open and stops the pool", async () => {
+    const closed: number[] = [];
+    let made = 0;
+    const browser = {
+      newContext: async () => {
+        made += 1;
+        const number = made;
+        return {
+          newPage: async () => {
+            throw new Error("No tab");
+          },
+          close: async () => {
+            closed.push(number);
+          },
+        };
+      },
+    };
+    const run = await readInPage(browser, ["a", "b"], quick);
+
+    expect(run.stopped).toEqual({ reason: "open_failed", error: "No tab" });
+    // Every context that opened without its tab is closed again.
+    expect(closed.toSorted()).toEqual(Array.from({ length: made }, (_, index) => index + 1));
+    expect(run.results.map((result) => result.reason)).toEqual(["open_failed", "open_failed"]);
   });
 
   it("refuses to start without the site's domain", async () => {
