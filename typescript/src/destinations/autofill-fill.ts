@@ -904,8 +904,9 @@ const afterFieldCall = (
  * under a country picker set to another country, is `changed`, with `cutShort` when it kept just
  * the start of them, and the fill types nothing more and never clicks the submit. A phone field
  * whose step says `format: "national"` gets the number without its calling code, as the host's
- * `typedValues` gives it, and is read back against that. On a step with fields and no submit, a page that moves on once every
- * field is typed sent what was typed itself (`page`), never a refusal:
+ * `typedValues` gives it, and is read back against that. On a step with fields and no submit, a
+ * page that moves on once every field is typed sent what was typed itself (`page`), never a
+ * refusal:
  * the step's fields went away or were all disabled, its popup closed, its address moved to another
  * path, or a step of several fields came back emptied. The host gives the page up to `pageSendMs`
  * to do so, and a submit call that fails meanwhile is followed by another look (`submitWhenEnabled`).

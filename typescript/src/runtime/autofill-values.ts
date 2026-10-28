@@ -197,6 +197,17 @@ const boxedCode = (found: Found, boxes: number): Found => {
     : new Unanswered(codeDoesNotFit);
 };
 
+/** The values with each `national` phone field's number written without its calling code. */
+const localValues = (step: Pick<AutofillStep<FillSlot>, "fields">, values: readonly string[]) =>
+  step.fields.some((field) => field.slot === "phone" && field.format === "national")
+    ? values.map((value, index) => {
+        const field = step.fields[index];
+        return field?.slot === "phone" && field.format === "national"
+          ? (nationalDigits(value) ?? value)
+          : value;
+      })
+    : values;
+
 /**
  * The values as the host types them: a screen with as many code fields as its code has characters,
  * one-digit boxes, takes one character in each, in order (`valuesInOrder` gives a screen of several
@@ -221,17 +232,6 @@ export const typedValues = (
     return box === -1 ? value : (characters[box] ?? value);
   });
 };
-
-/** The values with each `national` phone field's number written without its calling code. */
-const localValues = (step: Pick<AutofillStep<FillSlot>, "fields">, values: readonly string[]) =>
-  step.fields.some((field) => field.slot === "phone" && field.format === "national")
-    ? values.map((value, index) => {
-        const field = step.fields[index];
-        return field?.slot === "phone" && field.format === "national"
-          ? (nationalDigits(value) ?? value)
-          : value;
-      })
-    : values;
 
 /** What the host holds of a login for one step's values. */
 export interface AutofillLogin {
