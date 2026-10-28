@@ -7,7 +7,7 @@ import type {
   FillSlot,
   IdentifierKind,
 } from "../destinations/autofill-step.js";
-import { wholeDateLayouts } from "../destinations/login-field-formats.js";
+import { nationalDigits, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { WebsiteCredentials } from "./authentication.js";
 import { correctionTriesLeft } from "./credential-prompts.js";
 import type { InputAsker } from "./input-request.js";
@@ -202,21 +202,36 @@ const boxedCode = (found: Found, boxes: number): Found => {
  * one-digit boxes, takes one character in each, in order (`valuesInOrder` gives a screen of several
  * code fields no other code); any other screen takes its values as they are. Every code field's
  * value stays the whole code everywhere else, since what the host watches go out and what a
- * refusal rules out is the code.
+ * refusal rules out is the code. A phone field whose step says `format: "national"` takes the
+ * digits after the number's calling code (`nationalDigits`), which its read-back then checks; a
+ * number saved without its calling code is typed as saved, since nothing says which digits are
+ * the calling code.
  */
 export const typedValues = (
   step: Pick<AutofillStep<FillSlot>, "fields">,
   values: readonly string[],
 ) => {
+  const local = localValues(step, values);
   const boxes = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
   const [first] = boxes;
-  const characters = first === undefined ? [] : Array.from(values[first] ?? "");
-  if (boxes.length < 2 || characters.length !== boxes.length) return values;
-  return values.map((value, index) => {
+  const characters = first === undefined ? [] : Array.from(local[first] ?? "");
+  if (boxes.length < 2 || characters.length !== boxes.length) return local;
+  return local.map((value, index) => {
     const box = boxes.indexOf(index);
     return box === -1 ? value : (characters[box] ?? value);
   });
 };
+
+/** The values with each `national` phone field's number written without its calling code. */
+const localValues = (step: Pick<AutofillStep<FillSlot>, "fields">, values: readonly string[]) =>
+  step.fields.some((field) => field.slot === "phone" && field.format === "national")
+    ? values.map((value, index) => {
+        const field = step.fields[index];
+        return field?.slot === "phone" && field.format === "national"
+          ? (nationalDigits(value) ?? value)
+          : value;
+      })
+    : values;
 
 /** What the host holds of a login for one step's values. */
 export interface AutofillLogin {

@@ -35,6 +35,7 @@ import type {
   AutofillPopup,
   DateControl,
   DateOfBirthFormat,
+  PhoneFormat,
   SignInMethodChoice,
   RejectedMarker,
   SubmitKey,
@@ -78,8 +79,12 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
-  /** How a `date_of_birth` field takes the date, or the one part of it a dropdown takes. */
-  readonly format?: DateOfBirthFormat | undefined;
+  /**
+   * How a `date_of_birth` field takes the date, or the one part of it a dropdown takes; or, on an
+   * identifier field that accepts a phone, `national`: it takes the number without its calling
+   * code (`PhoneFormat`), which the host types when it sends a phone there (`typedValues`).
+   */
+  readonly format?: DateOfBirthFormat | PhoneFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
   /**
@@ -96,7 +101,12 @@ export interface AutofillStepRequest {
   readonly popup?: AutofillPopup | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   readonly fields: readonly (
-    | { readonly selector: string; readonly accepts: readonly IdentifierKind[] }
+    | {
+        readonly selector: string;
+        readonly accepts: readonly IdentifierKind[];
+        /** `national` on a field that accepts a phone and keeps only the local number. */
+        readonly format?: PhoneFormat | undefined;
+      }
     | {
         readonly selector: string;
         readonly slot: SecretSlot;
@@ -437,7 +447,7 @@ export interface AutofillInspection {
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: FillSlot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
-      readonly format?: DateOfBirthFormat | undefined;
+      readonly format?: DateOfBirthFormat | PhoneFormat | undefined;
     })[];
     /**
      * The submit control as found; for a step with a submit key, its last field's form (tag
@@ -461,7 +471,7 @@ export interface AutofillInspection {
  * phone field the host typed into kept other digits than the number's once the page reformatted
  * it, as under a country picker set to another country (`InsertionOptions.phone`), so the host
  * typed nothing after it and never clicked the submit. A keyboard that does not read back never
- * reports it.
+ * reports it. Such a field that kept just the start of what was typed also says `cutShort`.
  */
 export type AutofillFieldStatus = "filled" | "failed" | "not_attempted" | "changed";
 
@@ -479,6 +489,11 @@ export type AutofillStepReport =
       readonly fields: readonly {
         readonly slot: FillSlot;
         readonly status: AutofillFieldStatus;
+        /**
+         * On a `changed` phone field: the keyboard read it back `cut_short`, as a box that takes
+         * fewer characters than the number as typed keeps only its start. Never a digit or length.
+         */
+        readonly cutShort?: true;
       }[];
       /**
        * `clicked`: the host clicked the submit, or pressed the step's submit key in its last field,

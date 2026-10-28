@@ -12,6 +12,7 @@ import {
   KeyboardSubmitAutofillRecipe,
   KeySubmitAutofillRecipe,
   LegacyAutofillRecipe,
+  NationalPhoneAutofillRecipe,
   PopupAutofillRecipe,
   publishedAutofillRecipe,
   WildcardAutofillRecipe,
@@ -50,8 +51,8 @@ export const SignInRecipeV3 = Schema.Struct({
   ),
 );
 /**
- * A recipe this host reads: version 1, 2, 4, 5, 6, 7 or 8 as every host writes it, or this host's
- * version 3.
+ * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8 or 9 as every host writes it, or this
+ * host's version 3.
  */
 export const SignInRecipe = Schema.Union(
   LegacyAutofillRecipe,
@@ -62,6 +63,7 @@ export const SignInRecipe = Schema.Union(
   DismissAutofillRecipe,
   WildcardAutofillRecipe,
   KeyboardSubmitAutofillRecipe,
+  NationalPhoneAutofillRecipe,
 );
 export type SignInRecipe = typeof SignInRecipe.Type;
 export type SignInRecipeStep = AutofillRecipeStep;
@@ -72,11 +74,11 @@ export const resolvedPage = (step: SignInRecipeStep, workspace: string | undefin
     ? undefined
     : recordedScreenPage(step, workspace);
 
-const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8];
+const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7 and 8 decode as every host reads them;
+ * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8 and 9 decode as every host reads them;
  * version 3 is read only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
@@ -156,7 +158,11 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
   fields: step.fields.map((field) =>
     "accepts" in field
-      ? { selector: field.selector, accepts: field.accepts }
+      ? {
+          selector: field.selector,
+          accepts: field.accepts,
+          ...(field.format === undefined ? {} : { format: field.format }),
+        }
       : {
           selector: field.selector,
           slot: field.slot,
@@ -177,7 +183,7 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 8's `workspace`, then each
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 9's `workspace`, then each
  * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
  * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
@@ -190,7 +196,8 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
         recipe.version !== 5 &&
         recipe.version !== 6 &&
         recipe.version !== 7 &&
-        recipe.version !== 8) ||
+        recipe.version !== 8 &&
+        recipe.version !== 9) ||
       recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),

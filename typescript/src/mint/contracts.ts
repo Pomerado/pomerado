@@ -36,6 +36,7 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  PhoneFormat,
   RejectedMarker,
   SecretSlots,
   SignInMethodChoice,
@@ -619,7 +620,8 @@ export const SignInStep = Schema.Union(
     ),
     fields: Schema.Array(
       Schema.Union(
-        // An identifier field lists every kind it accepts; the host picks what it sends.
+        // An identifier field lists every kind it accepts; the host picks what it sends. One that
+        // accepts a phone and keeps only the local number names `format: "national"`.
         Schema.Struct({
           selector: SignInSelector,
           accepts: Schema.Array(IdentifierKinds).pipe(
@@ -628,7 +630,12 @@ export const SignInStep = Schema.Union(
               message: () => "list each accepted kind once",
             }),
           ),
-        }),
+          format: Schema.optional(PhoneFormat),
+        }).pipe(
+          Schema.filter((field) => field.format === undefined || field.accepts.includes("phone"), {
+            message: () => "only a field that accepts a phone names format national",
+          }),
+        ),
         // A date of birth names how the field takes it, or the one part a dropdown takes. A
         // private answer names its question, and a code the screen's own instruction for it.
         Schema.Struct({

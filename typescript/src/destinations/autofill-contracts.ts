@@ -39,6 +39,14 @@ export const DateOfBirthFormat = Schema.Literal(
 );
 export type DateOfBirthFormat = typeof DateOfBirthFormat.Type;
 /**
+ * How a field that takes a phone number takes it: `national`, the number without its country
+ * calling code, for a box that keeps only the local number and has no country picker. The host
+ * types the digits after the saved number's calling code (`nationalDigits`); a number saved
+ * without one is typed as saved.
+ */
+export const PhoneFormat = Schema.Literal("national");
+export type PhoneFormat = typeof PhoneFormat.Type;
+/**
  * The control a `date_of_birth` field was filled into, as the host found it (`formControlShape`):
  * a native date input, a text box, a native select or a custom dropdown. The recipe records it,
  * value-free; a run finds the control's shape again and fills what it finds.

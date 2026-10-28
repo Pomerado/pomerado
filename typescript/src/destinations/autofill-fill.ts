@@ -40,8 +40,11 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
+import { DateOfBirthFormat } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
+
+const isDateOfBirthFormat = Schema.is(DateOfBirthFormat);
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -249,6 +252,17 @@ const filledReport = (
   ...(progress.typed ? { typed: true as const } : {}),
   ...trustedByHost(progress),
 });
+
+/** A report whose phone field at `index` kept just the start of what was typed (`cut_short`). */
+const cutShortAt = (report: AutofillStepReport, index: number): AutofillStepReport =>
+  report.outcome !== "filled"
+    ? report
+    : {
+        ...report,
+        fields: report.fields.map((field, at) =>
+          at === index ? { ...field, cutShort: true as const } : field,
+        ),
+      };
 
 /** The labels a failed call that held a value keeps of its error, by their names in its context. */
 const errorLabels = { code: "errorCode", reason: "errorReason", method: "errorMethod" } as const;
@@ -727,7 +741,12 @@ const fillField = (
     const field = input.step.fields[index];
     const value = input.values[index] ?? "";
     const bindingKey = `__pomerado_autofill_${randomUUID()}`;
-    const format = field?.slot === "date_of_birth" ? (field.format ?? "YYYY-MM-DD") : undefined;
+    const format =
+      field?.slot !== "date_of_birth"
+        ? undefined
+        : isDateOfBirthFormat(field.format)
+          ? field.format
+          : "YYYY-MM-DD";
     const answered = yield* fillCall(
       input,
       progress,
@@ -849,11 +868,12 @@ const afterFieldCall = (
         return undefined;
       }
       // The phone went in, but the field kept other digits: the host types and clicks nothing more.
-      if (typing.right === "changed") {
+      if (typing.right === "changed" || typing.right === "cut_short") {
         progress.typed = true;
         progress.typedIn = answer.document;
         progress.statuses.push("changed");
-        return filledReport(input.step, progress, "not_attempted", answer.url);
+        const report = filledReport(input.step, progress, "not_attempted", answer.url);
+        return typing.right === "changed" ? report : cutShortAt(report, index);
       }
       insertion = typing.right;
     }
@@ -881,8 +901,10 @@ const afterFieldCall = (
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
  * read back once typed (`InsertionOptions.phone`): one that kept other digits than the number, as
- * under a country picker set to another country, is `changed`, and the fill types nothing more and
- * never clicks the submit. On a step with fields and no submit, a page that moves on once every
+ * under a country picker set to another country, is `changed`, with `cutShort` when it kept just
+ * the start of them, and the fill types nothing more and never clicks the submit. A phone field
+ * whose step says `format: "national"` gets the number without its calling code, as the host's
+ * `typedValues` gives it, and is read back against that. On a step with fields and no submit, a page that moves on once every
  * field is typed sent what was typed itself (`page`), never a refusal:
  * the step's fields went away or were all disabled, its popup closed, its address moved to another
  * path, or a step of several fields came back emptied. The host gives the page up to `pageSendMs`

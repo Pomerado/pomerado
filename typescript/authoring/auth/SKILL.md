@@ -170,6 +170,8 @@ attribute.
     and placeholder. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.
+    For a phone box that keeps only the local number and has no country picker, prefer adding
+    `format: "national"` to that field: the host then types the number without its calling code.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
     otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
