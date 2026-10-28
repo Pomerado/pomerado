@@ -136,15 +136,18 @@ export class Unanswered {
 
 /**
  * A host's offer to keep an answer with the login it signs in with: the yes/no it adds to an ask
- * for an identifier, a date of birth or a ZIP (`field`), and to a sign-in method choice
- * (`method`), and what it hears of each answered ask, with or without its offer. A host that keeps
- * no logins offers none.
+ * for an identifier, a private identifier, a date of birth or a ZIP (`field`), and to a sign-in
+ * method choice (`method`), and what it hears of each answered ask, with or without its offer. A
+ * private identifier's answer comes with the field's label it was asked by (`label`), for the host
+ * to keep beside it. A host that keeps no logins offers none.
  */
 export interface SaveOffer {
   readonly field: Question;
   readonly method?: Question | undefined;
   readonly answered: (
-    answered: { readonly field: AnsweredLoginField } | { readonly method: SignInMethodChoice },
+    answered:
+      | { readonly field: AnsweredLoginField; readonly label?: string | undefined }
+      | { readonly method: SignInMethodChoice },
     answers: ValidAnswers,
   ) => void;
 }
@@ -262,6 +265,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     kept: { readonly slot: AskedSlot; readonly value: string },
     typed: string,
     answers: ValidAnswers,
+    label: string | undefined,
   ) =>
     Effect.gen(function* () {
       yield* register(kept.slot, typed);
@@ -271,7 +275,10 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
       if (kept.slot === "code" && bare !== typed && bare !== "") yield* register(kept.slot, bare);
       if (kept.slot === "code" || kept.slot === "recovery_code") return;
       given.current = { ...given.current, [kept.slot]: kept.value };
-      saveOffer?.answered({ field: kept.slot }, answers);
+      saveOffer?.answered(
+        label === undefined ? { field: kept.slot } : { field: kept.slot, label },
+        answers,
+      );
     });
   const ask = (
     asker: InputAsker,
@@ -313,7 +320,12 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
           ? new Unanswered(codeDoesNotFit)
           : yield* fail("autofill.ask", { check: "answer_kind" });
       }
-      yield* keep(kept, answer.value, response.right);
+      yield* keep(
+        kept,
+        answer.value,
+        response.right,
+        asksPrivateIdentifier(asked) ? asked.privateIdentifier : undefined,
+      );
       return kept;
     });
   /**

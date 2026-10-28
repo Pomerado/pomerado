@@ -2,7 +2,7 @@ import { lostTyping } from "../destinations/autofill-refusal.js";
 import type {
   AutofillStep,
   AutofillStepReport,
-  IdentifierKind,
+  PrimaryIdentifierKind,
 } from "../destinations/autofill-step.js";
 import { Effect } from "effect";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
@@ -33,7 +33,7 @@ export interface AutofillHost {
   /** The identifiers, date of birth and ZIP the owner gave in this build. */
   readonly answeredLoginFields: { readonly current: AnsweredLoginFields };
   /** The kind of identifier field the login's username went into. */
-  readonly autofillPrimaryIdentifierKind: { current: IdentifierKind | undefined };
+  readonly autofillPrimaryIdentifierKind: { current: PrimaryIdentifierKind | undefined };
   /** The open sign-in, if one is open. */
   readonly autofillSignIn: { current: AutofillSignInState | undefined };
   /** Whether the latest sign-in verified. */

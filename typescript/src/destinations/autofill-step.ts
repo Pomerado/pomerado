@@ -53,6 +53,8 @@ export type IdentifierKind =
   | "phone"
   | "account_number"
   | "private_identifier";
+/** A kind a login's own username may be, so its primary identifier: never a private identifier. */
+export type PrimaryIdentifierKind = Exclude<IdentifierKind, "private_identifier">;
 /** The order the host picks an accepted identifier kind in when the login holds several. */
 export const identifierPreference: readonly IdentifierKind[] = [
   "username",
