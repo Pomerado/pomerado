@@ -36,6 +36,7 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  PhoneFormat,
   PrivateIdentifierLabel,
   onePrivateIdentifier,
   onePrivateIdentifierMessage,
@@ -631,7 +632,8 @@ export const SignInStep = Schema.Union(
     fields: Schema.Array(
       Schema.Union(
         // An identifier field lists every kind it accepts; the host picks what it sends. A
-        // private identifier is accepted alone, with the site's own label for its field.
+        // private identifier is accepted alone, with the site's own label for its field. One that
+        // accepts a phone and keeps only the local number names `format: "national"`.
         Schema.Struct({
           selector: SignInSelector,
           accepts: Schema.Array(IdentifierKinds).pipe(
@@ -644,7 +646,13 @@ export const SignInStep = Schema.Union(
             description:
               "Only with private_identifier: the field's own label as the site shows it, such as National ID number or PIN",
           }),
-        }).pipe(Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage })),
+          format: Schema.optional(PhoneFormat),
+        }).pipe(
+          Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }),
+          Schema.filter((field) => field.format === undefined || field.accepts.includes("phone"), {
+            message: () => "only a field that accepts a phone names format national",
+          }),
+        ),
         // A date of birth names how the field takes it, or the one part a dropdown takes. A
         // private answer names its question, and a code the screen's own instruction for it.
         Schema.Struct({

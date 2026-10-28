@@ -1,4 +1,5 @@
 import { lostTyping } from "../destinations/autofill-refusal.js";
+import { callingCode } from "../destinations/login-field-formats.js";
 import type {
   AutofillStep,
   AutofillStepReport,
@@ -15,6 +16,8 @@ import type { Unanswered } from "../runtime/login-field-asks.js";
 import type { AnsweredLoginFields } from "../runtime/login-values.js";
 import { report } from "../runtime/sign-in-telemetry.js";
 import { MintFailure } from "./contracts.js";
+
+export { callingCode } from "../destinations/login-field-formats.js";
 
 /**
  * What a build's sign-in rules read and keep of the sign-in under way: refs the host holds for the
@@ -142,43 +145,45 @@ const filledNotices = {
   page: "The host filled the fields, and the page may have sent them itself: once the last field was filled, the screen moved on, emptied its fields or stopped taking typing before the host clicked anything. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signInStep.signedIn with what shows the site signed in.",
 } as const;
 
-/** The country calling codes one or two digits long; every other code is three. */
-const shortCallingCodes = new Set([
-  ...["1", "7", "20", "27", "30", "31", "32", "33", "34", "36", "39"],
-  ...["40", "41", "43", "44", "45", "46", "47", "48", "49"],
-  ...["51", "52", "53", "54", "55", "56", "57", "58"],
-  ...["60", "61", "62", "63", "64", "65", "66", "81", "82", "84", "86"],
-  ...["90", "91", "92", "93", "94", "95", "98"],
-]);
-
 /**
- * A phone number's country calling code, digits only, when the number is written in international
- * form, after `+` or `00`; undefined for a number written another way, which does not say it.
+ * After a phone field whose `maxLength` is shorter than the number the host typed, when the number
+ * says its calling code: it names no digit of the number.
  */
-export const callingCode = (number: string) => {
-  const written = number.trim();
-  const lead = /^(?:\+|00)/u.exec(written)?.[0];
-  if (lead === undefined) return undefined;
-  const digits = written.slice(lead.length).replaceAll(/[^0-9]/gu, "");
-  if (digits.length < 4 || digits.startsWith("0")) return undefined;
-  const short = [digits.slice(0, 1), digits.slice(0, 2)].find((code) => shortCallingCodes.has(code));
-  return short ?? digits.slice(0, 3);
-};
+const localNumberNotice =
+  "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits.";
 
 /**
  * A step the host stopped before its submit because a phone field kept other digits than the
- * number it typed (field status `changed`), with the number's calling code when it is written in
- * international form (`callingCode`), else the site's own country, as a number written without its
- * calling code most likely belongs to it. Nothing was submitted and nobody was asked.
+ * number it typed (field status `changed`). When the field seems to take only the local number
+ * (`local`, from `takesLocalNumber`) and the number is written in international form, it says to
+ * send the step again with the field's format set to national, naming no digit of the number.
+ * Otherwise it names the number's calling code when it is written in international form
+ * (`callingCode`), else the site's own country, as a number written without its calling code most
+ * likely belongs to it. Nothing was submitted and nobody was asked.
  */
-export const changedPhoneNotice = (number: string | undefined) => {
+export const changedPhoneNotice = (number: string | undefined, local = false) => {
   const code = number === undefined ? undefined : callingCode(number);
+  if (local && code !== undefined) return localNumberNotice;
   const lead =
     "The phone field kept different digits than the number the host typed, as when the site's country picker is set to another country. Nothing was submitted and nobody was asked.";
   return code === undefined
     ? `${lead} If the screen has a country picker, prefer setting it to the site's own country with an explore step, then send this signInStep again.`
     : `${lead} The number's country calling code is +${code}. If the screen has a country picker, prefer setting it to that country with an explore step, then send this signInStep again.`;
 };
+
+/**
+ * Whether the changed phone field at `index` (`changedField`) seems to take only the local
+ * number: its `maxLength` is shorter than the number as typed (`cutShort`), and its step did not
+ * already have the number typed without its calling code (`format: "national"`).
+ */
+export const takesLocalNumber = (
+  stepReport: AutofillStepReport,
+  step: Pick<AutofillStep, "fields">,
+  index: number,
+) =>
+  stepReport.outcome === "filled" &&
+  stepReport.fields[index]?.cutShort === true &&
+  step.fields[index]?.format !== "national";
 
 /** The first field of a fill that a phone the page changed stopped (`changed`), else -1. */
 export const changedField = (stepReport: AutofillStepReport) =>
