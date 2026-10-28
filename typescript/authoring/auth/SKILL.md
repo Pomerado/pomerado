@@ -168,8 +168,10 @@ attribute.
     `["username", "email"]`, an email-only field `["email"]`, a mobile-number field `["phone"]`, an
     account, member or customer number field or a company or organization ID field
     `["account_number"]`. A sign-in identity field that is not a username, email, phone or account
-    number, such as a national identity number or a PIN, is `["private_identifier"]` with the
-    site's own label as `label`; prefer it over relabelling the field, which Guardian refuses. Read
+    number, such as a national identity number or a PIN that is itself the sign-in identifier, is
+    `["private_identifier"]` with the site's own label as `label`; prefer it over relabelling the
+    field, which Guardian refuses. A step names one such field at most, and a PIN entered after
+    another identifier is the `password` slot. Read
     the label, type and placeholder. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.

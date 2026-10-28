@@ -37,6 +37,8 @@ import {
   maximumCodeBoxes,
   maximumStepFields,
   PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
   privateIdentifierFits,
   privateIdentifierMessage,
   RejectedMarker,
@@ -663,6 +665,7 @@ export const SignInStep = Schema.Union(
     ).pipe(
       Schema.maxItems(maximumStepFields + maximumCodeBoxes),
       Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+      Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
     ),
     submit: Schema.optional(SignInSelector),
     /**

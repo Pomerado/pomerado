@@ -382,8 +382,9 @@ export const makeAutofillValues = <
       return { slot, value: answered.value };
     });
   /**
-   * A private identifier, such as a national identity number or a PIN: the record's, the owner's
-   * answer, else asked by the field's label with the save offer, and masked like a password.
+   * A private identifier, such as a national identity number or a PIN that is itself the sign-in
+   * identifier: the record's, the owner's answer, else asked by the field's label with the save
+   * offer, and masked like a password.
    */
   const privateIdentifierValue = (field: AutofillField, login: AutofillLogin) =>
     Effect.gen(function* () {

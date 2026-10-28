@@ -8,6 +8,8 @@ import {
   maximumCodeBoxes,
   maximumStepFields,
   PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
   privateIdentifierFits,
   privateIdentifierMessage,
   RejectedMarker,
@@ -42,12 +44,11 @@ const SecretRecipeField = Schema.Struct({
  * `private_identifier`, accepted alone with the site's own `label` for its field, rides only in a
  * version 9 recipe (`PrivateIdentifierAutofillRecipe`).
  */
-const identifierRecipeField = (kinds: number) =>
-  Schema.Struct({
-    selector: Selector,
-    accepts: Schema.Array(IdentifierKinds).pipe(Schema.minItems(1), Schema.maxItems(kinds)),
-    label: Schema.optional(PrivateIdentifierLabel),
-  }).pipe(Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }));
+const IdentifierRecipeField = Schema.Struct({
+  selector: Selector,
+  accepts: Schema.Array(IdentifierKinds).pipe(Schema.minItems(1), Schema.maxItems(4)),
+  label: Schema.optional(PrivateIdentifierLabel),
+}).pipe(Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }));
 /** Refuses a private identifier in a recipe before version 9, whose hosts cannot fill one. */
 const withoutPrivateIdentifier = <Value extends object, Encoded>(
   value: Schema.Schema<Value, Encoded>,
@@ -68,7 +69,7 @@ const withoutPrivateIdentifier = <Value extends object, Encoded>(
  * its own login, or a secret field by its slot.
  */
 const RecipeField = Schema.Union(
-  withoutPrivateIdentifier(identifierRecipeField(4)),
+  withoutPrivateIdentifier(IdentifierRecipeField),
   SecretRecipeField,
 );
 
@@ -428,13 +429,11 @@ export const KeyboardSubmitAutofillRecipe = workspacePages(
 );
 /**
  * A version 9 field: a version 8 field whose identifier may accept `private_identifier`, any other
- * identity field the sign-in asks for, such as a national identity number or a PIN, alone and with
- * the site's own `label` for it. Each run fills it from its own login, never from the recipe.
+ * identity field the sign-in asks for, such as a national identity number or a PIN that is itself
+ * the sign-in identifier, alone and with the site's own `label` for it, in one field of a step at
+ * most. Each run fills it from its own login, never from the recipe.
  */
-const PrivateRecipeField = Schema.Union(
-  identifierRecipeField(IdentifierKinds.literals.length),
-  SecretRecipeField,
-);
+const PrivateRecipeField = Schema.Union(IdentifierRecipeField, SecretRecipeField);
 /** A version 9 step: a version 8 step whose fields and markers may name a private identifier. */
 const PrivateRecipeStep = keyboardRule(
   wildcardRule(
@@ -448,6 +447,7 @@ const PrivateRecipeStep = keyboardRule(
           fields: Schema.Array(PrivateRecipeField).pipe(
             Schema.maxItems(maximumStepFields + maximumCodeBoxes),
             Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+            Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
           ),
           dismiss: Schema.optional(Selector),
           anySegments: Schema.optional(SegmentList),

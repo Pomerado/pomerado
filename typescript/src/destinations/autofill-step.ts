@@ -44,8 +44,8 @@ export { SiteNavigation } from "./sign-in-redirect.js";
 
 /**
  * A kind of sign-in identifier: what an identifier field may accept. A `private_identifier` is any
- * other identity field the sign-in asks for, such as a national identity number or a PIN, which
- * the host keeps like a password.
+ * other identity field the sign-in asks for, such as a national identity number or a PIN that is
+ * itself the sign-in identifier, which the host keeps like a password.
  */
 export type IdentifierKind =
   | "username"

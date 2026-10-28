@@ -27,11 +27,14 @@ it("retains a private answer's question selector and rejects it on another secre
 
 // A sign-in identity field that is no username, email, phone or account number, such as a national
 // identity number, takes the private identifier kind with the site's own label: the host fills it
-// from the saved login like a password and masks it, never the minter.
+// from the saved login like a password and masks it, never the minter. A login holds one, so a
+// step naming two would type one value into both and is refused.
 it("decodes a labelled private identifier field and fills it from the saved login", async () => {
   const field = { selector: "#national-id", accepts: ["private_identifier"], label: "National ID number" };
   const step = Schema.decodeUnknownSync(SignInStep)({ fields: [field], submit: "#next" });
   expect(step).toEqual({ fields: [field], submit: "#next" });
+  const second = { ...field, selector: "#pin", label: "PIN" };
+  expect(Either.isLeft(Schema.decodeUnknownEither(SignInStep)({ fields: [field, second] }))).toBe(true);
   const masked: string[] = [];
   const autofill = makeAutofillValues({
     broker: { register: (value) => Effect.sync(() => void masked.push(value.entity)) },

@@ -109,7 +109,7 @@ const question = (
       secretKind: "private_text",
       maxLength: privateIdentifierLimit,
       prompt: withNotice(
-        `Enter the ${cutTo(asked.privateIdentifier, 100)} you use to sign in to ${site}. Pomerado keeps it private, like a password.`,
+        `Enter the ${asked.privateIdentifier} you use to sign in to ${site}. Pomerado keeps it private, like a password.`,
       ),
     };
   return {

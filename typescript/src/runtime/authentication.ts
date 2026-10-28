@@ -47,8 +47,9 @@ export interface WebsiteCredentials {
   readonly phone?: string | undefined;
   readonly accountNumber?: string | undefined;
   /**
-   * The login's private identifier, such as a national identity number or a PIN a site signs in
-   * with, kept like the password: the host fills it and masks it, and it is never a username.
+   * The login's private identifier, such as a national identity number or a PIN that is itself
+   * what a site signs in with, kept like the password: the host fills it and masks it, and it is
+   * never a username.
    */
   readonly privateIdentifier?: string | undefined;
   readonly dateOfBirth?: string | undefined;
