@@ -50,7 +50,6 @@ const failureSubCauses = [
   "recorder_primary_missing",
   "recorder_target_setup_failed",
   "recorder_event_unreadable",
-  "recorder_foreign_target_unclosed",
   "recorder_target_undetached",
   "recorder_request_unseen",
   // Origin policy reads a hosted service may make before and while it browses
