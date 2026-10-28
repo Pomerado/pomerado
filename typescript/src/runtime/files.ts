@@ -191,6 +191,54 @@ export const FileField = Schema.Union(
   Schema.Struct({ selector: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000)) }),
 );
 
+/** The longest download address a script is given. */
+export const downloadUrlMaxLength = 2048;
+
+/**
+ * Why `files.collectAll` took no file from one download it saw.
+ *
+ * - `canceled`: the browser canceled the download, or it failed before it finished.
+ * - `unfinished`: the download had not finished when the wait ended; the host stops it.
+ * - `over_max`: the download began after the call's `max` downloads.
+ * - `too_large`, `run_limit`: the download is over the host's per-file cap, or over what the
+ *   run's caps leave. A script never sees these: `files.collectAll` throws, naming the cap.
+ * - `executable`: the download is a program.
+ * - `unavailable`: the host could not read the downloaded file.
+ */
+export const DownloadFailureReason = Schema.Literal(
+  "canceled",
+  "unfinished",
+  "over_max",
+  "too_large",
+  "run_limit",
+  "executable",
+  "unavailable",
+);
+export type DownloadFailureReason = typeof DownloadFailureReason.Type;
+
+/**
+ * One download a `files.collectAll` trigger started: the file it collected, or why it took none
+ * and the browser's suggested name. `url`, when the browser reported an `http:` or `https:`
+ * address for the download, is that address, so a script can tell which item started it when
+ * names repeat. It is the script's alone: the file object carries no address.
+ */
+export const CollectedDownload = Schema.Union(
+  Schema.Struct({
+    file: FileOutput,
+    url: Schema.optionalWith(Schema.String.pipe(Schema.maxLength(downloadUrlMaxLength)), {
+      exact: true,
+    }),
+  }),
+  Schema.Struct({
+    failed: DownloadFailureReason,
+    name: Schema.optionalWith(FileName, { exact: true }),
+    url: Schema.optionalWith(Schema.String.pipe(Schema.maxLength(downloadUrlMaxLength)), {
+      exact: true,
+    }),
+  }),
+);
+export type CollectedDownload = typeof CollectedDownload.Type;
+
 /**
  * The run's file service, as the runner binds it into a script's context. The host implements it
  * outside the script's process (`makeRunFiles`), so bytes never reach the script.
@@ -214,6 +262,17 @@ export interface FileChannel {
     readonly slot: string;
     readonly timeoutMs: number;
   }) => Effect.Effect<FileObject, FileRefused>;
+  /**
+   * Waits for every download the slot captured to finish, ending the capture, and keeps each
+   * one within the caps, in the order downloads began; at most `max` are taken, and none is
+   * dropped unreported. Refuses `no_download` when none began within the wait. A host without it
+   * cannot run `files.collectAll`, which then fails before it arms a capture.
+   */
+  readonly collectAll?: (request: {
+    readonly slot: string;
+    readonly timeoutMs: number;
+    readonly max?: number;
+  }) => Effect.Effect<readonly CollectedDownload[], FileRefused>;
 }
 
 /** The context's `files`: what an operation's script calls. */
@@ -250,6 +309,27 @@ export interface ScriptFiles {
     trigger: () => Promise<unknown>,
     options?: { readonly timeoutMs?: number },
   ) => Promise<FileObject>;
+  /**
+   * Runs `trigger`, the script's own execute calls that make the page start several downloads,
+   * such as one for each listed item, in any page of any browser context the run has, and
+   * returns every download it started, in the order they began. It waits up to `timeoutMs`
+   * (30 s by default) after the trigger: until `max` downloads ended, or at least one began and
+   * every one that began ended with no new one beginning for a moment. Each entry is the
+   * collected `file`, returned as an output `FileOutput` as `collect` returns it, or `failed`
+   * with the reason it holds no file (`canceled`, `unfinished`, `over_max`, `executable`,
+   * `unavailable`) and the browser's suggested `name`. `url` is the download's `http:` or
+   * `https:` address when the browser reported one, for telling which item started it; never put
+   * it in the output as the file. `max` bounds how many downloads it takes, by default what the
+   * run's caps leave; each one past it is `over_max`. A download over the host's per-file cap,
+   * or over what the run's caps leave, throws an `OperationFailure` naming the cap and which
+   * downloads, by their place in that order, as `collect` throws. No download at all throws as
+   * `collect` does. A host that cannot take every download throws an `OperationFailure` before
+   * the trigger runs.
+   */
+  readonly collectAll: (
+    trigger: () => Promise<unknown>,
+    options?: { readonly timeoutMs?: number; readonly max?: number },
+  ) => Promise<readonly CollectedDownload[]>;
 }
 
 /** Whether `value` is shaped like a `FileOutput`, the only shape an output file takes. */

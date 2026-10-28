@@ -200,7 +200,10 @@ and passing it to `files.place`, rather than checking the file in code. Return a
 `FileOutput` from `files.collect(trigger)`, where `trigger` makes the execute call that starts
 it; you see only its name, type, size and sha256. While the tool is being built, the file has
 no download_url or expires_at; the published tool's runs add them. Prefer returning the file as
-collected, and never require those fields in code. The host refuses a result whose `$file`
+collected, and never require those fields in code. When one call starts several downloads,
+such as one per listed item, possibly in several pages, use `files.collectAll(trigger)`, which
+returns each download in the order they began, with its `file` or why it has none, and its
+address `url` for telling which item started it. The host refuses a result whose `$file`
 differs from the file it collected: `download_url` and `expires_at` are the host's own link to
 the bytes. When the caller wants the site's own link or another fact about the file, prefer
 returning it in a separate field beside the file. A downloaded file meant for the caller goes

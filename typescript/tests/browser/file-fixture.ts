@@ -5,10 +5,13 @@ import { createServer } from "node:http";
 /** The statement the fixture's download link serves. */
 export const statement = "date,amount\n2026-01-02,12.50\n2026-01-03,8.00\n";
 export const statementSha256 = createHash("sha256").update(statement).digest("hex");
+/** The statement for one month, which `/statement.csv?month=<month>` serves. */
+export const monthStatement = (month: string) => `${statement}month,${month}\n`;
 
 /**
  * A site with a file input that uploads the chosen file and shows what the server received (its
- * name, size and sha256), and a link that downloads a statement. `received` lists each upload,
+ * name, size and sha256), a link that downloads a statement and one for each of two months'
+ * statements. `received` lists each upload,
  * and `requested` the path of every request the site answered. Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
  * embeds that address in an iframe.
  */
@@ -34,9 +37,13 @@ export const startFileSite = async (options: { readonly frame?: string } = {}) =
         return;
       }
       if (url.pathname === "/statement.csv") {
+        const month = url.searchParams.get("month");
         response.setHeader("Content-Type", "text/csv");
-        response.setHeader("Content-Disposition", 'attachment; filename="statement.csv"');
-        response.end(statement);
+        response.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${month === null ? "statement" : `statement-${month}`}.csv"`,
+        );
+        response.end(month === null ? statement : monthStatement(month));
         return;
       }
       response.setHeader("Content-Type", "text/html");
@@ -57,6 +64,8 @@ document.querySelector("input").addEventListener("change", (event) => {
 <output id="received"></output>
 <label>Notes <input type="text"></label>
 <a href="/statement.csv">Download statement</a>
+<a href="/statement.csv?month=1">January statement</a>
+<a href="/statement.csv?month=2">February statement</a>
 ${options.frame === undefined ? "" : `<iframe src="${options.frame}"></iframe>`}
 <script>
 document.getElementById("upload").addEventListener("click", async () => {
