@@ -21,6 +21,7 @@ import {
   FileField,
   FileRefused,
   SiteFileLimits,
+  type CollectedDownload,
   type FileChannel,
   type FileRefusalReason,
   type ScriptFiles,
@@ -230,8 +231,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on either.
+   * captures a download the page starts and `collectAll` every download a trigger starts. The
+   * bytes stay with the host. A run without the host's file service, such as an offline run,
+   * throws `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -347,13 +349,18 @@ const callerFileReasons: ReadonlySet<string> = new Set([
   "not_accepted",
 ]);
 
+/** What a download over each of the host's size caps is, as a failure names it. */
+const downloadCapWording = {
+  too_large: "over the host's size limit for one file (too_large)",
+  run_limit: "over the host's limit for one run's files (run_limit)",
+} as const;
 /**
  * A download the host refused over its size caps, as the script's failure: the page made the
  * file, so it is the host's limit, never the caller's input, and the message names the cap.
  */
 const downloadCapFailures: Partial<Record<FileRefusalReason, string>> = {
-  too_large: "The downloaded file is over the host's size limit for one file (too_large)",
-  run_limit: "The downloaded file is over the host's limit for one run's files (run_limit)",
+  too_large: `The downloaded file is ${downloadCapWording.too_large}`,
+  run_limit: `The downloaded file is ${downloadCapWording.run_limit}`,
 };
 
 /**
@@ -456,7 +463,68 @@ const scriptFiles = (
         throw fileFailure(error, true);
       }
     },
+    collectAll: async (trigger, collectOptions) => {
+      const files = channel();
+      const collectAll = files.collectAll;
+      if (collectAll === undefined)
+        throw new OperationFailure(
+          "This host cannot collect every download a trigger starts (files.collectAll); use files.collect for one download",
+          { dispatch: "not_sent" },
+        );
+      const max = collectOptions?.max;
+      if (max !== undefined && !(Number.isSafeInteger(max) && max >= 1))
+        throw new OperationFailure("files.collectAll takes max as a positive whole number", {
+          dispatch: "not_sent",
+        });
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(collectAll({ slot, timeoutMs: 0, max: 1 })));
+        throw error;
+      }
+      const timeoutMs = Math.min(
+        collectOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      let downloads: readonly CollectedDownload[];
+      try {
+        downloads = await settle(
+          collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
+        );
+      } catch (error) {
+        throw fileFailure(error, true);
+      }
+      const overCap = downloadCapsExceeded(downloads);
+      if (overCap !== undefined) throw new OperationFailure(overCap, { dispatch: "unknown" });
+      return downloads;
+    },
   };
+};
+
+/**
+ * Why downloads `files.collectAll` saw are over the host's caps, naming each cap and which
+ * downloads, by their place in the order they began; undefined when none is.
+ */
+const downloadCapsExceeded = (downloads: readonly CollectedDownload[]) => {
+  const reasons = (["too_large", "run_limit"] as const).flatMap((reason) => {
+    const places = downloads.flatMap((download, index) =>
+      "failed" in download && download.failed === reason ? [index + 1] : [],
+    );
+    if (places.length === 0) return [];
+    const named =
+      places.length === 1
+        ? `Download ${places[0]} of ${downloads.length} is`
+        : `Downloads ${places.slice(0, -1).join(", ")} and ${places.at(-1)} of ${downloads.length} are`;
+    return [`${named} ${downloadCapWording[reason]}`];
+  });
+  return reasons.length === 0 ? undefined : `${reasons.join("; ")}, in the order they began`;
 };
 
 /**

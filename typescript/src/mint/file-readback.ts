@@ -45,7 +45,7 @@ const refusedWithFiles: readonly (readonly [RegExp, string])[] = [
   [/\bDataTransfer\b/u, "moves files between inputs"],
   [
     new RegExp(
-      String.raw`\.files\b(?!\s*\??\.\s*(?:length|place|collect|${arrayMethods})\b)`,
+      String.raw`\.files\b(?!\s*\??\.\s*(?:length|place|collect|collectAll|${arrayMethods})\b)`,
       "u",
     ),
     "reads an input's files",
@@ -58,7 +58,7 @@ const refusedWithFiles: readonly (readonly [RegExp, string])[] = [
     "routes the page's requests, which can send its upload elsewhere",
   ],
 ];
-const usesFiles = /\bfiles\s*\.\s*(?:place|collect)\b|\bFile(?:Input|Output)\b/u;
+const usesFiles = /\bfiles\s*\.\s*(?:place|collect|collectAll)\b|\bFile(?:Input|Output)\b/u;
 
 const lineAt = (source: string, offset: number) => source.slice(0, offset).split("\n").length;
 

@@ -5,6 +5,7 @@ import type { BrowserExecute } from "./browser-execution.js";
 import { acceptsSource, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
 import {
   defaultFileLimits,
+  downloadUrlMaxLength,
   FileField,
   fileFormat,
   FileName,
@@ -12,6 +13,8 @@ import {
   isFileObject,
   MediaType,
   SiteFileLimits,
+  type CollectedDownload,
+  type DownloadFailureReason,
   type FileChannel,
   type FileLimits,
   type FileObject,
@@ -40,6 +43,34 @@ export type TakenDownload =
     }
   /** The download is larger than the most the host may read. */
   | { readonly tooLarge: true };
+
+/**
+ * One download a capture saw, as `takeDownloads` reports it: a finished one with its suggested
+ * name, its size on the browser's machine and a read of its bytes, or one that `ended` without a
+ * file, `canceled` by the browser or failed, or still `unfinished` when the wait ended. `url` is
+ * the download's address as the browser reported it, and `media_type` the server's
+ * `Content-Type`, when the host saw them.
+ */
+export type CapturedDownload =
+  | {
+      readonly name: string;
+      readonly url?: string;
+      readonly media_type?: string;
+      readonly size: number;
+      /** All `size` of the file's bytes; read only once the file passed the caps. */
+      readonly read: Effect.Effect<Uint8Array, Error>;
+    }
+  | {
+      readonly name?: string;
+      readonly url?: string;
+      readonly ended: "canceled" | "unfinished";
+    };
+
+/**
+ * How long `takeDownloads` waits, once every download that began has ended, for another one to
+ * begin before it returns, counted from the last one that began or ended.
+ */
+export const downloadSettleMs = 1_000;
 
 /**
  * Where a host keeps file bytes; it implements this and `makeRunFiles` does the rest. The browser's
@@ -74,6 +105,18 @@ export interface FileHostHook {
     slot: string,
     bounds: { readonly timeoutMs: number; readonly maxBytes: number },
   ) => Effect.Effect<TakenDownload | undefined, Error>;
+  /**
+   * Every download that began in the slot's capture, from any page of any browser context of
+   * the run, in the order they began, and ends the capture. It returns once the first `max` downloads
+   * to begin have ended, whatever order they end in; or once at least one began, every one that began has ended and `settleMs` passed with
+   * none beginning or ending; or once `timeoutMs` passed, with no download when none began. A
+   * download still running then is reported `unfinished` and stopped. Optional: a host without
+   * it cannot run `files.collectAll`, which fails before it arms a capture.
+   */
+  readonly takeDownloads?: (
+    slot: string,
+    bounds: { readonly timeoutMs: number; readonly settleMs: number; readonly max: number },
+  ) => Effect.Effect<readonly CapturedDownload[], Error>;
   /**
    * Keeps a collected file for the run's caller and returns its id, and when the host serves the
    * bytes, where and until when.
@@ -221,6 +264,18 @@ export const siteFileRefusalMessage = (
 /** A name a browser can be given: the host's, else a plain fallback. */
 const safeName = (name: string, fallback: string) =>
   Either.isRight(Schema.decodeUnknownEither(FileName)(name)) ? name : fallback;
+
+/**
+ * A download's address as a script may see it: only an `http:` or `https:` one within the length
+ * a script is given, never a `data:` address, which holds the file's own bytes.
+ */
+const scriptUrl = (url: string | undefined) => {
+  if (url === undefined || url.length > downloadUrlMaxLength) return undefined;
+  const parsed = URL.parse(url);
+  return parsed !== null && (parsed.protocol === "http:" || parsed.protocol === "https:")
+    ? url
+    : undefined;
+};
 
 /** A server's `Content-Type` as a media type without parameters, when it is a valid one. */
 const serverType = (contentType: string | undefined) => {
@@ -382,27 +437,21 @@ export const makeRunFiles = (options: {
         Effect.tap((slot) => Effect.sync(() => slots.add(slot))),
         Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
       );
-    const collect: RunFiles["collect"] = ({ slot, timeoutMs }) =>
+    /** Keeps a download's bytes for the caller, counted against the run's caps. */
+    const keepDownload = (
+      name: string,
+      bytes: Uint8Array,
+      serverMediaType: string | undefined,
+    ): Effect.Effect<FileObject, FileRefused> =>
       Effect.gen(function* () {
-        if (!slots.delete(slot)) return yield* refuse("unknown_reference");
-        const current = yield* Ref.get(used);
-        const room = Math.min(limits.fileBytes, limits.runBytes - current.bytes);
-        const taken = yield* options.hook
-          .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
-          .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
-        if (taken === undefined) return yield* refuse("no_download");
-        if ("tooLarge" in taken) return yield* refuse(room < limits.fileBytes ? "run_limit" : "too_large");
-        const name = safeName(taken.name, "download");
-        if (isProgram(taken.bytes, name)) return yield* refuse("executable");
-        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuse("run_limit");
-        yield* count(taken.bytes.byteLength);
+        yield* count(bytes.byteLength);
         // The bytes decide the type when they prove one, else the server's; never the name.
         const media_type =
-          sniffedType(taken.bytes) ?? serverType(taken.media_type) ?? "application/octet-stream";
-        const sha256 = createHash("sha256").update(taken.bytes).digest("hex");
-        const size = taken.bytes.byteLength;
+          sniffedType(bytes) ?? serverType(serverMediaType) ?? "application/octet-stream";
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const size = bytes.byteLength;
         const kept = yield* options.hook
-          .keep({ name, media_type, size, sha256, bytes: taken.bytes })
+          .keep({ name, media_type, size, sha256, bytes })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         const file: FileObject = {
           $file: {
@@ -418,6 +467,80 @@ export const makeRunFiles = (options: {
         yield* Ref.update(collected, (files) => [...files, file]);
         return file;
       });
+    const collect: RunFiles["collect"] = ({ slot, timeoutMs }) =>
+      Effect.gen(function* () {
+        if (!slots.delete(slot)) return yield* refuse("unknown_reference");
+        const current = yield* Ref.get(used);
+        const room = Math.min(limits.fileBytes, limits.runBytes - current.bytes);
+        const taken = yield* options.hook
+          .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
+          .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
+        if (taken === undefined) return yield* refuse("no_download");
+        if ("tooLarge" in taken) return yield* refuse(room < limits.fileBytes ? "run_limit" : "too_large");
+        const name = safeName(taken.name, "download");
+        if (isProgram(taken.bytes, name)) return yield* refuse("executable");
+        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuse("run_limit");
+        return yield* keepDownload(name, taken.bytes, taken.media_type);
+      });
+    const takeDownloads = options.hook.takeDownloads;
+    const collectAll: RunFiles["collectAll"] =
+      takeDownloads === undefined
+        ? undefined
+        : ({ slot, timeoutMs, max }) =>
+            Effect.gen(function* () {
+              if (!slots.delete(slot)) return yield* refuse("unknown_reference");
+              const current = yield* Ref.get(used);
+              // At most what the run's caps leave, and at least one, so a download past them is
+              // seen and refused rather than never waited for.
+              const room = Math.max(1, limits.runFiles - current.files);
+              const captured = yield* takeDownloads(slot, {
+                timeoutMs,
+                settleMs: downloadSettleMs,
+                max: Math.min(max ?? room, room),
+              }).pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
+              if (captured.length === 0) return yield* refuse("no_download");
+              const results: CollectedDownload[] = [];
+              for (const [index, download] of captured.entries()) {
+                const url = scriptUrl(download.url);
+                const named =
+                  download.name === undefined ? undefined : safeName(download.name, "download");
+                const failed = (reason: DownloadFailureReason) =>
+                  results.push({
+                    failed: reason,
+                    ...(named === undefined ? {} : { name: named }),
+                    ...(url === undefined ? {} : { url }),
+                  });
+                if (max !== undefined && index >= max) {
+                  failed("over_max");
+                  continue;
+                }
+                if ("ended" in download) {
+                  failed(download.ended);
+                  continue;
+                }
+                if (download.size > limits.fileBytes) {
+                  failed("too_large");
+                  continue;
+                }
+                if (!(yield* fits(download.size))) {
+                  failed("run_limit");
+                  continue;
+                }
+                const bytes = yield* download.read.pipe(Effect.option);
+                if (bytes._tag === "None" || bytes.value.byteLength !== download.size) {
+                  failed("unavailable");
+                  continue;
+                }
+                const name = named ?? "download";
+                if (isProgram(bytes.value, name)) {
+                  failed("executable");
+                  continue;
+                }
+                const file = yield* keepDownload(name, bytes.value, download.media_type);
+                results.push({ file, ...(url === undefined ? {} : { url }) });
+              }
+              return results;
+            });
     const checkOutput: RunFiles["checkOutput"] = (output) =>
       Ref.get(collected).pipe(
         Effect.flatMap((files) =>
@@ -428,7 +551,13 @@ export const makeRunFiles = (options: {
             : refuse("not_collected"),
         ),
       );
-    return { place, arm, collect, checkOutput };
+    return {
+      place,
+      arm,
+      collect,
+      ...(collectAll === undefined ? {} : { collectAll }),
+      checkOutput,
+    };
   });
 
 /** Every `$file` object in an output, wherever it sits. */

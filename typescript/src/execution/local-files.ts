@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Schema, type Scope } from "effect";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
-import type { FileHostHook, SourceFile } from "../runtime/file-transfer.js";
+import type { CapturedDownload, FileHostHook, SourceFile } from "../runtime/file-transfer.js";
 import { typeOfName } from "../runtime/file-types.js";
 import { localError, localPromise } from "./local-path.js";
 import type { LocalDownloads } from "./local-downloads.js";
@@ -13,9 +13,10 @@ import type { LocalDownloads } from "./local-downloads.js";
 /**
  * The local host's files. A caller names a file on this machine by its `file:` URL; the native
  * browser's Playwright code runs on this machine, so a placed file is written to a run directory
- * here and a download is saved there by the browser's own download event. A collected file is
- * kept in `downloads`, where the caller reads it from its `file:` URL until it expires, or kept
- * nowhere when there are none, as during a build, whose files only the run sees.
+ * here and each download any page of the run's browser contexts starts is saved there by the
+ * browser's own download event. A collected file is kept in `downloads`, where the caller reads
+ * it from its `file:` URL until it expires, or kept nowhere when there are none, as during a
+ * build, whose files only the run sees.
  */
 
 /** Whether a value is a local file reference: a `file:` URL of an absolute path. */
@@ -84,45 +85,130 @@ const Saved = Schema.Union(
   Schema.Struct({ saved: Schema.Literal(false) }),
 );
 
+/** Each download a capture saw, in the order they began, as `takeAllCode` reports them. */
+const SavedAll = Schema.Array(
+  Schema.Union(
+    Schema.Struct({
+      saved: Schema.Literal(true),
+      name: Schema.String,
+      url: Schema.String,
+      contentType: Schema.optional(Schema.String),
+    }),
+    Schema.Struct({
+      name: Schema.String,
+      url: Schema.String,
+      ended: Schema.Literal("canceled", "unfinished"),
+    }),
+  ),
+);
+
 /**
- * Native page code that saves the first download any page of the context starts into `path`,
- * noting the `Content-Type` of each response so the download's own is known.
+ * Native page code that saves every download any page of any browser context of the run starts,
+ * in the order they began, into `directory` under its place in that order, noting the
+ * `Content-Type` of each response so a download's own is known. A context the run opens while
+ * the capture is armed is watched from its start.
  */
-const armCode = (slot: string, path: string) => `
+const armCode = (slot: string, directory: string) => `
 const registry = (globalThis.__pomeradoDownloads ??= new Map());
-const state = { listeners: [], types: new Map() };
+const state = { listeners: [], types: new Map(), downloads: [], changedAt: Date.now(), contexts: new Set() };
 const capture = (download) => {
-  if (state.done !== undefined) return;
-  const name = download.suggestedFilename();
-  const contentType = state.types.get(download.url());
-  state.done = download.saveAs(${JSON.stringify(path)}).then(() => ({ saved: true, name, ...(contentType === undefined ? {} : { contentType }) }), () => ({ saved: false }));
+  if (state.closed === true) return;
+  const url = download.url();
+  const entry = { download, name: download.suggestedFilename(), url, contentType: state.types.get(url) };
+  const ended = (result) => { entry.result = result; state.changedAt = Date.now(); };
+  download.saveAs(${JSON.stringify(directory)} + "/" + state.downloads.length).then(() => ended({ saved: true }), () => ended({ saved: false }));
+  state.downloads.push(entry);
+  state.changedAt = Date.now();
 };
 const typed = (response) => {
   const type = response.headers()["content-type"];
   if (type !== undefined) state.types.set(response.url(), type);
 };
-const watch = (page) => {
+const watchPage = (page) => {
   page.on("download", capture);
   state.listeners.push(() => page.off("download", capture));
 };
-for (const page of context.pages()) watch(page);
-context.on("page", watch);
-context.on("response", typed);
-state.listeners.push(() => context.off("page", watch), () => context.off("response", typed));
+const watchContext = (watched) => {
+  if (state.contexts.has(watched)) return;
+  state.contexts.add(watched);
+  for (const page of watched.pages()) watchPage(page);
+  watched.on("page", watchPage);
+  watched.on("response", typed);
+  state.listeners.push(() => watched.off("page", watchPage), () => watched.off("response", typed));
+};
+watchContext(context);
+for (const watched of browser.contexts()) watchContext(watched);
+browser.on("context", watchContext);
+state.listeners.push(() => browser.off("context", watchContext));
 registry.set(${JSON.stringify(slot)}, state);
 return true;`;
 
-/** Native page code that waits up to `timeoutMs` for the slot's download, then ends its capture. */
-const takeCode = (slot: string, timeoutMs: number) => `
+/** Page code that ends the slot's capture and stops each download it saw still running. */
+const endCaptureSource = (slot: string) => `
 const registry = globalThis.__pomeradoDownloads;
 const state = registry?.get(${JSON.stringify(slot)});
+const end = () => {
+  registry.delete(${JSON.stringify(slot)});
+  state.closed = true;
+  for (const stop of state.listeners) stop();
+  for (const entry of state.downloads) if (entry.result === undefined) entry.download.cancel().catch(() => {});
+};`;
+
+/**
+ * Native page code that waits up to `timeoutMs` for the first download the slot saw to finish,
+ * then ends its capture.
+ */
+const takeCode = (slot: string, timeoutMs: number) => `${endCaptureSource(slot)}
 if (state === undefined) return { saved: false };
 const until = Date.now() + ${timeoutMs};
-while (state.done === undefined && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
-registry.delete(${JSON.stringify(slot)});
-for (const stop of state.listeners) stop();
-if (state.done === undefined) return { saved: false };
-return await Promise.race([state.done, new Promise((resolve) => setTimeout(() => resolve({ saved: false }), Math.max(0, until - Date.now())))]);`;
+while (state.downloads[0]?.result === undefined && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+const first = state.downloads[0];
+end();
+if (first?.result?.saved !== true) return { saved: false };
+return { saved: true, name: first.name, ...(first.contentType === undefined ? {} : { contentType: first.contentType }) };`;
+
+/**
+ * Native page code that waits for the slot's downloads, as `FileHostHook.takeDownloads` says,
+ * then ends its capture and reports each one in the order they began.
+ */
+/**
+ * Whether `takeAllCode` has waited long enough: the first `max` downloads to begin have all
+ * ended, since a take reports a download past `max` by its place in the order they began, never
+ * by when it ended; or at least one began, every one that began ended, and nothing began or ended
+ * for `settleMs`. Pasted into the page, so it refers to nothing outside its own body.
+ */
+export function takeAllSettled(
+  downloads: readonly { readonly result?: unknown }[],
+  bounds: { readonly max: number; readonly settleMs: number },
+  quietMs: number,
+): boolean {
+  const first = downloads.slice(0, bounds.max);
+  if (first.length >= bounds.max && first.every((entry) => entry.result !== undefined)) return true;
+  const ended = downloads.filter((entry) => entry.result !== undefined).length;
+  return ended > 0 && ended === downloads.length && quietMs >= bounds.settleMs;
+}
+
+const takeAllCode = (
+  slot: string,
+  bounds: { readonly timeoutMs: number; readonly settleMs: number; readonly max: number },
+) => `${endCaptureSource(slot)}
+if (state === undefined) return null;
+const until = Date.now() + ${bounds.timeoutMs};
+const takeAllSettled = ${takeAllSettled.toString()};
+const bounds = { max: ${bounds.max}, settleMs: ${bounds.settleMs} };
+while (Date.now() < until && !takeAllSettled(state.downloads, bounds, Date.now() - state.changedAt)) {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+const seen = [...state.downloads];
+end();
+return seen.map((entry) => entry.result === undefined
+  ? { name: entry.name, url: entry.url, ended: "unfinished" }
+  : entry.result.saved
+    ? { saved: true, name: entry.name, url: entry.url, ...(entry.contentType === undefined ? {} : { contentType: entry.contentType }) }
+    : { name: entry.name, url: entry.url, ended: "canceled" });`;
+
+/** How long the host gives page code that waits `waitMs` for downloads. */
+const pageTimeoutSec = (waitMs: number) => Math.min(300, Math.ceil(waitMs / 1000) + 5);
 
 /**
  * The native browser's file hook for one run, removing its run directory when the scope closes.
@@ -163,23 +249,24 @@ export const makeLocalFileHook = (options: {
       armDownloads: () =>
         Effect.gen(function* () {
           const slot = randomUUID();
-          const path = join(yield* fresh("downloads"), "download");
-          slots.set(slot, path);
-          yield* run(armCode(slot, path), 10);
+          const directory = yield* fresh("downloads");
+          slots.set(slot, directory);
+          yield* run(armCode(slot, directory), 10);
           return slot;
         }),
       takeDownload: (slot, { timeoutMs, maxBytes }) =>
         Effect.gen(function* () {
-          const path = slots.get(slot);
+          const directory = slots.get(slot);
           slots.delete(slot);
-          if (path === undefined) return yield* Effect.fail(new Error("Unknown download slot"));
-          const timeoutSec = Math.min(300, Math.ceil(timeoutMs / 1000) + 5);
-          const saved = yield* run(takeCode(slot, timeoutMs), timeoutSec).pipe(
+          if (directory === undefined)
+            return yield* Effect.fail(new Error("Unknown download slot"));
+          const saved = yield* run(takeCode(slot, timeoutMs), pageTimeoutSec(timeoutMs)).pipe(
             Effect.flatMap(Schema.decodeUnknown(Saved)),
             Effect.mapError(localError),
           );
           if (!saved.saved) return undefined;
           // The host reads only the path it chose, never one the page named.
+          const path = join(directory, "0");
           const status = yield* localPromise(() => lstat(path));
           if (!status.isFile()) return yield* Effect.fail(new Error("Download is not a file"));
           if (status.size > maxBytes) return { tooLarge: true as const };
@@ -188,6 +275,37 @@ export const makeLocalFileHook = (options: {
             bytes: yield* localPromise(() => readAtMost(path, status.size)),
             ...(saved.contentType === undefined ? {} : { media_type: saved.contentType }),
           };
+        }),
+      takeDownloads: (slot, bounds) =>
+        Effect.gen(function* () {
+          const directory = slots.get(slot);
+          slots.delete(slot);
+          if (directory === undefined)
+            return yield* Effect.fail(new Error("Unknown download slot"));
+          const seen = yield* run(
+            takeAllCode(slot, bounds),
+            pageTimeoutSec(bounds.timeoutMs + bounds.settleMs),
+          ).pipe(Effect.flatMap(Schema.decodeUnknown(SavedAll)), Effect.mapError(localError));
+          const captured: CapturedDownload[] = [];
+          for (const [index, download] of seen.entries()) {
+            if (!("saved" in download)) {
+              captured.push(download);
+              continue;
+            }
+            // The host reads only the paths it chose, by each download's place, never one the
+            // page named.
+            const path = join(directory, String(index));
+            const status = yield* localPromise(() => lstat(path));
+            if (!status.isFile()) return yield* Effect.fail(new Error("Download is not a file"));
+            captured.push({
+              name: download.name,
+              url: download.url,
+              ...(download.contentType === undefined ? {} : { media_type: download.contentType }),
+              size: status.size,
+              read: localPromise(() => readAtMost(path, status.size)),
+            });
+          }
+          return captured;
         }),
       keep: (file) =>
         options.downloads === undefined

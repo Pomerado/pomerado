@@ -53,3 +53,13 @@ it("lets a build without files set an input from base64 input, deprecated, and r
     "sets a file input itself (use files.place)",
   );
 });
+
+it("counts files.collectAll as the file API, never as reading an input's files", () => {
+  expect(scan("const all = await context.files.collectAll(() => click());", true)).toBeUndefined();
+  expect(
+    scan(
+      "await files.collectAll(() => click());\nawait page.getByLabel('Receipt').setInputFiles(path);",
+      false,
+    ),
+  ).toBe("sets a file input itself (use files.place)");
+});

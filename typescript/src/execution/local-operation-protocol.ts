@@ -144,7 +144,7 @@ export const LocalOperationMessage = Schema.Union(
     timeoutSec: Schema.Int.pipe(Schema.between(1, 300)),
     ...SiteFileLimits.fields,
   }),
-  /** `files.collect`, before its trigger: the host starts capturing downloads. */
+  /** `files.collect` or `files.collectAll`, before its trigger: the host starts a capture. */
   Schema.Struct({ kind: Schema.Literal("file_arm"), id: Id }),
   /** `files.collect`, after its trigger: the host keeps the slot's download. */
   Schema.Struct({
@@ -152,6 +152,14 @@ export const LocalOperationMessage = Schema.Union(
     id: Id,
     slot: Id,
     timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+  }),
+  /** `files.collectAll`, after its trigger: the host keeps every download in the slot. */
+  Schema.Struct({
+    kind: Schema.Literal("file_collect_all"),
+    id: Id,
+    slot: Id,
+    timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+    max: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), { exact: true }),
   }),
   /** One `SiteHttp` request the child validated, for the host's transport to send. */
   Schema.Struct({
