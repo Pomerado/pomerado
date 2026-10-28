@@ -120,7 +120,9 @@ say under `notTested` why it does not apply to this tool:
   category or by identifier: a search by the exact name or code of something the site lists
   publicly, such as a product, a place or a book's ISBN, finds that item;
 - many results with the next page, and a query with a single result;
-- a closed, sold-out or unavailable record, returned as such, never as available;
+- a closed, sold-out or unavailable record, returned as such, never as available, when the site
+  readily offers one that a quick search or browse finds. If none turns up reasonably, drop this case
+  and say why under `notTested`; never keep hunting for one, and never let its absence stop the build;
 - a boundary value: the earliest or latest date the site offers, or the lowest or highest count
   or price it takes;
 - a value other than the default for each control;
@@ -195,7 +197,13 @@ site origin that keeps its browser's site data, in parallel browsers where the h
 (a signed-in read's on its own browser).
 Each result says whether the case ran `cold`, first on a new browser with an empty profile, or
 `warm`, on a browser that kept what earlier steps left. A case that passes warm and fails cold
-relies on something the site remembered: set that value from the input. You get every result: its status, what it returned, and a failure's
+relies on something the site remembered: set that value from the input. When most of a batch's
+cases fail at the same step before the part they test, such as setting a location, address or
+store, or a pop-up or banner covering a control, fix that step first and run only
+`example-again`, which a host with several browsers still runs cold, until it
+passes, before the whole batch again. A pop-up
+or banner that shows only on some visits is closed whenever it shows, never waited for (forms
+skill). You get every result: its status, what it returned, and a failure's
 error with the source line that threw. Name cases in action `plan` to read their full outputs,
 and check what they mean, not just pass or fail: every item matches the filters, the order follows
 the sort, the applied location is the one asked for or labeled as another, page 2 differs from

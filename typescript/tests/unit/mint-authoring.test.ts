@@ -1289,17 +1289,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["7abfda1e7fdb6bbebbde5535ffb4e1fc7cab4ebff66a87268422d31c43adafe3", "core"],
+    ["27650c715c8203757b5e6b919be0629f7bd9ea790eba4f422c3f453f1392d0e8", "core"],
     ["933e2daac360d31beeeb2a8aeabcf22ca8512cc0272f321b047106f4a2055ab3", "search"],
-    ["930550863b9f83e98719b77bc149b20e70b526a88a16dd758d44ab20d048d8cb", "auth"],
-    ["fe414151bf943f40c38f5b1451dcfe5823fc81bafc3598a493fe0c2bfe90ba24", "testing"],
+    ["4484a13bc74caafbc22fcee1c10b36f13b21e116d24928ce369393d5a29e47ea", "auth"],
+    ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["0f45b38331f51d0d503a26806d8a96b545a6dd4ca03eddce2c585debf2c569a2", "forms"],
     ["ecaf28ded2af41284590a1d5de734e1a6679533ffbcecf764b08d2cdde41aad4", "writes"],
     ["d06f650fc09f74d3711e043da2303de97ced42c9ff2541d48ec28cd7e686519d", "cart"],
     ["b6dd72d69c30ac9a1818ac1baeae48e701cd318f04d11e04ef8c03d812b91a16", "caller-input"],
-    ["fb7cd6b0929612a94dd6e0a3c54fa42e102ada77ccd83059fe818a01d8307cf0", "publication"],
-    ["1f6b600eb8f9eaa1aff119a0a2e0e407235732a01ea1f803f6b2754a7dfdadbd", "workspace/AGENTS.md"],
+    ["16a7758448245bfdfa358b21315a3d27a7d28a9d1b8e6253726afe2808fc6093", "publication"],
+    ["755588eca532809a574d3f4d46b61d2f1063d3dd678b83995a209d1687698a1f", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1420,7 +1420,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["0386d3e23fb8cd652f7c64320b940b6a61c7ed9fb3315579fe5521c835789b42", "search"],
-    ["67132ef3101ecb565e4d461ed5944c9d3edcaea07e14d3de0cbd5df03543c4b5", "workspace/AGENTS.md"],
+    ["c6739d4b50ca4b259d59301010809c27e2cb0bcfaec20bd9a83b242dc648becb", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
