@@ -66,8 +66,61 @@ export const stepFieldsFit = (fields: readonly object[]) => {
 };
 /** Why a step's fields do not fit (`stepFieldsFit`). */
 export const stepFieldsMessage = `a sign-in step names at most ${maximumStepFields} fields besides its code fields, and at most ${maximumCodeBoxes} code fields, one per box of a split code`;
-/** Identifier kinds a field may accept. */
-export const IdentifierKinds = Schema.Literal("username", "email", "phone", "account_number");
+/**
+ * Identifier kinds a field may accept. `private_identifier` is any other identity field a sign-in
+ * asks for, such as a national identity number or a PIN that is itself the sign-in identifier,
+ * labelled as the site labels it (`PrivateIdentifierLabel`): the host keeps its value like a
+ * password. A PIN entered in place of a password after another identifier is the `password` slot.
+ */
+export const IdentifierKinds = Schema.Literal(
+  "username",
+  "email",
+  "phone",
+  "account_number",
+  "private_identifier",
+);
+/**
+ * A private identifier field's own label as the site shows it, such as "National ID number": what
+ * the owner is asked for and what the saved login shows. Never the value. One line: no control or
+ * format character (a newline, NEL, NUL or a bidi control) and no line or paragraph separator.
+ */
+export const PrivateIdentifierLabel = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(100),
+  Schema.filter((label) => label.trim() === label && !/[\p{C}\p{Zl}\p{Zp}]/u.test(label), {
+    message: () =>
+      "a label is one line of the site's own words, without surrounding spaces or control characters",
+  }),
+);
+/**
+ * Whether an identifier field's kinds and label agree: a `private_identifier` field accepts that
+ * kind alone and names its label; no other identifier field names a label.
+ */
+export const privateIdentifierFits = (field: {
+  readonly accepts: readonly string[];
+  readonly label?: string | undefined;
+}) =>
+  field.accepts.includes("private_identifier")
+    ? field.accepts.length === 1 && field.label !== undefined
+    : field.label === undefined;
+/** Why an identifier field's kinds and label do not agree (`privateIdentifierFits`). */
+export const privateIdentifierMessage =
+  "a private_identifier field accepts that kind alone, with the site's label for it; no other identifier field names a label";
+/**
+ * Whether a step's fields name at most one `private_identifier` field: a login holds one private
+ * identifier, so a second such field would be typed the same value. A PIN entered in place of a
+ * password after another identifier is the `password` slot.
+ */
+export const onePrivateIdentifier = (fields: readonly object[]) =>
+  fields.filter(
+    (field) =>
+      "accepts" in field &&
+      Array.isArray(field.accepts) &&
+      field.accepts.includes("private_identifier"),
+  ).length <= 1;
+/** Why a step's fields do not fit (`onePrivateIdentifier`). */
+export const onePrivateIdentifierMessage =
+  "a sign-in step names at most one private_identifier field; a PIN entered in place of a password after another identifier is the password slot";
 /** Secret slots a field may take. */
 export const SecretSlots = Schema.Literal(
   "password",

@@ -42,14 +42,26 @@ import type {
 
 export { SiteNavigation } from "./sign-in-redirect.js";
 
-/** A kind of sign-in identifier: what an identifier field may accept. */
-export type IdentifierKind = "username" | "email" | "phone" | "account_number";
+/**
+ * A kind of sign-in identifier: what an identifier field may accept. A `private_identifier` is any
+ * other identity field the sign-in asks for, such as a national identity number or a PIN that is
+ * itself the sign-in identifier, which the host keeps like a password.
+ */
+export type IdentifierKind =
+  | "username"
+  | "email"
+  | "phone"
+  | "account_number"
+  | "private_identifier";
+/** A kind a login's own username may be, so its primary identifier: never a private identifier. */
+export type PrimaryIdentifierKind = Exclude<IdentifierKind, "private_identifier">;
 /** The order the host picks an accepted identifier kind in when the login holds several. */
 export const identifierPreference: readonly IdentifierKind[] = [
   "username",
   "email",
   "phone",
   "account_number",
+  "private_identifier",
 ];
 /**
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
@@ -78,6 +90,8 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
+  /** A `private_identifier` field's own label as the site shows it; never its value. */
+  readonly label?: string | undefined;
   /** How a `date_of_birth` field takes the date, or the one part of it a dropdown takes. */
   readonly format?: DateOfBirthFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
@@ -96,7 +110,11 @@ export interface AutofillStepRequest {
   readonly popup?: AutofillPopup | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   readonly fields: readonly (
-    | { readonly selector: string; readonly accepts: readonly IdentifierKind[] }
+    | {
+        readonly selector: string;
+        readonly accepts: readonly IdentifierKind[];
+        readonly label?: string | undefined;
+      }
     | {
         readonly selector: string;
         readonly slot: SecretSlot;

@@ -29,6 +29,7 @@ const identityValues = (
     credentials?.email,
     credentials?.phone,
     credentials?.accountNumber,
+    credentials?.privateIdentifier,
     open?.sentIdentifiers.email,
     open?.sentIdentifiers.phone,
     open?.sentIdentifiers.accountNumber,
@@ -36,6 +37,7 @@ const identityValues = (
     h.answeredLoginFields.current.email,
     h.answeredLoginFields.current.phone,
     h.answeredLoginFields.current.account_number,
+    h.answeredLoginFields.current.private_identifier,
   ].flatMap((value) => (value === undefined || value.length < 3 ? [] : [value.toLowerCase()]));
 };
 

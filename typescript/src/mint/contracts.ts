@@ -36,6 +36,11 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
+  privateIdentifierFits,
+  privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
   SignInMethodChoice,
@@ -625,7 +630,8 @@ export const SignInStep = Schema.Union(
     ),
     fields: Schema.Array(
       Schema.Union(
-        // An identifier field lists every kind it accepts; the host picks what it sends.
+        // An identifier field lists every kind it accepts; the host picks what it sends. A
+        // private identifier is accepted alone, with the site's own label for its field.
         Schema.Struct({
           selector: SignInSelector,
           accepts: Schema.Array(IdentifierKinds).pipe(
@@ -634,7 +640,11 @@ export const SignInStep = Schema.Union(
               message: () => "list each accepted kind once",
             }),
           ),
-        }),
+          label: Schema.optional(PrivateIdentifierLabel).annotations({
+            description:
+              "Only with private_identifier: the field's own label as the site shows it, such as National ID number or PIN",
+          }),
+        }).pipe(Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage })),
         // A date of birth names how the field takes it, or the one part a dropdown takes. A
         // private answer names its question, and a code the screen's own instruction for it.
         Schema.Struct({
@@ -655,6 +665,7 @@ export const SignInStep = Schema.Union(
     ).pipe(
       Schema.maxItems(maximumStepFields + maximumCodeBoxes),
       Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+      Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
     ),
     submit: Schema.optional(SignInSelector),
     /**

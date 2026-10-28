@@ -1,7 +1,7 @@
 import { report } from "./sign-in-telemetry.js";
 import { Cause, Effect, Exit } from "effect";
 import type { AutofillRecipeStep, RejectedMarker } from "../destinations/autofill-recipe.js";
-import type { AutofillSlot, IdentifierKind } from "../destinations/autofill-step.js";
+import type { AutofillSlot, PrimaryIdentifierKind } from "../destinations/autofill-step.js";
 import type { AutofillHooks } from "./autofill-state.js";
 
 /** The recipe's observed, value-free error marker, checked before another credential can go out. */
@@ -50,7 +50,7 @@ export const recordedRejections = <E>(
  */
 export const logicalRejectedField = <Slot extends RejectedMarker["slot"]>(
   slot: Slot,
-  primaryIdentifierKind?: IdentifierKind,
+  primaryIdentifierKind?: PrimaryIdentifierKind,
 ): Slot | "username" => (slot === primaryIdentifierKind ? "username" : slot);
 
 /** Whether a filled field's value may become rejection evidence: every slot but a private answer. */
