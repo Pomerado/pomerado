@@ -620,10 +620,12 @@ never with final text, which the host treats as unfinished work:
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
   `site_lacks_capability`. Never use it for a bot check or an access-denied page. An outage,
   maintenance, error or empty page that appears only after the site already served its pages in
-  this attempt, or after a bot check earlier in it, is a suspected block, not an outage: sites
-  throttle a browser's network address this way. Ask for a new browser with
-  `request_browser_recovery` first, and report `site_unavailable` only when the page stays on the
-  new browser.
+  this attempt, or after a bot check you got past earlier, is reported the same way: report the
+  outage page you see now, not the earlier check. Sites sometimes throttle a browser's network
+  address this way, so a host may give the build a new browser on another address and ask you to
+  try the failing step once more before it ends the build; on a signed-in build that browser
+  starts signed out. Try the step again within your usual rules, and report `site_unavailable`
+  again if the page stays.
 - `caller_input`: the caller's own request stops the build: what it states conflicts with itself
   or its cited sources, a file it needs is missing, or it rules out going on, such as a stop
   condition it set that cannot be met. Prefer asking with `request_input` for a missing fact the
