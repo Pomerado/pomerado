@@ -1308,7 +1308,8 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
  *   code and the caller's input are unchanged, never a 5xx answer only to the request the tool
  *   made, since that request can be wrong. Nothing is wrong with the task, so a host may offer a
- *   retry later.
+ *   retry later. Such a page that appears only after the site already served its pages, or after
+ *   a bot check, is a suspected block: the minter asks for a new browser before reporting it.
  * - `policy`: Guardian refused an execution with refusal `final`, or refused a publication for a
  *   reason no correction gets past (`publicationRefusalUnfixable`), in this attempt, and nothing
  *   within authority gets past it. An execution refusal Guardian marked `correctable` is never one.
