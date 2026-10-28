@@ -43,14 +43,26 @@ import type {
 
 export { SiteNavigation } from "./sign-in-redirect.js";
 
-/** A kind of sign-in identifier: what an identifier field may accept. */
-export type IdentifierKind = "username" | "email" | "phone" | "account_number";
+/**
+ * A kind of sign-in identifier: what an identifier field may accept. A `private_identifier` is any
+ * other identity field the sign-in asks for, such as a national identity number or a PIN that is
+ * itself the sign-in identifier, which the host keeps like a password.
+ */
+export type IdentifierKind =
+  | "username"
+  | "email"
+  | "phone"
+  | "account_number"
+  | "private_identifier";
+/** A kind a login's own username may be, so its primary identifier: never a private identifier. */
+export type PrimaryIdentifierKind = Exclude<IdentifierKind, "private_identifier">;
 /** The order the host picks an accepted identifier kind in when the login holds several. */
 export const identifierPreference: readonly IdentifierKind[] = [
   "username",
   "email",
   "phone",
   "account_number",
+  "private_identifier",
 ];
 /**
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
@@ -79,6 +91,8 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
+  /** A `private_identifier` field's own label as the site shows it; never its value. */
+  readonly label?: string | undefined;
   /**
    * How a `date_of_birth` field takes the date, or the one part of it a dropdown takes; or, on an
    * identifier field that accepts a phone, `national`: it takes the number without its calling
@@ -104,6 +118,7 @@ export interface AutofillStepRequest {
     | {
         readonly selector: string;
         readonly accepts: readonly IdentifierKind[];
+        readonly label?: string | undefined;
         /** `national` on a field that accepts a phone and keeps only the local number. */
         readonly format?: PhoneFormat | undefined;
       }
@@ -184,8 +199,9 @@ const Target = Schema.Struct({
   actions: Schema.Array(Schema.String),
   /**
    * Its form's own action, the first of `actions`, is a script that does nothing (`javascript:`,
-   * `javascript:void(0)`, `javascript:;`): the page's own code does whatever sending the form does.
-   * A step call that finds it changed judges the controls again.
+   * `javascript:void(0)`, `javascript:;`) or one of the React toolkit's placeholders, which only
+   * throw (`noOpScriptCode`): the page's own code does whatever sending the form does. A step call
+   * that finds it changed judges the controls again.
    */
   scriptAction: Schema.optional(Schema.Boolean),
   /**

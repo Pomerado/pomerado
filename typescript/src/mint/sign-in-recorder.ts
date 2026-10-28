@@ -204,7 +204,9 @@ const unansweredStep = (h: AutofillHost, unanswered: Unanswered) => {
     return Effect.fail(rejection("site_rejected", "code"));
   if (
     unanswered.cause === "field_corrections_exhausted" &&
-    (unanswered.field === "date_of_birth" || unanswered.field === "zip")
+    (unanswered.field === "date_of_birth" ||
+      unanswered.field === "zip" ||
+      unanswered.field === "private_identifier")
   )
     return Effect.fail(rejection("site_rejected", unanswered.field));
   return Effect.fail(unansweredFailure(unanswered));
@@ -577,9 +579,15 @@ export const makeSignInRecorder = (input: {
         filled,
       );
       if (named !== undefined) return shown(named);
-      // The field the login's username went into is its primary identifier.
+      // The field the login's username went into is its primary identifier; a private
+      // identifier never is one.
       for (const [index, field] of step.fields.entries())
-        if (isIdentifier(field.slot) && held !== undefined && filled[index] === held.username)
+        if (
+          isIdentifier(field.slot) &&
+          field.slot !== "private_identifier" &&
+          held !== undefined &&
+          filled[index] === held.username
+        )
           h.autofillPrimaryIdentifierKind.current ??= field.slot;
       const previous = { ...h.autofillSentValues.current };
       yield* recordAutofillValues(h, step, filled, held ?? {});

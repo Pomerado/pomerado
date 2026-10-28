@@ -29,17 +29,21 @@ or settings the task does not concern.
 # The login URL you record
 
 The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to
-sign in. Follow the site's own sign-in link: record its exact `href`, read before you click it,
-never a trimmed, rebuilt or guessed copy. When that link works only with one-time values in it,
-record the page that shows the link as `loginUrl` and the link's click as a fieldless
-`signInStep`. Never record:
+sign in. It must work in a new browser with no cookies. Follow the site's own sign-in link as a
+signed-out visitor sees it: record its exact `href`, read before you click it, never a trimmed,
+rebuilt or guessed copy. Never copy cookies or session values into it. When that link works only
+with one-time values or this browser's session values in it, record the page that shows the link
+as `loginUrl` and the link's click as a fieldless `signInStep`. Never record:
 
 - a URL carrying one-time values: `state`, `nonce`, `code_challenge`, `code`, `session_state`,
   `SAMLRequest`, or a signed token or opaque random value in its query or fragment;
+- a URL carrying a device or session identifier the site put in the link for this browser, such
+  as a `did`, `device_id` or session id parameter;
 - an identity provider's authorize endpoint (`/authorize`, `/oauth2/…/authorize`,
   `/as/authorization.oauth2`, `/protocol/openid-connect/auth`), even on the site's own domain.
 
-Such a URL was made for one sign-in; a run that replays it starts from spent values.
+Such a URL was made for one sign-in or one browser; a run that replays it starts from spent values
+or another browser's session, which a site can meet with a bot challenge or an error.
 
 A login link often redirects through an identity provider and lands on an authorize URL with
 one-time parameters: record the link you clicked, not the page you landed on.
@@ -164,10 +168,15 @@ attribute.
   A selector never reaches into another frame (no `>>` chains or `internal:` engines): the host finds
   each field in its own frame.
   - An identifier field lists every kind it accepts in `accepts`, from `username`, `email`,
-    `phone` and `account_number`: a "username or email" field is `["username", "email"]`, an
-    email-only field `["email"]`, a mobile-number field `["phone"]`, an account, member or customer
-    number field or a company or organization ID field `["account_number"]`. Read the label, type
-    and placeholder. The host sends a kind the login holds (username first, then email, phone and
+    `phone`, `account_number` and `private_identifier`: a "username or email" field is
+    `["username", "email"]`, an email-only field `["email"]`, a mobile-number field `["phone"]`, an
+    account, member or customer number field or a company or organization ID field
+    `["account_number"]`. A sign-in identity field that is not a username, email, phone or account
+    number, such as a national identity number or a PIN that is itself the sign-in identifier, is
+    `["private_identifier"]` with the site's own label as `label`; prefer it over relabelling the
+    field, which Guardian refuses. A step names one such field at most, and a PIN entered in place
+    of a password after another identifier is the `password` slot. Read
+    the label, type and placeholder. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.
     For a phone box that keeps only the local number and has no country picker, prefer adding
@@ -226,8 +235,8 @@ attribute.
   address names it (`page_names_contact`) is refused; use an account-independent route.
 
 A screen may record `rejectedMarkers`, each with a field slot and an observed, value-free
-rejection selector. The slots are `username`, `email`, `phone`, `account_number`, `password`,
-`code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
+rejection selector. The slots are `username`, `email`, `phone`, `account_number`,
+`private_identifier`, `password`, `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
 `private_answer` has no recorded rejection marker or automatic correction: when the site rejects

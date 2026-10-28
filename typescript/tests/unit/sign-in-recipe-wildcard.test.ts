@@ -76,7 +76,7 @@ describe("version 7", () => {
     );
     expect(Either.isLeft(Schema.decodeUnknownEither(olderHost)(recipe))).toBe(true);
     expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 6 }))).toBe("invalid");
-    expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 10 }))).toBe("unknown_version");
+    expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 11 }))).toBe("unknown_version");
   });
 
   it.each([

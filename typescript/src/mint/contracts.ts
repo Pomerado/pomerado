@@ -37,6 +37,11 @@ import {
   maximumCodeBoxes,
   maximumStepFields,
   PhoneFormat,
+  PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
+  privateIdentifierFits,
+  privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
   SignInMethodChoice,
@@ -65,6 +70,7 @@ import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import {
   AnsweredQuestion,
   type ConfirmedStepQuestion,
+  type QuestionFinding,
   type QuestionDecision,
 } from "../guardian/question.js";
 import { MintFile } from "./file-handles.js";
@@ -100,10 +106,13 @@ import type {
   MintReviewFeedback,
 } from "./input-feedback.js";
 import {
+  FindingResponse,
+  findingResponsesLimit,
   GuardianAction,
   PublicationFinding,
   PublicationReason,
   type GuardianRefusal,
+  type ResponseRuling,
 } from "../guardian/review-contracts.js";
 import {
   OutcomeWrite,
@@ -557,6 +566,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     readonly reviewId?: string;
     readonly rationale: string;
     readonly findings?: readonly PublicationFinding[];
+    /** A publication review's ruling on each minter answer to a prior finding it carried. */
+    readonly responseRulings?: readonly ResponseRuling[];
     /**
      * A publication review's short reason its caller may read, apart from the private rationale;
      * the harness screens it before a build's result carries it (`PublicationDenial`).
@@ -620,7 +631,8 @@ export const SignInStep = Schema.Union(
     ),
     fields: Schema.Array(
       Schema.Union(
-        // An identifier field lists every kind it accepts; the host picks what it sends. One that
+        // An identifier field lists every kind it accepts; the host picks what it sends. A
+        // private identifier is accepted alone, with the site's own label for its field. One that
         // accepts a phone and keeps only the local number names `format: "national"`.
         Schema.Struct({
           selector: SignInSelector,
@@ -630,8 +642,13 @@ export const SignInStep = Schema.Union(
               message: () => "list each accepted kind once",
             }),
           ),
+          label: Schema.optional(PrivateIdentifierLabel).annotations({
+            description:
+              "Only with private_identifier: the field's own label as the site shows it, such as National ID number or PIN",
+          }),
           format: Schema.optional(PhoneFormat),
         }).pipe(
+          Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }),
           Schema.filter((field) => field.format === undefined || field.accepts.includes("phone"), {
             message: () => "only a field that accepts a phone names format national",
           }),
@@ -656,6 +673,7 @@ export const SignInStep = Schema.Union(
     ).pipe(
       Schema.maxItems(maximumStepFields + maximumCodeBoxes),
       Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+      Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
     ),
     submit: Schema.optional(SignInSelector),
     /**
@@ -1287,6 +1305,20 @@ export const PublicationRequest = Schema.Struct({
    * tool's intended output, such as code, or page text that only resembles code. A blocking one no
    * longer refuses publication, and the publication review checks every override and its reason.
    */
+  /**
+   * The minter's answers to findings of the publication review that denied its last submission,
+   * each naming the finding by the id the host gave it. The next review reads each as the
+   * minter's untrusted claim and rules on it; an answer never stands in for live evidence a
+   * finding asks for.
+   */
+  findingResponses: Schema.optional(
+    Schema.Array(FindingResponse)
+      .pipe(Schema.maxItems(findingResponsesLimit))
+      .annotations({
+        description:
+          "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
+      }),
+  ),
   outputOverrides: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -1315,7 +1347,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
  *   code and the caller's input are unchanged, never a 5xx answer only to the request the tool
  *   made, since that request can be wrong. Nothing is wrong with the task, so a host may offer a
- *   retry later.
+ *   retry later. Such a page that appears only after the site already served its pages, or after
+ *   a bot check the build got past, is reported the same way; since sites sometimes throttle a
+ *   browser's network address this way, a host may give the build a new browser on another
+ *   address and ask it to try the failing step once more before it ends the build.
  * - `policy`: Guardian refused an execution with refusal `final`, or refused a publication for a
  *   reason no correction gets past (`publicationRefusalUnfixable`), in this attempt, and nothing
  *   within authority gets past it. An execution refusal Guardian marked `correctable` is never one.
@@ -1742,6 +1777,17 @@ export const AgentRequest = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /**
+   * The id of the finding of Guardian's latest publication denial this request is about, such as
+   * one that leaves the owner to choose between keeping a claim with its evidence or dropping it.
+   * The host keeps it from the caller and gives the question review that finding.
+   */
+  finding: Schema.optional(
+    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200)).annotations({
+      description:
+        "Optional: the id of a finding in Guardian's latest publication denial that this question asks the owner about, such as whether to keep a claim and get its evidence or to remove it or mark it untested. Guardian's question review then sees that finding; the caller never sees the id.",
+    }),
+  ),
 });
 
 /** What the agent asks: the request without the host's id and source. */
@@ -2631,6 +2677,13 @@ export interface MintDependencies {
        * host leaves it out, and the answer reaches later reviews only as an answered question.
        */
       readonly confirms?: readonly ConfirmedStepQuestion[];
+      /**
+       * The finding of the latest publication denial the request names (`AgentRequest.finding`),
+       * as the host recorded it. A host that forwards it to `questionForReview` lets the review
+       * allow a question asking the owner to choose between the fixes the finding permits; an
+       * older host leaves it out.
+       */
+      readonly finding?: QuestionFinding;
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
@@ -2743,6 +2796,14 @@ export interface MintDependencies {
    * and the host applies or refuses it, as before.
    */
   readonly siteMoveUnsupported?: true;
+  /**
+   * The host takes a `login` `signed_out` change as narrowing what the build may do: it gives up
+   * the sign-in only where the build may go on signed out, and keeps any sign-in that must stay,
+   * such as a write's that its owner has not agreed to drop. The harness then sends such an update
+   * to Guardian's review with no caller confirmation. Absent, every `login` change needs the
+   * caller's confirmation, as before.
+   */
+  readonly signedOutNarrows?: true;
   /**
    * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
    * `owner` when the person the repair's questions reach may manage the tool, `owner_request`

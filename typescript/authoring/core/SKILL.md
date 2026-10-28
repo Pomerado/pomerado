@@ -100,11 +100,11 @@ answers `{ success, result, error, stderr }`. Throw
   settled page.
 - `waitForOutcome` already waited for its answer, so prefer no extra wait for that same answer after it.
 - A step that changes the site's own setting, such as a store, location, currency or language,
-  often reloads the same URL or redraws the page after the site saves it, and the element the next
-  step uses may already show on the old page, where `waitForOutcome` counts it once unchanged for
-  2 s. Prefer naming an outcome only the new page shows: `{ url: page.url() }`, which after an
-  `action` counts only once the page navigated, beside the new setting shown outside its dialog.
-  Then look the next element up again before typing.
+  may reload the page some time after the site saves it, or redraw it without loading a new one,
+  and the element the next step uses may already show before then, where `waitForOutcome` counts
+  it once unchanged for 2 s. If the site may reload the page some time after saving a setting,
+  name an outcome only the new page shows, such as a changed URL, and look the next element up
+  again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
   nothing.
 - Start a response wait in the same call as the click that causes it: name the response as a
@@ -215,9 +215,13 @@ exception: it is optional unless the task can't run without it (below).
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
   up the way a person would, with `pickValue` from `pickerCode` (forms skill). It types the
   caller's value into the site's own search, reads every suggestion, matches names loosely
-  (case, accents, spacing, punctuation, and whole words, so a name with a neighborhood or an
-  airport code in brackets still matches) with a whole-name or code match outranking a partial
-  one, and counts the matches at the best rank. A read of a category or term passes `stem: true`
+  (case, accents, spacing, punctuation, whole words, then the same words with their
+  comma-separated parts in another order, so a name with a neighborhood or an airport code in
+  brackets, or a station the site lists as "Station, City", still matches, but never a name with
+  words the value lacks), tries the usual other forms of the value's words, such as 5th
+  and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
+  outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
+  site's closest options first. A read of a category or term passes `stem: true`
   so a caller's word also matches an option word it begins or that begins it, such as Dentist and
   Dentistry, and returns the option it used (forms skill). With none, throw its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, except on a write

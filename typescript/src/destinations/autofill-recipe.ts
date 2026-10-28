@@ -8,6 +8,11 @@ import {
   maximumCodeBoxes,
   maximumStepFields,
   PhoneFormat,
+  PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
+  privateIdentifierFits,
+  privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
   SignInMethodChoice,
@@ -27,10 +32,6 @@ export {
 export const autofillRecipePath = "auth-fill.json";
 
 const Selector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
-const IdentifierRecipeField = Schema.Struct({
-  selector: Selector,
-  accepts: Schema.Array(IdentifierKinds).pipe(Schema.minItems(1), Schema.maxItems(4)),
-});
 const SecretRecipeField = Schema.Struct({
   selector: Selector,
   slot: SecretSlots,
@@ -40,10 +41,38 @@ const SecretRecipeField = Schema.Struct({
   questionSelector: Schema.optional(Selector),
 });
 /**
+ * An identifier field by every kind it accepts, which each run resolves against its own login. A
+ * `private_identifier`, accepted alone with the site's own `label` for its field, rides only in a
+ * version 9 or 10 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`).
+ */
+const IdentifierRecipeField = Schema.Struct({
+  selector: Selector,
+  accepts: Schema.Array(IdentifierKinds).pipe(Schema.minItems(1), Schema.maxItems(4)),
+  label: Schema.optional(PrivateIdentifierLabel),
+}).pipe(Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }));
+/** Refuses a private identifier in a recipe before version 9, whose hosts cannot fill one. */
+const withoutPrivateIdentifier = <Value extends object, Encoded>(
+  value: Schema.Schema<Value, Encoded>,
+) =>
+  value.pipe(
+    Schema.filter(
+      (value) =>
+        !(
+          ("accepts" in value &&
+            Array.isArray(value.accepts) &&
+            value.accepts.includes("private_identifier")) ||
+          ("slot" in value && value.slot === "private_identifier")
+        ) || "only a version 9 or later recipe names a private_identifier",
+    ),
+  );
+/**
  * A recorded field: an identifier field by every kind it accepts, which each run resolves against
  * its own login, or a secret field by its slot.
  */
-const RecipeField = Schema.Union(IdentifierRecipeField, SecretRecipeField);
+const RecipeField = Schema.Union(
+  withoutPrivateIdentifier(IdentifierRecipeField),
+  SecretRecipeField,
+);
 
 /**
  * One recorded sign-in screen: the page it ran on (origin and path), the fields the host filled by
@@ -53,7 +82,9 @@ const RecipeField = Schema.Union(IdentifierRecipeField, SecretRecipeField);
  */
 const RecipeStep = Schema.Struct({
   rejectedMarkers: Schema.optional(
-    Schema.Array(RejectedMarker).pipe(Schema.maxItems(maximumStepFields)),
+    Schema.Array(withoutPrivateIdentifier(RejectedMarker)).pipe(
+      Schema.maxItems(maximumStepFields),
+    ),
   ),
   page: Schema.String.pipe(Schema.maxLength(2_000)),
   fields: Schema.Array(RecipeField).pipe(
@@ -228,18 +259,28 @@ export const KeySubmitAutofillRecipe = workspacePages(
     steps: Schema.Array(KeyRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
   }).annotations({ parseOptions: { onExcessProperty: "error" } }),
 );
-/** Version 6's check of a step's `dismiss`, which versions 7 to 9 keep. */
-const dismissesNoOwnControl = (step: {
-  readonly fields: readonly { readonly selector: string }[];
-  readonly submit?: string | undefined;
-  readonly methods?: readonly { readonly selector: string }[] | undefined;
-  readonly dismiss?: string | undefined;
-}) =>
-  step.dismiss === undefined ||
-  (step.dismiss !== step.submit &&
-    !step.fields.some((field) => field.selector === step.dismiss) &&
-    !(step.methods ?? []).some((method) => method.selector === step.dismiss)) ||
-  "a step's dismiss is none of its own controls";
+/** Version 6's check of a step's `dismiss`, which later versions keep. */
+const dismissRule = <
+  Step extends {
+    readonly fields: readonly { readonly selector: string }[];
+    readonly submit?: string | undefined;
+    readonly methods?: readonly { readonly selector: string }[] | undefined;
+    readonly dismiss?: string | undefined;
+  },
+  Encoded,
+>(
+  step: Schema.Schema<Step, Encoded>,
+) =>
+  step.pipe(
+    Schema.filter(
+      (step) =>
+        step.dismiss === undefined ||
+        (step.dismiss !== step.submit &&
+          !step.fields.some((field) => field.selector === step.dismiss) &&
+          !(step.methods ?? []).some((method) => method.selector === step.dismiss)) ||
+        "a step's dismiss is none of its own controls",
+    ),
+  );
 /**
  * A version 6 step: a version 5 step that may name `dismiss`, the own close, reject or accept control of a
  * cookie, consent or similar notice that covered the screen, which the host clicked there. A
@@ -247,9 +288,9 @@ const dismissesNoOwnControl = (step: {
  * once more when the notice caught that click; a page that does not show it skips it. It is never
  * the step's submit, a method or one of its fields.
  */
-const DismissRecipeStep = keyStepRules(
-  Schema.Struct({ ...keyStepFields, dismiss: Schema.optional(Selector) }),
-).pipe(Schema.filter(dismissesNoOwnControl));
+const DismissRecipeStep = dismissRule(
+  keyStepRules(Schema.Struct({ ...keyStepFields, dismiss: Schema.optional(Selector) })),
+);
 /**
  * Version 6: version 5 whose steps may name `dismiss`. A host that does not know version 6 refuses
  * it, so it never replays such a step without dismissing the notice that covers it; a version 6
@@ -289,14 +330,20 @@ const SegmentList = Schema.Array(Schema.Int.pipe(Schema.nonNegative())).pipe(
   Schema.minItems(1),
   Schema.maxItems(16),
 );
-const AnySegments = Schema.Struct({ anySegments: Schema.optional(SegmentList) });
-/** Version 7's check of a step's `anySegments`, which versions 8 and 9 keep. */
-const segmentsListed = (step: {
-  readonly page: string;
-  readonly anySegments?: readonly number[] | undefined;
-}) =>
-  starsListed(URL.parse(step.page, "https://h.invalid")?.pathname ?? "", step.anySegments) ||
-  "a step's anySegments list, in order, exactly its page's * segments, beside a literal one";
+/** Version 7's check of a step's `anySegments`, which later versions keep. */
+const wildcardRule = <
+  Step extends { readonly page: string; readonly anySegments?: readonly number[] | undefined },
+  Encoded,
+>(
+  step: Schema.Schema<Step, Encoded>,
+) =>
+  step.pipe(
+    Schema.filter(
+      (step) =>
+        starsListed(URL.parse(step.page, "https://h.invalid")?.pathname ?? "", step.anySegments) ||
+        "a step's anySegments list, in order, exactly its page's * segments, beside a literal one",
+    ),
+  );
 /**
  * A version 7 step: a version 6 step that may list `anySegments`, the segments of its page's path,
  * counted from 0 after its first "/", that it writes as `*`, such as a later screen at
@@ -304,8 +351,8 @@ const segmentsListed = (step: {
  * replay reads such a screen on the same origin, with as many segments, any one non-empty segment
  * at each listed place and every other the same (`pageMatches`).
  */
-const WildcardRecipeStep = Schema.extend(DismissRecipeStep, AnySegments).pipe(
-  Schema.filter(segmentsListed),
+const WildcardRecipeStep = wildcardRule(
+  Schema.extend(DismissRecipeStep, Schema.Struct({ anySegments: Schema.optional(SegmentList) })),
 );
 /** Version 7's marker: a host opens its paths, so neither writes a segment as `*`. */
 const WildcardSignedIn = LegacyAutofillRecipe.fields.signedIn.pipe(
@@ -335,20 +382,32 @@ export const WildcardAutofillRecipe = workspacePages(
       recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
   ),
 );
-const SubmitVia = Schema.Struct({ submitVia: Schema.optional(Schema.Literal("keyboard")) });
-/** Version 8's check of a step's `submitVia`, which version 9 keeps. */
-const submitViaNamesSubmit = (step: {
-  readonly submit?: string | undefined;
-  readonly submitVia?: "keyboard" | undefined;
-}) => step.submitVia === undefined || step.submit !== undefined || "a submitVia step names a submit";
+/** Version 8's check of a step's `submitVia`, which later versions keep. */
+const keyboardRule = <
+  Step extends { readonly submit?: string | undefined; readonly submitVia?: "keyboard" | undefined },
+  Encoded,
+>(
+  step: Schema.Schema<Step, Encoded>,
+) =>
+  step.pipe(
+    Schema.filter(
+      (step) =>
+        step.submitVia === undefined ||
+        step.submit !== undefined ||
+        "a submitVia step names a submit",
+    ),
+  );
 /**
  * A version 8 step: a version 7 step that may say `submitVia: "keyboard"`. Another element sat over
  * its submit when the host sent it, such as a fixed footer, and the host pressed that same submit
  * from the keyboard. A replay presses it so first, once focus lands on it, and clicks it
  * otherwise. Only a step that names a submit says it.
  */
-const KeyboardRecipeStep = Schema.extend(WildcardRecipeStep, SubmitVia).pipe(
-  Schema.filter(submitViaNamesSubmit),
+const KeyboardRecipeStep = keyboardRule(
+  Schema.extend(
+    WildcardRecipeStep,
+    Schema.Struct({ submitVia: Schema.optional(Schema.Literal("keyboard")) }),
+  ),
 );
 /**
  * Version 8: version 7 whose steps may say `submitVia`. A host that does not know version 8
@@ -370,12 +429,62 @@ export const KeyboardSubmitAutofillRecipe = workspacePages(
   ),
 );
 /**
- * A version 9 field: a version 8 field, whose identifier field may say `format: "national"` when it
- * accepts a phone: the field keeps only the local number, so a replay types the number without its
- * calling code when it sends a phone there (`PhoneFormat`, `typedValues`).
+ * A version 9 field: a version 8 field whose identifier may accept `private_identifier`, any other
+ * identity field the sign-in asks for, such as a national identity number or a PIN that is itself
+ * the sign-in identifier, alone and with the site's own `label` for it, in one field of a step at
+ * most. Each run fills it from its own login, never from the recipe.
+ */
+const PrivateRecipeField = Schema.Union(IdentifierRecipeField, SecretRecipeField);
+/** A version 9 step's own fields, before its checks; version 10 keeps them. */
+const privateStepFields = {
+  ...keyStepFields,
+  rejectedMarkers: Schema.optional(
+    Schema.Array(RejectedMarker).pipe(Schema.maxItems(maximumStepFields)),
+  ),
+  fields: Schema.Array(PrivateRecipeField).pipe(
+    Schema.maxItems(maximumStepFields + maximumCodeBoxes),
+    Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+    Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
+  ),
+  dismiss: Schema.optional(Selector),
+  anySegments: Schema.optional(SegmentList),
+  submitVia: Schema.optional(Schema.Literal("keyboard")),
+};
+/** A version 9 step: a version 8 step whose fields and markers may name a private identifier. */
+const PrivateRecipeStep = keyboardRule(
+  wildcardRule(dismissRule(keyStepRules(Schema.Struct(privateStepFields)))),
+);
+/**
+ * Version 9: version 8 whose identifier fields may accept `private_identifier`, with its label,
+ * and whose markers may name it. A host that does not know version 9 refuses it, so it never
+ * replays a sign-in that needs a value it cannot fill; no earlier version carries the kind. A
+ * recipe without it is written as before, in the lowest version it needs.
+ */
+export const PrivateIdentifierAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(9),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(PrivateRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
+/**
+ * A version 10 field: a version 9 field, whose identifier field may say `format: "national"` when
+ * it accepts a phone: the field keeps only the local number, so a replay types the number without
+ * its calling code when it sends a phone there (`PhoneFormat`, `typedValues`).
  */
 const NationalRecipeField = Schema.Union(
-  Schema.Struct({ ...IdentifierRecipeField.fields, format: Schema.optional(PhoneFormat) }).pipe(
+  Schema.Struct({
+    ...IdentifierRecipeField.from.fields,
+    format: Schema.optional(PhoneFormat),
+  }).pipe(
+    Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }),
     Schema.filter(
       (field) =>
         field.format === undefined ||
@@ -385,33 +494,33 @@ const NationalRecipeField = Schema.Union(
   ),
   SecretRecipeField,
 );
-/** A version 9 step: a version 8 step whose fields are version 9 fields. */
-const NationalRecipeStep = Schema.extend(
-  Schema.extend(
-    keyStepRules(
-      Schema.Struct({
-        ...keyStepFields,
-        fields: Schema.Array(NationalRecipeField).pipe(
-          Schema.maxItems(maximumStepFields + maximumCodeBoxes),
-          Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
-        ),
-        dismiss: Schema.optional(Selector),
-      }),
-    ).pipe(Schema.filter(dismissesNoOwnControl)),
-    AnySegments,
-  ).pipe(Schema.filter(segmentsListed)),
-  SubmitVia,
-).pipe(Schema.filter(submitViaNamesSubmit));
+/** A version 10 step: a version 9 step whose fields are version 10 fields. */
+const NationalRecipeStep = keyboardRule(
+  wildcardRule(
+    dismissRule(
+      keyStepRules(
+        Schema.Struct({
+          ...privateStepFields,
+          fields: Schema.Array(NationalRecipeField).pipe(
+            Schema.maxItems(maximumStepFields + maximumCodeBoxes),
+            Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+            Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
+          ),
+        }),
+      ),
+    ),
+  ),
+);
 /**
- * Version 9: version 8 whose identifier fields may say `format: "national"`. A host that does not
- * know version 9 refuses it, so it never types a phone with its calling code into a field that
+ * Version 10: version 9 whose identifier fields may say `format: "national"`. A host that does not
+ * know version 10 refuses it, so it never types a phone with its calling code into a field that
  * keeps only the local number, where the read-back stops the sign-in. A recipe whose fields name
  * no such format is written as before, in the lowest version it needs.
  */
 export const NationalPhoneAutofillRecipe = workspacePages(
   Schema.Struct({
     ...LegacyAutofillRecipe.fields,
-    version: Schema.Literal(9),
+    version: Schema.Literal(10),
     workspace: Schema.optional(Schema.Struct({ parent: HostName })),
     steps: Schema.Array(NationalRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
     signedIn: WildcardSignedIn,
@@ -430,6 +539,7 @@ export const AutofillRecipe = Schema.Union(
   DismissAutofillRecipe,
   WildcardAutofillRecipe,
   KeyboardSubmitAutofillRecipe,
+  PrivateIdentifierAutofillRecipe,
   NationalPhoneAutofillRecipe,
 );
 export type AutofillRecipe = typeof AutofillRecipe.Type;
@@ -550,6 +660,8 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
       : {
           selector: field.selector,
           accepts: field.accepts ?? [field.slot],
+          // A private identifier's label, as the site shows it; never its value.
+          ...(field.label === undefined ? {} : { label: field.label }),
           ...(field.format === "national" ? { format: field.format } : {}),
         },
   ),
@@ -562,20 +674,28 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
   ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
 });
 
-/** Whether a recorded screen's identifier field says `format: "national"` (version 9). */
+/** Whether a recorded screen names a private identifier, in a field or a marker. */
+const namesPrivateIdentifier = (step: RecordedRecipeStep) =>
+  step.fields.some(
+    (field) =>
+      field.slot === "private_identifier" ||
+      (field.accepts ?? []).includes("private_identifier"),
+  ) || (step.rejectedMarkers ?? []).some((marker) => marker.slot === "private_identifier");
+
+/** Whether a recorded screen's identifier field says `format: "national"` (version 10). */
 const namesNational = (step: RecordedRecipeStep) =>
   step.fields.some((field) => isIdentifierKind(field.slot) && field.format === "national");
 
 /**
- * A verified sign-in's recipe: version 9 only when an identifier field says `format: "national"`,
- * else version 8 only when a step says `submitVia`, else version 7 only when a step lists segments
- * written as `*`
- * (`anySegments`; an empty list is none and is left out), else version 6 only when a step names
- * `dismiss`, else version 5 only when a step submits with a key or refills a secret (`refills`),
- * else version 4 only when its sign-in may move to a workspace host (`origins.workspace`, or a
- * workspace step), else version 2 only with a popup or an approval, else version 1. A security
- * answer's question selector rides in any of them. Versions 4 to 9 write `workspace` before
- * `steps`.
+ * A verified sign-in's recipe: version 10 only when an identifier field says
+ * `format: "national"`, else version 9 only when a step names a private identifier, else version
+ * 8 only when a step says `submitVia`, else version 7 only when a step lists segments written as
+ * `*` (`anySegments`; an empty list is none and is left out), else version 6 only when a step
+ * names `dismiss`, else version 5 only when a step submits with a key or refills a secret
+ * (`refills`), else version 4 only when its sign-in may move to a workspace host
+ * (`origins.workspace`, or a workspace step), else version 2 only with a popup or an approval,
+ * else version 1. A security answer's question selector rides in any of them. Versions 4 to 10
+ * write `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
@@ -585,15 +705,18 @@ export const autofillRecipe = <SignedIn>(
   const lists = steps.some((step) => (step.anySegments ?? []).length > 0);
   const pressed = steps.some((step) => step.submitVia !== undefined);
   const national = steps.some(namesNational);
-  if (national || pressed || lists || steps.some((step) => step.dismiss !== undefined))
+  if (national || steps.some(namesPrivateIdentifier))
     return {
-      version: national
-        ? (9 as const)
-        : pressed
-          ? (8 as const)
-          : lists
-            ? (7 as const)
-            : (6 as const),
+      version: national ? (10 as const) : (9 as const),
+      ...(origins.workspace === undefined
+        ? {}
+        : { workspace: { parent: origins.workspace.parent } }),
+      steps: steps.map(recipeStep),
+      signedIn,
+    };
+  if (pressed || lists || steps.some((step) => step.dismiss !== undefined))
+    return {
+      version: pressed ? (8 as const) : lists ? (7 as const) : (6 as const),
       ...(origins.workspace === undefined
         ? {}
         : { workspace: { parent: origins.workspace.parent } }),

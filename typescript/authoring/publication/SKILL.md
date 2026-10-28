@@ -163,9 +163,10 @@ first:
   you; the script never takes the first, the alphabetically first or a hard-wired value.
 - **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens
   it. Check it is the site's own sign-in link as you clicked it (auth skill): no `state`, `nonce`,
-  `code_challenge`, `code`, `session_state` or signed token in its query or fragment, and no
-  identity provider's authorize endpoint. If it is not, follow that link again, call
-  `authenticate` again with it as `loginUrl`, then call `finish_build` with the same `executionId`.<!-- pomerado:section publication.http -->
+  `code_challenge`, `code`, `session_state`, signed token, or device or session identifier such as
+  a `did`, `device_id` or session id in its query or fragment, and no identity provider's
+  authorize endpoint. If it is not, follow that link again, call `authenticate` again with it as
+  `loginUrl`, then call `finish_build` with the same `executionId`.<!-- pomerado:section publication.http -->
 - **Page traffic.** Let the site's own scripts, fonts, images and analytics load. Guardian never
   refuses them for the username or keys they carry, so never block, route around or suppress
   them to satisfy review. Your code, page code it runs included, must never send the caller's
@@ -262,6 +263,17 @@ A `not_published` result says why in `reason` and, for most reasons, what to do 
 | `reason`                   | `write_path_undeclared`                                                                                                                | The composed script leaves marks of the recorded write path out of `write.commits` | Run and declare every step of the path in the composed script, then call again with the same `executionId`. Never run the write again                                                                                                                                                                                                                                       |<!-- pomerado:section publication.host-rejections -->
 | `reason`                   | `missing_receipt`, `receipt_incomplete`<!-- pomerado:section publication.protected-result -->, `wrong_execution_purpose`                                         | The `executionId` names no completed example or confirming act step                | Call again with the `executionId` of the completed read example or the write step that confirmed it                                                                                                                                                                                          |<!-- pomerado:section publication.screening-rejections -->
 | `diagnostic.review.reason` | `privacy`, `source_correction`, `unsupported_claim`, `authority`, `evidence`                                                           | Guardian's review blocked it                                                       | Each finding names a published file (`path`, and `file` as your workspace names it), a UTF-8 byte range (`byteStart`, `byteEnd`) and a `category`, and its `explanation` says what is wrong, the evidence and the fix. Fix every finding in source or metadata, then call again with the same `executionId`. For a host-owned file, see the check list |
+
+Each finding also has an `id`. When you hold a finding wrong, or no longer applying, under the
+review's rules, answer it rather than resubmitting unchanged: call `finish_build` again with
+`findingResponses`, one entry per finding you answer, each with its `id`, a short `response` and
+`evidence` that shows it, a live test `caseId` or a capture the host recorded under
+`captures/`, never a file you wrote. Guardian rules on each answer in the next review, and a
+denial returns its `responseRulings`. An answer never replaces a live run or capture a finding
+asks for: run it instead. When no live test batch can run again (`noRunsLeft` in the host's
+record), fix an unsupported claim by showing it with evidence you hold, removing it or listing it
+in `notTested`; when that choice is the owner's, ask with `request_input` and set its `finding`
+to the finding's `id`.
 
 Any other reason: read `diagnostic` and the instruction; the existing example stays recorded.
 
