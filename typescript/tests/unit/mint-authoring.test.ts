@@ -818,7 +818,7 @@ it("has the minter read back a write, accept recent-search saves and look before
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Before committing, read back from the page what you are about to submit and check each value as the core skill's Confirm step says, against the option the tool picked when it picked one, or the site's version of a typed value it rewrote (below), in the session and on every branch of the composed script. Fail if one does not match, and prefer running this check before the step's commit mark, so a mismatch stops the step before it sends anything. Never read back a field filled with a secret handle.",
+    "- Before committing, read back from the page what you are about to submit and check each value as the core skill's Confirm step says, against the option the tool picked when it picked one, or the site's version of a typed value it rewrote (below), in the session and on every branch of the composed script. When a structured value (\"Check the read-back\") does not match, pick or type it once more, and throw `InputNotApplied` if it still differs. Prefer running this check before the step's commit mark, so a mismatch stops the step before it sends anything. A free-text value the page rewrote is kept, as the next bullet says. Never read back a field filled with a secret handle.",
   );
   expect(text("core")).toContain(
     "Telemetry, analytics and bot-sensor POSTs are normal and need no change. So is an anonymous recent-search, prefill or search-state save the site fires when you submit a search.",
@@ -899,7 +899,7 @@ it("has a write confirm from its first matching read-back, never from state befo
     " ",
   );
   expect(writes).toContain(
-    "- When a read-back is needed, the first one that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the values entered), and every field the caller asked for that the view shows agrees (the read before the commit already checked what you entered). Sites reformat what they save, such as line breaks, spaces and dates in the viewer's format, so compare text after the commit with `sameText`, as before it (the core skill's Confirm step). Prefer `readBackMatches` for a number the caller gave, such as a measurement, an amount or a quantity, since sites save numbers in their own format, such as 1,50 for 1.5. Compare a chosen option's value only where the view shows that value; otherwise compare the label it shows. When the write changed state that already existed, the same read is also the after read of the before-and-after comparison, which runs after `verified()` (\"Check the read-back\"). Write each read-back step to check the requested fields in its own code and call `verified()` when they hold, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row, and prefer finding each value in it by a stable id, its column header or a `data-` attribute over its cell's position. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
+    "- When a read-back is needed, the first one that matches confirms the write; stop there. It matches when it shows the written record after the write, found by something the write produced or entered (its number, its own reference or the values entered). Compare every field the caller asked for that the view shows (the read before the commit already checked what you entered), and list each one that differs in `saved_differences` (\"Check the read-back\"). Sites reformat what they save, such as line breaks, spaces and dates in the viewer's format, so compare text after the commit with `sameText`, as before it (the core skill's Confirm step). Prefer `readBackMatches` for a number the caller gave, such as a measurement, an amount or a quantity, since sites save numbers in their own format, such as 1,50 for 1.5. Compare a chosen option's value only where the view shows that value; otherwise compare the label it shows. When the write changed state that already existed, the same read is also the after read of the before-and-after comparison, which runs after `verified()` (\"Check the read-back\"). Write each read-back step to compare the requested fields in its own code and call `verified()` once it finds the record, so the first one that matches is the confirming step. Read one confirmation, list or detail view: find the record there by that identity, never by its position, such as the first or newest row, and prefer finding each value in it by a stable id, its column header or a `data-` attribute over its cell's position. Read only that record, and the view's other rows only where the before-and-after check or another skill, such as the cart skill, compares them. Read another page, in that same step before `verified()`, only for a field the view did not show and the tool's output promises.",
   );
   // Entered values find a record but never prove it new.
   expect(writes).toContain(
@@ -916,6 +916,29 @@ it("has a write confirm from its first matching read-back, never from state befo
   expect(
     (await readFile("typescript/authoring/examples/write-readback.ts", "utf8")).replace(/\s+/g, " "),
   ).toContain("// The 201 with its Location confirmed the write. Record it now, with no further call.");
+});
+
+/*
+ * A write that issued a document confirmed it by reading it back, then found that the site sends
+ * one of the two requested files by email only and offers no way to fetch it. With every
+ * requested output required and blocked as the only ending for one the site lacks, the build
+ * ended with no tool although its one real write was done. After a verified write, it asks the
+ * caller once whether to publish with that output null and a reason, and never fills it in.
+ */
+it("has a write ask once to publish without an output the site does not offer, after its verified write", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("writes") ?? "").replace(/\s+/g, " ")).toContain(
+    "In a write build, after a verified write, if the site does not offer one output the request asks for, prefer asking the caller once with `request_input` whether to publish the tool with that output null and a reason field, rather than ending blocked; never invent the value.",
+  );
+  // The blocked ending for a capability the site lacks points to that ask first.
+  const guide = (texts.get("workspace/AGENTS.md") ?? "").replace(/\s+/g, " ");
+  expect(guide).toContain(
+    "never invent a value or substitute a different field. After a verified write, when the site does not offer one output the request asks for, the writes skill's ask whether to publish without it comes first.",
+  );
+  // So does the rule that never offers to leave out an output the request names.
+  expect(guide).toContain(
+    "A field, input or output the request itself names is never such a capability: support it, or end with `report_blocked` saying why the site cannot; never offer to leave it out, except one output the site does not offer, after a verified write, where the writes skill's ask whether to publish without it comes first.",
+  );
 });
 
 /*
@@ -1066,7 +1089,7 @@ it("has a write read back each saved caller value before its final commit, and s
     " ",
   );
   expect(writes).toContain(
-    "- On a form saved over several pages, before the final commit, read back what the site saved for the caller's values, from a summary, a review page or each saved page, in the session and in the composed script. Compare each value the site shows with `readBackMatches(shown, wanted)` from `pomerado/runtime`, against the option the tool picked when it picked one, or the site's version of a typed value it rewrote (above): `wanted` is that option's label or that version, and the caller's value otherwise. It accepts the same value in another format or word order, such as 1,50 for 1.5, and every number must be the caller's, the same numbers in the same order. When the site kept a different value, save that page again once with the same entries and read it back again, but only when saving it again updates the same record or page, never when the save adds an item, such as a cart line or a row. Prefer `saveAndReadBack` from `pomerado/runtime` for such a page's save: it does both and returns the values that still differ. When one still differs, or a page whose save adds an item kept a different value, stop before the final commit's mark and throw `InputNotApplied` with its `field`, `requested` and `applied`.",
+    "- On a form saved over several pages, before the final commit, read back what the site saved for the caller's values, from a summary, a review page or each saved page, in the session and in the composed script. Compare each value the site shows with `readBackMatches(shown, wanted)` from `pomerado/runtime`, against the option the tool picked when it picked one, or the site's version of a typed value it rewrote (above): `wanted` is that option's label or that version, and the caller's value otherwise. It accepts the same value in another format or word order, such as 1,50 for 1.5, and every number must be the caller's, the same numbers in the same order. When the site kept a different structured value, save that page again once with the same entries and read it back again, but only when saving it again updates the same record or page, never when the save adds an item, such as a cart line or a row. Prefer `saveAndReadBack` from `pomerado/runtime` for such a page's save, with the free-text fields in `freeText`: it does both and returns the values that still differ. When a structured value still differs, or a page whose save adds an item kept a different structured value, stop before the final commit's mark and throw `InputNotApplied` with its `field`, `requested` and `applied`. Prefer keeping a free-text value the site saved differently: later read-backs compare against it, and the output lists it in `saved_differences` (\"Check the read-back\").",
   );
   expect(readBackMatches("California", "California")).toBe(true);
   expect(readBackMatches("California", "CA")).toBe(false);
@@ -1263,17 +1286,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["314001add5599865b36f5387db94084b575fe18046d1577c839a4b4bea356f4f", "core"],
+    ["5f3af5401fa484e56cd4eaeca41da8ba04cb9ded455ffc46263e659a05e2d54e", "core"],
     ["933e2daac360d31beeeb2a8aeabcf22ca8512cc0272f321b047106f4a2055ab3", "search"],
     ["cec5bca01bf057a95faaab07e25c02e3d0b9329e66d6df97b6744f81ab421bf7", "auth"],
     ["ad5b4f8391094f6d7c8ff4a480b071bb298807da9523971e0aaf7d719f152664", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
-    ["c21b3e69771470e4ae72b6c88201a2b6fad8d3eea76f4ebfda47993aeb351448", "forms"],
-    ["19b1e31e9891c46a236e05d4637f81750d93e8826a5987e6ed624e97ad64598d", "writes"],
-    ["b27e2f41a137ef6d981341a6d384f78899b1e53bdebbf9f64b3ff5209d275bd1", "cart"],
-    ["c91deddad323e3c996cc3a172812a1cfd2e14eba76f0552264384708c7d13c58", "caller-input"],
-    ["04e9f9dca786e3cf3f125a52d5bc73d71506387db521ad3ac53f8ca13dd5dd6e", "publication"],
-    ["e6a91d90cd515385aa8a7073a5435ac00a4f2dbaaa045cffd3b290e9b497dc91", "workspace/AGENTS.md"],
+    ["4d05ffc26a395fafb591bb8ac593b79ae7450f21f26ac8709cbbe543fc2453df", "forms"],
+    ["60d94f1bc738726cfd31a34cd99b390e8ff7fcc9b6012d917061330c257ad22d", "writes"],
+    ["d06f650fc09f74d3711e043da2303de97ced42c9ff2541d48ec28cd7e686519d", "cart"],
+    ["14ec800f1f19a16e1a94c11e8a4e869e798bf597d86cd2369a51d32d66c9bc94", "caller-input"],
+    ["fb7cd6b0929612a94dd6e0a3c54fa42e102ada77ccd83059fe818a01d8307cf0", "publication"],
+    ["a319737c69647bb215186a1ab88fb61edfff11c6cc6cec6fb582b490d1bae10a", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1394,7 +1417,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["0386d3e23fb8cd652f7c64320b940b6a61c7ed9fb3315579fe5521c835789b42", "search"],
-    ["8cdb4e10da001832e65d3d6693de61d85ddfcbcc0c78a4b87fa6d5f5766bb218", "workspace/AGENTS.md"],
+    ["d10403f4fe86cdbe179b2ef53376a14c053fdbe7d151b31fb18018843b1141d5", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

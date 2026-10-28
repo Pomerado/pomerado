@@ -1012,13 +1012,23 @@ describe("the publication policy", () => {
     expect(publicationLiveTestsPolicy).toContain(` ${rule} `);
   });
 
+  // A gap the build can close itself, such as a case on another record it reaches through the
+  // site's own search, goes to the minter as a case to add, not to the owner as a scope question.
+  it("sends a gap the minter can close to the minter, not the owner", () => {
+    const rule =
+      "When the minter can close such a gap itself, such as with a passing case on another record the tool's inputs claim, reached through the site's own search, listings or links, prefer naming that case over asking the owner to confirm or authorize the tool's scope, which replaces, for such a gap, the rule that a denial has the minter ask the owner about a capability that looks unverifiable; leave the owner the choices that are theirs, such as spending money, cutting the tool's scope or a sign-in.";
+    expect(publicationLiveTestsPolicy).toContain(
+      `naming what no case tests, so the minter runs or fixes the cases. ${rule} `,
+    );
+  });
+
   // A site's own "Remember me" choice left at its default keeps the owner's session for later
   // runs. It is not a safety default, so neither review denies the host's sign-in step over it.
   it("leaves a site's own Remember me choice at its default in both reviews", () => {
     const rule =
       "Prefer leaving a site's own \"Remember me\" or \"Keep me signed in\" choice at its default on the tool's own sign-in. It keeps the account owner's session, which later runs rely on, and it is not a safety default. Never deny the host's own sign-in step over that choice.";
-    expect(publicationSafetyDefaultPolicy.endsWith(` ${rule}`)).toBe(true);
-    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
+    expect(publicationSafetyDefaultPolicy).toContain(` ${rule} `);
+    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule} `);
   });
 
   // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,
