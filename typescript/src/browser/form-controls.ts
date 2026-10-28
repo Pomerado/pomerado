@@ -68,11 +68,14 @@ export const CalendarDate = Schema.String.pipe(
 
 /**
  * The global name of an optional host hook. A host that runs Kernel calls may install a function
- * under it, in the global scope its calls' code runs in. Just before `blockingRequiredFields`
- * returns, it calls the hook with the kind of its result: `"fields"`, `"unaskable"` or `"none"`
- * (for `null`), never a label or value. Anything the hook throws is ignored, and with no hook
- * nothing is called. A host can then tell which of its calls proved a click saved nothing, such as
- * before it lets a write enter the same commit step again.
+ * under it in the global scope its calls' code runs in, such as from code it adds to each call's
+ * body. Just before `blockingRequiredFields` returns, it calls the hook once, synchronously, with
+ * the kind of its result: `"fields"`, `"unaskable"` or `"none"` (for `null`), never a label or
+ * value. A call that throws, such as `labels_missing`, reports nothing. What the hook returns or
+ * throws is ignored, a rejected promise included, and with no hook nothing is called. A host can
+ * then tell which of its calls proved a click saved nothing, such as before it lets a write enter
+ * the same commit step again. A script's own code could call the hook too, so it is a guard
+ * against mistakes, not against a hostile script.
  */
 export const blockingFieldsHook = "__pomeradoBlockingFields";
 
@@ -560,7 +563,8 @@ const visibleFieldLabels = async (scope, options = {}) =>
 // A host's hook, when one is installed, learns the kind of result each call got, never a label.
 const formControlBlockingReport = (result) => {
   try {
-    globalThis[${JSON.stringify(blockingFieldsHook)}]?.(result === null ? "none" : result.unaskable === true ? "unaskable" : "fields");
+    const returned = globalThis[${JSON.stringify(blockingFieldsHook)}]?.(result === null ? "none" : result.unaskable === true ? "unaskable" : "fields");
+    if (typeof returned?.then === "function") returned.then(undefined, () => {});
   } catch {}
   return result;
 };

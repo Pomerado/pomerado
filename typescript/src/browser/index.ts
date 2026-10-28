@@ -2,6 +2,7 @@ export { ExecutionContext, makeEffectJournal, makeEffectJournalWith } from "../r
 export type {
   CaptureLifecycle,
   EffectJournal,
+  NotCommittedOptions,
   EventSink,
   ExecutionServices,
   CommitMark,

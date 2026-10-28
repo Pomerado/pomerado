@@ -202,9 +202,9 @@ export interface KernelOperationContext<
    * It also fits a click the site's own answer refused as a whole with nothing created, such as a
    * commit response that reports an expired quote and returns no record: call it with
    * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
-   * enter the step for one more click. Pass `siteRefused` only then, never after
-   * `blockingRequiredFields` returned fields; a host may refuse entering a step again after a call
-   * with neither proof.
+   * enter the step for one more click. Pass `siteRefused` only for such a refusal, never after
+   * `blockingRequiredFields` returned fields or `unaskable`. A host may refuse to let a step be
+   * entered again when its click had neither that refusal nor `blockingRequiredFields`' fields.
    * It works once per step in a run, and only for a step in the contract's `write.commits` when it
    * declares any: a second call for the same step, another name, a step this run did not enter
    * from unsent, or one confirmed since throws `CommitAlreadySent`, which ends the run with the

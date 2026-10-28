@@ -715,7 +715,11 @@ test("blockingRequiredFields tells a host's hook the kind of result it returned,
     await judge(phone);
     await judge(`<label>Card number<input name="card_number" autocomplete="cc-number" data-flag></label>`);
     await judge(`<label>Delivery date<input type="date" name="date" data-flag></label>`);
-    expect(kinds).toEqual(["fields", "unaskable", "none"]);
+    // A call that throws reports nothing; a form gone is a `null` like any other.
+    expect(await call(page, `return await blockingRequiredFields(${form});`)).toEqual({ error: "labels_missing" });
+    await page.setContent(`<p>Order ORD-1001 is placed.</p>`);
+    await call(page, `return await blockingRequiredFields(${form}, ["Item"]);`);
+    expect(kinds).toEqual(["fields", "unaskable", "none", "none"]);
     // A hook that fails changes nothing the helper returns.
     hosts[blockingFieldsHook] = () => {
       throw new Error("host hook failed");

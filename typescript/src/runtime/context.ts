@@ -59,8 +59,9 @@ export interface CommitMark {
   readonly state: CommitMarkState;
 }
 
-/** What a script says put a commit step back unsent, beside `blockingRequiredFields`' fields. */
+/** What a script says about a `notCommitted` call. */
 export interface NotCommittedOptions {
+  /** The site's own answer refused the step's click as a whole, with nothing created. */
   readonly siteRefused?: true;
 }
 
@@ -90,7 +91,7 @@ export interface EffectJournal {
    * A host journal made before this existed has none, and a script's call then fails the same way.
    * `siteRefused` passes on the script's word that the site's own answer refused the click as a
    * whole with nothing created, for a host that checks which proof put a step back before it is
-   * entered again; this journal treats such a call as any other.
+   * entered again; core's own journal ignores it.
    */
   readonly notCommitted?: (
     name: string,

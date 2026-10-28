@@ -170,7 +170,9 @@ const journal: typeof baseJournal = {
     ? {}
     : {
         notCommitted: (name: string, options?: NotCommittedOptions) =>
-          revertCommit(name, options).pipe(Effect.tap(() => publishJournal)),
+          (options === undefined ? revertCommit(name) : revertCommit(name, options)).pipe(
+            Effect.tap(() => publishJournal),
+          ),
       }),
   confirmed: (confirmation) =>
     baseJournal.confirmed(confirmation).pipe(Effect.tap(() => publishJournal)),
