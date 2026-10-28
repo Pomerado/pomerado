@@ -219,3 +219,37 @@ it("refuses an answer sent again unchanged after the review ruled on it", async 
   expect(reviews).toBe(2);
   expect(resultOf(f.requests[4], "unchanged")).toMatchObject({ reason: "unchanged_since_denial" });
 });
+
+it("tells the minter which answers a review did not rule on, rather than dropping them", async () => {
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        example,
+        call("finish_build", finishBuild, "first"),
+        call("finish_build", { ...finishBuild, findingResponses: bothAnswers }, "answered"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.suspend(() => {
+          reviews++;
+          // The second review rules on the rating answer only, as when it lost the round that
+          // returned the filter finding.
+          return Effect.fail(
+            reviews === 1
+              ? denial([nullableRating, untestedFilter])
+              : denial(
+                  [untestedFilter],
+                  [{ finding: ratingAnswer.finding, ruling: "accepted", reason: "It passes." }],
+                ),
+          );
+        }),
+    },
+  );
+  await f.run();
+  expect(resultOf(f.requests[2], "first")).not.toHaveProperty("unruledAnswers");
+  expect(resultOf(f.requests[3], "answered")).toMatchObject({
+    unruledAnswers: [filterAnswer.finding],
+    instruction: expect.stringContaining("unruledAnswers"),
+  });
+});

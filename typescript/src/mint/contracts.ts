@@ -1281,11 +1281,6 @@ export const PublicationRequest = Schema.Struct({
     ).pipe(Schema.maxItems(8)),
   ),
   /**
-   * Output check findings the minter says are wrong about a correct value, each with why: the
-   * tool's intended output, such as code, or page text that only resembles code. A blocking one no
-   * longer refuses publication, and the publication review checks every override and its reason.
-   */
-  /**
    * The minter's answers to findings of the publication review that denied its last submission,
    * each naming the finding by the id the host gave it. The next review reads each as the
    * minter's untrusted claim and rules on it; an answer never stands in for live evidence a
@@ -1299,6 +1294,11 @@ export const PublicationRequest = Schema.Struct({
           "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
       }),
   ),
+  /**
+   * Output check findings the minter says are wrong about a correct value, each with why: the
+   * tool's intended output, such as code, or page text that only resembles code. A blocking one no
+   * longer refuses publication, and the publication review checks every override and its reason.
+   */
   outputOverrides: Schema.optional(
     Schema.Array(
       Schema.Struct({

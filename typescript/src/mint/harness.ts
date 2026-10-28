@@ -555,6 +555,19 @@ const refusalRecovery = (reason: string | undefined, write: boolean): Publicatio
  */
 const findingAnswerInstruction =
   " When you hold a finding wrong, or no longer applying, under the review's rules, answer it instead of resubmitting unchanged: call finish_build again with findingResponses naming its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each answer in the next review. An answer never stands in for a live run or capture a finding asks for.";
+/**
+ * The finding ids the minter answered that a review's rulings leave out: the review did not hold
+ * the finding an answer names, such as after its kept round was lost, so it had nothing to rule on.
+ */
+const unruledAnswers = (
+  answers: PublicationRequest["findingResponses"],
+  rulings: readonly ResponseRuling[] | undefined,
+): readonly string[] => {
+  const ruled = new Set((rulings ?? []).map(({ finding }) => finding));
+  return [...new Set((answers ?? []).map(({ finding }) => finding))].filter((id) => !ruled.has(id));
+};
+const unruledAnswersInstruction =
+  " unruledAnswers names answers this review did not rule on: it did not hold the finding each names, so nothing was decided about them. Each finding of this denial stands as it states; fix it, or answer it again by the id this denial gives.";
 /** A refusal the harness makes before publication runs, as its decision. */
 const hostRefusalDecision = (
   reason: string,
@@ -5121,16 +5134,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** Captures retained in this attempt, as evidence a later submission may rest on. */
       let capturesRetained = 0;
       /**
+       * The ids of the findings of Guardian's latest publication denial, the ones the minter may
+       * answer in its next finish_build (`PublicationRequest.findingResponses`).
+       */
+      let answerableFindings: ReadonlySet<string> = new Set();
+      /**
        * What the last publication Guardian denied rested on: the request, the digests of the
        * entrypoint's and the HTTP version's import closures and of each flagged file, and the
        * evidence the host holds. The same again is refused before a second review. Kept in memory
        * only, so a takeover drops it.
        */
-      /**
-       * The ids of the findings of Guardian's latest publication denial, the ones the minter may
-       * answer in its next finish_build (`PublicationRequest.findingResponses`).
-       */
-      let answerableFindings: ReadonlySet<string> = new Set();
       let deniedSubmission:
         | {
             readonly paths: readonly string[];
@@ -6123,6 +6136,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // The review as the minter reads it, screened once for every reply below.
                 const review =
                   error.review === undefined ? undefined : yield* minterReview(error.review);
+                // Answers this review did not rule on, because the finding each names was not in
+                // the round Guardian held: the minter hears so instead of losing them silently.
+                const unruled =
+                  error.code === "ReviewDenied"
+                    ? unruledAnswers(proposed.findingResponses, error.review?.responseRulings)
+                    : [];
+                const unruledDetails = unruled.length === 0 ? {} : { unruledAnswers: unruled };
+                const unruledNote = unruled.length === 0 ? "" : unruledAnswersInstruction;
                 if (
                   error.code === "PublicationUnavailable" &&
                   error.reason !== undefined &&
@@ -6248,11 +6269,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         rationale,
                         reviewId: error.review.reviewId,
                         feedbackRoundsRemaining: maximumInputFeedbackRounds - inputFeedbackRounds,
+                        ...unruledDetails,
                       },
                       inputFeedbackInstruction(maximumInputFeedbackRounds - inputFeedbackRounds, {
                         write: buildEffect === "write",
                         ...(fallback === undefined ? {} : { privateFallback }),
-                      }),
+                      }) + unruledNote,
                     );
                   if (yield* settleUnresolvedInputFeedback)
                     return "Build published for this account only and flagged with Guardian's unresolved input feedback. The current invocation outcome is returned separately; do not execute again.";
@@ -6580,6 +6602,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     expectedEntrypoint: error.expectedEntrypoint,
                     untrustedSignInOrigins: error.untrustedSignInOrigins,
                     ...(review === undefined ? {} : { review }),
+                    ...unruledDetails,
                     diagnostic:
                       diagnostic._tag === "Right"
                         ? diagnostic.right
@@ -6593,6 +6616,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId. The existing example and result remain recorded." +
                         findingAnswerInstruction
                       : "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable.") +
+                    unruledNote +
                     " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
                 );
               }
