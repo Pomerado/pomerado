@@ -107,8 +107,8 @@ export interface FileHostHook {
   ) => Effect.Effect<TakenDownload | undefined, Error>;
   /**
    * Every download that began in the slot's capture, from any page of any browser context of
-   * the run, in the order they began, and ends the capture. It returns once `max` downloads have
-   * ended; or once at least one began, every one that began has ended and `settleMs` passed with
+   * the run, in the order they began, and ends the capture. It returns once the first `max` downloads
+   * to begin have ended, whatever order they end in; or once at least one began, every one that began has ended and `settleMs` passed with
    * none beginning or ending; or once `timeoutMs` passed, with no download when none began. A
    * download still running then is reported `unfinished` and stopped. Optional: a host without
    * it cannot run `files.collectAll`, which fails before it arms a capture.

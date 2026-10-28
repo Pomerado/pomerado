@@ -313,7 +313,7 @@ export interface ScriptFiles {
    * Runs `trigger`, the script's own execute calls that make the page start several downloads,
    * such as one for each listed item, in any page of any browser context the run has, and
    * returns every download it started, in the order they began. It waits up to `timeoutMs`
-   * (30 s by default) after the trigger: until `max` downloads ended, or at least one began and
+   * (30 s by default) after the trigger: until the first `max` downloads to begin ended, or at least one began and
    * every one that began ended with no new one beginning for a moment. Each entry is the
    * collected `file`, returned as an output `FileOutput` as `collect` returns it, or `failed`
    * with the reason it holds no file (`canceled`, `unfinished`, `over_max`, `executable`,

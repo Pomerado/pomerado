@@ -171,16 +171,32 @@ return { saved: true, name: first.name, ...(first.contentType === undefined ? {}
  * Native page code that waits for the slot's downloads, as `FileHostHook.takeDownloads` says,
  * then ends its capture and reports each one in the order they began.
  */
+/**
+ * Whether `takeAllCode` has waited long enough: the first `max` downloads to begin have all
+ * ended, since a take reports a download past `max` by its place in the order they began, never
+ * by when it ended; or at least one began, every one that began ended, and nothing began or ended
+ * for `settleMs`. Pasted into the page, so it refers to nothing outside its own body.
+ */
+export function takeAllSettled(
+  downloads: readonly { readonly result?: unknown }[],
+  bounds: { readonly max: number; readonly settleMs: number },
+  quietMs: number,
+): boolean {
+  const first = downloads.slice(0, bounds.max);
+  if (first.length >= bounds.max && first.every((entry) => entry.result !== undefined)) return true;
+  const ended = downloads.filter((entry) => entry.result !== undefined).length;
+  return ended > 0 && ended === downloads.length && quietMs >= bounds.settleMs;
+}
+
 const takeAllCode = (
   slot: string,
   bounds: { readonly timeoutMs: number; readonly settleMs: number; readonly max: number },
 ) => `${endCaptureSource(slot)}
 if (state === undefined) return null;
 const until = Date.now() + ${bounds.timeoutMs};
-while (Date.now() < until) {
-  const ended = state.downloads.filter((entry) => entry.result !== undefined).length;
-  if (ended >= ${bounds.max}) break;
-  if (ended > 0 && ended === state.downloads.length && Date.now() - state.changedAt >= ${bounds.settleMs}) break;
+const takeAllSettled = ${takeAllSettled.toString()};
+const bounds = { max: ${bounds.max}, settleMs: ${bounds.settleMs} };
+while (Date.now() < until && !takeAllSettled(state.downloads, bounds, Date.now() - state.changedAt)) {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 const seen = [...state.downloads];
