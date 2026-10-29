@@ -44,12 +44,13 @@ Read the cart's lines before the write, in the session and in the composed scrip
 assume the cart starts empty. Afterwards, confirm from the cart itself that the line reached
 the expected quantity (the earlier quantity plus the input, or the input) and that every other
 line is unchanged, then return the lines as read and call `verified()`. When comparing lines
-before and after, such as to list other lines that changed, prefer comparing unit price with
-unit price and line total with line total (core skill, output fields), so a quantity change on
-one line never reads as a price change. After the tool's final commit, a line that changed to
-another quantity than expected, such as one the site capped, is still the written line: call
-`verified()` and list it in `saved_differences` (writes skill). A checkout reads the lines it
-is about to buy before its commit and returns them with the confirmation.
+before and after, such as to list other lines that changed, prefer comparing
+`unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
+skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.
+After the tool's final commit, a line that changed to another quantity than expected, such as
+one the site capped, is still the written line: call `verified()` and list it in
+`saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
+commit and returns them with the confirmation.
 
 ## Values the account lacks
 

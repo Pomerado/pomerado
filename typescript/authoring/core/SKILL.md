@@ -456,9 +456,11 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
-- Prefer returning both `unit_price` and `line_total` for each line with a quantity, such as a
-  cart's or an order's, each read as the site shows it. When the site shows only one, keep both
-  fields: the other is null, never computed, and its description says when it is null.
+- Prefer returning both a unit price and a line total for each line with a quantity, such as a
+  cart's or an order's, as `unit_price_minor` and `line_total_minor` in the money form above,
+  each read as the site shows it. When the site shows only one, keep both fields anyway, an
+  exception to the rules here on unread, always-null and never-filled fields: the other is null,
+  never computed, and its description says when it is null.
 - Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
   back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
   cut short.
