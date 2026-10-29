@@ -3024,8 +3024,9 @@ export interface MintDependencies {
    * changed the site, because the host itself keeps the step from sending the write's final step
    * again, such as a practice save of a form's earlier page on an account the caller confirmed is
    * a test account. It gets the step and the execution IDs of the earlier writes it repeats, and is
-   * asked only for a step the harness would otherwise refuse as that repeat, before it waits for
-   * the outcome review. Absent, or false, the step is refused as a repeat.
+   * asked only for a step that repeats such a write, before the harness waits for the outcome
+   * review. Absent, or false, the step runs only once that review finds every such write
+   * `not_done`, as before.
    */
   readonly repeatAllowed?: (
     request: ExecutionRequest,
