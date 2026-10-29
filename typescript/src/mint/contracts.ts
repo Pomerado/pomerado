@@ -3019,6 +3019,18 @@ export interface MintDependencies {
    * each stays unresolved, is never repeated and is reported `may_have_applied`.
    */
   readonly outcomeReview?: OutcomeReviewHost;
+  /**
+   * Whether the host lets a live step run although it repeats a write that may already have
+   * changed the site, because the host itself keeps the step from sending the write's final step
+   * again, such as a practice save of a form's earlier page on an account the caller confirmed is
+   * a test account. It gets the step and the execution IDs of the earlier writes it repeats, and is
+   * asked only for a step the harness would otherwise refuse as that repeat, before it waits for
+   * the outcome review. Absent, or false, the step is refused as a repeat.
+   */
+  readonly repeatAllowed?: (
+    request: ExecutionRequest,
+    repeats: readonly string[],
+  ) => Effect.Effect<boolean>;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
 }
