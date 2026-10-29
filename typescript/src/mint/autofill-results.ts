@@ -147,23 +147,26 @@ const filledNotices = {
 
 /**
  * After a phone field whose `maxLength` is shorter than the number the host typed, when the number
- * says its calling code: it names no digit of the number.
+ * says its calling code (`code`): it names that code and no other digit of the number, so that on
+ * a screen with a country picker the picker shows the number's country before the number goes
+ * without its calling code.
  */
-const localNumberNotice =
-  "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits.";
+const localNumberNotice = (code: string) =>
+  `The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits. If the screen has a country picker, prefer setting it to the country for calling code +${code} with an explore step, then send this signInStep again with that phone field's format set to national.`;
 
 /**
  * A step the host stopped before its submit because a phone field kept other digits than the
  * number it typed (field status `changed`). When the field seems to take only the local number
  * (`local`, from `takesLocalNumber`) and the number is written in international form, it says to
- * send the step again with the field's format set to national, naming no digit of the number.
- * Otherwise it names the number's calling code when it is written in international form
- * (`callingCode`), else the site's own country, as a number written without its calling code most
- * likely belongs to it. Nothing was submitted and nobody was asked.
+ * send the step again with the field's format set to national, naming only the number's calling
+ * code, for a screen with a country picker to show first. Otherwise it names the number's calling
+ * code when it is written in international form (`callingCode`), else the site's own country, as
+ * a number written without its calling code most likely belongs to it. Nothing was submitted and
+ * nobody was asked.
  */
 export const changedPhoneNotice = (number: string | undefined, local = false) => {
   const code = number === undefined ? undefined : callingCode(number);
-  if (local && code !== undefined) return localNumberNotice;
+  if (local && code !== undefined) return localNumberNotice(code);
   const lead =
     "The phone field kept different digits than the number the host typed, as when the site's country picker is set to another country. Nothing was submitted and nobody was asked.";
   return code === undefined
