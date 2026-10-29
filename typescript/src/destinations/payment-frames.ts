@@ -39,6 +39,8 @@ export const paymentFrameOrigins: readonly string[] = [
   "https://checkoutshopper-live-au.adyen.com",
   "https://checkoutshopper-live-apse.adyen.com",
   "https://checkoutshopper-live-in.adyen.com",
+  // Toast: the hosted checkout iframe, on its SDK's production host (doc.toasttab.com).
+  "https://payments.toasttab.com",
 ];
 
 /** Whether a URL's own origin is exactly one of `origins`; a URL with credentials never is. */
