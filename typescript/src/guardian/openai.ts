@@ -19,7 +19,7 @@ import { publicationDeltaPolicy, publicationFindingResponsePolicy } from "./publ
 import { guardianModel, guardianModelCallBound } from "./model.js";
 import type { GuardianModelCallBound, GuardianReasoningEffort } from "./model.js";
 import { sourceMatches } from "./source.js";
-import { providerQuotaExhausted } from "../models/provider-quota.js";
+import { providerQuotaExhausted, spentQuotaCode } from "../models/provider-quota.js";
 import { modelUsageCounts } from "../models/model-usage.js";
 import {
   collectingCacheDiagnostics,
@@ -887,8 +887,7 @@ const reviewerWithPolicy = (shared: string, options: GuardianModelOptions): Open
                         : overContextWindow(finite)
                           ? "InputTooLarge"
                           : "Unavailable";
-                  quotaExhausted =
-                    providerQuotaExhausted(error) || finite.code === "insufficient_quota";
+                  quotaExhausted = providerQuotaExhausted(error) || spentQuotaCode(finite.code);
                   reviewComputationDetail =
                     !turn.session && turn.pending.publication === undefined
                       ? failureDetail(
