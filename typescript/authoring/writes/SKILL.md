@@ -22,6 +22,13 @@ redo the whole task, and never redo a step that finished; run a step again only 
 a fresh read of the page shows it did not finish, or the task cannot complete without it. Then you compose the
 published script from what those steps did and publish it. Nothing runs again.
 
+When the request names a list of same-kind targets and the site makes the same write once for
+each, such as a message to each of several recipients, prefer a tool that takes one target, whose
+description tells the caller to call it once per target. Its session writes the first target only,
+and the caller calls the published tool for the rest. A form saved over several pages for one
+record, one action the site takes over many targets, such as a send to a group picked in one form,
+and a read of many things are each fine as one tool.
+
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Signed out, setting the session's store, location or delivery or pickup mode is part of a

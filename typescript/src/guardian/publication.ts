@@ -510,19 +510,25 @@ export const publicationOutputPolicy = [
 
 /**
  * What a write tool must carry out: the request's material requested outcome, within its effect
- * limits, never an earlier stop, disclosed or not. The publication review judges the finished
- * tool by it, the execution review judges a write build's path by it before its one write
- * session sends anything, and the minter reads it in its workspace, so the three agree.
+ * limits, never an earlier stop, disclosed or not. A request that names a list of same-kind
+ * targets the site writes one at a time is carried out by a tool that takes one target, called
+ * once per target, whose one write session writes the first. The publication review judges the
+ * finished tool by it, the execution review judges a write build's path by it before its one
+ * write session sends anything, and the minter reads it in its workspace, so the three agree.
  */
 export const publicationWriteOutcomePolicy =
-  "A write tool carries out the material requested outcome of trusted_request.intent, as trusted_authority.taskUpdates revise it, within the effect limits the request states, such as stopping before a final submit it rules out: a tool that stops earlier, even with that disclosed, such as at a saved draft or a new account when the request asks for the quote or the placed order, does not satisfy it.";
+  "A write tool carries out the material requested outcome of trusted_request.intent, as trusted_authority.taskUpdates revise it, within the effect limits the request states, such as stopping before a final submit it rules out: a tool that stops earlier, even with that disclosed, such as at a saved draft or a new account when the request asks for the quote or the placed order, does not satisfy it. When the request names a list of same-kind targets and the site makes the same write once for each, a tool that takes one target, whose description tells the caller to call it once per target, carries out that outcome, and its one write session writes the first target.";
 
 /**
  * How the publication review judges a write against the path its first act step declared and an
- * execution review allowed by `publicationWriteOutcomePolicy` before anything was sent.
+ * execution review allowed by `publicationWriteOutcomePolicy` before anything was sent, and the
+ * shape it prefers for a new write tool: one target per call where the script would repeat one
+ * commit over a list of targets. `trusted_publication.publishedInputs` marks a publication that
+ * replaces a published tool, whose input its callers rely on, so that preference never asks a
+ * republish to change it.
  */
 export const publicationWritePathPolicy =
-  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each of its steps, entering each mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding.";
+  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each of its steps, entering each mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding. A new write tool, in a publication without trusted_publication.publishedInputs, prefers one target per call: when its input takes a list of same-kind targets and its script enters the same commit mark once for each, such as a message to each of several recipients, prefer a schema_mismatch finding, reason source_correction, at that input's schema text, whose fix is a tool that takes one target and whose description tells the caller to call it once per target. No finding for a form saved over several pages or commits for one record, a read of many things, or one action the site takes over many targets, such as a send to a group picked in one form or a checkout of a cart that already holds the items. A publication with trusted_publication.publishedInputs replaces a published tool whose callers rely on its input: never return this finding there.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =
