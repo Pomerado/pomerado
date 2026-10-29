@@ -214,7 +214,7 @@ it("names the calling code for a box that keeps only the local number, in case t
   const local = takesLocalNumber(report, step, changedField(report));
   expect(local).toBe(true);
   expect(changedPhoneNotice("+44 7911 123456", local)).toBe(
-    "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits. If the screen has a country picker, prefer setting it to the country for calling code +44 with an explore step, then send this signInStep again with that phone field's format set to national.",
+    "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits. If the screen has a country picker, prefer setting that phone field's format to national only when the picker already shows the country for calling code +44 as the screen loads, which is what a run will see, and otherwise keep the full number, so the read-back stops a number typed under another country.",
   );
 });
 

@@ -40,9 +40,9 @@ export const DateOfBirthFormat = Schema.Literal(
 export type DateOfBirthFormat = typeof DateOfBirthFormat.Type;
 /**
  * How a field that takes a phone number takes it: `national`, the number without its country
- * calling code, for a box that keeps only the local number and has no country picker. The host
- * types the digits after the saved number's calling code (`nationalDigits`); a number saved
- * without one is typed as saved.
+ * calling code, for a box that keeps only the local number and has no country picker, or a picker
+ * that already shows the number's country as the screen loads. The host types the digits after
+ * the saved number's calling code (`nationalDigits`); a number saved without one is typed as saved.
  */
 export const PhoneFormat = Schema.Literal("national");
 export type PhoneFormat = typeof PhoneFormat.Type;
