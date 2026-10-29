@@ -3417,7 +3417,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * the same source under another name, after that write may have reached the site, and the
        * outcome reviewer, caught up with no readback outstanding, has not assessed every such
        * write `not_done`. This is the one place the minter waits for the reviewer, and an outage
-       * leaves the write unresolved, so it is not repeated.
+       * leaves the write unresolved, so it is not repeated. A host that keeps the step from
+       * sending the write's final step again may let it run at once (`repeatAllowed`).
        */
       const repeatedWriteRefusal = (
         submitted: Parameters<typeof dependencies.reviewAndExecute>[0],
@@ -3434,13 +3435,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               (digest !== undefined && write.sourceDigest === digest),
           );
           if (earlier.length === 0) return undefined;
-          const settled = yield* reviewer.settle(earlier.map((write) => write.executionId));
+          const repeats = earlier.map((write) => write.executionId);
+          if (
+            dependencies.repeatAllowed !== undefined &&
+            (yield* dependencies.repeatAllowed(submitted, repeats))
+          )
+            return undefined;
+          const settled = yield* reviewer.settle(repeats);
           if (
             settled.current &&
             settled.assessments.every((assessment) => assessment?.outcome === "not_done")
           )
             return undefined;
-          const writes = earlier.map((write) => write.executionId).join(", ");
+          const writes = repeats.join(", ");
           // With no outcome reviewer, nothing can clear the write, so the refusal lasts the
           // attempt, and a copy of the step is the double write this guard prevents.
           if (dependencies.outcomeReview === undefined)
