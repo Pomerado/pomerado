@@ -564,10 +564,12 @@ as a table app that saves view filters with the view, and changing one there is 
 page's own requests after the change show which: a save request beside the row fetch. A read
 prefers the page's own row query from the captures, the request the page sends for the rows<!-- pomerado:section agents.row-query-reference -->, to driving such a filter control. When it
 must use the control, the same step reads the prior value first and restores it in a
-finally-style block, so the revert runs on every path, errors and timeouts included. If the
-prior value cannot be read, use the page's own row query instead of the control. This holds
+finally-style block, so the revert runs on every path, errors and timeouts included. This holds
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
+
+If you changed something on the site by mistake, put it back to its earlier value before going
+on. When the owner asks you to undo a change you made, do it.
 
 Testing a read signed out is your job, never the caller's (.agents/testing/SKILL.md). It designs
 a wide, varied first batch of about 10 to 20 cases from what it saw on the site and its own code, and
@@ -627,7 +629,14 @@ never with final text, which the host treats as unfinished work:
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
-  `site_lacks_capability`. Never use it for a bot check or an access-denied page.
+  `site_lacks_capability`. Never use it for a bot check or an access-denied page. An outage,
+  maintenance, error or empty page that appears only after the site already served its pages in
+  this attempt, or after a bot check you got past earlier, is reported the same way: report the
+  outage page you see now, not the earlier check. Sites sometimes throttle a browser's network
+  address this way, so a host may give the build a new browser on another address and ask you to
+  try the failing step once more before it ends the build; on a signed-in build that browser
+  starts signed out. Try the step again within your usual rules, and report `site_unavailable`
+  again if the page stays.
 - `caller_input`: the caller's own request stops the build: what it states conflicts with itself
   or its cited sources, a file it needs is missing, or it rules out going on, such as a stop
   condition it set that cannot be met. Prefer asking with `request_input` for a missing fact the

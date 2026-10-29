@@ -168,12 +168,20 @@ attribute.
   A selector never reaches into another frame (no `>>` chains or `internal:` engines): the host finds
   each field in its own frame.
   - An identifier field lists every kind it accepts in `accepts`, from `username`, `email`,
-    `phone` and `account_number`: a "username or email" field is `["username", "email"]`, an
-    email-only field `["email"]`, a mobile-number field `["phone"]`, an account, member or customer
-    number field or a company or organization ID field `["account_number"]`. Read the label, type
-    and placeholder. The host sends a kind the login holds (username first, then email, phone and
+    `phone`, `account_number` and `private_identifier`: a "username or email" field is
+    `["username", "email"]`, an email-only field `["email"]`, a mobile-number field `["phone"]`, an
+    account, member or customer number field or a company or organization ID field
+    `["account_number"]`. A sign-in identity field that is not a username, email, phone or account
+    number, such as a national identity number or a PIN that is itself the sign-in identifier, is
+    `["private_identifier"]` with the site's own label as `label`; prefer it over relabelling the
+    field, which Guardian refuses. A step names one such field at most, and a PIN entered in place
+    of a password after another identifier is the `password` slot. Read
+    the label, type and placeholder. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.
+    For a phone box that keeps only the local number and has no country picker, or a picker that
+    already shows the number's country as the screen loads, prefer adding `format: "national"` to
+    that field: the host then types the number without its calling code.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
     otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
@@ -228,8 +236,8 @@ attribute.
   address names it (`page_names_contact`) is refused; use an account-independent route.
 
 A screen may record `rejectedMarkers`, each with a field slot and an observed, value-free
-rejection selector. The slots are `username`, `email`, `phone`, `account_number`, `password`,
-`code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
+rejection selector. The slots are `username`, `email`, `phone`, `account_number`,
+`private_identifier`, `password`, `code`, `date_of_birth`, `zip` and `recovery_code`. Record every rejection visible during ordinary
 sign-in; never invent a marker or submit bad credentials to discover one. The host reads only
 visibility and retains every rejected value so it cannot send that value again.
 `private_answer` has no recorded rejection marker or automatic correction: when the site rejects

@@ -287,7 +287,7 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   or re-select it right before its mark, so the site issues a fresh one, and check that one
   against the caller's limits, such as the cap and the same item or route, before the mark as
   above. When the site answers the click by saying the quote expired or the price changed, with
-  that proof that it created nothing, call `notCommitted` for the step, refresh the quote and check it again,
+  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
   before the mark, so the run reports nothing applied. Retry only once: a step goes back once a
   run, so a second such answer ends the run with the site's words, returned where the

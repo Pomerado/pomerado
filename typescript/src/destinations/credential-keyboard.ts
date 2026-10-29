@@ -44,15 +44,19 @@ export type InsertionRefusal = typeof InsertionRefusal.Type;
 export const CredentialInsertion = Schema.Union(Schema.Literal("inserted"), InsertionRefusal);
 /**
  * An insertion's answer when the host asked it to read a phone field back (`InsertionOptions`):
- * also `changed`, inserted, but the field then held other digits than the number's.
+ * also `changed`, inserted, but the field then held other digits than the number's, or
+ * `cut_short`, changed in a field whose `maxLength` is shorter than the text (`phoneDigitsCode`).
  */
-export const CredentialReadBack = Schema.Union(CredentialInsertion, Schema.Literal("changed"));
+export const CredentialReadBack = Schema.Union(
+  CredentialInsertion,
+  Schema.Literal("changed", "cut_short"),
+);
 
 /** What the host asks of an insertion besides typing. */
 export interface InsertionOptions {
   /**
    * The field takes a phone number: once the page had `phoneReadBackMs` to reformat it, read the
-   * field back and answer `changed` when it holds other digits than the number's
+   * field back and answer `changed` or `cut_short` when it holds other digits than the number's
    * (`phoneDigitsCode`). A read that fails or finds no value answers `inserted`, as without it.
    */
   readonly phone?: true | undefined;
@@ -89,10 +93,11 @@ export const phoneReadBackMs = 250;
  * code or trunk prefix, and may show up to three of its own before them, such as the picker's
  * calling code: what follows must be the rest of the number, every digit to the last. A number
  * dialed with an international prefix (`00`, or `011`) may also drop the prefix with them. A
- * number shifted into another country's digits or cut short is `changed`. A field gone from its
- * document, one with no text value or no digits, or a number with no digits is `unread`, so a
- * field the page emptied stays the empty-field failure the next call finds. Only digits 0 to 9
- * count.
+ * number shifted into another country's digits or cut short is `changed`, and `cut_short` when the
+ * field's `maxLength` is shorter than the text, as a box that takes only the local number may be
+ * for a number typed with its calling code. A field gone from its document, one with no text value
+ * or no digits, or a number with no digits is `unread`, so a field the page emptied stays the
+ * empty-field failure the next call finds. Only digits 0 to 9 count.
  */
 export const phoneDigitsCode = `function(text) {
   const field = this;
@@ -110,6 +115,8 @@ export const phoneDigitsCode = `function(text) {
         const rest = number.slice(dropped);
         if (rest.length > 0 && rest === kept.slice(shown)) return "kept";
       }
+  const limit = field.maxLength;
+  if (typeof limit === "number" && limit >= 0 && limit < text.length) return "cut_short";
   return "changed";
 }`;
 
@@ -314,10 +321,11 @@ const findBinding = (
   });
 
 /**
- * A phone field read back once the page had `phoneReadBackMs` to reformat it: `changed` when it
- * kept other digits than the number's (`phoneDigitsCode`), else `inserted`. The number goes in as
- * an argument on the private socket, as the insertion's did, and only the finite answer comes
- * back. A read that fails or answers anything else can't tell, so it answers `inserted`.
+ * A phone field read back once the page had `phoneReadBackMs` to reformat it: `changed` or
+ * `cut_short` when it kept other digits than the number's (`phoneDigitsCode`), else `inserted`.
+ * The number goes in as an argument on the private socket, as the insertion's did, and only the
+ * finite answer comes back. A read that fails or answers anything else can't tell, so it answers
+ * `inserted`.
  */
 const readBackPhone = (
   cdp: PrivateCredentialCdp,
@@ -333,12 +341,11 @@ const readBackPhone = (
         returnByValue: true,
       }),
     ),
-    Effect.map((value) =>
-      Option.getOrUndefined(Schema.decodeUnknownOption(RemoteResult)(value))?.result.value ===
-      "changed"
-        ? ("changed" as const)
-        : ("inserted" as const),
-    ),
+    Effect.map((value) => {
+      const read = Option.getOrUndefined(Schema.decodeUnknownOption(RemoteResult)(value))?.result
+        .value;
+      return read === "changed" || read === "cut_short" ? read : ("inserted" as const);
+    }),
     // error-reporting-allow: typed-recovery the value is already typed and a read that fails can't tell what the field kept, so the fill goes on as it did before reading back
     Effect.orElseSucceed(() => "inserted" as const),
   );
@@ -359,7 +366,7 @@ export const makeCredentialKeyboard = (
     Effect.gen(function* () {
       const bound = yield* findBinding(cdp, target, bindingWorld);
       if (typeof bound === "string") return bound;
-      let readBack: "inserted" | "changed" = "inserted";
+      let readBack: "inserted" | "changed" | "cut_short" = "inserted";
       const value = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
         objectId: bound.objectId,
         functionDeclaration: atomicInsert,
