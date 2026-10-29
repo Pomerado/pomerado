@@ -93,6 +93,46 @@ describe("URL boundaries", () => {
       "Synth3tic9",
     ],
     [
+      "an authorization header field glued by a semicolon",
+      "see https://portal.example/a;authorization=Bearer synthetic-bearer-0123456789 now",
+      "synthetic-bearer-0123456789",
+    ],
+    [
+      "a cookie field glued by a comma",
+      "see https://portal.example/a,cookie=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
+      "a capitalized cookie header glued by a pipe",
+      "see https://portal.example/a|Cookie: sid=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
+      "a proxy authorization header glued by a comma",
+      "see https://portal.example/a,Proxy-Authorization=Basic U3ludGhldGljOlNlY3JldDE2 now",
+      "U3ludGhldGljOlNlY3JldDE2",
+    ],
+    [
+      "a set-cookie field glued by a pipe",
+      "see https://portal.example/a|set-cookie=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
+      "an authorization header with a colon glued by a semicolon",
+      "see https://portal.example/a;Authorization:Bearer synthetic-bearer-0123456789 now",
+      "synthetic-bearer-0123456789",
+    ],
+    [
+      "a header field after a semicolon in the query",
+      "see https://portal.example/a?x=1;cookie=SyntheticTok0123456789 now",
+      "SyntheticTok0123456789",
+    ],
+    [
+      "a header field after a comma in the fragment",
+      "see https://portal.example/a#frag,authorization=Bearer synthetic-bearer-0123456789 now",
+      "synthetic-bearer-0123456789",
+    ],
+    [
       "a key after an escaped angle bracket",
       "see https://portal.example/a?q=1&amp;lt;password=Synthetic14 now",
       "Synthetic14",
@@ -112,6 +152,11 @@ describe("URL boundaries", () => {
     ["/cb,password=Synthetic10 failed", "/cb", "Synthetic10"],
     ["/v1/login,password=Synthetic11", "/v1/login", "Synthetic11"],
     ["/v1/items?page=2|password=Synthetic12 failed", "/v1/items?page=2", "Synthetic12"],
+    [
+      "/cb;authorization=Bearer synthetic-bearer-0123456789 failed",
+      "/cb",
+      "synthetic-bearer-0123456789",
+    ],
   ])("ends a leading route as a URL ends: %s", (text, route, secret) => {
     const redacted = redactDiagnosticText(text);
     expect(redacted.startsWith(route)).toBe(true);
@@ -171,6 +216,10 @@ describe("URL boundaries", () => {
     ["a scheme-relative URL", "//cdn.example/lib.js?v=1,2"],
     ["a key with a colon after a comma", "https://shop.example/a?f=x,date:2026-02-07"],
     ["a schemeless host", "www.shop.example/a?ids=4,5"],
+    ["a header name inside a path field", "https://shop.example/a,cookies/b"],
+    ["a header name inside a query value", "https://docs.example/a?topic=auth,authorization-code"],
+    ["a header name as a path segment", "https://shop.example/a;cookie/b"],
+    ["a key that starts with a header name", "https://shop.example/a?q=x,set-cookie-policy=strict"],
     ["an escaped apostrophe", "https://wiki.example/wiki/Ender&#39;s_Game"],
     ["an escaped apostrophe in hex", "https://wiki.example/wiki/Ender&#x27;s_Game"],
   ])("keeps a real URL whole: %s", (_label, url) => {
@@ -232,6 +281,9 @@ describe("URL boundaries", () => {
       "https://portal.example/a;bearer synthetic-bearer-0123456789",
       "",
     ],
+    ["a header field after a semicolon", "https://portal.example/a;Proxy-Authorization=x", ""],
+    ["a set-cookie field after a pipe", "https://portal.example/a|Set-Cookie=x", ""],
+    ["a header field with a colon after a comma", "https://portal.example/a,cookie: x", ""],
     ["an unbalanced bracket", "(https://portal.example/a)", "("],
     ["an escaped angle bracket", "https://portal.example/a&lt;b", ""],
     ["an angle bracket escaped twice", "https://portal.example/a&amp;lt;b", ""],
