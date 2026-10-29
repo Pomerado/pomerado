@@ -90,6 +90,7 @@ import {
   refusedStep,
   result,
   stepNotice,
+  takesLocalNumber,
   unansweredFailure,
 } from "./autofill-results.js";
 import { MintFailure, type SignInStep } from "./contracts.js";
@@ -129,15 +130,20 @@ const shown = (answer: ReturnType<typeof result>): SignInStepResult => ({
 
 /**
  * What the minter does after a screen the host inspected and maybe filled, with the values the
- * fill typed (`typed`), which name a changed phone's calling code.
+ * fill typed (`typed`), which name a changed phone's calling code or show it written in
+ * international form, for a field that seems to take only the local number (`takesLocalNumber`).
  */
 const notice = (
   report: AutofillStepReport,
-  step?: Pick<AutofillStep, "submitKey">,
+  step?: Pick<AutofillStep, "submitKey" | "fields">,
   typed?: readonly string[],
 ) => {
   const changed = changedField(report);
-  if (changed !== -1) return changedPhoneNotice(typed?.[changed]);
+  if (changed !== -1)
+    return changedPhoneNotice(
+      typed?.[changed],
+      step !== undefined && takesLocalNumber(report, step, changed),
+    );
   return report.outcome === "refused" && report.codeBoxes !== undefined
     ? `This screen splits its code across ${report.codeBoxes.boxes} one-character boxes, and the step's code fields named only the boxes at places ${report.codeBoxes.named.join(", ")}, in that order (codeBoxes.named, counted from 1). The host typed and clicked nothing, so nothing reached the site, no code was asked for and no sign-in was spent. Send the step again with one code field per box, all ${report.codeBoxes.boxes} of them in order from the first box to the last; the host asks for the code once and types one character into each box.`
     : stepNotice(report, step);
@@ -198,7 +204,9 @@ const unansweredStep = (h: AutofillHost, unanswered: Unanswered) => {
     return Effect.fail(rejection("site_rejected", "code"));
   if (
     unanswered.cause === "field_corrections_exhausted" &&
-    (unanswered.field === "date_of_birth" || unanswered.field === "zip")
+    (unanswered.field === "date_of_birth" ||
+      unanswered.field === "zip" ||
+      unanswered.field === "private_identifier")
   )
     return Effect.fail(rejection("site_rejected", unanswered.field));
   return Effect.fail(unansweredFailure(unanswered));
@@ -571,9 +579,15 @@ export const makeSignInRecorder = (input: {
         filled,
       );
       if (named !== undefined) return shown(named);
-      // The field the login's username went into is its primary identifier.
+      // The field the login's username went into is its primary identifier; a private
+      // identifier never is one.
       for (const [index, field] of step.fields.entries())
-        if (isIdentifier(field.slot) && held !== undefined && filled[index] === held.username)
+        if (
+          isIdentifier(field.slot) &&
+          field.slot !== "private_identifier" &&
+          held !== undefined &&
+          filled[index] === held.username
+        )
           h.autofillPrimaryIdentifierKind.current ??= field.slot;
       const previous = { ...h.autofillSentValues.current };
       yield* recordAutofillValues(h, step, filled, held ?? {});

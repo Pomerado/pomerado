@@ -35,6 +35,7 @@ import type {
   AutofillPopup,
   DateControl,
   DateOfBirthFormat,
+  PhoneFormat,
   SignInMethodChoice,
   RejectedMarker,
   SubmitKey,
@@ -42,14 +43,26 @@ import type {
 
 export { SiteNavigation } from "./sign-in-redirect.js";
 
-/** A kind of sign-in identifier: what an identifier field may accept. */
-export type IdentifierKind = "username" | "email" | "phone" | "account_number";
+/**
+ * A kind of sign-in identifier: what an identifier field may accept. A `private_identifier` is any
+ * other identity field the sign-in asks for, such as a national identity number or a PIN that is
+ * itself the sign-in identifier, which the host keeps like a password.
+ */
+export type IdentifierKind =
+  | "username"
+  | "email"
+  | "phone"
+  | "account_number"
+  | "private_identifier";
+/** A kind a login's own username may be, so its primary identifier: never a private identifier. */
+export type PrimaryIdentifierKind = Exclude<IdentifierKind, "private_identifier">;
 /** The order the host picks an accepted identifier kind in when the login holds several. */
 export const identifierPreference: readonly IdentifierKind[] = [
   "username",
   "email",
   "phone",
   "account_number",
+  "private_identifier",
 ];
 /**
  * A secret a site may check besides the password: the login's date of birth, ZIP or postal code,
@@ -78,8 +91,14 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
-  /** How a `date_of_birth` field takes the date, or the one part of it a dropdown takes. */
-  readonly format?: DateOfBirthFormat | undefined;
+  /** A `private_identifier` field's own label as the site shows it; never its value. */
+  readonly label?: string | undefined;
+  /**
+   * How a `date_of_birth` field takes the date, or the one part of it a dropdown takes; or, on an
+   * identifier field that accepts a phone, `national`: it takes the number without its calling
+   * code (`PhoneFormat`), which the host types when it sends a phone there (`typedValues`).
+   */
+  readonly format?: DateOfBirthFormat | PhoneFormat | undefined;
   /** The control a `date_of_birth` field was filled into, as the host found it. */
   readonly control?: DateControl | undefined;
   /**
@@ -96,7 +115,13 @@ export interface AutofillStepRequest {
   readonly popup?: AutofillPopup | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   readonly fields: readonly (
-    | { readonly selector: string; readonly accepts: readonly IdentifierKind[] }
+    | {
+        readonly selector: string;
+        readonly accepts: readonly IdentifierKind[];
+        readonly label?: string | undefined;
+        /** `national` on a field that accepts a phone and keeps only the local number. */
+        readonly format?: PhoneFormat | undefined;
+      }
     | {
         readonly selector: string;
         readonly slot: SecretSlot;
@@ -438,7 +463,7 @@ export interface AutofillInspection {
     readonly fields: readonly (typeof Described.Type & {
       readonly slot: FillSlot;
       readonly accepts?: readonly IdentifierKind[] | undefined;
-      readonly format?: DateOfBirthFormat | undefined;
+      readonly format?: DateOfBirthFormat | PhoneFormat | undefined;
     })[];
     /**
      * The submit control as found; for a step with a submit key, its last field's form (tag
@@ -462,7 +487,7 @@ export interface AutofillInspection {
  * phone field the host typed into kept other digits than the number's once the page reformatted
  * it, as under a country picker set to another country (`InsertionOptions.phone`), so the host
  * typed nothing after it and never clicked the submit. A keyboard that does not read back never
- * reports it.
+ * reports it. Such a field whose `maxLength` is shorter than what was typed also says `cutShort`.
  */
 export type AutofillFieldStatus = "filled" | "failed" | "not_attempted" | "changed";
 
@@ -480,6 +505,11 @@ export type AutofillStepReport =
       readonly fields: readonly {
         readonly slot: FillSlot;
         readonly status: AutofillFieldStatus;
+        /**
+         * On a `changed` phone field: the keyboard read it back `cut_short`, as the field's
+         * `maxLength` is shorter than the number as typed. Never a digit or length.
+         */
+        readonly cutShort?: true;
       }[];
       /**
        * `clicked`: the host clicked the submit, or pressed the step's submit key in its last field,

@@ -1151,7 +1151,7 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step, refresh the quote and check it again, then call `enteringCommit` again and click once more.",
+    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again, then call `enteringCommit` again and click once more.",
   );
   expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
     "Nor is it when the site's own answer to the first click refused it as a whole and showed nothing was created, such as a quote that expired or a price that changed, and the step called notCommitted for that step once, refreshed the quote and checked it against the caller's limits before entering it again for one more click.",
@@ -1291,15 +1291,15 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["27650c715c8203757b5e6b919be0629f7bd9ea790eba4f422c3f453f1392d0e8", "core"],
     ["933e2daac360d31beeeb2a8aeabcf22ca8512cc0272f321b047106f4a2055ab3", "search"],
-    ["4484a13bc74caafbc22fcee1c10b36f13b21e116d24928ce369393d5a29e47ea", "auth"],
+    ["fea694955b3324031ace569ea0a9fb7aa4a2e31fdf1e4ae4a31fec85efd66a91", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["0f45b38331f51d0d503a26806d8a96b545a6dd4ca03eddce2c585debf2c569a2", "forms"],
-    ["ecaf28ded2af41284590a1d5de734e1a6679533ffbcecf764b08d2cdde41aad4", "writes"],
+    ["78ce8bbf3f992c5f300cde8838eb3352d8bf372f29f64ca39ad0b8cd9072ce14", "writes"],
     ["d06f650fc09f74d3711e043da2303de97ced42c9ff2541d48ec28cd7e686519d", "cart"],
     ["b6dd72d69c30ac9a1818ac1baeae48e701cd318f04d11e04ef8c03d812b91a16", "caller-input"],
     ["16a7758448245bfdfa358b21315a3d27a7d28a9d1b8e6253726afe2808fc6093", "publication"],
-    ["0cfb4cb36e0f5c30d52786c27ba02141eac4ec4d0ece44a1d22365f740831a3b", "workspace/AGENTS.md"],
+    ["19f7848cc924166ae7c0162725a884a384a1046f639ff698b74f11c33d241a56", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1420,7 +1420,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["0386d3e23fb8cd652f7c64320b940b6a61c7ed9fb3315579fe5521c835789b42", "search"],
-    ["99f0df56026e198df1d2d6e8ba3ab2c88b1e3aa3058f6d41d20b5cd248a0d7c2", "workspace/AGENTS.md"],
+    ["86cd084c1424d68162b506ca5b3635f9c90e7b5018a0f1ba035923196ba76b17", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

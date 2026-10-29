@@ -146,6 +146,7 @@ export type RegisteredEntity =
   | "EMAIL"
   | "PHONE"
   | "ACCOUNT_NUMBER"
+  | "PRIVATE_IDENTIFIER"
   | "DATE_OF_BIRTH"
   | "ZIP"
   | "RECOVERY_CODE"
@@ -258,7 +259,11 @@ export interface AutofillSignInState<E = unknown, V extends string = string> {
 }
 
 export const isIdentifier = (slot: AutofillSlot): slot is IdentifierKind =>
-  slot === "username" || slot === "email" || slot === "phone" || slot === "account_number";
+  slot === "username" ||
+  slot === "email" ||
+  slot === "phone" ||
+  slot === "account_number" ||
+  slot === "private_identifier";
 /**
  * A security answer (`private_answer`): read or asked for each screen that asks one, and never
  * held as filled, so no sign-in counts it toward `signedIn`; only a saved one is tracked as sent,

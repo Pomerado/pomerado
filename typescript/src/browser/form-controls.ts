@@ -67,6 +67,19 @@ export const CalendarDate = Schema.String.pipe(
 );
 
 /**
+ * The global name of an optional host hook. A host that runs Kernel calls may install a function
+ * under it in the global scope its calls' code runs in, such as from code it adds to each call's
+ * body. Just before `blockingRequiredFields` returns, it calls the hook once, synchronously, with
+ * the kind of its result: `"fields"`, `"unaskable"` or `"none"` (for `null`), never a label or
+ * value. A call that throws, such as `labels_missing`, reports nothing. What the hook returns or
+ * throws is ignored, a rejected promise included, and with no hook nothing is called. A host can
+ * then tell which of its calls proved a click saved nothing, such as before it lets a write enter
+ * the same commit step again. A script's own code could call the hook too, so it is a guard
+ * against mistakes, not against a hostile script.
+ */
+export const blockingFieldsHook = "__pomeradoBlockingFields";
+
+/**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
  * string, then call its functions with your verified Playwright locators. Every function reads
  * back that the page took the value and throws an Error whose message is a fixed reason, never a
@@ -547,7 +560,15 @@ const unfilledRequiredFields = async (scope, options = {}) => {
 };
 const visibleFieldLabels = async (scope, options = {}) =>
   formControlRequiredFields(scope, options.timeout ?? 10000, options.enabledOnly === true ? "enabled labels" : "labels");
-const blockingRequiredFields = async (scope, before, options = {}) => {
+// A host's hook, when one is installed, learns the kind of result each call got, never a label.
+const formControlBlockingReport = (result) => {
+  try {
+    const returned = globalThis[${JSON.stringify(blockingFieldsHook)}]?.(result === null ? "none" : result.unaskable === true ? "unaskable" : "fields");
+    if (typeof returned?.then === "function") returned.then(undefined, () => {});
+  } catch {}
+  return result;
+};
+const formControlBlockingFields = async (scope, before, options) => {
   if (!Array.isArray(before)) throw formControlFailure("labels_missing");
   const timeout = options.timeout ?? 10000;
   if ((await scope.count()) !== 1 || !(await scope.isVisible())) return null;
@@ -574,6 +595,8 @@ const blockingRequiredFields = async (scope, before, options = {}) => {
   if (options.unaskable !== true || unasked.some((field) => field.label === "" || !field.secret)) return null;
   return { unaskable: true, labels: unasked.map((field) => field.label) };
 };
+const blockingRequiredFields = async (scope, before, options = {}) =>
+  formControlBlockingReport(await formControlBlockingFields(scope, before, options));
 const fillRequiredField = async (scope, label, answer, options = {}) => {
   const timeout = options.timeout ?? 10000;
   const matched = (await formControlRequiredFields(scope, timeout)).filter((field) => field.label === label && !field.unsupported);
