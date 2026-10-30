@@ -223,7 +223,7 @@ test("pickValue reports no match, with what the site suggested, instead of timin
   });
 });
 
-test("pickValue types again key by key when the field listens only to keys, and answers that land out of order never win", async ({ page }) => {
+test("pickValue types the value once more, its last key once the page goes quiet, when an older, slower answer to an earlier key landed last", async ({ page }) => {
   const cities = ["Sacramento", "Salem", "San Diego", "San Jose", "Santa Fe", "Santiago", "Seattle", "Spokane"];
   const asked: string[] = [];
   await serve(
@@ -257,6 +257,39 @@ list.addEventListener("click", (event) => {
     result: { picked: true, label: "Santiago", rank: "exact" },
   });
   expect(await submitted(page)).toEqual({ city: "Santiago" });
+});
+
+test("pickValue picks on its first try, typing key by key, from a field whose page reacts only to keys", async ({ page }) => {
+  const asked: string[] = [];
+  await serve(
+    page,
+    `<form><label>Street <input id="street" role="combobox" aria-controls="streets" autocomplete="off"></label>
+<ul id="streets" role="listbox"></ul><input type="hidden" name="street"></form>
+<script>
+const input = document.getElementById("street"), list = document.getElementById("streets");
+// Only a key asks for suggestions; a value set at once asks nothing.
+input.addEventListener("keyup", async () => {
+  const answer = await (await fetch("/api/streets?q=" + encodeURIComponent(input.value))).json();
+  list.innerHTML = answer.map((name) => '<li role="option">' + name + "</li>").join("");
+});
+list.addEventListener("click", (event) => {
+  input.value = event.target.textContent;
+  document.querySelector("[name=street]").value = event.target.textContent;
+  list.innerHTML = "";
+});
+</script>`,
+    (params) => {
+      const query = params.get("q") ?? "";
+      asked.push(query);
+      return { delayMs: 40, body: ["Oak Lane", "Oak Street", "Orchard Road"].filter((name) => name.startsWith(query)) };
+    },
+  );
+  expect(await call(page, `return await pickValue(page.getByLabel("Street"), "Oak Lane", fast);`)).toMatchObject({
+    result: { picked: true, label: "Oak Lane", rank: "exact" },
+  });
+  expect(await submitted(page)).toEqual({ street: "Oak Lane" });
+  // Typed once, a key at a time: the page asked for each prefix once, from the first key.
+  expect(asked).toEqual(["O", "Oa", "Oak", "Oak ", "Oak L", "Oak La", "Oak Lan", "Oak Lane"]);
 });
 
 test("pickValue types the value once more when a slower, older answer replaced the list", async ({ page }) => {
@@ -428,8 +461,8 @@ input.addEventListener("keydown", (event) => {
     result: { picked: true, kind: "typeahead", values: [{ label: "urgent", value: "", added: true }], removed: [] },
   });
   expect(await submitted(page)).toEqual({ tags: "urgent" });
-  // Filled once and committed with Enter: never typed again key by key.
-  expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(["Enter"]);
+  // Typed once, key by key, and committed with Enter: never typed again.
+  expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(["u", "r", "g", "e", "n", "t", "Enter"]);
 });
 
 test("pickValue types an empty list's search box again key by key, never with Enter", async ({ page }) => {
@@ -452,7 +485,9 @@ search.addEventListener("keydown", (event) => { if (event.key === "Enter") windo
 });
 
 test("pickValue refuses as the empty list did when typing it again runs out of time", async ({ page }) => {
-  // Typing draws "No matches" at once; each key also asks the site, which never answers.
+  // Typing draws "No matches" at once; each key also asks the site, which answers until it has
+  // been asked for the whole term, then never answers again.
+  let whole = false;
   await serve(
     page,
     `<form><label>Branch <input id="branch" role="combobox" aria-controls="branches" autocomplete="off"></label>
@@ -460,9 +495,13 @@ test("pickValue refuses as the empty list did when typing it again runs out of t
 <script>
 const input = document.getElementById("branch"), list = document.getElementById("branches");
 input.addEventListener("input", () => { list.hidden = false; list.innerHTML = '<li class="no-results">No matches</li>'; });
-input.addEventListener("keydown", () => { fetch("/api/branches?q=" + encodeURIComponent(input.value)); });
+input.addEventListener("keyup", () => { fetch("/api/branches?q=" + encodeURIComponent(input.value)); });
 </script>`,
-    () => ({ delayMs: 20_000, body: [] }),
+    (params) => {
+      const delayMs = whole ? 20_000 : 0;
+      if (params.get("q") === "Northside") whole = true;
+      return { delayMs, body: [] };
+    },
   );
   expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 3000 });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Northside", available: [], matches: [] },
@@ -470,7 +509,7 @@ input.addEventListener("keydown", () => { fetch("/api/branches?q=" + encodeURICo
 });
 
 test("pickValue still refuses, and never types again, when too little of its time is left", async ({ page }) => {
-  // The site answers every term with nothing, after 2.3 s of the call's 3 s.
+  // The site answers every term with nothing, after 2.1 s of the call's 3 s.
   await serve(
     page,
     `<form><label>Branch <input id="branch" role="combobox" aria-controls="branches" autocomplete="off"></label>
@@ -485,12 +524,13 @@ input.addEventListener("input", async () => {
   list.innerHTML = '<li class="no-results">No matches</li>';
 });
 </script>`,
-    () => ({ delayMs: 2300, body: [] }),
+    () => ({ delayMs: 2100, body: [] }),
   );
   expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 3000 });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Northside", available: [], matches: [] },
   });
-  expect(await page.evaluate(() => (window as unknown as { inputs: number }).inputs)).toBe(1);
+  // Typed once, key by key: never typed again.
+  expect(await page.evaluate(() => (window as unknown as { inputs: number }).inputs)).toBe("Northside".length);
 });
 
 test("pickValue's wait for the page to go quiet is bounded on a page that never does", async ({ page }) => {
@@ -1093,7 +1133,7 @@ test("pickValue fails as options_loading when the list never finishes loading", 
   });
 });
 
-test("pickValue's options_loading names a request its typing started that never answered", async ({ page }) => {
+test("pickValue's options_loading names the requests its typing started that never answered", async ({ page }) => {
   await serve(
     page,
     `<label>Account <input id="account" autocomplete="off"></label><ul id="accounts" role="listbox"></ul>
@@ -1102,7 +1142,7 @@ test("pickValue's options_loading names a request its typing started that never 
   );
   const failed = await callFailure(page, `return await pickValue(page.getByLabel("Account"), "Savings", { ...fast, timeout: 2000 });`);
   expect(failed.error).toBe("options_loading");
-  expect(failed.stack).toMatch(/^PickerFailure: options_loading \(1 request it started in flight \(fetch, \d+\.\d s\)\)$/u);
+  expect(failed.stack).toMatch(/^PickerFailure: options_loading \(7 requests it started in flight \(fetch, the oldest \d+\.\d s\)\)$/u);
 });
 
 test("pickValue waits for a site's own answered signal when given one", async ({ page }) => {
