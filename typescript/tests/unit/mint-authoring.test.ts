@@ -226,12 +226,9 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A place goes through the site's own lookup, never only a menu the page already shows.
   [
     "core",
-    "- Look up a place the caller gives, such as a city, address, region or area, through the site's own location search, typeahead or picker, with `pickValue` where it fits. Never match it only against options the page already shows, such as a menu of popular cities or the page's buttons, or against a list or aliases of your own, and never throw for a place that menu lacks: the site's search finds places no menu lists. Trying the shown options first is fine when the tool falls back to that search for any other place. When the site's only control for the place is a fixed list, the input is an enum of that list, as above.",
+    "- Look up a place the caller gives, such as a city, address, region or area, through the site's own location search, typeahead or picker, rather than only the options the page already shows, such as a menu of popular cities or the page's buttons, or a list or aliases of your own: the site's search finds places no menu lists. Trying the shown options first is fine when the tool falls back to that search for any other place. When the site's only control for the place is a fixed list, the input is an enum of that list, as above. In a signed-in tool where adding an address saves it to the account, matching the account's saved addresses is fine.",
   ],
-  [
-    "search",
-    "Set a place the caller gives through the site's own location search or picker, never by matching only the places the page already shows (core skill's input schema).",
-  ],
+  ["search", "Set a place the caller gives as the core skill's input schema says."],
   ["core", "Take the site origin from the context's `siteOrigin`."],
   ["core", "The tools and the files you may edit are in `AGENTS.md`."],
   ["core", "Read their bodies only when useful."],
@@ -1298,8 +1295,8 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["13d4fae3ddebd732e58d9892b897128b5f680c856c5a9744b231d5af9ca1af44", "core"],
-    ["38427300d5e308d99742beabc49ce3a9953b25d4fd47738b5f3d97d524236ab1", "search"],
+    ["fdfd5321f82594a85cd843a09026391789105c05d415309b920d226e9fad7f8f", "core"],
+    ["dc3a2222e8eadcd53642aed5233da94cc83fcb81e1471e1562beac6b02aa7f79", "search"],
     ["fea694955b3324031ace569ea0a9fb7aa4a2e31fdf1e4ae4a31fec85efd66a91", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
@@ -1428,7 +1425,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["0aa096f907e01d34bc7d5a5bf0ea4da49ff21b99e0cbaeb074853094d7ea3fbe", "search"],
+    ["41f659f47dd592a4bb7db720c8fce507a05c20d517aac971108cece0b6c8b0bc", "search"],
     ["254072c5e1e431a4f3f8e57e6c13724169996e24febc0e31c0b57697754f62ba", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
