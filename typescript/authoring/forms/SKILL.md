@@ -150,7 +150,7 @@ action, for the exact option within that popup. A zero count directly
 after a click does not establish absence. Inspect the post-action accessibility
 snapshot before changing the selector or attempting another action.
 
-A filled query plus a visible listbox can still show the previous response. `pickValue`
+A typed query plus a visible listbox can still show the previous response. `pickValue`
 waits for the list to settle and types again when it lacks the value; when the site marks
 which query its options answer, pass that check as `answered`. A matching old option alone
 does not establish the answer.
@@ -225,7 +225,8 @@ such forms save each step as you go. A read build may not fill in or advance suc
 form (it asks the caller and changes its task to a write with `mint_update` first, as the
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
-form (core skill). A signed-out quote or price form that only fetches is a read too, but a
+form, or a signed-in session's per-visit location control that saves nothing to the account (core
+skill). A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the
