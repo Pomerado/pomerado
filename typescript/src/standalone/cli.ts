@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { readArtifact, writeArtifact } from "./artifact-files.js";
 import { createPomerado } from "./pomerado.js";
-import type { PomeradoOptions } from "./contracts.js";
+import type { LocalMintOutcome, PomeradoOptions } from "./contracts.js";
+import type { JobBuildBlocked, MintStopReason } from "../mint/contracts.js";
 import { RunOutcomeFailure } from "./run-report.js";
 import { makeTerminalAsker } from "../inputs/terminal.js";
 
@@ -88,6 +89,94 @@ const readOptions = (args: readonly string[]) =>
     };
   });
 
+/** A few words on each ending a stopped mint names by its code. */
+const stopMeanings: Readonly<Record<MintStopReason | JobBuildBlocked["reason"], string>> = {
+  final_text_without_tool: "the build agent kept answering without acting",
+  turn_budget_spent: "the build used every model call it may make",
+  model_quota_exhausted: "the model provider's quota is spent",
+  sign_in_failed: "signing in to the site failed",
+  account_locked: "the site says the account is locked",
+  question_unanswered: "a question the build needed went unanswered",
+  owner_declined: "you declined a step the build needs",
+  owner_ended: "you chose to end the build",
+  site_lacks_capability: "the site can't do what was asked",
+  site_declined: "the site declined the request",
+  site_unavailable: "the site was temporarily down",
+  policy: "a safety review ruled the build out",
+  host_refused: "a host check refused a step the build needs",
+  caller_input: "the request itself stops the build",
+  agent_declined: "the build agent declined the request",
+  host_unavailable: "a service the build relies on failed, not the task",
+  new_mint_recommended: "the task changed enough to need a new build",
+  not_supported_yet: "this kind of build isn't supported yet",
+};
+
+/**
+ * The lines a mint that saved nothing prints under its summary: its codes and counts. Each code
+ * is a fixed literal, and the outcome holds no step's output, so no secret prints.
+ */
+const stoppedLines = (result: LocalMintOutcome) => {
+  const why = result.stopReason ?? result.blocked?.reason;
+  const denial = result.publicationDenial;
+  const denialCodes = [denial?.reason, denial?.category].filter((code) => code !== undefined);
+  const failed = result.executions.filter(
+    (execution) => execution.status === "failed" || execution.status === "unsupported",
+  );
+  const last = failed.at(-1);
+  const lastFailure = last?.siteAccess?.code ?? last?.terminalFailure;
+  const writes = (result.writes ?? []).filter((write) => write.status !== "not_applied").length;
+  return [
+    why === undefined
+      ? "Why: no reason recorded; the full report's diagnostics hold what the host saw"
+      : `Why: ${stopMeanings[why]} (${why})`,
+    ...(result.hostFailure === undefined ? [] : [`Host failure: ${result.hostFailure}`]),
+    ...(denial === undefined
+      ? []
+      : [
+          `Guardian: denied the last publication${denialCodes.length === 0 ? "" : ` (${denialCodes.join(", ")})`}`,
+        ]),
+    ...(result.noResponse === undefined
+      ? []
+      : [
+          `Question: went unanswered${result.noResponse.possibleCommit ? "; a step may have changed the site" : ""}`,
+        ]),
+    `Steps: ${result.executions.length} run, ${failed.length} failed.${lastFailure === undefined ? "" : ` Last failure: ${lastFailure}`}`,
+    `Writes that may have gone through: ${writes === 0 ? "none" : `${writes}; check the website before minting again`}`,
+  ]
+    .map((line) => `  ${line}\n`)
+    .join("");
+};
+
+/**
+ * The outcome as `mint-report.json` holds it. Each JSON diagnostic is parsed so the filter reaches
+ * inside it too. The filter drops every `rationale`, `advice`, `explanation` and `responseRulings`
+ * key: the models' words about steps and publications, such as Guardian's rationale and findings
+ * and the outcome reviewer's explanation, which may quote what a page returned, such as a session
+ * cookie. The summary stays as the harness wrote it for its caller, which may quote Guardian's
+ * rationale. Credentials and one-time codes are redacted before any model reads them.
+ */
+const reportText = (result: LocalMintOutcome) =>
+  `${JSON.stringify(
+    {
+      ...result,
+      diagnostics: result.diagnostics.map((entry) => {
+        try {
+          return JSON.parse(entry) as unknown;
+        } catch {
+          return entry;
+        }
+      }),
+    },
+    (key, value: unknown) =>
+      key === "rationale" ||
+      key === "advice" ||
+      key === "explanation" ||
+      key === "responseRulings"
+        ? undefined
+        : value,
+    2,
+  )}\n`;
+
 /**
  * The terminal CLI. `overrides` holds what a caller that starts it sets, such as model providers;
  * the CLI sets the terminal asker, and the browser and session budget from `args`.
@@ -148,8 +237,13 @@ const runCli = (
       });
       const result = yield* pomerado.mint(request);
       if (result.artifact === undefined) {
-        process.stderr.write(`${result.summary}\n`);
+        // The lines print before the report is written, so a failed write still shows them.
+        process.stderr.write(`${result.summary}\n${stoppedLines(result)}`);
         process.exitCode = 1;
+        // The outcome, which has no artifact here, stays on this machine beside the build.
+        const report = join(outputDirectory, "mint-report.json");
+        yield* Effect.tryPromise(() => writeFile(report, reportText(result)));
+        process.stderr.write(`  Full report: ${report}\n`);
         return;
       }
       const artifact = result.artifact;
