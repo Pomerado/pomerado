@@ -627,7 +627,8 @@ const restoredHostRefusals = (kept: unknown) => {
  * no login sent since (`beforeSignIn` false); and a task update the host refused. A publication or
  * live tests refused while the sign-in never confirmed may be its consequence, such as a recipe
  * nothing verified, as may a refused refill, and a refusal an older checkpoint kept without its
- * source is unknown: none of them keeps the reason.
+ * source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
+ * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
  */
 const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boolean) =>
   refusal.source === "sign_in_destination" ||
@@ -3734,7 +3735,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
         const unanswered = noAnswerHandBacks > 0;
         const refillRefused = dependencies.signInRefillRefused?.() === true;
-        const hostCheckRefusing = hostRefused || refillRefused || signInDestinationRefused;
+        // A challenge the host recorded and could not get past is read only for host_refused.
+        const challengeRefused =
+          reason === "host_refused" && dependencies.hostChallengeRefused?.() === true;
+        const hostCheckRefusing =
+          hostRefused || refillRefused || signInDestinationRefused || challengeRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
         if (reason === "owner_declined" && !ownerRefused && stopDeclined)
@@ -3793,10 +3798,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "host_not_refused",
             "No host check refused a step in this attempt, so the build has not ended. host_refused needs a host check that refused a step the build needs, such as finish_build, a sign-in form or a site change, or live tests the host refuses with no batch left while Guardian's denial of the last publication stands.",
           );
-        // The latest host refusal names its own fix, and neither sign-in screen answer stands
-        // beside it: the first report on its reason goes back with that step, and the next is
-        // taken. Spent live tests never stand beside it: they need Guardian's denial of the latest
-        // publication, and a host refusal of a later one ends that denial.
+        // The latest host refusal names its own fix, and neither sign-in screen answer nor a
+        // recorded challenge stands beside it: the first report on its reason goes back with that
+        // step, and the next is taken. Spent live tests never stand beside it: they need Guardian's
+        // denial of the latest publication, and a host refusal of a later one ends that denial.
         const latestHostRefusal = hostRefused ? standingHostRefusals.at(-1)?.refusal : undefined;
         const namedStep =
           latestHostRefusal?.source === "publication" &&
@@ -3811,7 +3816,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           namedStep !== undefined &&
           !namedStepsOffered.has(namedStep) &&
           !refillRefused &&
-          !signInDestinationRefused
+          !signInDestinationRefused &&
+          !challengeRefused
         ) {
           namedStepsOffered.add(namedStep);
           const told = namedStepReasons.has(namedStep)
@@ -3856,6 +3862,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...(refillRefused ? [{ source: "sign_in_refill" as const }] : []),
           ...(signInDestinationRefused ? [{ source: "sign_in_destination" as const }] : []),
           ...(liveTestsSpent ? [{ source: "live_tests_spent" as const }] : []),
+          ...(challengeRefused ? [{ source: "challenge" as const }] : []),
         ];
         const apart =
           standing.some(({ refusal, beforeSignIn }) =>

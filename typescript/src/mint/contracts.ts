@@ -228,8 +228,9 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), and
- * a refusal an older worker's checkpoint kept without its source (`unrecorded`).
+ * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
+ * older worker's checkpoint kept without its source (`unrecorded`).
  */
 export type HostRefusalBasis =
   | HostRefusalSource
@@ -238,6 +239,7 @@ export type HostRefusalBasis =
         | "sign_in_refill"
         | "sign_in_destination"
         | "live_tests_spent"
+        | "challenge"
         | "unrecorded";
     };
 
@@ -2936,6 +2938,14 @@ export interface MintDependencies {
    * has it. Absent, the harness knows only the refusals it was handed as failures.
    */
   readonly signInDestinationRefused?: () => boolean;
+  /**
+   * Whether the host recorded a challenge or bot check on the site that it could not get past, in
+   * this attempt or in the run the build repairs: a solver or wait that failed, so no step left in
+   * the attempt can run on the site, and a minter that tries again on a new browser meets the same
+   * check. A `host_refused` block stands on it, named as the source `challenge`. The harness reads
+   * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
+   */
+  readonly hostChallengeRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
