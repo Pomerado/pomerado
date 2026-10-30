@@ -604,6 +604,10 @@ test("input feedback that outlasts its two rounds ends the CLI build unpublished
       ["input_feedback", 0],
     ]);
     expect(await readdir(out)).toEqual(["mint-report.json"]);
+    // The report keeps Guardian's denials as parsed diagnostics, without its finding's words.
+    const saved = await readFile(join(out, "mint-report.json"), "utf8");
+    expect(saved).toContain('"code": "ReviewDenied"');
+    expect(saved).not.toContain("Make the account input free-form.");
   } finally {
     await rm(directory, { recursive: true, force: true });
     await site.close();

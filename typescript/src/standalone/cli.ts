@@ -112,10 +112,10 @@ const stopMeanings: Readonly<Record<MintStopReason | JobBuildBlocked["reason"], 
 };
 
 /**
- * The lines a mint that saved nothing prints under its summary: its codes, counts and report path.
- * Each code is a fixed literal, and the outcome holds no step's output, so no secret prints.
+ * The lines a mint that saved nothing prints under its summary: its codes and counts. Each code
+ * is a fixed literal, and the outcome holds no step's output, so no secret prints.
  */
-const stoppedLines = (result: LocalMintOutcome, report: string) => {
+const stoppedLines = (result: LocalMintOutcome) => {
   const why = result.stopReason ?? result.blocked?.reason;
   const denial = result.publicationDenial;
   const denialCodes = [denial?.reason, denial?.category].filter((code) => code !== undefined);
@@ -123,9 +123,12 @@ const stoppedLines = (result: LocalMintOutcome, report: string) => {
     (execution) => execution.status === "failed" || execution.status === "unsupported",
   );
   const last = failed.at(-1);
+  const lastFailure = last?.siteAccess?.code ?? last?.terminalFailure;
   const writes = (result.writes ?? []).filter((write) => write.status !== "not_applied").length;
   return [
-    why === undefined ? "Why: no reason recorded" : `Why: ${stopMeanings[why]} (${why})`,
+    why === undefined
+      ? "Why: no reason recorded; the full report's diagnostics hold what the host saw"
+      : `Why: ${stopMeanings[why]} (${why})`,
     ...(result.hostFailure === undefined ? [] : [`Host failure: ${result.hostFailure}`]),
     ...(denial === undefined
       ? []
@@ -137,24 +140,40 @@ const stoppedLines = (result: LocalMintOutcome, report: string) => {
       : [
           `Question: went unanswered${result.noResponse.possibleCommit ? "; a step may have changed the site" : ""}`,
         ]),
-    `Steps: ${result.executions.length} run, ${failed.length} failed.${last === undefined ? "" : ` Last failure: ${last.siteAccess?.code ?? last.terminalFailure ?? last.status}`}`,
+    `Steps: ${result.executions.length} run, ${failed.length} failed.${lastFailure === undefined ? "" : ` Last failure: ${lastFailure}`}`,
     `Writes that may have gone through: ${writes === 0 ? "none" : `${writes}; check the website before minting again`}`,
-    `Full report: ${report}`,
   ]
     .map((line) => `  ${line}\n`)
     .join("");
 };
 
 /**
- * The outcome as `mint-report.json` holds it: no model's words about a step (Guardian's rationale
- * and advice, the outcome reviewer's explanation), which may quote what a page returned, such as a
- * session cookie. Credentials and one-time codes are redacted before any model reads them.
+ * The outcome as `mint-report.json` holds it. Each JSON diagnostic is parsed so the filter reaches
+ * inside it too. The filter drops every `rationale`, `advice`, `explanation` and `responseRulings`
+ * key: the models' words about steps and publications, such as Guardian's rationale and findings
+ * and the outcome reviewer's explanation, which may quote what a page returned, such as a session
+ * cookie. The summary stays as the harness wrote it for its caller, which may quote Guardian's
+ * rationale. Credentials and one-time codes are redacted before any model reads them.
  */
 const reportText = (result: LocalMintOutcome) =>
   `${JSON.stringify(
-    result,
+    {
+      ...result,
+      diagnostics: result.diagnostics.map((entry) => {
+        try {
+          return JSON.parse(entry) as unknown;
+        } catch {
+          return entry;
+        }
+      }),
+    },
     (key, value: unknown) =>
-      key === "rationale" || key === "advice" || key === "explanation" ? undefined : value,
+      key === "rationale" ||
+      key === "advice" ||
+      key === "explanation" ||
+      key === "responseRulings"
+        ? undefined
+        : value,
     2,
   )}\n`;
 
@@ -218,11 +237,13 @@ const runCli = (
       });
       const result = yield* pomerado.mint(request);
       if (result.artifact === undefined) {
+        // The lines print before the report is written, so a failed write still shows them.
+        process.stderr.write(`${result.summary}\n${stoppedLines(result)}`);
+        process.exitCode = 1;
         // The outcome, which has no artifact here, stays on this machine beside the build.
         const report = join(outputDirectory, "mint-report.json");
         yield* Effect.tryPromise(() => writeFile(report, reportText(result)));
-        process.stderr.write(`${result.summary}\n${stoppedLines(result, report)}`);
-        process.exitCode = 1;
+        process.stderr.write(`  Full report: ${report}\n`);
         return;
       }
       const artifact = result.artifact;
