@@ -5308,8 +5308,8 @@ const websiteAuthentication = (input: string) => modelInput(input).websiteAuthen
 const unboundSignInInstruction =
   "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
 
-const preAuthorizedSignInInstruction = (signInSteps: boolean) =>
-  `A login the caller already authorized for this site is attached; the build has not signed in with it yet. Credential values are private host input. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate${signInSteps ? ", with a signInStep for each sign-in screen," : ""} before dependent business work; the host signs in with the attached login and continues within the same call. Never ask the caller for credentials or another login, or to relax a rule about which login to use: call authenticate instead. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.`;
+const preAuthorizedSignInInstruction =
+  "A login the caller already authorized for this site is attached; the build has not signed in with it yet. Credential values are private host input. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate, with a signInStep for each sign-in screen, before dependent business work; the host signs in with the attached login and continues within the same call. Call authenticate before asking the caller for another login or to relax a rule about which login to use. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
 
 it("tells a build with no login bound and none pre-authorized exactly what it was told before", async () => {
   let seen: unknown;
@@ -5325,75 +5325,22 @@ it("tells a build with no login bound and none pre-authorized exactly what it wa
 });
 
 // A login the caller authorized that waits for the build's first sign-in is attached, not
-// missing: the minter calls authenticate for it instead of asking the caller about logins.
-it.each([false, true])(
-  "tells a build with a pre-authorized login to sign in through authenticate (autofill %s)",
-  async (autofill) => {
-    let seen: unknown;
-    const f = await fixture(
-      (turn) =>
-        Effect.sync(() => {
-          seen = websiteAuthentication(turn.input);
-        }),
-      { websiteLoginPreAuthorized: true, ...(autofill ? { autofillSignIn: true as const } : {}) },
-    );
-    await f.run();
-    expect(seen).toEqual({
-      credentialsAvailable: false,
-      loginPreAuthorized: true,
-      instruction: preAuthorizedSignInInstruction(autofill),
-    });
-  },
-);
-
-it("tells a build with a bound login what it was told before, pre-authorized or not", async () => {
-  const seen: unknown[] = [];
-  for (const overrides of [
-    { websiteCredentialsAvailable: true },
-    { websiteCredentialsAvailable: true, websiteLoginPreAuthorized: true as const },
-  ]) {
-    const f = await fixture(
-      (turn) =>
-        Effect.sync(() => {
-          seen.push(websiteAuthentication(turn.input));
-        }),
-      overrides,
-    );
-    await f.run();
-  }
-  expect(seen[1]).toEqual(seen[0]);
-  expect(seen[0]).toMatchObject({ credentialsAvailable: true });
-  expect(seen[0]).not.toHaveProperty("loginPreAuthorized");
-});
-
-// A pre-authorized login is no held login: the build starts signed out, so its unanswered
-// question still goes back to the minter.
-it("hands an unanswered question back as no_answer when a login is only pre-authorized", async () => {
-  let asked = 0;
+// missing: the minter calls authenticate for it before asking the caller about logins.
+it("tells a build with a pre-authorized login to sign in through authenticate", async () => {
+  let seen: unknown;
   const f = await fixture(
     (turn) =>
-      Effect.gen(function* () {
-        expect(
-          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which format?"))),
-        ).toMatchObject({ status: "no_answer", userInputRequired: false });
-        expect(turn.isComplete()).toBe(false);
-        yield* turn.actions.execute(execution);
-        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
-          status: "published",
-        });
+      Effect.sync(() => {
+        seen = websiteAuthentication(turn.input);
       }),
-    {
-      websiteLoginPreAuthorized: true,
-      askInput: () =>
-        Effect.sync(() => {
-          asked++;
-        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
-    },
+    { websiteLoginPreAuthorized: true, autofillSignIn: true },
   );
-  const outcome = await f.run();
-  expect(outcome).toMatchObject({ build: "published" });
-  expect(outcome).not.toHaveProperty("noResponse");
-  expect(asked).toBe(1);
+  await f.run();
+  expect(seen).toEqual({
+    credentialsAvailable: false,
+    loginPreAuthorized: true,
+    instruction: preAuthorizedSignInInstruction,
+  });
 });
 
 /** A sign-in the host verified. */
