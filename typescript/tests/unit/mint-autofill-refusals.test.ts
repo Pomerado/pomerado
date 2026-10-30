@@ -512,7 +512,7 @@ it("tells the agent a submit stayed disabled after the fields were filled, as no
   });
   // The host asked the page again while it waited, typed again by keys, waited again, then stopped.
   expect(Date.now() - started).toBeGreaterThanOrEqual(10_000);
-  expect(typings).toEqual([undefined, { keys: true }]);
+  expect(typings).toEqual([{ trustedKeys: true }, { keys: true, trustedKeys: true }]);
   expect(executed.length).toBeGreaterThan(3);
   expect(JSON.stringify(report)).not.toContain("synthetic-password");
 }, 20_000);

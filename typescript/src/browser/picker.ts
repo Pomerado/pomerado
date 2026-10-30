@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
 import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
+import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
 import { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
 
 /**
@@ -617,6 +618,8 @@ const pickerLimits = Object.freeze(${JSON.stringify({
 const pickerTimedOut = (error, s) =>
   error?.name === "TimeoutError" || (error?.name !== "PickerFailure" && s && Date.now() >= s.until) ? pickerFailure("timeout") : error;
 const pickerSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const pickerPauses = ${String(typingPauses)};
+const pickerTypeKeys = ${String(typeKeys)};
 const pickerWanted = (wanted) => {
   const spellings = (Array.isArray(wanted) ? wanted : [wanted]).map((item) => String(item ?? "").replace(/\s+/g, " ").trim()).filter(Boolean);
   if (spellings.length === 0) throw pickerFailure("wanted_missing");
@@ -943,14 +946,16 @@ const pickerFieldValue = (field, s) =>
   field.evaluate((node) => (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement ? node.value : node.textContent ?? ""), undefined, s.act());
 // Clears the field when it holds text and types a query key by key, as a person does, never
 // filled at once, so a page that listens only to keys still answers; a line break or tab in it is
-// typed as a space, so it never presses Enter or Tab. It marks the typing's end, so a request a
-// page sends after its own pause, such as a debounce, still counts. On the second try, a popup's
-// search box is then run with the popup's Search button, or with Enter when the box is in no form
-// (Enter in a form can submit it).
+// typed as a space, so it never presses Enter or Tab. The keys come at a person's varied pace
+// (typingPauses), sped up so the pauses take at most a third of the call's time left. It marks the
+// typing's end, so a request a page sends after its own pause, such as a debounce, still counts.
+// On the second try, a popup's search box is then run with the popup's Search button, or with
+// Enter when the box is in no form (Enter in a form can submit it).
 const pickerType = async (s, field, query, step, scan) => {
   if (s.options.type) return s.options.type(field, query, step);
   if ((await pickerFieldValue(field, s).catch(() => null)) !== "") await field.fill("", s.act());
-  await field.pressSequentially(query.replace(/\s+/g, " "), { ...s.act(), delay: 10 });
+  const text = query.replace(/\s+/g, " ");
+  await pickerTypeKeys(field, text, pickerPauses(text, s.left() / 3), s.act());
   s.net.mark(Date.now());
   if (step === 1 && field !== s.control && scan?.go) return pickerTag(s, "data-pomerado-pick-go", s.token).click(s.act());
   if (step === 1 && field !== s.control && scan && !scan.inForm) return field.press("Enter", s.act());

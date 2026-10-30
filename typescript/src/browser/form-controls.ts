@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { foldChoiceText } from "../runtime/text.js";
+import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
 
 /**
  * The shape of a form control, as the page code reads it: a native date input, a text box, a
@@ -223,8 +224,11 @@ const formControlFill = (control, text, timeout) =>
   control.fill(text, { timeout }).catch(() => {
     throw formControlFailure("not_committed");
   });
+const formControlPauses = ${String(typingPauses)};
+const formControlKeys = ${String(typeKeys)};
+/** Types key by key at a person's varied pace (typingPauses). */
 const formControlTypeKeys = (control, keys, timeout) =>
-  control.pressSequentially(keys, { timeout }).catch(() => {
+  formControlKeys(control, keys, formControlPauses(keys), { timeout }).catch(() => {
     throw formControlFailure("not_committed");
   });
 const formControlChooseNative = async (control, wanted, timeout) => {

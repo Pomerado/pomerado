@@ -390,7 +390,10 @@ interface FillInput extends CallInput {
    */
   readonly typedBefore?: readonly string[];
   readonly keyboard: CredentialKeyboard;
-  /** How each value is typed; `paste` by default. */
+  /**
+   * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
+   * (`InsertionOptions.trustedKeys`), the retype below included.
+   */
   readonly typing?: CredentialTypingMode;
 }
 
@@ -887,8 +890,9 @@ const afterFieldCall = (
  * Fills the values into the step's fields, in order, and clicks its submit, on the stable primary tab or its inspected authentication popup,
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
- * node over its own encrypted DevTools socket (`keyboard`), so no value but a date of birth ever enters a Kernel call's script text or
- * its request to Kernel's REST API. It reports per-field outcomes and never a
+ * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
+ * trusted key per character into it there, so no value but a date of birth ever enters a Kernel
+ * call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -896,7 +900,8 @@ const afterFieldCall = (
  * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
  * clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
- * (`InsertionOptions.keys`), for a page that enables it only on key presses, and waits once more.
+ * (`InsertionOptions.keys`, or trusted keys again under `keyboard`), for a page that enables it
+ * only on key presses, and waits once more.
  * When it still stays disabled the report says so (`stayed_disabled`). A step whose code the host
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
@@ -938,11 +943,11 @@ const afterFieldCall = (
  * main frame went out, whatever the site answered, and the page gets the settle wait from there;
  * with no such request it is `failed`.
  */
-export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
+export const fillAutofillStep = (fill: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
+    const input =
+      fill.typing === "keyboard" ? { ...fill, keyboard: byTrustedKeys(fill.keyboard) } : fill;
     const { step } = input;
-    if (input.typing === "keyboard")
-      return withCheck(refused("typing_unavailable"), "typing_unavailable");
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
@@ -1040,6 +1045,12 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
 /** The keyboard, typing each value key by key (`InsertionOptions.keys`). */
 const byKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
   insertText: (target, text, options) => keyboard.insertText(target, text, { ...options, keys: true }),
+});
+
+/** The keyboard, pressing a trusted key per character (`InsertionOptions.trustedKeys`). */
+const byTrustedKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
+  insertText: (target, text, options) =>
+    keyboard.insertText(target, text, { ...options, trustedKeys: true }),
 });
 
 /** The first of the step's selectors that reaches into another frame, its `dismiss` included. */
