@@ -331,7 +331,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   left, match it to the caller's values, and call `verified()` with no argument just before
   returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
   such as a list, a history or an account screen, only to prove the write: a commit that went
-  through, with the new record's id, already proves it. When a commit
+  through, with the new record's id, already proves it. Return the tool's whole output from the
+  step that confirms the write, read from the commit's response or the page it left: the caller
+  or the site may cancel, refund or delete the record soon after, and a later read-back then
+  shows less. When a commit
   step returned without calling `verified()` and its `stateChangingRequests` list the commit
   request with a 2xx or 3xx status, prefer confirming it in the next step from the page as
   it stands. Make no execute

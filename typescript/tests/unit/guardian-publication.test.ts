@@ -17,6 +17,7 @@ import {
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
   publicationSafetyDefaultPolicy,
+  publicationWriteLaterStatePolicy,
 } from "../../src/guardian/publication.js";
 import {
   makeGuardian,
@@ -1353,6 +1354,25 @@ describe("the OpenAI publication reviewer", () => {
     });
     expect(policyOf(requests[0])).toContain(publicationCallerDecisionPolicy);
     expect(publicationOutputPolicy).toContain(publicationCallerDecisionPolicy);
+  });
+
+  // A write whose record was cancelled, refunded or deleted after the write went through can no
+  // longer show some needed values. The commit's own evidence and that record's later state, both in
+  // the host's records, let those be optional, never removed. A read, and a write with no such later
+  // state, keep the rule.
+  it("excuses a write's needed value a later cancel, refund or delete left unreadable, on host records only", () => {
+    const loosened = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Loosened needed value:"),
+      publicationOutputPolicy.indexOf("Lost information: a fact"),
+    );
+    expect(loosened).toContain(publicationWriteLaterStatePolicy);
+    expect(loosened).toContain(
+      "only a caller-confirmed design decision, below, or a write's record later cancelled, refunded or deleted, as this rule says, does.",
+    );
+    expect(publicationWriteLaterStatePolicy).toContain(
+      "the later read-back never shows the write went through",
+    );
+    expect(publicationWriteLaterStatePolicy).not.toMatch(/left out|removed/);
   });
 
   // One caller's "always" answer must not make a published write take a paid add-on, an upsell,
