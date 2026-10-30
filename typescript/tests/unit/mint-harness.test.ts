@@ -1599,6 +1599,39 @@ it.each([
   },
 );
 
+// A write build's output mismatch sends the minter to the step that confirmed the write first, and
+// lets a field a later cancel, refund or delete left unreadable go optional so the tool can
+// publish. A read's text is unchanged.
+it("words a write build's output mismatch apart from a read build's", async () => {
+  const instructions: Record<string, string> = {};
+  for (const { effect, purpose } of [
+    { effect: "read", purpose: "example" },
+    { effect: "write", purpose: "act" },
+  ] as const) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose });
+          const answer = JSON.parse(yield* turn.actions.finish(publication));
+          const instruction = String(Reflect.get(Object(answer), "instruction"));
+          instructions[effect] = instruction.slice(instruction.indexOf("Not published:"));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "contract_output_mismatch" }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect });
+  }
+  expect(instructions).toStrictEqual({
+    read: "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+    write:
+      "Not published: the script's output schema rejects the output this write's confirming step returned. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional or remove it so the tool can publish. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+  });
+});
+
 // A finish_build the host refuses before publication runs is a decision too.
 it.each([
   { refusal: "an invalid request", input: { ...publication, metadata: undefined }, code: "InvalidRequest" },
