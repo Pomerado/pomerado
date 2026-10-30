@@ -17,6 +17,7 @@ import {
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
   publicationSafetyDefaultPolicy,
+  publicationWriteLaterStatePolicy,
 } from "../../src/guardian/publication.js";
 import {
   makeGuardian,
@@ -963,6 +964,19 @@ describe("the publication policy", () => {
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
 
+  // A value the caller names, a city or a product name alike, goes through the site's own search.
+  // Matching it only against a menu the page shows, or a list in the source, is a finding; a fast
+  // path that falls back to the search, a fixed list that is the site's only control, or a
+  // signed-in account's saved entries where adding one would save it, is not.
+  it("finds a value matched only against a shown shortlist instead of the site's search", () => {
+    const rule =
+      "Shortlist lookup: source that matches a value the caller names that the site can search, such as a place, business, product, provider or record, only against the options the page already shows, such as a menu of popular choices or every button's text, or against a hard-coded list or alias table, or that throws for a value that list lacks, instead of using the site's own search, when the captures show the site offering one, such as a search box, a typeahead or a button that opens one. The fix is to type the value into that search, or in an HTTP version to send the site's own lookup request, and pick the result that matches, as pickValue does. Trying the shown options first is fine when the code falls back to that search for any other value, and so is an enum of a fixed list that is the site's only control for the value, or a match among the account's saved entries where adding one would save it to the account.";
+    expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
+    // Not places only: the rule names a business or product beside a place, and no place-only
+    // copy of it stays.
+    expect(publicationOutputPolicy).not.toMatch(/Shortlist place|a place the caller gives/u);
+  });
+
   // Of several equal matches, taking the first or letting the caller choose is the tool's own
   // choice. Only taking the first without returning the match it used is a finding, and one the
   // publication review can return.
@@ -1353,6 +1367,25 @@ describe("the OpenAI publication reviewer", () => {
     });
     expect(policyOf(requests[0])).toContain(publicationCallerDecisionPolicy);
     expect(publicationOutputPolicy).toContain(publicationCallerDecisionPolicy);
+  });
+
+  // A write whose record was cancelled, refunded or deleted after the write went through can no
+  // longer show some needed values. The commit's own evidence and that record's later state, both in
+  // the host's records, let those be optional, never removed. A read, and a write with no such later
+  // state, keep the rule.
+  it("excuses a write's needed value a later cancel, refund or delete left unreadable, on host records only", () => {
+    const loosened = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Loosened needed value:"),
+      publicationOutputPolicy.indexOf("Lost information: a fact"),
+    );
+    expect(loosened).toContain(publicationWriteLaterStatePolicy);
+    expect(loosened).toContain(
+      "only a caller-confirmed design decision, below, or a write's record later cancelled, refunded or deleted, as this rule says, does.",
+    );
+    expect(publicationWriteLaterStatePolicy).toContain(
+      "the later read-back never shows the write went through",
+    );
+    expect(publicationWriteLaterStatePolicy).not.toMatch(/left out|removed/);
   });
 
   // One caller's "always" answer must not make a published write take a paid add-on, an upsell,
