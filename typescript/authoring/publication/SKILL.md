@@ -73,9 +73,9 @@ first:
   and non-null: never loosen one. Only a record whose own page shows no such value may return
   null, together with a field saying why; a description never excuses a nullable needed value,
   and Guardian refuses a schema that makes one optional or nullable. The one write exception: when
-  the session shows the write went through and a later read-back shows the record cancelled,
-  refunded or deleted, a value that read-back can no longer show may be optional or left out,
-  and the field's description, or the tool's for one left out, says so. No output is a constant
+  the commit's own response or page shows the write went through, and a later read-back of that
+  same record shows it cancelled, refunded or deleted, a value that read-back can no longer show
+  may be optional, and the field's description says so. No output is a constant
   where the page shows a value, and titles and names are returned in full (core skill, output
   fields).
 - **Typed output.** Prefer parsing what the page shows into typed fields over returning a

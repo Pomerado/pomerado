@@ -477,13 +477,13 @@ export const publicationCallerDecisionPolicy =
 
 /**
  * A write's needed value that a later read-back can no longer show, because the record was
- * cancelled, refunded or deleted after the write went through, may be optional or left out. Only
- * the host's records show that state, never the minter's word; a read, and a write with no such
- * later state, keep the Loosened needed value rule as it is. Part of that rule in
- * `publicationOutputPolicy`.
+ * cancelled, refunded or deleted after the write went through, may be optional. Only the host's
+ * records show both, the commit's own evidence that the write went through and the later state of
+ * that same record, never the minter's word; a read, and a write with no such later state, keep
+ * the Loosened needed value rule as it is. Part of that rule in `publicationOutputPolicy`.
  */
 export const publicationWriteLaterStatePolicy =
-  "In a write only, a needed value may also be optional, or left out, when the host's records show both that the write went through, by the session's confirmation or its commit request answered 2xx or 3xx in the captures, and that a later read-back of that record, in publication/session-output.json or the captures, shows it cancelled, refunded or deleted, so the value can no longer be read; the field's description, or the tool's for a value left out, says so. Only those records show it: a description, code comment or finding response, or a value the source sets rather than reads from the site, shows nothing. This excuses only that value's absence, under this rule and the Lost information rule; a value present still meets the rest of this standard, its type, literal and format included, and a read, or a write whose records show no such later state, is judged as above.";
+  "In a write only, a needed value may also be optional when the host's records show both that the write went through, by its commit request in the captures answered 2xx or 3xx with no error after it in its readable response or on the page it left, or by a confirmation the session recorded before that later state, and that a later read-back of that same record, by its identifier or the caller's values, in publication/session-output.json or the captures, shows it cancelled, refunded or deleted, so the value can no longer be read; the field's description says so. Only those records show it: a description, code comment or finding response, or a value the source sets rather than reads from the site, shows nothing, and the later read-back never shows the write went through. This excuses only that value being optional: a value present still meets the rest of this standard, its type, literal and format included, and a read, or a write whose records show no such later state, is judged as above.";
 
 /**
  * The output and input rules a publication review blocks on, shared by every host's publication

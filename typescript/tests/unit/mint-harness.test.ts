@@ -1599,9 +1599,9 @@ it.each([
   },
 );
 
-// A write build's output mismatch sends the minter to the step that confirmed the write first, and
-// lets a field a later cancel, refund or delete left unreadable go optional so the tool can
-// publish. A read's text is unchanged.
+// A write build's output mismatch asks for a schema its output decodes against, sends the minter to
+// the step that confirmed the write, and lets a field a later cancel, refund or delete left
+// unreadable go optional so the tool can publish. A read's text is unchanged.
 it("words a write build's output mismatch apart from a read build's", async () => {
   const instructions: Record<string, string> = {};
   for (const { effect, purpose } of [
@@ -1628,7 +1628,7 @@ it("words a write build's output mismatch apart from a read build's", async () =
   expect(instructions).toStrictEqual({
     read: "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
     write:
-      "Not published: the script's output schema rejects the output this write's confirming step returned. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional or remove it so the tool can publish, and say why in the field's description, or the tool's for one removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+      "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
   });
 });
 
