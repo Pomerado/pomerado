@@ -82,7 +82,9 @@ neither: it tailors the answer. Apply it, read it back and always return it, as 
 or `applied_zip`, the site's default included when the caller gave none, as the core skill's
 input schema says ("Inputs that tailor the answer"). When the caller gives a location but no
 store, use what the site would show for that location, such as the nearest store, rather than
-what the site guessed from the browser's own location, and return what was applied.
+what the site guessed from the browser's own location, and return what was applied. Set a
+place the caller gives through the site's own location search or picker, never by matching
+only the places the page already shows (core skill's input schema).
 
 ## Results
 

@@ -963,6 +963,16 @@ describe("the publication policy", () => {
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
 
+  // A place the caller gives goes through the site's own location search. Matching it only
+  // against a menu the page shows, or a list in the source, is a finding; a fast path that falls
+  // back to the search, or a fixed list that is the site's only control, is not.
+  it("finds a place matched only against a shown shortlist instead of the site's search", () => {
+    expect(publicationOutputPolicy).toContain(
+      "Shortlist place: source that matches a place the caller gives, such as a city, address, region or area, only against the options the page already shows, such as a menu of popular cities or every button's text, or against a hard-coded list or alias table, or that throws for a place that list lacks instead of using the site's own location search, when the captures show the site offering one, such as a location box, a typeahead or a location button that opens one. The fix is to type the place into that search and pick from its suggestions, as pickValue does. Trying the shown options first is fine when the code falls back to that search for any other place, and so is an enum of a fixed list that is the site's only control for the place.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
   // Of several equal matches, taking the first or letting the caller choose is the tool's own
   // choice. Only taking the first without returning the match it used is a finding, and one the
   // publication review can return.
