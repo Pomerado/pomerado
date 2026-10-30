@@ -874,6 +874,15 @@ typed failures for every other state; never return interstitial fields as a deta
 result. `references/navigation.ts` shows this sequence in one call, reached through the site's
 search (`detailNavigation`) and from a caller's page URL opened unchanged (`detailFromUrl`).
 
+When the tool opens a record it picked from the site's results by a name the caller gave, such
+as a restaurant, venue, product or provider, prefer to confirm the page by the site's own id or
+link from that result, such as the path the result linked to. Compare visible names loosely, if
+at all, as a read-back does, with
+`readBackMatches(shown, picked) || readBackMatches(picked, shown)` from `pomerado/runtime`,
+`picked` being the name the result showed, rather than equality or `sameText`, since a page's
+heading may add words to that name or drop some. Prefer not to fail a valid target over
+punctuation, case, accents, an article such as The, a location suffix or the heading's format.
+
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible
 write, login or other consequential effect requires reconciliation before repeating
