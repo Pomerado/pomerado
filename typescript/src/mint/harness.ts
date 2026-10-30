@@ -627,7 +627,8 @@ const restoredHostRefusals = (kept: unknown) => {
  * no login sent since (`beforeSignIn` false); and a task update the host refused. A publication or
  * live tests refused while the sign-in never confirmed may be its consequence, such as a recipe
  * nothing verified, as may a refused refill, and a refusal an older checkpoint kept without its
- * source is unknown: none of them keeps the reason.
+ * source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
+ * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
  */
 const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boolean) =>
   refusal.source === "sign_in_destination" ||
@@ -3799,8 +3800,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
         // The latest host refusal names its own fix, and neither sign-in screen answer nor a
         // recorded challenge stands beside it: the first report on its reason goes back with that
-        // step, and the next is taken. Spent live tests never stand beside it: they need Guardian's denial of the latest
-        // publication, and a host refusal of a later one ends that denial.
+        // step, and the next is taken. Spent live tests never stand beside it: they need Guardian's
+        // denial of the latest publication, and a host refusal of a later one ends that denial.
         const latestHostRefusal = hostRefused ? standingHostRefusals.at(-1)?.refusal : undefined;
         const namedStep =
           latestHostRefusal?.source === "publication" &&
