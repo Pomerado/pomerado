@@ -63,10 +63,10 @@ write build with `mint_update` and `recommend: "new_mint"`.
 Sign in first when the site needs it, and for a cart or checkout as .agents/cart/SKILL.md
 says, with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
-read-only, for example to read the first page's options, run the searches the task needs and
-set the session's delivery or pickup location as a read (above), with `pickValue` and the
-site's own confirm control in one step. Never fill, select, add, save or submit anything else
-there, except one made-up key in the site's own format, with a
+read-only, for example to read the first page's options, and set the session's delivery or
+pickup location as a read (above), with `pickValue` and the site's own confirm control in one
+step. Never fill, select, add, save or submit anything else there, except one made-up key in
+the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill).
 

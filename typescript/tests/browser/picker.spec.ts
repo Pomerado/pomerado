@@ -223,7 +223,7 @@ test("pickValue reports no match, with what the site suggested, instead of timin
   });
 });
 
-test("pickValue types again key by key when the field listens only to keys, and answers that land out of order never win", async ({ page }) => {
+test("pickValue types the value once more, its last key once the page goes quiet, when an older, slower answer to an earlier key landed last", async ({ page }) => {
   const cities = ["Sacramento", "Salem", "San Diego", "San Jose", "Santa Fe", "Santiago", "Seattle", "Spokane"];
   const asked: string[] = [];
   await serve(

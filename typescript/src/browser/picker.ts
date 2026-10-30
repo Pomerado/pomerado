@@ -623,7 +623,8 @@ const pickerWanted = (wanted) => {
   return [...new Set(spellings)];
 };
 // The site's own requests a picker's action caused: xhr, fetch and documents to the page's site
-// (any host when the page has none) that started within causedMs of the action, counted until
+// (any host when the page has none) that started from the action to causedMs after the picker's
+// latest mark, such as the end of its typing, counted until
 // they end or for the inflight budget. A poll, one request (same method, URL and body) started
 // four times at a steady interval outside every window the picker's own actions opened, such as
 // a heartbeat, is the page's own and never counts. A request starting right after one of the
@@ -683,7 +684,7 @@ const pickerNetwork = (page, causedMs, siteDomain) => {
   page.on("request", onRequest);
   page.on("requestfinished", onDone);
   page.on("requestfailed", onDone);
-  const caused = (since) => entries.filter((entry) => !polls.has(entry.key) && entry.at >= since && entry.at <= since + causedMs);
+  const caused = (since) => entries.filter((entry) => !polls.has(entry.key) && entry.at >= since && entry.at <= Math.max(since, marks.at(-1) ?? since) + causedMs);
   const pending = (since) => caused(since).filter((entry) => entry.endAt === null && Date.now() - entry.at < pickerLimits.inflight);
   return {
     mark: (at) => marks.push(at),
@@ -832,10 +833,11 @@ const pickerTag = (s, name, value) => s.frame.locator("[" + name + "=" + JSON.st
 const pickerChoices = (options) => options.map((option) => ({ names: option.names, value: option.value, disabled: option.disabled, key: option.key }));
 // Waits for the picker's options to answer an action: no loading sign, no request the action
 // started in flight, the author's answered() true, and the list unchanged for settleMs (or for
-// idleMs when nothing reacted at all). Returns the last scan and whether anything reacted.
+// idleMs when nothing reacted at all), counted from the action's end, so typing a long query
+// uses none of it. Returns the last scan and whether anything reacted.
 const pickerSettle = async (s, since, before, query) => {
   let last = null;
-  let changedAt = since;
+  let changedAt = Date.now();
   let reacted = false;
   let looks = 0;
   while (true) {
@@ -940,13 +942,16 @@ const pickerPicked = (kind, found, refills) => ({
 const pickerFieldValue = (field, s) =>
   field.evaluate((node) => (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement ? node.value : node.textContent ?? ""), undefined, s.act());
 // Clears the field when it holds text and types a query key by key, as a person does, never
-// filled at once, so a page that listens only to keys still answers. On the second try, a popup's
+// filled at once, so a page that listens only to keys still answers; a line break or tab in it is
+// typed as a space, so it never presses Enter or Tab. It marks the typing's end, so a request a
+// page sends after its own pause, such as a debounce, still counts. On the second try, a popup's
 // search box is then run with the popup's Search button, or with Enter when the box is in no form
 // (Enter in a form can submit it).
 const pickerType = async (s, field, query, step, scan) => {
   if (s.options.type) return s.options.type(field, query, step);
   if ((await pickerFieldValue(field, s).catch(() => null)) !== "") await field.fill("", s.act());
-  await field.pressSequentially(query, { ...s.act(), delay: 10 });
+  await field.pressSequentially(query.replace(/\s+/g, " "), { ...s.act(), delay: 10 });
+  s.net.mark(Date.now());
   if (step === 1 && field !== s.control && scan?.go) return pickerTag(s, "data-pomerado-pick-go", s.token).click(s.act());
   if (step === 1 && field !== s.control && scan && !scan.inForm) return field.press("Enter", s.act());
 };
@@ -984,7 +989,7 @@ const pickerQuery = async (s, field, wanted, seenAvailable = []) => {
           await pickerType(s, field, query.slice(0, -1), step, snapshot);
           await pickerPageQuiet(s, Math.min(pickerLimits.quiet, s.left() / 2));
           since = pickerMark(s);
-          await field.pressSequentially(query.slice(-1), s.act());
+          await field.pressSequentially(query.slice(-1).replace(/\s/, " "), s.act());
         } else await pickerType(s, field, query, step, snapshot);
         ({ scan, reacted } = await pickerSettle(s, since, before, query));
         found = await pickerCollect(s, scan, wanted);
@@ -998,7 +1003,7 @@ const pickerQuery = async (s, field, wanted, seenAvailable = []) => {
       available.push(...pickerAvailable(found.list, wanted));
       // A tag input that may create values and shows nothing for the text is a free-entry field.
       if (!reacted && s.options.create) break;
-      if (!reacted && step < 2) continue;
+      if (!reacted && step < 1) continue;
       if (!retyped && scan.options.length > 0 && !s.options.type) {
         retyped = true;
         step = -1;

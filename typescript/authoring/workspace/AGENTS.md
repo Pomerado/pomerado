@@ -371,9 +371,10 @@ only make declining it its default (.agents/writes/SKILL.md). No request or answ
 words such as synthetic, sample or test data settle no value or choice. A caller that wants
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field, except the one
-made-up record key the writes and testing skills allow. Signed out, or for a signed-in
-session's per-visit location, picking one of the page's own options for state a read needs, such
-as a pickup mode that opens the store picker, is part of the read.
+made-up record key the writes and testing skills allow. Signed out,
+picking one of the page's own options for state a read needs, such as a pickup mode that opens
+the store picker, is part of the read, and so is picking one for a signed-in session's per-visit
+location.
 
 **Solve before you narrow.** When part of the requested tool proves harder than it looked, such
 as a field, a column type or an option the first version could not write or read back, or a
