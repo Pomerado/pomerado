@@ -280,18 +280,19 @@ const claimForKeys = `function(key, origin) {
 }`;
 const guardCheck = `function() { return this() ?? "ready"; }`;
 /**
- * Runs on the field once its last key went in. A field that kept fewer characters than were typed,
- * each of them one of the text's in order, as one that drops keys does, gets the whole text at once
- * in place of what it kept, guarded as each key was: the atomic insertion typing replaced. A field
- * that shows anything else, as one that formats or masks its value with its own marks, is left as
- * typed, and so is a field the call can no longer read, as on a page that sent itself on the
- * last key.
+ * Runs on the field once its last key went in. A field that kept some but fewer characters than
+ * were typed, each of them one of the text's in order, as one that drops keys does, gets the whole
+ * text at once in place of what it kept, guarded as each key was: the atomic insertion typing
+ * replaced. A field left empty is left so, for the next call's check, as one the page emptied was
+ * before. A field that shows anything else, as one that formats or masks its value with its own
+ * marks, is left as typed, and so is a field the call can no longer read, as on a page that sent
+ * itself on the last key.
  */
 const replaceDropped = `function(guard, text) {
   const kept = Array.from(String(this.value ?? this.textContent ?? ""));
   const typed = Array.from(text);
   let at = 0;
-  const dropped = kept.length < typed.length &&
+  const dropped = kept.length > 0 && kept.length < typed.length &&
     kept.every((character) => (at = typed.indexOf(character, at) + 1) > 0);
   if (!dropped) return "inserted";
   const refused = guard();
