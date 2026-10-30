@@ -501,6 +501,36 @@ it.each([
   }
 });
 
+// A challenge or bot check on the site that the host recorded and could not get past leaves the
+// build no step it can run there, and the minter's host_refused report was refused while it tried
+// again on every new browser. The report stands on the host's record of it
+// (`hostChallengeRefused`), naming the challenge as its basis; with none on record it is refused.
+it.each([
+  { recorded: true, ends: true },
+  { recorded: false, ends: false },
+])("ends as host_refused on a challenge the host recorded: $ends", async ({ recorded, ends }) => {
+  const explanation = "The site's bot check stopped every browser, so nothing could be tested.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { hostChallengeRefused: () => recorded },
+  );
+  const outcome = await f.run();
+  if (ends) {
+    expect(f.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "challenge" }] });
+  } else {
+    expect(outcome).not.toHaveProperty("blocked");
+    expect(lastResult(f.requests[1])).toContain("host_not_refused");
+  }
+});
+
 /** What an accepted ending's `phase: "blocked"` diagnostic says the host refusal stood on. */
 const blockedRecord = (outcome: { readonly diagnostics: readonly string[] }) =>
   outcome.diagnostics
