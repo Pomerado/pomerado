@@ -963,14 +963,17 @@ describe("the publication policy", () => {
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
 
-  // A place the caller gives goes through the site's own location search. Matching it only
-  // against a menu the page shows, or a list in the source, is a finding; a fast path that falls
-  // back to the search, a fixed list that is the site's only control, or a signed-in account's
-  // saved addresses where adding one would save it, is not.
-  it("finds a place matched only against a shown shortlist instead of the site's search", () => {
-    expect(publicationOutputPolicy).toContain(
-      "Shortlist place: source that matches a place the caller gives, such as a city, address, region or area, only against the options the page already shows, such as a menu of popular cities or every button's text, or against a hard-coded list or alias table, or that throws for a place that list lacks instead of using the site's own location search, when the captures show the site offering one, such as a location box, a typeahead or a location button that opens one. The fix is to type the place into that search, or in an HTTP version to send the site's own lookup request, and pick the suggestion that matches the place, as pickValue does. Trying the shown options first is fine when the code falls back to that search for any other place, and so is an enum of a fixed list that is the site's only control for the place, or a match among the account's saved addresses where adding one would save it to the account.",
-    );
+  // A value the caller names, a city or a product name alike, goes through the site's own search.
+  // Matching it only against a menu the page shows, or a list in the source, is a finding; a fast
+  // path that falls back to the search, a fixed list that is the site's only control, or a
+  // signed-in account's saved entries where adding one would save it, is not.
+  it("finds a value matched only against a shown shortlist instead of the site's search", () => {
+    const rule =
+      "Shortlist lookup: source that matches a value the caller names, such as a place, business, product, provider or record, only against the options the page already shows, such as a menu of popular choices or every button's text, or against a hard-coded list or alias table, or that throws for a value that list lacks, instead of using the site's own search, when the captures show the site offering one, such as a search box, a typeahead or a button that opens one. The fix is to type the value into that search, or in an HTTP version to send the site's own lookup request, and pick the result that matches, as pickValue does. Trying the shown options first is fine when the code falls back to that search for any other value, and so is an enum of a fixed list that is the site's only control for the value, or a match among the account's saved entries where adding one would save it to the account.";
+    expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
+    // Not places only: the rule names a business or product beside a place, and no place-only
+    // copy of it stays.
+    expect(publicationOutputPolicy).not.toMatch(/Shortlist place|a place the caller gives/u);
   });
 
   // Of several equal matches, taking the first or letting the caller choose is the tool's own
