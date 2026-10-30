@@ -2643,6 +2643,14 @@ export interface MintDependencies {
   readonly capabilityQuestion?: string;
   /** Host-resolved availability only. Credentials never enter the model request. */
   readonly websiteCredentialsAvailable?: boolean;
+  /**
+   * With no login bound (`websiteCredentialsAvailable` not true): the caller already authorized a
+   * login the host signs in with once the build calls execute purpose authenticate. It changes
+   * only what the minter is told about signing in. The build still starts signed out, so it is
+   * not a held login: an unanswered question is handed back as before. A core without it ignores
+   * it.
+   */
+  readonly websiteLoginPreAuthorized?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**

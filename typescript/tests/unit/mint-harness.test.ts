@@ -5302,6 +5302,47 @@ it("ends a signed-in build as no_response when its example's script question goe
   });
 });
 
+/** What the minter's first request says about signing in. */
+const websiteAuthentication = (input: string) => modelInput(input).websiteAuthentication;
+
+const unboundSignInInstruction =
+  "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+const preAuthorizedSignInInstruction =
+  "A login the caller already authorized for this site is attached; the build has not signed in with it yet. Credential values are private host input. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate, with a signInStep for each sign-in screen, before dependent business work; the host signs in with the attached login and continues within the same call. Call authenticate before asking the caller for another login or to relax a rule about which login to use. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+it("tells a build with no login bound and none pre-authorized exactly what it was told before", async () => {
+  let seen: unknown;
+  const f = await fixture((turn) =>
+    Effect.sync(() => {
+      seen = websiteAuthentication(turn.input);
+    }),
+  );
+  await f.run();
+  expect(JSON.stringify(seen)).toBe(
+    JSON.stringify({ credentialsAvailable: false, instruction: unboundSignInInstruction }),
+  );
+});
+
+// A login the caller authorized that waits for the build's first sign-in is attached, not
+// missing: the minter calls authenticate for it before asking the caller about logins.
+it("tells a build with a pre-authorized login to sign in through authenticate", async () => {
+  let seen: unknown;
+  const f = await fixture(
+    (turn) =>
+      Effect.sync(() => {
+        seen = websiteAuthentication(turn.input);
+      }),
+    { websiteLoginPreAuthorized: true, autofillSignIn: true },
+  );
+  await f.run();
+  expect(seen).toEqual({
+    credentialsAvailable: false,
+    loginPreAuthorized: true,
+    instruction: preAuthorizedSignInInstruction,
+  });
+});
+
 /** A sign-in the host verified. */
 const verifiedSignIn = {
   executionId: "signed_in",
