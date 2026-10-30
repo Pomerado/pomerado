@@ -243,6 +243,14 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- Look up anything the caller names that the site can search, such as a place, business,
+  product, provider or record, through the site's own search, typeahead or picker, rather than
+  matching only the options the page already shows, such as a menu of popular choices or the
+  page's buttons, or a list or aliases of your own: the site's search finds what no menu lists.
+  Trying the shown options first is fine when the tool falls back to that search for any other
+  value. When the site's only control for the value is a fixed list, the input is an enum of
+  that list, as above. In a signed-in tool where adding an entry saves it to the account, such
+  as a new address or payee, matching the account's saved entries is fine.
 - On a write, every choice the session met is an input, costly choices included, and any
   other option, such as a seat, is an optional input, as the writes skill says ("Compose and
   publish").
@@ -424,7 +432,8 @@ names, the record's identifier as the site shows it, and the context those depen
 shows it, such as dates, a party size or a location. Make each one required and non-null, typed
 so a value the code could not read fails the output check (`Schema.NonEmptyTrimmedString` for
 text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever a
-description says. A run whose output fails its schema goes to repair.
+description says, except as below and for a write's record later cancelled, refunded or deleted
+(publication skill). A run whose output fails its schema goes to repair.
 - The owner may settle a different form for every run: in the request's own explicit words, in
   an answer to your design question or in a task update, such as blank fields returned as empty
   strings. Publication review honours that decision as stated. Build it that way, and say in
@@ -873,6 +882,18 @@ wait again and recheck the final site, path and page identity before extraction.
 typed failures for every other state; never return interstitial fields as a detail
 result. `references/navigation.ts` shows this sequence in one call, reached through the site's
 search (`detailNavigation`) and from a caller's page URL opened unchanged (`detailFromUrl`).
+
+When the tool opens a record it picked from the site's results by a name the caller gave, such
+as a restaurant, venue, product or provider, prefer to confirm the page by the site's own id or
+link from that result, such as the path the result linked to. Compare visible names loosely, if
+at all, with `readBackMatches(shown, picked) || readBackMatches(picked, shown)` from
+`pomerado/runtime`, `picked` being the name the result showed, rather than equality or
+`sameText`, since a page's heading may add words to that name or drop some. Prefer not to fail a
+valid target over punctuation, case, accents, an article such as The, a location suffix or the
+heading's format. This is for the page opened from that result. A picker's selected label still
+compares with `sameText`, and choosing among results follows the proper-noun rule above, since
+this loose match also accepts another record whose name adds or drops a word, such as Bay Diner
+for Big Bay Diner.
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible
