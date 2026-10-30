@@ -509,7 +509,8 @@ input.addEventListener("keyup", () => { fetch("/api/branches?q=" + encodeURIComp
 });
 
 test("pickValue still refuses, and never types again, when too little of its time is left", async ({ page }) => {
-  // The site answers every term with nothing, after 2.1 s of the call's 3 s.
+  // The site answers every term with nothing, 2.4 s after each key of the call's 4 s, so once typed
+  // at a person's pace less than a third of the call is left.
   await serve(
     page,
     `<form><label>Branch <input id="branch" role="combobox" aria-controls="branches" autocomplete="off"></label>
@@ -524,9 +525,9 @@ input.addEventListener("input", async () => {
   list.innerHTML = '<li class="no-results">No matches</li>';
 });
 </script>`,
-    () => ({ delayMs: 2100, body: [] }),
+    () => ({ delayMs: 2400, body: [] }),
   );
-  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 3000 });`)).toEqual({
+  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 4000 });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Northside", available: [], matches: [] },
   });
   // Typed once, key by key: never typed again.
@@ -1151,9 +1152,10 @@ test("pickValue waits for a site's own answered signal when given one", async ({
 <script>
 const input = document.getElementById("code"), list = document.getElementById("codes");
 input.addEventListener("input", () => {
-  // The old options stay until the new answer, which arrives in two parts.
-  setTimeout(() => { list.insertAdjacentHTML("beforeend", '<li role="option">' + input.value + '-A</li>'); }, 150);
-  setTimeout(() => { list.innerHTML = '<li role="option">' + input.value + '</li><li role="option">' + input.value + '-B</li>'; list.dataset.query = input.value; }, 450);
+  // The old options stay until the new answer for what was typed, which arrives in two parts.
+  const query = input.value;
+  setTimeout(() => { list.insertAdjacentHTML("beforeend", '<li role="option">' + query + '-A</li>'); }, 150);
+  setTimeout(() => { list.innerHTML = '<li role="option">' + query + '</li><li role="option">' + query + '-B</li>'; list.dataset.query = query; }, 450);
 });
 list.addEventListener("click", (event) => { input.value = event.target.textContent; list.innerHTML = ""; });
 </script>`);

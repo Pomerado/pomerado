@@ -359,7 +359,12 @@ const credential = (
                     objectId: Schema.String,
                     functionDeclaration: Schema.String,
                     arguments: Schema.mutable(
-                      Schema.Array(Schema.Struct({ value: Schema.Unknown })),
+                      Schema.Array(
+                        Schema.Union(
+                          Schema.Struct({ objectId: Schema.String }),
+                          Schema.Struct({ value: Schema.Unknown }),
+                        ),
+                      ),
                     ),
                     returnByValue: Schema.Boolean,
                   }),
@@ -369,6 +374,21 @@ const credential = (
               return session.send(
                 method,
                 Schema.decodeUnknownSync(Schema.Struct({ objectId: Schema.String }))(params),
+              );
+            case "Input.dispatchKeyEvent":
+              return session.send(
+                method,
+                Schema.decodeUnknownSync(
+                  Schema.Struct({
+                    type: Schema.Literal("keyDown", "keyUp"),
+                    key: Schema.String,
+                    code: Schema.String,
+                    windowsVirtualKeyCode: Schema.Number,
+                    nativeVirtualKeyCode: Schema.Number,
+                    text: Schema.optionalWith(Schema.String, { exact: true }),
+                    unmodifiedText: Schema.optionalWith(Schema.String, { exact: true }),
+                  }),
+                )(params),
               );
             default:
               return Effect.runPromise(
@@ -380,7 +400,7 @@ const credential = (
       return yield* keyboard.insertText(
         request.target,
         request.text,
-        { phone: request.phone, keys: request.keys },
+        { phone: request.phone, keys: request.keys, trustedKeys: request.trustedKeys },
       );
     }).pipe(
       Effect.ensuring(

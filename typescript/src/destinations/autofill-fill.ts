@@ -390,9 +390,26 @@ interface FillInput extends CallInput {
    */
   readonly typedBefore?: readonly string[];
   readonly keyboard: CredentialKeyboard;
-  /** How each value is typed; `paste` by default. */
+  /**
+   * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
+   * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
+   * `pastedSlots`.
+   */
   readonly typing?: CredentialTypingMode;
 }
+
+/**
+ * The slots `typing: "keyboard"` still pastes, since their boxes commonly reformat or move on as a
+ * person types: a one-time code, a phone number, a card's number and expiry, and a date of birth.
+ * Every other slot is typed key by key.
+ */
+const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
+  "code",
+  "phone",
+  "card_number",
+  "card_expiry",
+  "date_of_birth",
+]);
 
 /**
  * The host's judgment of the controls a call found changed, by inspection's rule, where only a
@@ -822,6 +839,7 @@ const afterFieldCall = (
     let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
+      const slot = input.step.fields[index]?.slot;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
@@ -830,7 +848,10 @@ const afterFieldCall = (
             documentOrigin: progress.judged.fields[index]?.documentOrigin ?? "",
           },
           value,
-          input.step.fields[index]?.slot === "phone" ? { phone: true } : undefined,
+          {
+            ...(slot === "phone" ? { phone: true } : {}),
+            ...(input.typing === "keyboard" && !pastedSlots.has(slot) ? { trustedKeys: true } : {}),
+          },
         ),
       );
       if (typing._tag === "Left") {
@@ -887,8 +908,9 @@ const afterFieldCall = (
  * Fills the values into the step's fields, in order, and clicks its submit, on the stable primary tab or its inspected authentication popup,
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
- * node over its own encrypted DevTools socket (`keyboard`), so no value but a date of birth ever enters a Kernel call's script text or
- * its request to Kernel's REST API. It reports per-field outcomes and never a
+ * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
+ * trusted key per character into it there for each slot but the `pastedSlots`, so no value but a
+ * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -896,7 +918,8 @@ const afterFieldCall = (
  * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
  * clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
- * (`InsertionOptions.keys`), for a page that enables it only on key presses, and waits once more.
+ * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
+ * enables it only on key presses, and waits once more.
  * When it still stays disabled the report says so (`stayed_disabled`). A step whose code the host
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
@@ -941,8 +964,6 @@ const afterFieldCall = (
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
     const { step } = input;
-    if (input.typing === "keyboard")
-      return withCheck(refused("typing_unavailable"), "typing_unavailable");
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
