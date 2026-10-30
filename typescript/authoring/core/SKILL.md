@@ -243,6 +243,14 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- Look up anything the caller names that the site can search, such as a place, business,
+  product, provider or record, through the site's own search, typeahead or picker, rather than
+  matching only the options the page already shows, such as a menu of popular choices or the
+  page's buttons, or a list or aliases of your own: the site's search finds what no menu lists.
+  Trying the shown options first is fine when the tool falls back to that search for any other
+  value. When the site's only control for the value is a fixed list, the input is an enum of
+  that list, as above. In a signed-in tool where adding an entry saves it to the account, such
+  as a new address or payee, matching the account's saved entries is fine.
 - On a write, every choice the session met is an input, costly choices included, and any
   other option, such as a seat, is an optional input, as the writes skill says ("Compose and
   publish").
