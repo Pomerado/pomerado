@@ -199,10 +199,22 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
                 const publish = yield* options.prepare(request, name);
                 const pomerado = yield* createPomerado({ ...options.pomerado, ask });
                 const result = yield* pomerado.mint(request);
+                // The calling agent reads only codes: no diagnostics, page text or step detail.
+                const denial = result.publicationDenial;
                 if (result.artifact === undefined)
                   return {
                     build: result.build,
                     summary: result.summary,
+                    ...(result.stopReason === undefined ? {} : { stopReason: result.stopReason }),
+                    ...(result.hostFailure === undefined ? {} : { hostFailure: result.hostFailure }),
+                    ...(denial === undefined
+                      ? {}
+                      : {
+                          publicationDenial: {
+                            ...(denial.reason === undefined ? {} : { reason: denial.reason }),
+                            ...(denial.category === undefined ? {} : { category: denial.category }),
+                          },
+                        }),
                     ...(result.untrustedSignInOrigins === undefined
                       ? {}
                       : { untrustedSignInOrigins: result.untrustedSignInOrigins }),
