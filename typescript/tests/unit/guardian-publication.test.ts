@@ -17,6 +17,7 @@ import {
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
   publicationSafetyDefaultPolicy,
+  publicationWriteLaterStatePolicy,
 } from "../../src/guardian/publication.js";
 import {
   makeGuardian,
@@ -1353,6 +1354,32 @@ describe("the OpenAI publication reviewer", () => {
     });
     expect(policyOf(requests[0])).toContain(publicationCallerDecisionPolicy);
     expect(publicationOutputPolicy).toContain(publicationCallerDecisionPolicy);
+  });
+
+  // A write whose record was cancelled, refunded or deleted after the write went through can no
+  // longer show some needed values. The host's own records, never the minter's word, let those be
+  // optional or left out. A read, and a write with no such later state, keep the rule.
+  it("excuses a write's needed value a later cancel, refund or delete left unreadable, on host records only", () => {
+    const loosened = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Loosened needed value:"),
+      publicationOutputPolicy.indexOf("Lost information: a fact"),
+    );
+    expect(loosened).toContain(
+      "In a write only, a needed value may also be optional, or left out, when the host's records show both that the write went through, by the session's confirmation or its commit request answered 2xx or 3xx in the captures, and that a later read-back of that record, in publication/session-output.json or the captures, shows it cancelled, refunded or deleted, so the value can no longer be read; the field's description, or the tool's for a value left out, says so.",
+    );
+    expect(loosened).toContain(publicationWriteLaterStatePolicy);
+    expect(loosened).toContain(
+      "only a caller-confirmed design decision, below, or a write's record later cancelled, refunded or deleted, as this rule says, does.",
+    );
+    // The minter's own word never shows the later state.
+    expect(publicationWriteLaterStatePolicy).toContain(
+      "Only those records show it: a description, code comment or finding response, or a value the source sets rather than reads from the site, shows nothing.",
+    );
+    // A read, and a write with no such later state, are judged as before, as is a present value.
+    expect(publicationWriteLaterStatePolicy).toContain(
+      "This excuses only that value's absence, under this rule and the Lost information rule; a value present still meets the rest of this standard, its type, literal and format included, and a read, or a write whose records show no such later state, is judged as above.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
   // One caller's "always" answer must not make a published write take a paid add-on, an upsell,

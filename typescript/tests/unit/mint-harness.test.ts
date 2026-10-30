@@ -1628,7 +1628,7 @@ it("words a write build's output mismatch apart from a read build's", async () =
   expect(instructions).toStrictEqual({
     read: "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
     write:
-      "Not published: the script's output schema rejects the output this write's confirming step returned. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional or remove it so the tool can publish. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+      "Not published: the script's output schema rejects the output this write's confirming step returned. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional or remove it so the tool can publish, and say why in the field's description, or the tool's for one removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
   });
 });
 
