@@ -22,10 +22,7 @@ export interface PublicationScope {
    * this publication replaces a published tool. A host supplies it from its own record of that
    * revision, never from anything the minter wrote, so Guardian can tell a repair that keeps a
    * caller's earlier decision on how an input is used, a "By design:" description, word for word.
-   * Absent, a repair gets no such allowance. Present, it also tells Guardian the publication is
-   * not a new tool, so the one-target write preference (`publicationWritePathPolicy`) never asks
-   * it to change an input its callers rely on; a host that republishes a tool supplies it every
-   * time, an empty list for a tool with no inputs. The local host keeps no published revisions and
+   * Absent, a repair gets no such allowance. The local host keeps no published revisions and
    * supplies none.
    */
   readonly publishedInputs?: readonly {
