@@ -510,12 +510,14 @@ export const publicationOutputPolicy = [
 
 /**
  * What a write tool must carry out: the request's material requested outcome, within its effect
- * limits, never an earlier stop, disclosed or not. The publication review judges the finished
- * tool by it, the execution review judges a write build's path by it before its one write
- * session sends anything, and the minter reads it in its workspace, so the three agree.
+ * limits, never an earlier stop, disclosed or not. A request that names a list of same-kind
+ * targets the site writes one at a time is carried out by a tool that takes one target, called
+ * once per target, whose one write session writes the first. The publication review judges the
+ * finished tool by it, the execution review judges a write build's path by it before its one
+ * write session sends anything, and the minter reads it in its workspace, so the three agree.
  */
 export const publicationWriteOutcomePolicy =
-  "A write tool carries out the material requested outcome of trusted_request.intent, as trusted_authority.taskUpdates revise it, within the effect limits the request states, such as stopping before a final submit it rules out: a tool that stops earlier, even with that disclosed, such as at a saved draft or a new account when the request asks for the quote or the placed order, does not satisfy it.";
+  "A write tool carries out the material requested outcome of trusted_request.intent, as trusted_authority.taskUpdates revise it, within the effect limits the request states, such as stopping before a final submit it rules out: a tool that stops earlier, even with that disclosed, such as at a saved draft or a new account when the request asks for the quote or the placed order, does not satisfy it. When the request names a list of same-kind targets and the site makes the same write once for each, a tool that takes one target, whose description tells the caller to call it once per target, carries out that outcome, and its one write session writes the first target.";
 
 /**
  * How the publication review judges a write against the path its first act step declared and an
