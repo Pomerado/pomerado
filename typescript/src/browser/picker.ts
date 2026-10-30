@@ -551,12 +551,12 @@ const pickerPageCode = String.raw`(element, args) => {
  * long for two thirds of the budget is narrowed with its search box, or fails as `options_loading`.
  * Requests count only when the action caused them: a repeat of an earlier identical request, such
  * as a heartbeat or poller, never holds a wait open.
- * A native select's or datalist's list that lacks the value, or shows a loading sign (the control
- * disabled or `aria-busy`, a "Loading" or "Searching" option), as after a field its options depend
- * on was set, is read again until it holds the value, or shows no sign once it and the page's own
- * requests have held still for 2 s, within two thirds of the budget; one still showing a sign then
- * fails as `options_loading`. `pickerOptions` waits the same way while a native list holds no
- * option.
+ * A native select's or datalist's list that lacks the value or holds it greyed out, or shows a
+ * loading sign (the control disabled or `aria-busy`, a "Loading" or "Searching" option), as after
+ * a field its options depend on was set, is read again until it holds the value with no sign, or
+ * shows no sign once it and the page's own requests have held still for 2 s, within two thirds of
+ * the budget; one still showing a sign then fails as `options_loading`. `pickerOptions` waits the
+ * same way while a native list holds no option.
  *
  * The pick is clicked (a row's one link or button when it has one); `options.commit` set to
  * `"keyboard"` moves to it with ArrowDown and presses Enter. After it, focus left in the
@@ -1249,10 +1249,12 @@ const pickerNativeState = (control, s) =>
 const pickerNativeSign = (state) => state.disabled || state.busy || state.rows > 0;
 // A native list the page fills after a field its options depend on was set, such as times after a
 // date, can still hold the old options, or show a loading sign, when the call starts. It is read
-// again while it shows a sign or lacks(options) is true, until it holds what the call needs, or
-// shows no sign once it and the page's own requests (a request already in flight counts at its
-// end) have held still for the quiet limit, within two thirds of the budget; one still showing a
-// sign then fails as options_loading. A list that already holds the value is read once.
+// again while it shows a sign or lacks(options) is true, until it holds what the call needs with
+// no sign, or shows no sign once it and the page's own requests have held still for the quiet
+// limit, within two thirds of the budget; one still showing a sign then fails as options_loading.
+// A request already in flight when the call starts shows only by its end, so a list with no sign
+// that answers later than the quiet limit after the page went still is still refused. A list that
+// already holds the value with no sign is read once.
 const pickerNativeRead = async (s, lacks) => {
   const since = Date.now();
   const reserve = s.until - (s.until - s.started) / 3;
@@ -1277,7 +1279,9 @@ const pickerNativeRead = async (s, lacks) => {
   }
   return state.options;
 };
-const pickerLacks = (s, wanted) => (list) => pickerRank(s, list, wanted).status === "missing";
+// A list lacks the value when it does not hold it, or holds it greyed out, as an old date's full
+// slot that the new date offers; options that tie are a choice, never a lack.
+const pickerLacks = (s, wanted) => (list) => ["missing", "disabled"].includes(pickerRank(s, list, wanted).status);
 const pickerNative = async (s, wanted) => {
   const list = await pickerNativeRead(s, pickerLacks(s, wanted));
   const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie);

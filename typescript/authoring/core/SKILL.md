@@ -577,10 +577,9 @@ that depends on them:
      preselected substitute only when the caller's own task asks for whatever the site ends up
      with (writes skill).
    - For an input whose options depend on another, such as a check-out after a check-in or a
-     time after a date, apply the input it depends on first, pick from the dependent control
-     only once its options have loaded for that value, and read `available` from that state,
-     then drop the options the input alone rules out. Pick or list a dependent option only
-     after the field it depends on is set.
+     time after a date, pick from the dependent control only once its options have loaded for
+     that value, and read `available` from that state, then drop the options the input alone
+     rules out. Pick or list a dependent option only after the field it depends on is set.
    - A venue or record page that says it takes no online booking, or not yet, and shows no
      booking controls, such as "Reservations open November 1": the site says no to the whole
      request (caller-input skill), so a read returns those words, preferably as a declared
