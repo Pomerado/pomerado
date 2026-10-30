@@ -36,7 +36,10 @@ A read build may search, filter and query, but may not fill in or advance a form
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Signed out, setting the session's store, location or delivery or pickup mode is part of a
 read, even through a Save button, and so is entering the details the caller gave to set it,
-unless the step creates an account or a lasting record on the site (core skill). While building,
+unless the step creates an account or a lasting record on the site (core skill). Signed in,
+setting the session's delivery or pickup location through the site's per-visit control is part
+of a read too, unless the step's requests save an address-book entry, a default or an account
+preference; that is a write. While building,
 a live step, the example's or a test case's, that enters a name, email or phone asks the owner
 first, as the execution review requires; the answer keeps the build a read. Adding to a cart, a hold on inventory, a seat or a time slot, an upload and a draft stay writes,
 signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead.
@@ -60,8 +63,10 @@ write build with `mint_update` and `recommend: "new_mint"`.
 Sign in first when the site needs it, and for a cart or checkout as .agents/cart/SKILL.md
 says, with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
-read-only, for example to read the first page's options, but never fill, select,
-add, save or submit anything there, except one made-up key in the site's own format, with a
+read-only, for example to read the first page's options, and set the session's delivery or
+pickup location as a read (above), with `pickValue` and the site's own confirm control in one
+step. Never fill, select, add, save or submit anything else there, except one made-up key in
+the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill).
 
