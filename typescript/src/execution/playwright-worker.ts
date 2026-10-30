@@ -359,7 +359,12 @@ const credential = (
                     objectId: Schema.String,
                     functionDeclaration: Schema.String,
                     arguments: Schema.mutable(
-                      Schema.Array(Schema.Struct({ value: Schema.Unknown })),
+                      Schema.Array(
+                        Schema.Union(
+                          Schema.Struct({ objectId: Schema.String }),
+                          Schema.Struct({ value: Schema.Unknown }),
+                        ),
+                      ),
                     ),
                     returnByValue: Schema.Boolean,
                   }),

@@ -31,8 +31,10 @@ interface KeyTarget {
 /**
  * Types `text` into `target` key by key, waiting `pauses[n]` before each key after the first
  * (`typingPauses`). The first key goes through the locator, which focuses its element; the rest go
- * to its page's keyboard, as Playwright's own `pressSequentially` types after it focused. Like
- * `typingPauses`, it is self-contained for the page code that embeds it.
+ * to its page's keyboard, as Playwright's own `pressSequentially` types after it focused. With
+ * `timeout`, the whole typing fails with a `TimeoutError` once that time ran out, as
+ * `pressSequentially` does. Like `typingPauses`, it is self-contained for the page code that
+ * embeds it.
  */
 export const typeKeys = async (
   target: KeyTarget,
@@ -42,9 +44,17 @@ export const typeKeys = async (
 ): Promise<void> => {
   const [first, ...rest] = Array.from(text);
   if (first === undefined) return;
+  const end = Date.now() + (options?.timeout ?? Number.POSITIVE_INFINITY);
   await target.pressSequentially(first, options);
   for (const [index, key] of rest.entries()) {
     await new Promise((resolve) => setTimeout(resolve, pauses[index] ?? 0));
-    await target.page().keyboard.type(key);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(Object.assign(new Error("Typing timed out"), { name: "TimeoutError" })),
+        Math.max(0, Math.min(end - Date.now(), 2_147_483_647)),
+      );
+    });
+    await Promise.race([target.page().keyboard.type(key), late]).finally(() => clearTimeout(timer));
   }
 };

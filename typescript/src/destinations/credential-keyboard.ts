@@ -76,8 +76,9 @@ export interface InsertionOptions {
    * (`typingPauses`), for a page that takes only typed text. It takes precedence over `keys`. The
    * guard holds before each key; page code that moves the focus in the moment between the guard
    * and the key can take that key. A refusal after the first key may leave part of the text
-   * typed. A text with a control character is inserted at once instead, so no key it holds
-   * presses Enter or Tab.
+   * typed. A field that dropped keys then takes the whole text at once, as without this option.
+   * A text with a control character is inserted at once instead, so no key it holds presses Enter
+   * or Tab.
    */
   readonly trustedKeys?: true | undefined;
 }
@@ -278,6 +279,26 @@ const claimForKeys = `function(key, origin) {
   return (${bindingGuard})(this, key, origin) ?? "binding_not_in_world";
 }`;
 const guardCheck = `function() { return this() ?? "ready"; }`;
+/**
+ * Runs on the field once its last key went in. A field that kept fewer characters than were typed,
+ * each of them one of the text's in order, as one that drops keys does, gets the whole text at once
+ * in place of what it kept, guarded as each key was: the atomic insertion typing replaced. A field
+ * that shows anything else, as one that formats or masks its value with its own marks, is left as
+ * typed, and so is a field the call can no longer read, as on a page that sent itself on the
+ * last key.
+ */
+const replaceDropped = `function(guard, text) {
+  const kept = Array.from(String(this.value ?? this.textContent ?? ""));
+  const typed = Array.from(text);
+  let at = 0;
+  const dropped = kept.length < typed.length &&
+    kept.every((character) => (at = typed.indexOf(character, at) + 1) > 0);
+  if (!dropped) return "inserted";
+  const refused = guard();
+  if (refused) return refused;
+  if (typeof this.select === "function") this.select(); else document.execCommand("selectAll");
+  return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
+}`;
 
 /** A US keyboard's key for each character it types, with its code and legacy key code, as Playwright's layout has them. */
 const usKeys = new Map<string, readonly [code: string, keyCode: number]>([
@@ -462,7 +483,8 @@ const insertAtOnce = (
  * Types the text by trusted keys (`InsertionOptions.trustedKeys`): takes the binding's guard, then
  * for each character runs it and, while the field may take the key, presses the key on the
  * field's own session. A person's pause (`typingPauses`) runs from one key's guard to the next.
- * The guard's remote function is released however the typing ends.
+ * A field that dropped keys then takes the text at once (`replaceDropped`). The guard's remote
+ * function is released however the typing ends.
  */
 const pressKeys = (
   cdp: PrivateCredentialCdp,
@@ -502,7 +524,16 @@ const pressKeys = (
         for (const event of keyEvents(character))
           yield* command(cdp, bound.sessionId, "Input.dispatchKeyEvent", event);
       }
-      return "inserted" as const;
+      return yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
+        objectId: bound.objectId,
+        functionDeclaration: replaceDropped,
+        arguments: [{ objectId: guard }, { value: text }],
+        returnByValue: true,
+      }).pipe(
+        Effect.flatMap((landed) => answerOf(landed, CredentialInsertion)),
+        // error-reporting-allow: typed-recovery every key went in, and a read that fails, as on a page that sent itself on the last key, inserted nothing and can't tell what the field kept
+        Effect.orElseSucceed(() => "inserted" as const),
+      );
     });
     return yield* typing.pipe(
       Effect.ensuring(

@@ -392,7 +392,8 @@ interface FillInput extends CallInput {
   readonly keyboard: CredentialKeyboard;
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
-   * (`InsertionOptions.trustedKeys`), the retype below included.
+   * (`InsertionOptions.trustedKeys`), the retype below included, and types a date of birth in a
+   * text box key by key (`fillDate`'s `typed`).
    */
   readonly typing?: CredentialTypingMode;
 }
@@ -761,7 +762,13 @@ const fillField = (
             bindingKey,
             ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
           }
-        : { kind: "date", index, iso: value, format },
+        : {
+            kind: "date",
+            index,
+            iso: value,
+            format,
+            ...(input.typing === "keyboard" ? { typed: true as const } : {}),
+          },
     );
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
