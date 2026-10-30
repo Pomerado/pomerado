@@ -79,6 +79,43 @@ test("pickValue picks a native select's option by label, value or another spelli
   });
 });
 
+// A select whose options depend on another field, such as times on a date, still holds the old
+// field's options when the pick starts right after that field was set: the picker reads the list
+// again while it lacks the value or holds it disabled, rather than refusing a value the new list
+// offers.
+test("pickValue waits for a native select's options to load after the field they depend on", async ({ page }) => {
+  const times: Record<string, readonly (readonly [string, string, boolean?])[]> = {
+    "2030-03-04": [["17:00", "5:00 PM"], ["18:30", "6:30 PM", true], ["19:00", "7:00 PM"]],
+    "2030-03-05": [["17:30", "5:30 PM"], ["18:00", "6:00 PM"], ["18:30", "6:30 PM"]],
+  };
+  await serve(
+    page,
+    `<form><label>Date <select name="date"><option value="2030-03-04">March 4</option><option value="2030-03-05">March 5</option></select></label>
+<label>Time <select name="time"><option value="17:00">5:00 PM</option><option value="18:30" disabled>6:30 PM</option><option value="19:00">7:00 PM</option></select></label></form>
+<script>
+const date = document.querySelector("[name=date]"), time = document.querySelector("[name=time]");
+date.addEventListener("change", async () => {
+  const slots = await (await fetch("/times?date=" + date.value)).json();
+  time.innerHTML = slots.map(([value, label, disabled]) => '<option value="' + value + '"' + (disabled ? " disabled" : "") + '>' + label + '</option>').join("");
+});
+</script>`,
+    (params) => ({ body: times[params.get("date") ?? ""] ?? [], delayMs: 600 }),
+  );
+  expect(
+    await call(page, `await page.getByLabel("Date").selectOption("2030-03-05");
+return await pickValue(page.getByLabel("Time"), "6:00 PM", fast);`),
+  ).toEqual({ result: { picked: true, kind: "select", label: "6:00 PM", value: "18:00", rank: "exact", refills: 0 } });
+  expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:00" });
+  // A time the old date lists greyed out, open on the new date, is picked too.
+  expect(
+    await call(page, `await page.getByLabel("Date").selectOption("2030-03-04");
+await page.getByLabel("Time").locator("option", { hasText: "5:00 PM" }).waitFor({ state: "attached" });
+await page.getByLabel("Date").selectOption("2030-03-05");
+return await pickValue(page.getByLabel("Time"), "6:30 PM", fast);`),
+  ).toMatchObject({ result: { picked: true, label: "6:30 PM", value: "18:30" } });
+  expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:30" });
+});
+
 // A town the list writes in one of the usual other forms, such as St for Saint, is picked; one it
 // writes short in any other way is refused, never picked without a word.
 test("pickValue picks a town the list writes with a usual short form and refuses any other short form", async ({ page }) => {

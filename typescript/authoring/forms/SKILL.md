@@ -126,6 +126,9 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+When a picker's options depend on another field, such as times on a date or a party size, models
+on a make or regions on a country, set that field first, whatever order the page shows them in,
+then pick once its options have loaded for that value.
 `references/picker.ts` picks a typeahead value and refuses a missing one,
 `references/picker-first.ts` takes the first of several equal matches and returns it,
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
