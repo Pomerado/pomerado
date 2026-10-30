@@ -432,7 +432,8 @@ names, the record's identifier as the site shows it, and the context those depen
 shows it, such as dates, a party size or a location. Make each one required and non-null, typed
 so a value the code could not read fails the output check (`Schema.NonEmptyTrimmedString` for
 text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever a
-description says. A run whose output fails its schema goes to repair.
+description says, except as below and for a write's record later cancelled, refunded or deleted
+(publication skill). A run whose output fails its schema goes to repair.
 - The owner may settle a different form for every run: in the request's own explicit words, in
   an answer to your design question or in a task update, such as blank fields returned as empty
   strings. Publication review honours that decision as stated. Build it that way, and say in
