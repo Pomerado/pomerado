@@ -556,8 +556,10 @@ that depends on them:
    with one option, or a disabled control showing one value, is a
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
-   presents the groups, since one choice can change the options of the next. When the value is
-   not among the options the page lists at all, throw
+   presents the groups, since one choice can change the options of the next. An input whose
+   options depend on another goes after it, such as times after their date, slots after the
+   party size, models after the make or regions after the country, even when the page shows it
+   first. When the value is not among the options the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
@@ -575,9 +577,10 @@ that depends on them:
      preselected substitute only when the caller's own task asks for whatever the site ends up
      with (writes skill).
    - For an input whose options depend on another, such as a check-out after a check-in or a
-     time after a date, apply the input it depends on first and read `available` from that
-     state, then drop the options the input alone rules out. Never list options read before
-     the input they depend on applied.
+     time after a date, apply the input it depends on first, pick from the dependent control
+     only once its options have loaded for that value, and read `available` from that state,
+     then drop the options the input alone rules out. Pick or list a dependent option only
+     after the field it depends on is set.
    - A venue or record page that says it takes no online booking, or not yet, and shows no
      booking controls, such as "Reservations open November 1": the site says no to the whole
      request (caller-input skill), so a read returns those words, preferably as a declared

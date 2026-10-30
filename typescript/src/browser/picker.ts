@@ -551,6 +551,12 @@ const pickerPageCode = String.raw`(element, args) => {
  * long for two thirds of the budget is narrowed with its search box, or fails as `options_loading`.
  * Requests count only when the action caused them: a repeat of an earlier identical request, such
  * as a heartbeat or poller, never holds a wait open.
+ * A native select's or datalist's list that lacks the value, or shows a loading sign (the control
+ * disabled or `aria-busy`, a "Loading" or "Searching" option), as after a field its options depend
+ * on was set, is read again until it holds the value, or shows no sign once it and the page's own
+ * requests have held still for 2 s, within two thirds of the budget; one still showing a sign then
+ * fails as `options_loading`. `pickerOptions` waits the same way while a native list holds no
+ * option.
  *
  * The pick is clicked (a row's one link or button when it has one); `options.commit` set to
  * `"keyboard"` moves to it with ArrowDown and presses Enter. After it, focus left in the
@@ -791,7 +797,7 @@ const pickerMark = (s) => {
 // read when the list was not read to its end (listRead).
 const pickerLoadingText = (loading) => {
   const plural = (count, word) => count + " " + word + (count === 1 ? "" : "s");
-  const signs = { busy: "busy region", progressbar: "progress bar", loading: "loading class", spinner: "spinner class", searching: "searching class", skeleton: "skeleton class" };
+  const signs = { busy: "busy region", progressbar: "progress bar", loading: "loading class", spinner: "spinner class", searching: "searching class", skeleton: "skeleton class", disabled: "disabled control" };
   const places = { field: "on the field", page: "on the page", list: "in the list", outside_list: "outside the list" };
   const parts = [];
   if (loading.signs > 0)
@@ -1220,10 +1226,12 @@ const pickerTry = (options, attempt, switches) => {
   return { method, blur: blur === "auto" && attempt > 0 ? "tab" : blur };
 };
 const pickerDetect = async (s) => s.options.kind ?? (await pickerEval(s, "detect"));
-const pickerNativeOptions = (control, s) =>
+// A native select's or datalist's options, and its loading signs: the control disabled,
+// aria-busy on it or the three elements around it, and "Loading" or "Searching" options.
+const pickerNativeState = (control, s) =>
   control.evaluate((select) => {
     const list = select instanceof HTMLSelectElement ? [...select.options] : [...(select.list?.options ?? [])];
-    return list.map((option, index) => ({
+    const options = list.map((option, index) => ({
       index,
       label: (option.label || option.textContent || option.value || "").replace(/\s+/g, " ").trim(),
       names: [option.label, option.textContent, option.title].map((name) => String(name ?? "").replace(/\s+/g, " ").trim()).filter(Boolean),
@@ -1232,9 +1240,46 @@ const pickerNativeOptions = (control, s) =>
       key: String(index),
       native: true,
     }));
+    let busy = false;
+    for (let node = select, depth = 0; node instanceof Element && depth < 4; node = node.parentElement, depth++)
+      if (node.getAttribute("aria-busy") === "true") busy = true;
+    const rows = options.filter((option) => /^(loading|searching)( results| options)?[.!…]*$/i.test(option.label)).length;
+    return { options, disabled: select.disabled === true, busy, rows, tag: select.tagName.toLowerCase() };
   }, undefined, s.act());
+const pickerNativeSign = (state) => state.disabled || state.busy || state.rows > 0;
+// A native list the page fills after a field its options depend on was set, such as times after a
+// date, can still hold the old options, or show a loading sign, when the call starts. It is read
+// again while it shows a sign or lacks(options) is true, until it holds what the call needs, or
+// shows no sign once it and the page's own requests (a request already in flight counts at its
+// end) have held still for the quiet limit, within two thirds of the budget; one still showing a
+// sign then fails as options_loading. A list that already holds the value is read once.
+const pickerNativeRead = async (s, lacks) => {
+  const since = Date.now();
+  const reserve = s.until - (s.until - s.started) / 3;
+  let state = await pickerNativeState(s.control, s);
+  let signature = JSON.stringify(state.options.map((option) => [option.label, option.value, option.disabled]));
+  let changedAt = since;
+  while (pickerNativeSign(state) || lacks(state.options)) {
+    const now = Date.now();
+    if (!pickerNativeSign(state) && now - changedAt >= pickerLimits.quiet && s.net.quiet(since, pickerLimits.quiet)) break;
+    if (now >= reserve) {
+      if (!pickerNativeSign(state)) break;
+      const signs = state.disabled ? [{ sign: "disabled", tag: state.tag, where: "field" }] : [];
+      throw pickerLoadingFailure(s, { why: { signs: signs.length, kinds: signs, rows: state.rows, listBusy: state.busy } }, since);
+    }
+    await pickerSleep(40);
+    state = await pickerNativeState(s.control, s);
+    const next = JSON.stringify(state.options.map((option) => [option.label, option.value, option.disabled]));
+    if (next !== signature) {
+      signature = next;
+      changedAt = Date.now();
+    }
+  }
+  return state.options;
+};
+const pickerLacks = (s, wanted) => (list) => pickerRank(s, list, wanted).status === "missing";
 const pickerNative = async (s, wanted) => {
-  const list = await pickerNativeOptions(s.control, s);
+  const list = await pickerNativeRead(s, pickerLacks(s, wanted));
   const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie);
   if (outcome.status === "refused") return outcome.refusal;
   const option = outcome.option;
@@ -1251,7 +1296,7 @@ const pickerNative = async (s, wanted) => {
   throw pickerFailure("not_committed");
 };
 const pickerDatalist = async (s, wanted) => {
-  const list = await pickerNativeOptions(s.control, s);
+  const list = await pickerNativeRead(s, pickerLacks(s, wanted));
   const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie);
   if (outcome.status === "refused") return outcome.refusal;
   const option = outcome.option;
@@ -1325,7 +1370,7 @@ const pickValues = async (control, values, options = {}) => {
   try {
     s.kind = await pickerDetect(s);
     if (s.kind === "select" || s.kind === "select-multiple") {
-      const all = await pickerNativeOptions(s.control, s);
+      const all = await pickerNativeRead(s, (options) => list.some((wanted) => pickerLacks(s, wanted)(options)));
       const picked = [];
       for (const wanted of list) {
         const outcome = pickerOutcome({ ranking: pickerRank(s, all, wanted), list: all }, wanted);
@@ -1441,7 +1486,7 @@ const pickerOptions = async (control, options = {}) => {
   try {
     s.kind = await pickerDetect(s);
     if (["select", "select-multiple", "datalist"].includes(s.kind)) {
-      const list = await pickerNativeOptions(s.control, s);
+      const list = await pickerNativeRead(s, (options) => pickerAvailable(options).length === 0);
       return { kind: s.kind, options: list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
     }
     let scan;
