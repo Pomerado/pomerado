@@ -91,12 +91,11 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  * - `formControlShape(control, { timeout }?)`: the control's shape (`FormControlShape`).
  * - `formatDate(iso, format, locale?)`: an ISO `YYYY-MM-DD` date as `format` writes it (see
  *   the exported `formatDate`).
- * - `fillDate(control, iso, format, { timeout, typed }?)`: fills an ISO date into whatever date
- *   control the page has: a native date input (always ISO), a text box written in `format` (typed
- *   again character by character when an input mask rewrote it, or typed from the start with
- *   `typed: true`), or one part of a split date (`MM`, `DD` or `YYYY`) in a text box, a native
- *   select or a custom dropdown, matched by number or month name. It returns `{ shape }`, never
- *   the value.
+ * - `fillDate(control, iso, format, { timeout }?)`: fills an ISO date into whatever date control
+ *   the page has: a native date input (always ISO), a text box written in `format` (typed again
+ *   character by character when an input mask rewrote it), or one part of a split date (`MM`, `DD`
+ *   or `YYYY`) in a text box, a native select or a custom dropdown, matched by number or month name.
+ *   It returns `{ shape }`, never the value.
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
@@ -391,12 +390,10 @@ const fillDate = async (control, iso, format, options = {}) => {
   }
   if (shape !== "text") throw formControlFailure("control_unsupported");
   const text = formatDate(iso, format, locale);
-  if (options.typed !== true) {
-    await formControlFill(control, text, timeout);
-    if (formControlSameText(await control.inputValue({ timeout }), text)) return { shape };
-  }
-  // A masked field rewrites what is filled at once, and options.typed asks for keys from the start;
-  // the field takes the date typed key by key, with or without its separators.
+  await formControlFill(control, text, timeout);
+  if (formControlSameText(await control.inputValue({ timeout }), text)) return { shape };
+  // A masked field rewrites what is filled at once; it takes the date typed key by key, with or
+  // without its separators.
   for (const keys of [text, text.replace(/[^\p{L}\p{N}]/gu, "")]) {
     await formControlFill(control, "", timeout);
     await formControlTypeKeys(control, keys, timeout);

@@ -152,8 +152,7 @@ return {
  *   itself holds the focus, inside a shadow root too (`holdsFocusCode`), and names the tag of the
  *   element that holds it otherwise.
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
- *   own options, so this call's code holds the date (`iso`); with `typed`, a text box's date is
- *   typed key by key.
+ *   own options, so this call's code holds the date (`iso`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
  * - `submit`: first reads whether the page sent what was typed itself (`pageSentCode`). Otherwise
  *   it guards the submission as it fires (`submissionGuardCode`, under the host's
@@ -197,8 +196,6 @@ export type AutofillFillCall =
       readonly index: number;
       readonly iso: string;
       readonly format: DateOfBirthFormat;
-      /** Type a text box's date key by key from the start (`fillDate`'s `typed`), never filled at once. */
-      readonly typed?: true;
     }
   | {
       readonly kind: "submit";
@@ -732,7 +729,7 @@ try {
   if (call.kind === "date")
     return `try {
   // A date goes into whatever date control the page has, in the format the field takes.
-  await fillDate(fields[${call.index}].locator, ${JSON.stringify(call.iso)}, ${JSON.stringify(call.format)}, { timeout: 5000${call.typed === true ? ", typed: true" : ""} });
+  await fillDate(fields[${call.index}].locator, ${JSON.stringify(call.iso)}, ${JSON.stringify(call.format)}, { timeout: 5000 });
   return { dated: true, url: primary.url(), document: await documentStart() };
 } catch {
   return { dated: false, url: primary.url() };

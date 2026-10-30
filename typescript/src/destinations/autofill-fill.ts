@@ -392,11 +392,24 @@ interface FillInput extends CallInput {
   readonly keyboard: CredentialKeyboard;
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
-   * (`InsertionOptions.trustedKeys`), the retype below included, and types a date of birth in a
-   * text box key by key (`fillDate`'s `typed`).
+   * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
+   * `pastedSlots`.
    */
   readonly typing?: CredentialTypingMode;
 }
+
+/**
+ * The slots `typing: "keyboard"` still pastes, since their boxes commonly reformat or move on as a
+ * person types: a one-time code, a phone number, a card's number and expiry, and a date of birth.
+ * Every other slot is typed key by key.
+ */
+const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
+  "code",
+  "phone",
+  "card_number",
+  "card_expiry",
+  "date_of_birth",
+]);
 
 /**
  * The host's judgment of the controls a call found changed, by inspection's rule, where only a
@@ -762,13 +775,7 @@ const fillField = (
             bindingKey,
             ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
           }
-        : {
-            kind: "date",
-            index,
-            iso: value,
-            format,
-            ...(input.typing === "keyboard" ? { typed: true as const } : {}),
-          },
+        : { kind: "date", index, iso: value, format },
     );
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
@@ -832,6 +839,7 @@ const afterFieldCall = (
     let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
+      const slot = input.step.fields[index]?.slot;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
@@ -840,7 +848,10 @@ const afterFieldCall = (
             documentOrigin: progress.judged.fields[index]?.documentOrigin ?? "",
           },
           value,
-          input.step.fields[index]?.slot === "phone" ? { phone: true } : undefined,
+          {
+            ...(slot === "phone" ? { phone: true } : {}),
+            ...(input.typing === "keyboard" && !pastedSlots.has(slot) ? { trustedKeys: true } : {}),
+          },
         ),
       );
       if (typing._tag === "Left") {
@@ -898,8 +909,8 @@ const afterFieldCall = (
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
  * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
- * trusted key per character into it there, so no value but a date of birth ever enters a Kernel
- * call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
+ * trusted key per character into it there for each slot but the `pastedSlots`, so no value but a
+ * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -907,8 +918,8 @@ const afterFieldCall = (
  * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
  * clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
- * (`InsertionOptions.keys`, or trusted keys again under `keyboard`), for a page that enables it
- * only on key presses, and waits once more.
+ * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
+ * enables it only on key presses, and waits once more.
  * When it still stays disabled the report says so (`stayed_disabled`). A step whose code the host
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
@@ -950,10 +961,8 @@ const afterFieldCall = (
  * main frame went out, whatever the site answered, and the page gets the settle wait from there;
  * with no such request it is `failed`.
  */
-export const fillAutofillStep = (fill: FillInput): Effect.Effect<AutofillStepReport> =>
+export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
-    const input =
-      fill.typing === "keyboard" ? { ...fill, keyboard: byTrustedKeys(fill.keyboard) } : fill;
     const { step } = input;
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
@@ -1052,12 +1061,6 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
 /** The keyboard, typing each value key by key (`InsertionOptions.keys`). */
 const byKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
   insertText: (target, text, options) => keyboard.insertText(target, text, { ...options, keys: true }),
-});
-
-/** The keyboard, pressing a trusted key per character (`InsertionOptions.trustedKeys`). */
-const byTrustedKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
-  insertText: (target, text, options) =>
-    keyboard.insertText(target, text, { ...options, trustedKeys: true }),
 });
 
 /** The first of the step's selectors that reaches into another frame, its `dismiss` included. */

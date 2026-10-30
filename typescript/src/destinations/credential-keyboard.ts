@@ -76,9 +76,9 @@ export interface InsertionOptions {
    * (`typingPauses`), for a page that takes only typed text. It takes precedence over `keys`. The
    * guard holds before each key; page code that moves the focus in the moment between the guard
    * and the key can take that key. A refusal after the first key may leave part of the text
-   * typed. A field that dropped keys then takes the whole text at once, as without this option.
-   * A text with a control character is inserted at once instead, so no key it holds presses Enter
-   * or Tab.
+   * typed. A field that dropped a letter or digit then takes the whole text at once, as without
+   * this option. A text with a control character is inserted at once instead, so no key it holds
+   * presses Enter or Tab.
    */
   readonly trustedKeys?: true | undefined;
 }
@@ -280,24 +280,30 @@ const claimForKeys = `function(key, origin) {
 }`;
 const guardCheck = `function() { return this() ?? "ready"; }`;
 /**
- * Runs on the field once its last key went in. A field that kept some but fewer characters than
- * were typed, each of them one of the text's in order, as one that drops keys does, gets the whole
- * text at once in place of what it kept, guarded as each key was: the atomic insertion typing
- * replaced. A field left empty is left so, for the next call's check, as one the page emptied was
- * before. A field that shows anything else, as one that formats or masks its value with its own
- * marks, is left as typed, and so is a field the call can no longer read, as on a page that sent
- * itself on the last key.
+ * Runs on the field once its last key went in. A field that kept some of the typed characters, each
+ * of them one of the text's in order, but lost a letter or digit, as one that drops keys does, gets
+ * the whole text at once in place of what it kept, guarded as each key was: the atomic insertion
+ * typing replaced. A field that lost only other characters, as one that filters spaces or a plus
+ * does, and a field at its `maxLength` are left as typed, and so is a field left empty, for the next
+ * call's check, as one the page emptied was before. A field that shows anything else, as one that
+ * formats or masks its value with its own marks, is left as typed, and so is a field the call can
+ * no longer read, as on a page that sent itself on the last key. An editable's text is selected
+ * before the guard, so the guard also checks whatever page code that selection runs.
  */
 const replaceDropped = `function(guard, text) {
   const kept = Array.from(String(this.value ?? this.textContent ?? ""));
   const typed = Array.from(text);
+  const lettersAndDigits = (characters) => characters.filter((character) => /[\\p{L}\\p{N}]/u.test(character)).length;
   let at = 0;
-  const dropped = kept.length > 0 && kept.length < typed.length &&
+  const dropped = kept.length > 0 && lettersAndDigits(kept) < lettersAndDigits(typed) &&
+    !(this.maxLength >= 0 && kept.length >= this.maxLength) &&
     kept.every((character) => (at = typed.indexOf(character, at) + 1) > 0);
   if (!dropped) return "inserted";
+  const editable = typeof this.select !== "function";
+  if (editable) document.execCommand("selectAll");
   const refused = guard();
   if (refused) return refused;
-  if (typeof this.select === "function") this.select(); else document.execCommand("selectAll");
+  if (!editable) this.select();
   return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
 }`;
 
