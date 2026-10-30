@@ -10,6 +10,7 @@ import {
 import { flatUsage, modelUsageCounts } from "../models/model-usage.js";
 import {
   promptCacheDiagnostics,
+  promptCacheFallback,
   withAllowedTools,
   withCacheComparison,
   withCachedPrefix,
@@ -581,6 +582,8 @@ const openAIMinter = (
       const turnsPerSegment = limits.segmentTurns ?? segmentTurns;
       const retry = limits.modelRetry ?? modelCallRetry;
       const deadline = turn.deadline ?? Deadline.after();
+      // Whether the provider rejected OpenAI's prompt-cache settings, for this run's requests.
+      const cacheFallback = promptCacheFallback();
       let terminationReason:
         | "model_call_capacity"
         | "sdk_turn_ceiling"
@@ -1410,7 +1413,7 @@ const openAIMinter = (
             };
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
-            const sdkProvider = runner.config.modelProvider;
+            const sdkProvider = cacheFallback(runner.config.modelProvider);
             const cacheLayout: ModelProvider = {
               getModel: async (name) => {
                 const model = await sdkProvider.getModel(name);

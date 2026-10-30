@@ -5,6 +5,7 @@ import { lunaModel } from "../models/models.js";
 import { withReasoningContinuity } from "../models/reasoning-settings.js";
 import { instructionsAsMessages, prewarmInstructions } from "../models/cached-instructions.js";
 import { modelUsageCounts } from "../models/model-usage.js";
+import { promptCacheFallback } from "../models/prompt-cache.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { MintFailure } from "./contracts.js";
 import type {
@@ -220,6 +221,7 @@ export const makeOpenAIOutcomeReviewer = (
 } => {
   const maxTurns = options.maxTurns ?? 32;
   const timeout = Duration.decode(options.turnTimeout ?? "5 minutes");
+  const cacheFallback = promptCacheFallback();
   return {
     prewarm: () =>
       Effect.tryPromise({
@@ -236,7 +238,7 @@ export const makeOpenAIOutcomeReviewer = (
             traceIncludeSensitiveData: false,
           });
           const usage = await prewarmInstructions(
-            runner.config.modelProvider,
+            cacheFallback(runner.config.modelProvider),
             1,
             async (provider) => {
               runner.config.modelProvider = instructionsAsMessages(provider, cachedInstructions);
@@ -270,8 +272,13 @@ export const makeOpenAIOutcomeReviewer = (
           });
           const items = await Effect.runPromise(session.input(turn.input), { signal });
           const state = new RunState(new RunContext(), items, agent, maxTurns);
+          // A provider that rejects OpenAI's prompt-cache settings gets the mint's requests
+          // without them once it refuses one, kept by the mint's tools, which last the mint.
           runner.config.modelProvider = session.provider(
-            instructionsAsMessages(runner.config.modelProvider, cachedInstructions),
+            instructionsAsMessages(
+              cacheFallback(runner.config.modelProvider, turn.tools),
+              cachedInstructions,
+            ),
             () => state.history,
             () => signal,
           );
