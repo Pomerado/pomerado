@@ -28,6 +28,7 @@ import {
   prewarmInstructions,
 } from "../models/cached-instructions.js";
 import type { InstructionsMessage, PromptCacheDiagnostic } from "../models/cached-instructions.js";
+import { promptCacheFallback } from "../models/prompt-cache.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { Agent, AgentsError, MaxTurnsExceededError, Runner, tool, Usage } from "@openai/agents";
 import { Effect, Exit, identity } from "effect";
@@ -562,7 +563,11 @@ export type GuardianPrewarm = ReturnType<typeof modelUsageCounts>;
  * Sends the prewarm of the shared instructions through the same agent, settings, tool and
  * provider a session's review uses, so its prefix is the one every review sends.
  */
-const prewarmShared = (shared: string, options: GuardianModelOptions) =>
+const prewarmShared = (
+  shared: string,
+  options: GuardianModelOptions,
+  cacheFallback: ReturnType<typeof promptCacheFallback>,
+) =>
   Effect.tryPromise({
     try: async (signal) => {
       const instructions = [{ text: shared, breakpoint: "12h" as const }];
@@ -586,10 +591,14 @@ const prewarmShared = (shared: string, options: GuardianModelOptions) =>
         tracingDisabled: true,
         traceIncludeSensitiveData: false,
       });
-      const usage = await prewarmInstructions(runner.config.modelProvider, 1, async (provider) => {
-        runner.config.modelProvider = instructionsAsMessages(provider, instructions);
-        return runner.run(agent, "Prewarm the cached instructions.", { signal, maxTurns: 1 });
-      });
+      const usage = await prewarmInstructions(
+        cacheFallback(runner.config.modelProvider),
+        1,
+        async (provider) => {
+          runner.config.modelProvider = instructionsAsMessages(provider, instructions);
+          return runner.run(agent, "Prewarm the cached instructions.", { signal, maxTurns: 1 });
+        },
+      );
       return modelUsageCounts(usage);
     },
     catch: (error) =>
@@ -603,8 +612,12 @@ const prewarmShared = (shared: string, options: GuardianModelOptions) =>
       }),
   });
 
-const reviewerWithPolicy = (shared: string, options: GuardianModelOptions): OpenAIReviewer => ({
-  prewarm: () => prewarmShared(shared, options),
+const reviewerWithPolicy = (
+  shared: string,
+  options: GuardianModelOptions,
+  cacheFallback: ReturnType<typeof promptCacheFallback>,
+): OpenAIReviewer => ({
+  prewarm: () => prewarmShared(shared, options, cacheFallback),
   run: (turn) =>
     Effect.suspend(() => {
       let diagnosticState: ModelObserver | undefined;
@@ -757,7 +770,11 @@ const reviewerWithPolicy = (shared: string, options: GuardianModelOptions): Open
           const callBound = options.modelCallBound ?? guardianModelCallBound;
           // The instructions travel as developer messages, the shared ones ending in a cache
           // breakpoint, right above the model, so every observer still sees them as instructions.
-          const cacheDiagnostics = collectingCacheDiagnostics(runner.config.modelProvider);
+          // A provider that rejects OpenAI's prompt-cache settings gets the build's requests
+          // without them once it refuses one: a session's reviews share that, as one build's.
+          const cacheDiagnostics = collectingCacheDiagnostics(
+            cacheFallback(runner.config.modelProvider, turn.session),
+          );
           runner.config.modelProvider = boundedModelCalls(
             instructionsAsMessages(cacheDiagnostics.provider, instructions),
             callBound,
@@ -1008,4 +1025,5 @@ export const makeOpenAIReviewer = (
       withTenantPolicy(upstreamPolicy, guardianExecutionPolicy(options.executionEnvironment)),
     ),
     options,
+    promptCacheFallback(),
   );
