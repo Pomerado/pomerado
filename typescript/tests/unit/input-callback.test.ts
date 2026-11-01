@@ -1,4 +1,4 @@
-import { Effect, Either, TestContext } from "effect";
+import { Clock, Effect, Either, Fiber, TestClock, TestContext } from "effect";
 import { expect, it, vi } from "vitest";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
@@ -32,3 +32,41 @@ it("accepts an immediate answer while the source is still live", async () => {
   expect(result).toEqual({ note: { type: "text", value: "ready" } });
   expect(answer).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { preparationMs: 200, waitMs: 100, timesOut: true },
+  { preparationMs: 300, waitMs: 100, timesOut: true },
+  { preparationMs: 100, waitMs: 100, timesOut: false },
+])(
+  "includes $preparationMs ms of eager preparation in the source deadline",
+  async ({ preparationMs, waitMs, timesOut }) => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const clock = yield* Effect.clock;
+        let preparedMs = 0;
+        // Advance the callback's clock during eager preparation without real waiting.
+        // Its returned Effect still sleeps on the shared test clock.
+        const callbackClock = Object.assign(Object.create(clock) as Clock.Clock, {
+          currentTimeMillis: Effect.sync(() => clock.unsafeCurrentTimeMillis() + preparedMs),
+        });
+        const answer = () => {
+          preparedMs += preparationMs;
+          return Effect.succeed({ note: "ready" }).pipe(Effect.delay(waitMs));
+        };
+        const fiber = yield* Effect.fork(
+          Effect.either(makeInputAsker(answer)(request, { sourceEndsAt: 250 })).pipe(
+            Effect.withClock(callbackClock),
+          ),
+        );
+        yield* TestClock.adjust(500);
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    );
+
+    expect(result).toEqual(
+      timesOut
+        ? Either.left(expect.objectContaining({ code: "NoResponse" }))
+        : Either.right({ note: { type: "text", value: "ready" } }),
+    );
+  },
+);

@@ -34,11 +34,11 @@ export const makeInputAsker =
         }),
       );
       const timed =
-        remaining === undefined
+        bounds?.sourceEndsAt === undefined
           ? collect
           : collect.pipe(
               Effect.timeoutFail({
-                duration: remaining,
+                duration: Math.max(0, bounds.sourceEndsAt - (yield* Clock.currentTimeMillis)),
                 onTimeout: () => new InputRequestFailure({ code: "NoResponse" }),
               }),
             );
