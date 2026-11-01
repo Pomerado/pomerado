@@ -17,7 +17,17 @@ export const makeInputAsker =
       const checked = yield* Schema.decodeUnknown(InputRequest)(request).pipe(
         Effect.mapError((cause) => new InputRequestFailure({ code: "Invalid", cause })),
       );
-      const collect = answer(checked).pipe(
+
+      const remaining =
+        bounds?.sourceEndsAt === undefined
+          ? undefined
+          : bounds.sourceEndsAt - (yield* Clock.currentTimeMillis);
+
+      if (remaining !== undefined && remaining <= 0) {
+        return yield* Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
+      }
+
+      const collect = Effect.suspend(() => answer(checked)).pipe(
         Effect.flatMap((value) => {
           const valid = validateAnswer(checked, value);
           return Either.isRight(valid)
@@ -27,15 +37,17 @@ export const makeInputAsker =
               );
         }),
       );
+
       const timed =
-        bounds?.sourceEndsAt === undefined
+        remaining === undefined
           ? collect
           : collect.pipe(
               Effect.timeoutFail({
-                duration: Math.max(0, bounds.sourceEndsAt - (yield* Clock.currentTimeMillis)),
+                duration: remaining,
                 onTimeout: () => new InputRequestFailure({ code: "NoResponse" }),
               }),
             );
+
       return yield* bounds?.superseded === undefined
         ? timed
         : Effect.raceFirst(
