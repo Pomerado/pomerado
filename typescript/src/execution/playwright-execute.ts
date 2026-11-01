@@ -450,8 +450,10 @@ export const makePlaywrightExecutor = (
             text,
             ...(options?.phone === true ? { phone: true } : {}),
             ...(options?.keys === true ? { keys: true } : {}),
+            ...(options?.trustedKeys === true ? { trustedKeys: true } : {}),
           },
-          15,
+          // Typed by trusted keys, each character takes a person's pause: a second each bounds it.
+          options?.trustedKeys === true ? 15 + Array.from(text).length : 15,
         ).pipe(
           Effect.flatMap((value) => Schema.decodeUnknown(CredentialReadBack)(value)),
           Effect.mapError(asError),

@@ -59,6 +59,12 @@ export interface CommitMark {
   readonly state: CommitMarkState;
 }
 
+/** What a script says about a `notCommitted` call. */
+export interface NotCommittedOptions {
+  /** The site's own answer refused the step's click as a whole, with nothing created. */
+  readonly siteRefused?: true;
+}
+
 export interface EffectJournal {
   readonly state: Effect.Effect<WebsiteEffect>;
   readonly enteringDispatch: Effect.Effect<void>;
@@ -83,8 +89,14 @@ export interface EffectJournal {
    * for the same step, or, once `declareCommits` named any step, a call for one it did not name
    * fails with `CommitAlreadySent` and leaves it as it was. A step never entered stays `not_sent`.
    * A host journal made before this existed has none, and a script's call then fails the same way.
+   * `siteRefused` passes on the script's word that the site's own answer refused the click as a
+   * whole with nothing created, for a host that checks which proof put a step back before it is
+   * entered again; core's own journal ignores it.
    */
-  readonly notCommitted?: (name: string) => Effect.Effect<void, CommitAlreadySent>;
+  readonly notCommitted?: (
+    name: string,
+    options?: NotCommittedOptions,
+  ) => Effect.Effect<void, CommitAlreadySent>;
   /** The operation's declared marks, in order; `executeOperation` records them before it runs. */
   readonly declareCommits: (names: readonly string[]) => Effect.Effect<void>;
   /** Every mark: the declared ones in order, then any entered without a declaration. */

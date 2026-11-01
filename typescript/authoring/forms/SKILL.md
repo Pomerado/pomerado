@@ -126,6 +126,9 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+When a picker's options depend on another field, such as times on a date or a party size, models
+on a make or regions on a country, set that field first, whatever order the page shows them in,
+then pick once its options have loaded for that value.
 `references/picker.ts` picks a typeahead value and refuses a missing one,
 `references/picker-first.ts` takes the first of several equal matches and returns it,
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
@@ -150,7 +153,7 @@ action, for the exact option within that popup. A zero count directly
 after a click does not establish absence. Inspect the post-action accessibility
 snapshot before changing the selector or attempting another action.
 
-A filled query plus a visible listbox can still show the previous response. `pickValue`
+A typed query plus a visible listbox can still show the previous response. `pickValue`
 waits for the list to settle and types again when it lacks the value; when the site marks
 which query its options answer, pass that check as `answered`. A matching old option alone
 does not establish the answer.
@@ -194,10 +197,12 @@ runtime's `FileInput`; the caller's file reaches the build as a `{{file.fN}}` ha
 the input, with its name, type and size in the request's `files`. Pass the input's value
 as given to `files.place(input.receipt, { field: { label: "Receipt" } })`; `field` names
 the `<input type="file">` as data, its label or a `selector`, never code. The host checks
-the file and puts it there, and never anywhere else. Return a download as a `FileOutput`
-from `files.collect(trigger)`, where `trigger` makes the execute call that starts it; you
-see only its name, type, size and sha256. While the tool is being built, the file has no
-download_url or expires_at; the published tool's runs add them. Prefer returning the file as
+the file and puts it there, and never anywhere else. When the site states a file limit, prefer
+declaring it on the input, as `fileInputWithin({ maxBytes: 5_242_880, extensions: [".pdf"] })`,
+and passing it to `files.place`, rather than checking the file in code. Return a download as a
+`FileOutput` from `files.collect(trigger)`, where `trigger` makes the execute call that starts
+it; you see only its name, type, size and sha256. While the tool is being built, the file has
+no download_url or expires_at; the published tool's runs add them. Prefer returning the file as
 collected, and never require those fields in code. The host refuses a result whose `$file`
 differs from the file it collected: `download_url` and `expires_at` are the host's own link to
 the bytes. When the caller wants the site's own link or another fact about the file, prefer
@@ -206,8 +211,8 @@ through `files.collect`. Never write a handle in source, set file inputs, handle
 yourself, route the page's requests or read a file's contents back (`.files` items,
 `FileReader`, `FormData`, a request body): the host refuses such source. An older tool that
 sets a file input from base64 input with `setInputFiles` uses a deprecated pattern the host
-still allows while the build has no file handle and no `FileInput`: a repair keeps its input
-as it is, and a new tool takes a `FileInput` and uses `files.place`.
+still allows while the build has no file handle and no `FileInput`: a repair keeps its input as
+it is, and a new tool takes a `FileInput` and uses `files.place`.
 
 Some sites' Download or Share button only prints the page, through `window.print` or a print
 frame in the site's code, and offers no file. Prefer checking the site's code or page before
@@ -223,7 +228,8 @@ such forms save each step as you go. A read build may not fill in or advance suc
 form (it asks the caller and changes its task to a write with `mint_update` first, as the
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
-form (core skill). A signed-out quote or price form that only fetches is a read too, but a
+form, or a signed-in session's per-visit location control that saves nothing to the account (core
+skill). A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the

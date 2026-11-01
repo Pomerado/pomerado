@@ -153,6 +153,8 @@ const failureSubCauses = [
   "recovery_unsettled",
   // A browser create the provider kept answering with 429 past its wait budget
   "kernel_rate_limited",
+  // A sandbox runner its memory cap killed before it wrote a readable result
+  "runner_out_of_memory",
   // Dependency failures wrapped by a host failure, by area. `site` names the mapping.
   "mint_execution_failed",
   "mint_host_dependency_failed",

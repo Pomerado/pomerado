@@ -369,6 +369,36 @@ it.each([
   },
 );
 
+// A minter that declined the task under its own usage policy had no ending the host would take:
+// policy needs a refusal on record, so the build looped and ended without a reason. It ends as
+// agent_declined, with no refusal on record, once Guardian allows the explanation.
+it("ends a build its minter declined itself as agent_declined, while policy still needs a refusal", async () => {
+  const explanation = "The build agent declined to build the part of this request that orders it.";
+  const reviewed: unknown[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "policy", explanation }, "policy"),
+        call("report_blocked", { reason: "agent_declined", explanation }, "declined"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: (_candidate, context) =>
+        Effect.sync(() => {
+          reviewed.push(context?.blockedOutcome);
+          return { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("policy_not_refused");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "agent_declined", explanation },
+    stopReason: "agent_declined",
+  });
+  expect(reviewed).toEqual([true]);
+});
+
 const finishBuild = {
   entrypoint: "src/tool.ts",
   executionId: "execution_one",
@@ -468,6 +498,36 @@ it.each([
   } else {
     expect(outcome).not.toHaveProperty("blocked");
     expect(lastResult(f.requests[3 + publish.length])).toContain("host_not_refused");
+  }
+});
+
+// A challenge or bot check on the site that the host recorded and could not get past leaves the
+// build no step it can run there, and the minter's host_refused report was refused while it tried
+// again on every new browser. The report stands on the host's record of it
+// (`hostChallengeRefused`), naming the challenge as its basis; with none on record it is refused.
+it.each([
+  { recorded: true, ends: true },
+  { recorded: false, ends: false },
+])("ends as host_refused on a challenge the host recorded: $ends", async ({ recorded, ends }) => {
+  const explanation = "The site's bot check stopped every browser, so nothing could be tested.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { hostChallengeRefused: () => recorded },
+  );
+  const outcome = await f.run();
+  if (ends) {
+    expect(f.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "challenge" }] });
+  } else {
+    expect(outcome).not.toHaveProperty("blocked");
+    expect(lastResult(f.requests[1])).toContain("host_not_refused");
   }
 });
 

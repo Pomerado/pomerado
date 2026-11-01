@@ -319,12 +319,12 @@ const startSite = async () => {
         // An account picker the site shows before its pages: no marker and no sign-in form.
         if (path === "/choose")
           return page(response, `<title>Choose an account</title><p>Pick an account</p>`);
-        // A sign-in that submits itself once the password is typed, and removes its own form.
+        // A sign-in that submits itself once the whole password is typed, and removes its own form.
         if (path === "/login-self")
           return page(
             response,
             `<title>Sign in</title><form id="login"><input name="username"><input name="password" type="password"><button>Sign in</button></form>
-<script>const form=document.querySelector('#login');form.password.addEventListener('input',()=>form.requestSubmit());form.addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(form);form.replaceWith(Object.assign(document.createElement('p'),{textContent:'Signing in'}));const sent=await fetch('/api/login',{method:'POST',body:JSON.stringify({username:data.get('username'),password:data.get('password')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
+<script>const form=document.querySelector('#login');form.password.addEventListener('input',()=>{if(form.password.value.length===${account.password.length})form.requestSubmit()});form.addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(form);form.replaceWith(Object.assign(document.createElement('p'),{textContent:'Signing in'}));const sent=await fetch('/api/login',{method:'POST',body:JSON.stringify({username:data.get('username'),password:data.get('password')})});if(sent.ok){localStorage.setItem('token','member');location.href='/account'}})</script>`,
           );
         if (path === "/login-code")
           return page(

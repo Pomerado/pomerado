@@ -85,6 +85,11 @@ export const guardianReviewInput = (
     ...(turn.sources?.publicationDelta === undefined
       ? {}
       : { publication_delta: turn.sources.publicationDelta }),
+    // The minter's answers to that round's findings: untrusted call data, which this round rules on.
+    ...(turn.sources?.publicationDelta === undefined ||
+    (turn.pending.findingResponses?.length ?? 0) === 0
+      ? {}
+      : { untrusted_finding_responses: turn.pending.findingResponses }),
     ...(turn.pending.questionCandidate === undefined
       ? {}
       : {
@@ -109,6 +114,13 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.buildEffect === undefined
               ? {}
               : { buildEffect: turn.pending.questionCandidate.buildEffect }),
+            ...(turn.pending.questionCandidate.finding === undefined
+              ? {}
+              : { finding: turn.pending.questionCandidate.finding }),
+            // The change the host refused until the caller confirms it.
+            ...(turn.pending.questionCandidate.hostConfirmation === undefined
+              ? {}
+              : { hostConfirmation: turn.pending.questionCandidate.hostConfirmation }),
             // The confirm questions that ask the owner to confirm a step a review held.
             ...(turn.sources?.heldStepQuestions === undefined
               ? {}

@@ -137,7 +137,7 @@ export const makeSignInBrowser = (options: {
       readonly inspection: AutofillInspection;
       readonly values: readonly string[];
     }) =>
-      fillAutofillStep({ ...input, page, keyboard: options.keyboard }).pipe(
+      fillAutofillStep({ ...input, page, keyboard: options.keyboard, typing: "keyboard" }).pipe(
         // The session's record counts what `rememberTyping` counts: a fill that typed.
         Effect.tap((report) =>
           Effect.sync(() => {

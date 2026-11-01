@@ -331,8 +331,14 @@ it("tracks a write's source by content when it imports the host runtime, and ref
   });
 });
 
-/** A build that runs the write step `src/book.ts` twice, with or without an outcome review. */
-const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
+/**
+ * A build that runs the write step `src/book.ts` twice, with or without an outcome review, and
+ * with the host's `repeatAllowed` when given.
+ */
+const repeatedWrite = async (
+  outcomeReview?: OutcomeReviewHost,
+  repeatAllowed?: MintDependencies["repeatAllowed"],
+) => {
   let dispatched = 0;
   const f = await fixture(
     (_request, index) =>
@@ -354,6 +360,7 @@ const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
         }),
       ),
       ...(outcomeReview === undefined ? {} : { outcomeReview }),
+      ...(repeatAllowed === undefined ? {} : { repeatAllowed }),
     },
     { effect: "write" },
   );
@@ -361,6 +368,25 @@ const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
   const refusal = toolOutput(f.requests[2] as ModelRequest, "again");
   return { dispatched, refusal, reason: JSON.stringify(refusal) };
 };
+
+// Fails while the harness refuses every repeat of a write: a host that keeps a step from sending
+// the write's last step again, such as a practice save on a test account, cannot let it run.
+it("runs a repeat of a write when the host allows it, and refuses it without the hook", async () => {
+  const asked: string[] = [];
+  const allowed = await repeatedWrite(undefined, (request, repeats) =>
+    Effect.sync(() => {
+      asked.push(`${request.purpose} ${request.entrypoint} repeats ${repeats.join(", ")}`);
+      return true;
+    }),
+  );
+  const refused = await repeatedWrite();
+
+  expect(asked).toEqual(["act src/book.ts repeats booked"]);
+  expect(allowed.dispatched).toBe(2);
+  expect(allowed.refusal).toMatchObject({ executionId: "booked", status: "completed" });
+  expect(refused.dispatched).toBe(1);
+  expect(refused.refusal).toMatchObject({ status: "unsupported" });
+});
 
 // Fails when the refusal tells an agent with no outcome review to wait for one: it can never
 // come, so the agent sends the write again through a copy of the step.

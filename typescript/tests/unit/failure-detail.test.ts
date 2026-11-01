@@ -328,6 +328,19 @@ describe("failure detail", () => {
     expect(viaHelper.site).not.toMatch(/^helper \(/);
   });
 
+  it("keeps a runner its memory cap killed as its own sub-cause, apart from a dependency failure", () => {
+    const carried = failureDetailMetadata({
+      failureDetail: failureDetail("runner_out_of_memory", {
+        operation: "JSON.parse",
+        context: { exitCode: 137, oomKills: 1 },
+      }),
+    });
+    expect(carried?.failureDetail).toMatchObject({
+      subCause: "runner_out_of_memory",
+      context: { exitCode: 137, oomKills: 1 },
+    });
+  });
+
   it("keeps every pg field and a rejected URL's input without its password", () => {
     const pg = Object.assign(new Error("duplicate key value violates unique constraint"), {
       code: "23505",

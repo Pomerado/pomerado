@@ -3,6 +3,7 @@ import type { Page } from "playwright";
 import { Effect } from "effect";
 import { inspectAutofillStep, type AutofillStep } from "../../src/destinations/autofill-step.js";
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
+import { typedValues } from "../../src/runtime/autofill-values.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // A phone sign-in whose country picker the site preset to +1, with a mask that keeps ten digits
@@ -47,6 +48,12 @@ const phone = document.querySelector("input[name=phone]");
 phone.addEventListener("input", () => { phone.value = ""; });
 </script>`;
 
+/** A phone sign-in with no country picker whose box takes only the ten-digit local number. */
+const localScreen = `<form action="/session" method="post">
+<label>Mobile number <input name="phone" type="tel" maxlength="10"></label>
+<button>Sign in</button>
+</form>`;
+
 /** Serves the screen and keeps each form the site receives. */
 const serve = async (page: Page, body = screen) => {
   const received: Record<string, string>[] = [];
@@ -61,18 +68,21 @@ const serve = async (page: Page, body = screen) => {
   return received;
 };
 
-/** The host's fill of the phone screen, inspected first, with `phone` as the login's number. */
-const signIn = async (page: Page, phone: string) => {
+/**
+ * The host's fill of the phone screen, inspected first, with `phone` as the login's number, typed
+ * as hosts type a step's values (`typedValues`).
+ */
+const signIn = async (page: Page, phone: string, step = phoneStep) => {
   const host = await hostPage(page);
   const inspection = await Effect.runPromise(
-    inspectAutofillStep({ step: phoneStep, page: host, siteOrigin: site, authenticationOrigins: [] }),
+    inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
   );
   if ("outcome" in inspection) throw new Error(`Refused: ${inspection.reason}`);
   const { keyboard } = await hostKeyboard(page);
   return Effect.runPromise(
     fillAutofillStep({
-      step: phoneStep,
-      values: [phone],
+      step,
+      values: typedValues(step, [phone]),
       inspection,
       page: host,
       keyboard,
@@ -135,4 +145,20 @@ test("leaves a phone field the page emptied to the empty-field check, as before"
   });
   await page.waitForTimeout(500);
   expect(received).toEqual([]);
+});
+
+test("types the local number into a box that takes only it, when the step's phone field says national", async ({
+  page,
+}) => {
+  const received = await serve(page, localScreen);
+  const report = await signIn(page, "+44 7700 900123", {
+    ...phoneStep,
+    fields: [{ selector: "input[name=phone]", slot: "phone", accepts: ["phone"], format: "national" }],
+  });
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [{ slot: "phone", status: "filled" }],
+    submit: "clicked",
+  });
+  expect(received).toEqual([{ phone: "7700900123" }]);
 });

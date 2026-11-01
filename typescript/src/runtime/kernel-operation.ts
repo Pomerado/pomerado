@@ -10,7 +10,7 @@ import type {
   ScriptAnswerOf,
   ScriptQuestionDeclarations,
 } from "./script-input.js";
-import type { EffectJournal, WriteConfirmation } from "./context.js";
+import type { EffectJournal, NotCommittedOptions, WriteConfirmation } from "./context.js";
 import type { Deadline } from "./deadline.js";
 import { CommitAlreadySent, WriteConfirmationRefused, type Dispatch } from "./errors.js";
 import type { WriteDeclaration } from "./operation.js";
@@ -20,6 +20,7 @@ import { inspectSignInRejection } from "./sign-in-rejection.js";
 import {
   FileField,
   FileRefused,
+  SiteFileLimits,
   type FileChannel,
   type FileRefusalReason,
   type ScriptFiles,
@@ -199,14 +200,18 @@ export interface KernelOperationContext<
    * but no question may ask those fields, such as a card number: call it, then throw
    * `InvalidInput` naming them, and never click again.
    * It also fits a click the site's own answer refused as a whole with nothing created, such as a
-   * commit response that reports an expired quote and returns no record: call it, then return the
-   * refusal, or refresh the quote, check it again and enter the step for one more click.
+   * commit response that reports an expired quote and returns no record: call it with
+   * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
+   * enter the step for one more click. Pass `siteRefused` only for such a refusal. When the page
+   * flags fields or shows a validation message after the click, call `blockingRequiredFields`
+   * instead. A host may refuse to let a step be entered again when its click had neither that
+   * refusal nor `blockingRequiredFields`' fields.
    * It works once per step in a run, and only for a step in the contract's `write.commits` when it
    * declares any: a second call for the same step, another name, a step this run did not enter
    * from unsent, or one confirmed since throws `CommitAlreadySent`, which ends the run with the
    * step still sent. An offline run ignores it.
    */
-  readonly notCommitted: (name: string) => void;
+  readonly notCommitted: (name: string, options?: NotCommittedOptions) => void;
   /** Time left before the operation's deadline, for choosing `timeout_sec`. */
   readonly remainingMs: () => number;
   /** Inspect a value-free marker on the authorized page; throw only when it is visible. */
@@ -385,7 +390,7 @@ const scriptFiles = (
     if (options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
   };
   return {
-    place: async (reference, { field, timeoutSec }) => {
+    place: async (reference, { field, timeoutSec, maxBytes, extensions }) => {
       const files = channel();
       if (typeof reference !== "string")
         throw new OperationFailure("files.place takes the input's file reference", {
@@ -394,6 +399,16 @@ const scriptFiles = (
       // A field is data naming one input; anything else, such as page code, names none.
       if (Either.isLeft(Schema.decodeUnknownEither(FileField)(field)))
         throw fileFailure(new FileRefused({ reason: "field_not_found" }));
+      // The site's limits go to the host only when the script names them, and only as limits.
+      const limits = Schema.decodeUnknownEither(SiteFileLimits)({
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+        ...(extensions === undefined ? {} : { extensions }),
+      });
+      if (Either.isLeft(limits))
+        throw new OperationFailure(
+          'files.place takes maxBytes as a positive whole number of bytes and extensions as file name endings such as ".pdf"',
+          { dispatch: "not_sent" },
+        );
       try {
         const placed = await settle(
           files.place({
@@ -402,6 +417,7 @@ const scriptFiles = (
             timeoutSec: kernelTimeoutSec(
               Math.min((timeoutSec ?? 30) * 1000, options.deadline.remainingMs()),
             ),
+            ...limits.right,
           }),
         );
         dispatched();
@@ -510,11 +526,15 @@ const makeKernelOperationContext = <Input>(
     if (entered._tag === "Left") throw entered.left;
   },
   // A host journal without it cannot record the click unsent, so the step stays sent.
-  notCommitted: (name) => {
+  // `siteRefused` goes to the host only as the script's own word, so a host that checks each
+  // step's proof can tell it from a bare call.
+  notCommitted: (name, said) => {
     if (options.journal === undefined) return;
     const revert = options.journal.notCommitted;
     if (revert === undefined) throw new CommitAlreadySent({ name });
-    const reverted = Effect.runSync(Effect.either(revert(name)));
+    const reverted = Effect.runSync(
+      Effect.either(said?.siteRefused === true ? revert(name, { siteRefused: true }) : revert(name)),
+    );
     if (reverted._tag === "Left") throw reverted.left;
   },
   remainingMs: () => options.deadline.remainingMs(),

@@ -36,6 +36,12 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  PhoneFormat,
+  PrivateIdentifierLabel,
+  onePrivateIdentifier,
+  onePrivateIdentifierMessage,
+  privateIdentifierFits,
+  privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
   SignInMethodChoice,
@@ -64,6 +70,8 @@ import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import {
   AnsweredQuestion,
   type ConfirmedStepQuestion,
+  type HostConfirmation,
+  type QuestionFinding,
   type QuestionDecision,
 } from "../guardian/question.js";
 import { MintFile } from "./file-handles.js";
@@ -99,10 +107,13 @@ import type {
   MintReviewFeedback,
 } from "./input-feedback.js";
 import {
+  FindingResponse,
+  findingResponsesLimit,
   GuardianAction,
   PublicationFinding,
   PublicationReason,
   type GuardianRefusal,
+  type ResponseRuling,
 } from "../guardian/review-contracts.js";
 import {
   OutcomeWrite,
@@ -218,8 +229,9 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), and
- * a refusal an older worker's checkpoint kept without its source (`unrecorded`).
+ * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
+ * older worker's checkpoint kept without its source (`unrecorded`).
  */
 export type HostRefusalBasis =
   | HostRefusalSource
@@ -228,6 +240,7 @@ export type HostRefusalBasis =
         | "sign_in_refill"
         | "sign_in_destination"
         | "live_tests_spent"
+        | "challenge"
         | "unrecorded";
     };
 
@@ -556,6 +569,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     readonly reviewId?: string;
     readonly rationale: string;
     readonly findings?: readonly PublicationFinding[];
+    /** A publication review's ruling on each minter answer to a prior finding it carried. */
+    readonly responseRulings?: readonly ResponseRuling[];
     /**
      * A publication review's short reason its caller may read, apart from the private rationale;
      * the harness screens it before a build's result carries it (`PublicationDenial`).
@@ -591,6 +606,14 @@ const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(
 const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
 const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
 /**
+ * A path on the site with its query: one `/`, then nothing the URL parser reads as another host
+ * (a second `/` or `\`, or a tab or line break it drops), no fragment, at most 2000 characters.
+ * No lookaround, which strict tool schemas refuse.
+ */
+const SignedInRequestPath = Schema.String.pipe(
+  Schema.pattern(/^\/([^\/\\#\t\n\r][^#]{0,1998})?$/),
+);
+/**
  * A signed-in marker the minting agent asks the host to test before it sends it
  * (`check_signed_in_marker`): its selector, with the path and account page `signedIn` takes.
  */
@@ -619,7 +642,9 @@ export const SignInStep = Schema.Union(
     ),
     fields: Schema.Array(
       Schema.Union(
-        // An identifier field lists every kind it accepts; the host picks what it sends.
+        // An identifier field lists every kind it accepts; the host picks what it sends. A
+        // private identifier is accepted alone, with the site's own label for its field. One that
+        // accepts a phone and keeps only the local number names `format: "national"`.
         Schema.Struct({
           selector: SignInSelector,
           accepts: Schema.Array(IdentifierKinds).pipe(
@@ -628,7 +653,17 @@ export const SignInStep = Schema.Union(
               message: () => "list each accepted kind once",
             }),
           ),
-        }),
+          label: Schema.optional(PrivateIdentifierLabel).annotations({
+            description:
+              "Only with private_identifier: the field's own label as the site shows it, such as National ID number or PIN",
+          }),
+          format: Schema.optional(PhoneFormat),
+        }).pipe(
+          Schema.filter(privateIdentifierFits, { message: () => privateIdentifierMessage }),
+          Schema.filter((field) => field.format === undefined || field.accepts.includes("phone"), {
+            message: () => "only a field that accepts a phone names format national",
+          }),
+        ),
         // A date of birth names how the field takes it, or the one part a dropdown takes. A
         // private answer names its question, and a code the screen's own instruction for it.
         Schema.Struct({
@@ -649,6 +684,7 @@ export const SignInStep = Schema.Union(
     ).pipe(
       Schema.maxItems(maximumStepFields + maximumCodeBoxes),
       Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+      Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
     ),
     submit: Schema.optional(SignInSelector),
     /**
@@ -743,6 +779,16 @@ export const SignInStep = Schema.Union(
        * shows no marker itself; the selector or path is checked there.
        */
       openPath: Schema.optional(SignedInOpenPath),
+      /**
+       * A request a host may check in place of the marker on pages that don't show it. The local
+       * host ignores it and checks the marker alone.
+       */
+      requestPath: Schema.optional(
+        SignedInRequestPath.annotations({
+          description:
+            "A GET path on this site, with its query, that the site answers with success only while signed in and refuses or redirects to sign-in when signed out: one you saw the tool call or load while signed in, such as the signed-in user's own account endpoint or a data endpoint the tool reads, never a guessed route. Name nothing of this login or this visit in it, such as its account number, username, email, a record's ID or a session token, since it runs for every login. The host may check it in place of the marker where the tool's pages don't show the marker.",
+        }),
+      ),
     }).pipe(
       Schema.filter(
         (signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined,
@@ -1280,6 +1326,20 @@ export const PublicationRequest = Schema.Struct({
    * tool's intended output, such as code, or page text that only resembles code. A blocking one no
    * longer refuses publication, and the publication review checks every override and its reason.
    */
+  /**
+   * The minter's answers to findings of the publication review that denied its last submission,
+   * each naming the finding by the id the host gave it. The next review reads each as the
+   * minter's untrusted claim and rules on it; an answer never stands in for live evidence a
+   * finding asks for.
+   */
+  findingResponses: Schema.optional(
+    Schema.Array(FindingResponse)
+      .pipe(Schema.maxItems(findingResponsesLimit))
+      .annotations({
+        description:
+          "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
+      }),
+  ),
   outputOverrides: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -1308,7 +1368,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
  *   code and the caller's input are unchanged, never a 5xx answer only to the request the tool
  *   made, since that request can be wrong. Nothing is wrong with the task, so a host may offer a
- *   retry later.
+ *   retry later. Such a page that appears only after the site already served its pages, or after
+ *   a bot check the build got past, is reported the same way; since sites sometimes throttle a
+ *   browser's network address this way, a host may give the build a new browser on another
+ *   address and ask it to try the failing step once more before it ends the build.
  * - `policy`: Guardian refused an execution with refusal `final`, or refused a publication for a
  *   reason no correction gets past (`publicationRefusalUnfixable`), in this attempt, and nothing
  *   within authority gets past it. An execution refusal Guardian marked `correctable` is never one.
@@ -1332,6 +1395,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   revision or its words (`citesConfirmedUpdate`), such as a stop condition the owner picked that
  *   the build then met. The explanation says what the caller should supply or change. Optional:
  *   no host has to handle it until its core reports it.
+ * - `agent_declined`: the minter itself declined the requested task under its own usage policy,
+ *   and no change it could ask for would make it build it. It needs no refusal on record, and
+ *   Guardian reviews its explanation like any blocked ending. Never a site's, Guardian's or the
+ *   owner's refusal. Optional: no host has to handle it until its core reports it.
  * The host refuses each ending without its basis on record. A `policy` report whose only basis is
  * the owner's no or an unanswered question ends as `owner_declined` or `question_unanswered`. A
  * target on another registrable domain is never a reason by itself: Guardian reviews such work.
@@ -1348,6 +1415,7 @@ export const BuildBlocked = Schema.Struct({
     "owner_ended",
     "host_refused",
     "caller_input",
+    "agent_declined",
   ),
   explanation: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(blockedExplanationLimit)),
 });
@@ -1372,6 +1440,7 @@ export const BlockedReport = Schema.Struct({
     "owner_ended",
     "host_refused",
     "caller_input",
+    "agent_declined",
     "host_unavailable",
   ),
   explanation: BuildBlocked.fields.explanation,
@@ -1591,7 +1660,7 @@ export type PublicationDenial = typeof PublicationDenial.Type;
  * - `owner_declined`: the owner said no to a step the build needs.
  * - `owner_ended`: the owner chose in an answer to end the build.
  * - `site_lacks_capability`, `site_declined`, `site_unavailable`, `policy`, `host_refused`,
- *   `caller_input`: the minter's blocked ending of the same name.
+ *   `caller_input`, `agent_declined`: the minter's blocked ending of the same name.
  * - `host_unavailable`: the host, not the task, ended the build, such as when Guardian twice returned
  *   no outcome its review allows (`InvalidOutcome`).
  */
@@ -1610,6 +1679,7 @@ export const mintStopReasons = [
   "policy",
   "host_refused",
   "caller_input",
+  "agent_declined",
   "host_unavailable",
 ] as const;
 export const MintStopReason = Schema.Literal(...mintStopReasons);
@@ -1728,6 +1798,17 @@ export const AgentRequest = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /**
+   * The id of the finding of Guardian's latest publication denial this request is about, such as
+   * one that leaves the owner to choose between keeping a claim with its evidence or dropping it.
+   * The host keeps it from the caller and gives the question review that finding.
+   */
+  finding: Schema.optional(
+    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200)).annotations({
+      description:
+        "Optional: the id of a finding in Guardian's latest publication denial that this question asks the owner about, such as whether to keep a claim and get its evidence or to remove it or mark it untested. Guardian's question review then sees that finding; the caller never sees the id.",
+    }),
+  ),
 });
 
 /** What the agent asks: the request without the host's id and source. */
@@ -2581,6 +2662,14 @@ export interface MintDependencies {
   readonly capabilityQuestion?: string;
   /** Host-resolved availability only. Credentials never enter the model request. */
   readonly websiteCredentialsAvailable?: boolean;
+  /**
+   * With no login bound (`websiteCredentialsAvailable` not true): the caller already authorized a
+   * login the host signs in with once the build calls execute purpose authenticate. It changes
+   * only what the minter is told about signing in. The build still starts signed out, so it is
+   * not a held login: an unanswered question is handed back as before. A core without it ignores
+   * it.
+   */
+  readonly websiteLoginPreAuthorized?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**
@@ -2617,6 +2706,21 @@ export interface MintDependencies {
        * host leaves it out, and the answer reaches later reviews only as an answered question.
        */
       readonly confirms?: readonly ConfirmedStepQuestion[];
+      /**
+       * The finding of the latest publication denial the request names (`AgentRequest.finding`),
+       * as the host recorded it. A host that forwards it to `questionForReview` lets the review
+       * allow a question asking the owner to choose between the fixes the finding permits; an
+       * older host leaves it out.
+       */
+      readonly finding?: QuestionFinding;
+      /**
+       * The agent's own question only: the change of the site, the login or the effect a
+       * `mint_update` proposed that the harness refused as `confirmation_required`, until an update
+       * the caller confirmed applies. A host that forwards it to `questionForReview` lets the review
+       * tell the confirm question the host needs from one the request already settles; an older
+       * host leaves it out.
+       */
+      readonly hostConfirmation?: HostConfirmation;
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
@@ -2729,6 +2833,14 @@ export interface MintDependencies {
    * and the host applies or refuses it, as before.
    */
   readonly siteMoveUnsupported?: true;
+  /**
+   * The host takes a `login` `signed_out` change as narrowing what the build may do: it gives up
+   * the sign-in only where the build may go on signed out, and keeps any sign-in that must stay,
+   * such as a write's that its owner has not agreed to drop. The harness then sends such an update
+   * to Guardian's review with no caller confirmation. Absent, every `login` change needs the
+   * caller's confirmation, as before.
+   */
+  readonly signedOutNarrows?: true;
   /**
    * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
    * `owner` when the person the repair's questions reach may manage the tool, `owner_request`
@@ -2861,6 +2973,14 @@ export interface MintDependencies {
    * has it. Absent, the harness knows only the refusals it was handed as failures.
    */
   readonly signInDestinationRefused?: () => boolean;
+  /**
+   * Whether the host recorded a challenge or bot check on the site that it could not get past, in
+   * this attempt or in the run the build repairs: a solver or wait that failed, so no step left in
+   * the attempt can run on the site, and a minter that tries again on a new browser meets the same
+   * check. A `host_refused` block stands on it, named as the source `challenge`. The harness reads
+   * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
+   */
+  readonly hostChallengeRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
@@ -2944,6 +3064,19 @@ export interface MintDependencies {
    * each stays unresolved, is never repeated and is reported `may_have_applied`.
    */
   readonly outcomeReview?: OutcomeReviewHost;
+  /**
+   * Whether the host lets a live step run although it repeats a write that may already have
+   * changed the site, because the host itself keeps the step from sending the write's final step
+   * again, such as a practice save of a form's earlier page on an account the caller confirmed is
+   * a test account. It gets the step and the execution IDs of the earlier writes it repeats, and is
+   * asked only for a step that repeats such a write, before the harness waits for the outcome
+   * review. Absent, or false, the step runs only once that review finds every such write
+   * `not_done`, as before.
+   */
+  readonly repeatAllowed?: (
+    request: ExecutionRequest,
+    repeats: readonly string[],
+  ) => Effect.Effect<boolean>;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
 }

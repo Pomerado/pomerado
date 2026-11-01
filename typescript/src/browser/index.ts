@@ -2,6 +2,7 @@ export { ExecutionContext, makeEffectJournal, makeEffectJournalWith } from "../r
 export type {
   CaptureLifecycle,
   EffectJournal,
+  NotCommittedOptions,
   EventSink,
   ExecutionServices,
   CommitMark,
@@ -58,10 +59,10 @@ export type { ConditionObservation, ConditionState, Dispatch } from "../runtime/
 export { CalendarDate, formControlsCode } from "./form-controls.js";
 export { outcomeWaitCode } from "./outcome-wait.js";
 export { PickManyOutcome, PickOutcome, pickRefusal, pickerCode } from "./picker.js";
-export { pickerRanks, rankChoices } from "./picker-rank.js";
+export { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
 export type { PickerChoice, PickerRank, PickerRanking } from "./picker-rank.js";
 export { visibleTextCode } from "./visible-text.js";
-export { normalizeText, rankByWords, readBackMatches, sameText } from "../runtime/text.js";
+export { normalizeText, rankByWords, readBackMatches, sameText, spellingsOf } from "../runtime/text.js";
 export { saveAndReadBack } from "../runtime/save-read-back.js";
 export type { SavedValueDifference } from "../runtime/save-read-back.js";
 export { confirmCommitCode, waitCode } from "./wait.js";
@@ -84,7 +85,14 @@ export {
 export type { ListOutput, ListReader, ListSegment, ListStart } from "../runtime/list-page.js";
 export { pagedListReader, paginationCode } from "./pagination.js";
 export type { PagedListOptions, PagerMechanism, PagerRow, PagerSegment } from "./pagination.js";
-export { FileInput, FileOutput, FileRefused, defaultFileLimits } from "../runtime/files.js";
+export {
+  FileInput,
+  FileOutput,
+  FileRefused,
+  SiteFileLimits,
+  defaultFileLimits,
+  fileInputWithin,
+} from "../runtime/files.js";
 export type { FileObject, FileLimits, PlacedFile, ScriptFiles } from "../runtime/files.js";
 export type { FormControlShape } from "./form-controls.js";
 export type {
@@ -125,6 +133,19 @@ export {
   readText,
   requestPastChallenge,
 } from "../runtime/http-operation.js";
+export {
+  batchFetchCode,
+  batchRead,
+  batchReadConcurrency,
+  batchReadDefaults,
+} from "../runtime/batch-read.js";
+export type {
+  BatchClock,
+  BatchReadItem,
+  BatchReadOptions,
+  BatchReadRequest,
+  BatchReadResult,
+} from "../runtime/batch-read.js";
 export {
   EmbeddedJsonFailure,
   embeddedJson,

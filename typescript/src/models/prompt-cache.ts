@@ -1,4 +1,11 @@
-import type { AgentInputItem, ModelRequest, ModelSettings } from "@openai/agents";
+import { Usage } from "@openai/agents";
+import type {
+  AgentInputItem,
+  ModelProvider,
+  ModelRequest,
+  ModelResponse,
+  ModelSettings,
+} from "@openai/agents";
 
 /**
  * Prompt caching on the Responses API. A request reads the longest cached prefix that ends at a
@@ -206,3 +213,97 @@ export const promptCacheDiagnostics = (providerData: unknown): PromptCacheDiagno
     ...(reusable === undefined ? {} : { comparisonReusableTokens: reusable }),
   };
 };
+
+/** The prompt-cache settings a provider's 400 can name, alone or in a path such as `param`'s. */
+const promptCacheSetting = /prompt_cache_(?:breakpoint|options)|comparison_response_id|prewarm/;
+
+/**
+ * The provider refused the request for one of OpenAI's prompt-cache settings: a 400 whose `param`
+ * or message names one. Azure OpenAI takes no prewarm or comparison and a breakpoint only with the
+ * default 30-minute lifetime, and its models before GPT-5.6 take no breakpoint or options at all.
+ */
+const promptCacheSettingRefused = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  Reflect.get(error, "status") === 400 &&
+  [Reflect.get(error, "param"), Reflect.get(error, "message")].some(
+    (text) => typeof text === "string" && promptCacheSetting.test(text),
+  );
+
+const isPrewarm = (request: ModelRequest) => {
+  const options: unknown = request.modelSettings.providerData?.["prompt_cache_options"];
+  return typeof options === "object" && options !== null && Reflect.get(options, "prewarm") === true;
+};
+
+/** An item without its content parts' cache breakpoints. */
+const withoutBreakpoints = (item: AgentInputItem): AgentInputItem => {
+  if (item.type !== "unknown") return item;
+  const content: unknown = item.providerData?.["content"];
+  if (!Array.isArray(content)) return item;
+  return {
+    ...item,
+    providerData: {
+      ...item.providerData,
+      content: content.map((part: unknown) => {
+        if (typeof part !== "object" || part === null) return part;
+        const { prompt_cache_breakpoint: _breakpoint, ...rest } = part as Record<string, unknown>;
+        return rest;
+      }),
+    },
+  };
+};
+
+/** The request without OpenAI's prompt-cache settings; its `prompt_cache_key` stays. */
+const withoutPromptCacheSettings = (request: ModelRequest): ModelRequest => {
+  const { promptCacheOptions: _options, ...settings } = request.modelSettings;
+  const { prompt_cache_options: _sent, ...providerData } = settings.providerData ?? {};
+  return {
+    ...request,
+    input:
+      typeof request.input === "string" ? request.input : request.input.map(withoutBreakpoints),
+    modelSettings: settings.providerData === undefined ? settings : { ...settings, providerData },
+  };
+};
+
+/**
+ * Model calls for providers that reject OpenAI's prompt-cache settings, such as Azure OpenAI. The
+ * function it returns wraps the provider that calls the model, directly above it, for the mint
+ * `mint` stands for: an object that lives as long as the mint, such as its Guardian session, so
+ * mints that share a model never share what one learned. Without one, the wrapper keeps its own.
+ *
+ * A request the provider refuses with a 400 that names one of the settings (the breakpoints, or
+ * `prompt_cache_options` with its comparison and prewarm) goes once more without them, and every
+ * later request of the mint goes without them. A prewarm is never sent again, since without them it
+ * would generate output: it resolves as one that cached nothing. Until a refusal, every request
+ * passes through as the same object, and every other error as it was.
+ */
+export const promptCacheFallback = () => {
+  const refused = new WeakSet<object>();
+  return (provider: ModelProvider, mint: object = {}): ModelProvider => ({
+    getModel: async (name?: string) => {
+      const model = await provider.getModel(name);
+      const sendWithoutSettings = (request: ModelRequest): Promise<ModelResponse> =>
+        isPrewarm(request)
+          ? Promise.resolve({ usage: new Usage(), output: [] })
+          : model.getResponse(withoutPromptCacheSettings(request));
+      return {
+        ...model,
+        getResponse: async (request: ModelRequest) => {
+          if (refused.has(mint)) return sendWithoutSettings(request);
+          try {
+            return await model.getResponse(request);
+          } catch (error) {
+            if (!promptCacheSettingRefused(error)) throw error;
+            refused.add(mint);
+            return sendWithoutSettings(request);
+          }
+        },
+        getStreamedResponse: (request: ModelRequest) =>
+          model.getStreamedResponse(
+            refused.has(mint) ? withoutPromptCacheSettings(request) : request,
+          ),
+      };
+    },
+  });
+};
+

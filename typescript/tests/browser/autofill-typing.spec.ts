@@ -127,21 +127,32 @@ const watchKeys = async (page: Page) => {
   return seen;
 };
 
-test("a keyboard request refuses before clearing, focusing or transferring any value", async ({
+test("the keyboard mode signs in on a page that keeps only what trusted keys typed", async ({
   page,
 }) => {
   const received = await serve(page, loginScreen);
-  await page.locator("input[name=username]").fill("existing-username");
-  await page.locator("input[name=password]").fill("existing-password");
-  await page.evaluate(
-    () => document.activeElement instanceof HTMLElement && document.activeElement.blur(),
-  );
+  // An input no trusted key press started, as a value set at once is, empties the field.
+  await page.evaluate(() => {
+    for (const field of document.querySelectorAll("input")) {
+      let keyed = false;
+      field.addEventListener("keydown", (event) => {
+        keyed = event.isTrusted;
+      });
+      field.addEventListener("input", () => {
+        if (!keyed) field.value = "";
+        keyed = false;
+      });
+    }
+  });
+  const seen = await watchKeys(page);
   const report = await signIn(page, loginStep, "keyboard");
-  expect(report).toMatchObject({ outcome: "refused", reason: "typing_unavailable" });
-  expect(await page.locator("input[name=username]").inputValue()).toBe("existing-username");
-  expect(await page.locator("input[name=password]").inputValue()).toBe("existing-password");
-  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
-  expect(received).toEqual([]);
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(received.map((form) => Object.fromEntries(form))).toEqual([{ username, password }]);
+  const downs = seen.filter((key) => key.type === "keydown");
+  expect(downs.map((key) => key.key).join("")).toBe(username + password);
+  expect(seen.every((key) => key.trusted)).toBe(true);
+  const gaps = downs.slice(1).map((key, at) => key.at - (downs[at]?.at ?? 0));
+  expect(new Set(gaps.map(Math.round)).size).toBeGreaterThan(1);
 });
 
 test("the paste mode inserts each value with no key events", async ({ page }) => {
@@ -523,6 +534,45 @@ for (const [where, pageField, reason, evidence] of [
     });
     expectOriginsOnly(report);
   });
+
+test("a submit that also matches another form's button clicks the one in the field's own form", async ({
+  page,
+}) => {
+  const posts: { readonly path: string; readonly form: Record<string, string> }[] = [];
+  await page.route(`${site}/**`, async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      posts.push({
+        path: new URL(request.url()).pathname,
+        form: Object.fromEntries(new URLSearchParams(request.postData() ?? "")),
+      });
+      await route.fulfill({ contentType: "text/html", body: "<p>Signed in</p>" });
+    } else
+      await route.fulfill({
+        contentType: "text/html",
+        body: `<form action="/session" method="post">
+<label>Password<input name="password" type="password" autocomplete="current-password"></label>
+<input type="submit" value="Sign in"></form>
+<form action="/app-sign-in" method="post"><input type="submit" value="Sign in with the app"></form>`,
+      });
+  });
+  await page.goto(`${site}/login`);
+  const step: AutofillStep = {
+    fields: [{ selector: "input[name=password]", slot: "password" }],
+    submit: "input[type=submit]",
+  };
+  const host = await hostPage(page);
+  const inspection = await Effect.runPromise(
+    inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
+  );
+  if ("outcome" in inspection) throw new Error(`Refused: ${inspection.reason}`);
+  const { keyboard } = await hostKeyboard(page);
+  const report = await Effect.runPromise(
+    fillAutofillStep({ step, values: [password], inspection, page: host, keyboard, settleMs: 500 }),
+  );
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(posts).toEqual([{ path: "/session", form: { password } }]);
+});
 
 test("a field that hands its focus to another element is refused, naming that element", async ({
   page,

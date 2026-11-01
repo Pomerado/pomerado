@@ -1,8 +1,9 @@
-import { Either, Schema } from "effect";
+import { Data, Effect, Either, Schema } from "effect";
 import { expect, it } from "vitest";
 import { RejectedMarker, SecretSlots } from "../../src/destinations/autofill-contracts.js";
 import { autofillSignedInCode } from "../../src/destinations/autofill-page-code.js";
 import { SignInStep } from "../../src/mint/contracts.js";
+import { makeAutofillValues } from "../../src/runtime/autofill-values.js";
 
 it("accepts a one-use private answer as a field but never as a recorded rejection", () => {
   expect(Either.isRight(Schema.decodeUnknownEither(SecretSlots)("private_answer"))).toBe(true);
@@ -22,6 +23,35 @@ it("retains a private answer's question selector and rejects it on another secre
   expect(Either.isLeft(Schema.decodeUnknownEither(SignInStep)({
     fields: [{ ...field, slot: "password" }],
   }))).toBe(true);
+});
+
+// A sign-in identity field that is no username, email, phone or account number, such as a national
+// identity number, takes the private identifier kind with the site's own label: the host fills it
+// from the saved login like a password and masks it, never the minter. A login holds one, so a
+// step naming two would type one value into both and is refused.
+it("decodes a labelled private identifier field and fills it from the saved login", async () => {
+  const field = { selector: "#national-id", accepts: ["private_identifier"], label: "National ID number" };
+  const step = Schema.decodeUnknownSync(SignInStep)({ fields: [field], submit: "#next" });
+  expect(step).toEqual({ fields: [field], submit: "#next" });
+  const second = { ...field, selector: "#pin", label: "PIN" };
+  expect(Either.isLeft(Schema.decodeUnknownEither(SignInStep)({ fields: [field, second] }))).toBe(true);
+  const masked: string[] = [];
+  const autofill = makeAutofillValues({
+    broker: { register: (value) => Effect.sync(() => void masked.push(value.entity)) },
+    unavailable: (operation) => new (Data.TaggedError("Unavailable")<{ operation: string }>)({ operation }),
+    site: "bank.example.test",
+    given: { current: {} },
+  });
+  const credentials = { username: "", privateIdentifier: "synthetic-id-0001" };
+  const resolved = autofill.resolve(step as Parameters<typeof autofill.resolve>[0], credentials);
+  const filled = await Effect.runPromise(
+    autofill.valuesFor(resolved, { credentials, ask: () => Effect.dieMessage("The owner was asked") }),
+  );
+  expect(filled).toMatchObject({
+    values: ["synthetic-id-0001"],
+    step: { fields: [{ slot: "private_identifier", label: "National ID number" }] },
+  });
+  expect(masked).toEqual(["PRIVATE_IDENTIFIER"]);
 });
 
 // A code split across one-character boxes is one code field per box, and some codes are longer
@@ -63,4 +93,35 @@ it("keeps the signed-in page code's popups fifth, with no challenge check by def
   expect(code).toContain('const popupOrigins = ["https://login.example.test"];');
   expect(code).toContain("const challengeFields = [];");
   expect(code).toContain("const authenticationOrigins = [];");
+});
+
+it("takes a signed-in step's request path beside its marker, as a same-site path only", () => {
+  const signedIn = { selector: "#account-menu", requestPath: "/api/account?fields=id" };
+  expect(Schema.decodeUnknownSync(SignInStep)({ signedIn })).toEqual({ signedIn });
+  const longest = `/${"a".repeat(1999)}`;
+  expect(
+    Schema.decodeUnknownSync(SignInStep)({ signedIn: { selector: "#menu", requestPath: longest } }),
+  ).toEqual({ signedIn: { selector: "#menu", requestPath: longest } });
+  // Each of these reads as another host, or as no path of this site, once the URL parser reads it.
+  for (const requestPath of [
+    "https://other.example/api/account",
+    "api/account",
+    "/api#frag",
+    "//other.example/x",
+    "/\\other.example/x",
+    "/\t/other.example/x",
+    "/\n/other.example/x",
+    "/\r/other.example/x",
+    "",
+    `${longest}a`,
+  ])
+    expect(
+      Either.isLeft(
+        Schema.decodeUnknownEither(SignInStep)({ signedIn: { selector: "#menu", requestPath } }),
+      ),
+    ).toBe(true);
+  // A request path is no marker: a selector or a URL path still names one.
+  expect(
+    Either.isLeft(Schema.decodeUnknownEither(SignInStep)({ signedIn: { requestPath: "/api" } })),
+  ).toBe(true);
 });

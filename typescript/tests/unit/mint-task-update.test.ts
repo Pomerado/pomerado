@@ -1000,6 +1000,107 @@ it("asks for the caller's confirmation before a change that widens what the buil
   expect(updates.reviews).toEqual([]);
 });
 
+/** The site's own app, on another registrable domain, which the request names. */
+const app = "https://app.notes-cloud.test";
+const namesApp = `Sign in and list the notes on the account, read only. After sign-in the session may move to the site's app at ${app}; read the notes there if it does.`;
+const toApp = {
+  summary: `Build the tool on ${app}, where the sign-in landed.`,
+  changes: [{ setting: "site", origin: app }],
+  confirmedBy: ["move_site"],
+  recommend: "update",
+};
+const moveQuestion = {
+  questions: [
+    {
+      id: "move_site",
+      type: "confirm",
+      prompt: `The sign-in landed on ${app}, the site's app. Build the tool there instead of on ${site}?`,
+    },
+  ],
+};
+type QuestionFacts = Parameters<NonNullable<MintDependencies["reviewQuestion"]>>[1];
+
+/**
+ * Guardian's question review as its policy reads: a question asking leave to do what trusted
+ * intent already names is reworded as already authorized, unless the host's own record says it
+ * refused that very change until the caller confirms it. It keeps each question's facts, not a
+ * blocked report's.
+ */
+const policyFaithfulQuestionReview = (reviewed: QuestionFacts[]) => ({
+  reviewQuestion: (_request: AgentInputRequest, facts?: QuestionFacts) =>
+    Effect.sync(() => {
+      if (facts?.blockedOutcome !== true) reviewed.push(facts);
+      return facts?.hostConfirmation?.changes.some(
+        (change) => change.setting === "site" && change.origin === app,
+      ) === true
+        ? { outcome: "allow_business" as const, rationale: "The host needs this yes." }
+        : {
+            outcome: "reword" as const,
+            label: "already_authorized" as const,
+            rationale: "No question is needed: the request already names the app.",
+          };
+    }),
+});
+
+// A read build whose sign-in lands on the site's app at another address, which the request names:
+// the host refuses the move until the caller confirms it, and the confirm question that follows
+// must reach the caller. Fails when the question review never hears the host's demand, since it
+// then rewords the question as already authorized and the move never applies.
+it("tells the question review the host is waiting for the caller's yes to a site change, until it applies", async () => {
+  const updates = updateHost(["allow"]);
+  const reviewed: QuestionFacts[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("mint_update", { ...toApp, confirmedBy: [] }, "unconfirmed"),
+        call("request_input", moveQuestion, "ask"),
+        call("mint_update", toApp, "confirmed"),
+        call("request_input", { questions: [{ id: "list", type: "text", prompt: "Which list?" }] }),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      ...policyFaithfulQuestionReview(reviewed),
+      askInput: answering([{ move_site: { confirmed: true } }]),
+    },
+    { effect: "read", siteOrigin: site, intent: namesApp },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "unconfirmed")).toMatchObject({
+    status: "clarification_required",
+    source: "host",
+    reason: "confirmation_required",
+  });
+  expect(reviewed[0]?.hostConfirmation).toEqual({ changes: [{ setting: "site", origin: app }] });
+  expect(resultOf(f.requests, "ask")).not.toMatchObject({ status: "question_rejected" });
+  expect(resultOf(f.requests, "confirmed")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, siteOrigin: app },
+  });
+  expect(updates.applied[0]?.next).toMatchObject({ siteOrigin: app });
+  // The confirmed move applied, so the host waits for nothing and a later question hears nothing.
+  expect(reviewed).toHaveLength(2);
+  expect(reviewed[1]).not.toHaveProperty("hostConfirmation");
+});
+
+// Control: with no refusal by the host on record, a question asking leave for a change the request
+// already settles reaches the question review as before, and is reworded as before.
+it("tells the question review nothing when the host refused no change", async () => {
+  const updates = updateHost(["allow"]);
+  const reviewed: QuestionFacts[] = [];
+  const f = await fixture(
+    (_request, index) => [call("request_input", moveQuestion, "ask")][index] ?? prose(),
+    { ...updates.overrides, ...policyFaithfulQuestionReview(reviewed) },
+    { effect: "read", siteOrigin: site, intent: namesApp },
+  );
+  await f.run();
+  expect(reviewed).toHaveLength(1);
+  expect(reviewed[0]).not.toHaveProperty("hostConfirmation");
+  expect(resultOf(f.requests, "ask")).toMatchObject({
+    status: "question_rejected",
+    questionNeeded: false,
+  });
+});
+
 // Fails when an applied update leaves the outcome reviewer unaware that the remaining work changed,
 // or when a refused one tells it the work changed.
 it("tells the outcome reviewer about an applied update, never a refused one", async () => {

@@ -40,8 +40,11 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
+import { DateOfBirthFormat } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
+
+const isDateOfBirthFormat = Schema.is(DateOfBirthFormat);
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -250,6 +253,17 @@ const filledReport = (
   ...trustedByHost(progress),
 });
 
+/** A report whose phone field at `index` is shorter than what was typed (`cut_short`). */
+const cutShortAt = (report: AutofillStepReport, index: number): AutofillStepReport =>
+  report.outcome !== "filled"
+    ? report
+    : {
+        ...report,
+        fields: report.fields.map((field, at) =>
+          at === index ? { ...field, cutShort: true as const } : field,
+        ),
+      };
+
 /** The labels a failed call that held a value keeps of its error, by their names in its context. */
 const errorLabels = { code: "errorCode", reason: "errorReason", method: "errorMethod" } as const;
 
@@ -376,9 +390,26 @@ interface FillInput extends CallInput {
    */
   readonly typedBefore?: readonly string[];
   readonly keyboard: CredentialKeyboard;
-  /** How each value is typed; `paste` by default. */
+  /**
+   * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
+   * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
+   * `pastedSlots`.
+   */
   readonly typing?: CredentialTypingMode;
 }
+
+/**
+ * The slots `typing: "keyboard"` still pastes, since their boxes commonly reformat or move on as a
+ * person types: a one-time code, a phone number, a card's number and expiry, and a date of birth.
+ * Every other slot is typed key by key.
+ */
+const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
+  "code",
+  "phone",
+  "card_number",
+  "card_expiry",
+  "date_of_birth",
+]);
 
 /**
  * The host's judgment of the controls a call found changed, by inspection's rule, where only a
@@ -727,7 +758,12 @@ const fillField = (
     const field = input.step.fields[index];
     const value = input.values[index] ?? "";
     const bindingKey = `__pomerado_autofill_${randomUUID()}`;
-    const format = field?.slot === "date_of_birth" ? (field.format ?? "YYYY-MM-DD") : undefined;
+    const format =
+      field?.slot !== "date_of_birth"
+        ? undefined
+        : isDateOfBirthFormat(field.format)
+          ? field.format
+          : "YYYY-MM-DD";
     const answered = yield* fillCall(
       input,
       progress,
@@ -803,6 +839,7 @@ const afterFieldCall = (
     let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
+      const slot = input.step.fields[index]?.slot;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
@@ -811,7 +848,10 @@ const afterFieldCall = (
             documentOrigin: progress.judged.fields[index]?.documentOrigin ?? "",
           },
           value,
-          input.step.fields[index]?.slot === "phone" ? { phone: true } : undefined,
+          {
+            ...(slot === "phone" ? { phone: true } : {}),
+            ...(input.typing === "keyboard" && !pastedSlots.has(slot) ? { trustedKeys: true } : {}),
+          },
         ),
       );
       if (typing._tag === "Left") {
@@ -849,11 +889,12 @@ const afterFieldCall = (
         return undefined;
       }
       // The phone went in, but the field kept other digits: the host types and clicks nothing more.
-      if (typing.right === "changed") {
+      if (typing.right === "changed" || typing.right === "cut_short") {
         progress.typed = true;
         progress.typedIn = answer.document;
         progress.statuses.push("changed");
-        return filledReport(input.step, progress, "not_attempted", answer.url);
+        const report = filledReport(input.step, progress, "not_attempted", answer.url);
+        return typing.right === "changed" ? report : cutShortAt(report, index);
       }
       insertion = typing.right;
     }
@@ -867,8 +908,9 @@ const afterFieldCall = (
  * Fills the values into the step's fields, in order, and clicks its submit, on the stable primary tab or its inspected authentication popup,
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
- * node over its own encrypted DevTools socket (`keyboard`), so no value but a date of birth ever enters a Kernel call's script text or
- * its request to Kernel's REST API. It reports per-field outcomes and never a
+ * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
+ * trusted key per character into it there for each slot but the `pastedSlots`, so no value but a
+ * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -876,14 +918,19 @@ const afterFieldCall = (
  * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
  * clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
- * (`InsertionOptions.keys`), for a page that enables it only on key presses, and waits once more.
+ * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
+ * enables it only on key presses, and waits once more.
  * When it still stays disabled the report says so (`stayed_disabled`). A step whose code the host
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
  * read back once typed (`InsertionOptions.phone`): one that kept other digits than the number, as
- * under a country picker set to another country, is `changed`, and the fill types nothing more and
- * never clicks the submit. On a step with fields and no submit, a page that moves on once every
- * field is typed sent what was typed itself (`page`), never a refusal:
+ * under a country picker set to another country, is `changed`, with `cutShort` when its
+ * `maxLength` is shorter than the number as typed, and the fill types nothing more and never
+ * clicks the submit. A phone field whose step says `format: "national"` gets the number without
+ * its calling code, as the host's `typedValues` gives it, and is read back against that. On a step
+ * with fields and no submit, a
+ * page that moves on once every field is typed sent what was typed itself (`page`), never a
+ * refusal:
  * the step's fields went away or were all disabled, its popup closed, its address moved to another
  * path, or a step of several fields came back emptied. The host gives the page up to `pageSendMs`
  * to do so, and a submit call that fails meanwhile is followed by another look (`submitWhenEnabled`).
@@ -917,8 +964,6 @@ const afterFieldCall = (
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
     const { step } = input;
-    if (input.typing === "keyboard")
-      return withCheck(refused("typing_unavailable"), "typing_unavailable");
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");

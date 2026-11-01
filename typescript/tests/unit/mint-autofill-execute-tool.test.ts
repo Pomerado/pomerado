@@ -44,7 +44,8 @@ interface JsonSchema {
 // optional fields) made the SDK refuse the tool before the first model call.
 // Its secret field offers the private_answer slot and its questionSelector to every host's minter:
 // no dependency turns them on.
-it("offers execute with signInStep to the model on an autofill site", async () => {
+/** The `execute` tool the minter offers the model on an autofill site, as its first request sent it. */
+const autofillExecuteTool = async () => {
   const workspace = await portableJobSession({ "src/tool.ts": "export {};" });
   cleanups.push(async () => {
     await workspace.close();
@@ -87,7 +88,11 @@ it("offers execute with signInStep to the model on an autofill site", async () =
     }).pipe(Effect.provideService(MintServices, dependencies)),
   );
   expect(requests).toHaveLength(1);
-  const execute = requests[0]?.tools.find((tool) => tool.name === "execute");
+  return requests[0]?.tools.find((tool) => tool.name === "execute");
+};
+
+it("offers execute with signInStep to the model on an autofill site", async () => {
+  const execute = await autofillExecuteTool();
   expect(JSON.stringify(execute ?? null)).toContain("signInStep");
   const signInStep = (execute as { readonly parameters?: JsonSchema } | undefined)?.parameters
     ?.properties?.signInStep;
@@ -100,4 +105,21 @@ it("offers execute with signInStep to the model on an autofill site", async () =
   expect(secretFields).toHaveLength(1);
   expect(secretFields[0]?.properties?.slot?.enum).toContain("private_answer");
   expect(Object.keys(secretFields[0]?.properties ?? {})).toContain("questionSelector");
+});
+
+// Strict tool schemas keep each string's pattern, and the model provider refuses a pattern with
+// lookaround, which would fail every model call that offers the tool.
+it("offers execute with no pattern that looks around", async () => {
+  const execute = await autofillExecuteTool();
+  const patterns: string[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) for (const item of value) walk(item);
+    else if (typeof value === "object" && value !== null)
+      for (const [key, inner] of Object.entries(value))
+        if (key === "pattern" && typeof inner === "string") patterns.push(inner);
+        else walk(inner);
+  };
+  walk((execute as { readonly parameters?: unknown } | undefined)?.parameters);
+  expect(patterns.length).toBeGreaterThan(0);
+  expect(patterns.filter((pattern) => /\(\?(?:=|!|<=|<!)/u.test(pattern))).toEqual([]);
 });

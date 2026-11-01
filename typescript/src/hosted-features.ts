@@ -29,6 +29,7 @@ export const hostedFeatures: readonly HostedFeature[] = [
   { id: "offline-command-sandbox", name: "Sandboxed offline commands" },
   { id: "protected-answers", name: "Protected answers" },
   { id: "direct-sign-in", name: "Direct sign-in" },
+  { id: "sign-in-requests", name: "Sign-in requests (`signedIn.requestPath`)" },
   { id: "private-fallback-publication", name: "Private fallback publication" },
   { id: "saved-dom-tests", name: "savedDOM tests" },
   { id: "execution-capacity", name: "Execution capacity" },

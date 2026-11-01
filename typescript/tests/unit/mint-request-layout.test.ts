@@ -67,28 +67,40 @@ const strictExample = {
   exampleInput: null,
 };
 
-/** The real Responses client, answering each request from `script`, with each body captured. */
+/**
+ * The real Responses client, answering each request from `script`, with each body captured. A
+ * request `refuse` gives an error for is answered with it as a 400, and `script` never sees it.
+ */
 const wireProvider = (
   script: (index: number) => readonly WireItem[],
   responseFields: (index: number) => object = () => ({}),
+  refuse: (body: Body) => object | undefined = () => undefined,
 ) => {
   const bodies: Body[] = [];
+  let answered = 0;
   const client = new OpenAI({
     apiKey: "synthetic-key",
     maxRetries: 0,
     fetch: async (_url, init) => {
       const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Body;
       bodies.push(body);
+      const error = refuse(body);
+      if (error !== undefined)
+        return new Response(JSON.stringify({ error }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      answered++;
       return new Response(
         JSON.stringify({
-          id: `resp_${bodies.length}`,
+          id: `resp_${answered}`,
           object: "response",
           created_at: 1,
           status: "completed",
           model: solModel,
-          output: script(bodies.length - 1),
+          output: script(answered - 1),
           usage,
-          ...responseFields(bodies.length - 1),
+          ...responseFields(answered - 1),
         }),
         { headers: { "content-type": "application/json" } },
       );
@@ -101,8 +113,9 @@ const wireProvider = (
 const wireMinter = (
   script: (index: number) => readonly WireItem[],
   responseFields?: (index: number) => object,
+  refuse?: (body: Body) => object | undefined,
 ) => {
-  const { bodies, provider } = wireProvider(script, responseFields);
+  const { bodies, provider } = wireProvider(script, responseFields, refuse);
   return { bodies, model: makeOpenAIMinter(provider) };
 };
 
@@ -388,4 +401,77 @@ it("asks each request after the first to compare its cache reuse with the last r
     cacheMissedTokens: 100,
     comparisonReusableTokens: 5_000,
   });
+});
+
+it("sends a request a provider refuses for a prompt-cache setting once more without them, and the rest without them", async () => {
+  const settings = /prompt_cache_(?:breakpoint|options)/;
+  const script = (index: number) =>
+    index === 0
+      ? [functionCall("read_source", { path: "src/tool.ts", offset: null, limit: null, paths: null }, "read")]
+      : [blocked];
+  const run = async (refuse?: (body: Body) => object | undefined) => {
+    const wire = wireMinter(script, undefined, refuse);
+    const f = await fixture(() => Promise.reject(new Error("Unused")), {
+      model: wire.model,
+      staticContext,
+      promptCacheKey: "synthetic-environment",
+    });
+    await f.run();
+    return wire.bodies;
+  };
+  // A provider that takes the settings gets one request per model call, settings and all.
+  const taken = await run();
+  expect(taken).toHaveLength(2);
+  expect(taken[0]?.["prompt_cache_options"]).toEqual({ mode: "implicit" });
+  expect(JSON.stringify(taken[0]?.input[0])).toContain('"prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}');
+  expect(taken[1]?.["prompt_cache_options"]).toEqual({ mode: "implicit", comparison_response_id: "resp_1" });
+
+  // A refusal of the breakpoint's 12-hour lifetime, which Azure OpenAI does not take, naming the
+  // setting only in `param`.
+  const refused = await run((body) =>
+    settings.test(JSON.stringify(body))
+      ? {
+          message: "Invalid value: '12h'. Supported values are: '30m'.",
+          type: "invalid_request_error",
+          param: "input[0].content[2].prompt_cache_breakpoint.ttl",
+          code: "invalid_value",
+        }
+      : undefined,
+  );
+  expect(refused).toHaveLength(3);
+  const [first, resent, second] = refused;
+  // The refused request is the one the accepting provider got, sent once more without the settings.
+  expect(first).toEqual(taken[0]);
+  const { prompt_cache_options: _settings, input: firstInput, ...firstRest } = first as Body;
+  const { input: resentInput, ...resentRest } = resent as Body;
+  expect(resentRest).toEqual(firstRest);
+  expect(resentInput.slice(1)).toEqual(firstInput.slice(1));
+  expect(JSON.stringify(resent)).not.toMatch(settings);
+  // The next model call goes without them from the start, and keeps the prompt cache key.
+  expect(JSON.stringify(second)).not.toMatch(settings);
+  expect(second?.["prompt_cache_key"]).toBe("synthetic-environment");
+
+  // A refused prewarm is not sent again: it resolves as one that cached nothing.
+  const prewarm = wireProvider(
+    () => [],
+    undefined,
+    () => ({
+      message: "Unknown parameter: 'prompt_cache_options.prewarm'.",
+      type: "invalid_request_error",
+      param: null,
+      code: "unknown_parameter",
+    }),
+  );
+  const counts = await Effect.runPromise(
+    prewarmMinterPrefix(
+      {
+        instructions: "Synthetic instructions.",
+        skills: [{ name: "core", description: "Synthetic test contract", content: "Synthetic skill." }],
+        staticContext,
+      },
+      prewarm.provider,
+    ),
+  );
+  expect(prewarm.bodies).toHaveLength(1);
+  expect(counts).toMatchObject({ inputTokens: 0, cacheWriteTokens: 0 });
 });

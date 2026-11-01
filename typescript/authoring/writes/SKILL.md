@@ -22,14 +22,27 @@ redo the whole task, and never redo a step that finished; run a step again only 
 a fresh read of the page shows it did not finish, or the task cannot complete without it. Then you compose the
 published script from what those steps did and publish it. Nothing runs again.
 
+In a build whose caller input is empty (`{}`), when the request names a list of same-kind targets
+and the site makes the same write once for each, such as a message to each of several recipients,
+build a one-target write tool: it must take one target, and its description must tell the caller
+to call it once per target. Never build one that repeats the write over the list. Pass the first
+target's values as `exampleInput`, so the session writes that target only; called once per target,
+the tool carries out the whole list. A form saved over several pages for one record, one order of
+several items, each added to that order before its one final submit, one action the site takes
+over many targets, such as a send to a group picked in one form, and a read of many things are
+each fine as one tool.
+
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Signed out, setting the session's store, location or delivery or pickup mode is part of a
 read, even through a Save button, and so is entering the details the caller gave to set it,
-unless the step creates an account or a lasting record on the site (core skill). While building,
+unless the step creates an account or a lasting record on the site (core skill). Signed in,
+setting the session's delivery or pickup location through the site's per-visit control is part
+of a read too, unless the step's requests save an address-book entry, a default or an account
+preference; that is a write. While building,
 a live step, the example's or a test case's, that enters a name, email or phone asks the owner
 first, as the execution review requires; the answer keeps the build a read. Adding to a cart, a hold on inventory, a seat or a time slot, an upload and a draft stay writes,
-signed out too.
+signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead.
 
 ## When a read build finds it needs to write
 
@@ -50,8 +63,10 @@ write build with `mint_update` and `recommend: "new_mint"`.
 Sign in first when the site needs it, and for a cart or checkout as .agents/cart/SKILL.md
 says, with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
-read-only, for example to read the first page's options, but never fill, select,
-add, save or submit anything there, except one made-up key in the site's own format, with a
+read-only, for example to read the first page's options, and set the session's delivery or
+pickup location as a read (above), with `pickValue` and the site's own confirm control in one
+step. Never fill, select, add, save or submit anything else there, except one made-up key in
+the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill).
 
@@ -113,7 +128,12 @@ During the session:
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
   or returns a refusal its output schema declares before its first mark (below). Never return
   a refusal in an output shape the schema does not declare. Apart from such a declared
-  refusal, prefer throwing over returning when a write stops before its last commit step. A
+  refusal, prefer throwing over returning when a write stops before its first commit mark.
+  After a mark, when a step's result is unclear and commit steps remain, prefer reading the
+  site's own record of what saved, such as the cart or the saved form, then finishing the
+  remaining requested steps and the final read-back with `verified()`, over throwing or
+  returning early: publication review refuses a path that stops there. A field error the site shows after an earlier save still
+  throws `InvalidInput` with that field and the site's message. A
   report of the form's fields, its validation messages or the options to pick from is a
   refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's
   output. While building, a limit the session meets is the
@@ -287,7 +307,7 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   or re-select it right before its mark, so the site issues a fresh one, and check that one
   against the caller's limits, such as the cap and the same item or route, before the mark as
   above. When the site answers the click by saying the quote expired or the price changed, with
-  that proof that it created nothing, call `notCommitted` for the step, refresh the quote and check it again,
+  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
   before the mark, so the run reports nothing applied. Retry only once: a step goes back once a
   run, so a second such answer ends the run with the site's words, returned where the
@@ -316,7 +336,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   left, match it to the caller's values, and call `verified()` with no argument just before
   returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
   such as a list, a history or an account screen, only to prove the write: a commit that went
-  through, with the new record's id, already proves it. When a commit
+  through, with the new record's id, already proves it. Return the tool's whole output from the
+  step that confirms the write, read from the commit's response or the page it left: the caller
+  or the site may cancel, refund or delete the record soon after, and a later read-back then
+  shows less. When a commit
   step returned without calling `verified()` and its `stateChangingRequests` list the commit
   request with a 2xx or 3xx status, prefer confirming it in the next step from the page as
   it stands. Make no execute

@@ -507,10 +507,21 @@ test("an input the caller's request names that the schema drops comes back as in
   }
 });
 
+// The recorded minter's first turns by `index`: it writes the tool and runs its example.
+const exampleTurns = `if(index===0)return response([{type:'apply_patch_call',callId:'patch',status:'completed',operation:{type:'create_file',path:'src/tool.mjs',diff:tool.split('\\n').map(line=>'+'+line).join('\\n')+'\\n'}}]);
+if(index===1)return response([call('execute',{purpose:'example',target:'liveBrowser',entrypoint:'src/tool.mjs',fixtureRefs:[],caseFilter:[],maxWorkers:1,timeoutSeconds:10,intent:'Run the example'},'example')]);`;
+// Then it submits the build three times, changing it each time.
+const resubmittingMinter = `${exampleTurns}
+if(index<=4){if(index>2)appendFileSync(ledger,'finish '+JSON.stringify(resultOf(request,'finish_'+(index-1)))+'\\n');return response([call('finish_build',{intent:'Return the fixture integration',entrypoint:'src/tool.mjs',executionId:resultOf(request,'example').executionId,metadata:{name:'read_fixture',description:'Read the fixture heading, revision '+index},coverage:'One live example'},'finish_'+index)]);}
+return response([message('Done.')]);`;
+
 // A runtime override starts the actual compiled terminal CLI with recorded providers: the minter
-// submits the build three times, changing it each time, and Guardian returns input feedback on
-// each.
-const cliRuntime = async (directory: string) => {
+// takes `minter`'s turns on `tool`, and Guardian returns input feedback on each publication.
+const cliRuntime = async (
+  directory: string,
+  tool = accountTool('Schema.Literal("acct-4417")'),
+  minter = resubmittingMinter,
+) => {
   const file = join(directory, "recorded-cli.mjs");
   const ledger = join(directory, "ledger.txt");
   const runtime = pathToFileURL(resolve("dist/typescript/src/standalone/cli.js")).href;
@@ -521,7 +532,7 @@ import { Usage } from ${JSON.stringify(import.meta.resolve("@openai/agents"))};
 import { appendFileSync } from 'node:fs';
 
 const ledger=${JSON.stringify(ledger)};
-const tool=${JSON.stringify(accountTool('Schema.Literal("acct-4417")'))};
+const tool=${JSON.stringify(tool)};
 const objects=(value)=>{if(typeof value==='string'){try{return objects(JSON.parse(value));}catch{return [];}}if(Array.isArray(value))return value.flatMap(objects);if(value===null||typeof value!=='object')return [];return [value,...Object.values(value).flatMap(objects)];};
 const response=(output)=>({usage:new Usage(),output});
 const message=(value)=>({type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:typeof value==='string'?value:JSON.stringify(value)}]});
@@ -530,10 +541,7 @@ const resultOf=(request,callId)=>objects(objects(request.input).find(item=>item.
 let turn=0;
 const minterProvider={getModel:()=>({getResponse:async(request)=>{
 const index=turn++;
-if(index===0)return response([{type:'apply_patch_call',callId:'patch',status:'completed',operation:{type:'create_file',path:'src/tool.mjs',diff:tool.split('\\n').map(line=>'+'+line).join('\\n')+'\\n'}}]);
-if(index===1)return response([call('execute',{purpose:'example',target:'liveBrowser',entrypoint:'src/tool.mjs',fixtureRefs:[],caseFilter:[],maxWorkers:1,timeoutSeconds:10,intent:'Run the example'},'example')]);
-if(index<=4){if(index>2)appendFileSync(ledger,'finish '+JSON.stringify(resultOf(request,'finish_'+(index-1)))+'\\n');return response([call('finish_build',{intent:'Return the fixture integration',entrypoint:'src/tool.mjs',executionId:resultOf(request,'example').executionId,metadata:{name:'read_fixture',description:'Read the fixture heading, revision '+index},coverage:'One live example'},'finish_'+index)]);}
-return response([message('Done.')]);
+${minter}
 },getStreamedResponse:()=>{throw new Error('Unused stream');}})};
 const action=(current)=>{if(current?.trusted_review?.kind!=='execution')return {};const purpose=current.trusted_execution_context?.currentExecution?.purpose;return {action:purpose==='act'?'write':purpose==='authenticate'?'authentication':'read'};};
 const outcomeReviewerProvider={getModel:()=>({getResponse:async()=>response([message('No assessment yet.')]),getStreamedResponse:()=>{throw new Error('Unused stream');}})};
@@ -595,7 +603,85 @@ test("input feedback that outlasts its two rounds ends the CLI build unpublished
       ["input_feedback", 1],
       ["input_feedback", 0],
     ]);
-    expect(await readdir(out)).toEqual([]);
+    expect(await readdir(out)).toEqual(["mint-report.json"]);
+    // The report keeps Guardian's denials as parsed diagnostics, without its finding's words.
+    const saved = await readFile(join(out, "mint-report.json"), "utf8");
+    expect(saved).toContain('"code": "ReviewDenied"');
+    expect(saved).not.toContain("Make the account input free-form.");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await site.close();
+  }
+});
+
+// A build that stops says why at the terminal and in its report, and neither holds a step's
+// output: here the site's session cookie, which the example returns before the quota runs out.
+test("a CLI build that stops prints why and writes its report without the page's cookie", async () => {
+  test.setTimeout(60_000);
+  const cookie = "sess_9f2c41d7e8";
+  const site = await startSite((_request, response) => {
+    response.setHeader("Set-Cookie", `session=${cookie}; Path=/`);
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>");
+  });
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-cli-stopped-"));
+  const out = join(directory, "out");
+  const report = join(out, "mint-report.json");
+  const cookieTool = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_fixture",input:Schema.Struct({}),output:Schema.Struct({cookie:Schema.String})},
+async ({kernel,sessionId}) => {
+  const response = await kernel.browsers.playwright.execute(sessionId,{code:"return await page.evaluate(() => document.cookie);",timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return {cookie:String(response.result)};
+});`;
+  const quotaMinter = `${exampleTurns}
+appendFileSync(ledger,JSON.stringify(request.input));
+throw Object.assign(new Error('Quota spent'),{status:429,code:'insufficient_quota'});`;
+  try {
+    const { file, ledger } = await cliRuntime(directory, cookieTool, quotaMinter);
+    const child = spawn(
+      process.execPath,
+      [
+        file,
+        "mint",
+        "--url",
+        site.url,
+        "--intent",
+        "Read the fixture cookie",
+        "--effect",
+        "read",
+        "--out",
+        out,
+      ],
+      { env: { PATH: process.env["PATH"] ?? "" }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const [code] = (await once(child, "close")) as [number | null];
+    expect(code, stderr).toBe(1);
+    // The example's output reached the minter, so the cookie was there to leak.
+    expect(await readFile(ledger, "utf8")).toContain(cookie);
+    expect(stderr).toContain(
+      [
+        "  Why: the model provider's quota is spent (model_quota_exhausted)",
+        "  Host failure: model_quota_exhausted",
+        "  Steps: 1 run, 0 failed.",
+        "  Writes that may have gone through: none",
+        `  Full report: ${report}`,
+      ].join("\n"),
+    );
+    const saved = await readFile(report, "utf8");
+    expect(JSON.parse(saved)).toMatchObject({
+      build: "incomplete",
+      stopReason: "model_quota_exhausted",
+      hostFailure: "model_quota_exhausted",
+      executions: [{ status: "completed", review: { outcome: "allow" } }],
+    });
+    expect(stderr + saved).not.toContain(cookie);
+    // Guardian's words about a step, which could quote a page, stay out too.
+    expect(saved).not.toContain("Fixture review");
   } finally {
     await rm(directory, { recursive: true, force: true });
     await site.close();

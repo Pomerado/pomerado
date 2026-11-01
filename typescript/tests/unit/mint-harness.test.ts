@@ -1599,6 +1599,39 @@ it.each([
   },
 );
 
+// A write build's output mismatch asks for a schema its output decodes against, sends the minter to
+// the step that confirmed the write, and lets a field a later cancel, refund or delete left
+// unreadable go optional so the tool can publish. A read's text is unchanged.
+it("words a write build's output mismatch apart from a read build's", async () => {
+  const instructions: Record<string, string> = {};
+  for (const { effect, purpose } of [
+    { effect: "read", purpose: "example" },
+    { effect: "write", purpose: "act" },
+  ] as const) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose });
+          const answer = JSON.parse(yield* turn.actions.finish(publication));
+          const instruction = String(Reflect.get(Object(answer), "instruction"));
+          instructions[effect] = instruction.slice(instruction.indexOf("Not published:"));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "contract_output_mismatch" }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect });
+  }
+  expect(instructions).toStrictEqual({
+    read: "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+    write:
+      "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+  });
+});
+
 // A finish_build the host refuses before publication runs is a decision too.
 it.each([
   { refusal: "an invalid request", input: { ...publication, metadata: undefined }, code: "InvalidRequest" },
@@ -2702,30 +2735,49 @@ it("tells the agent to ask a rejected read-or-write question again, never to wit
   ]);
 });
 
-it("keeps the reword-or-withdraw instruction for a rejected question other than read-or-write", async () => {
-  const responses: unknown[] = [];
+// A reword came back as "reword the question, or withdraw it", and builders dropped questions the
+// owner needed to answer. Guardian's label now says whether a question is still needed.
+it("tells the minter to ask a reworded question again, once, unless Guardian found none needed", async () => {
+  const responses: Record<string, unknown>[] = [];
+  const asks = [
+    { id: "account", label: "unclear" },
+    // The same question sent back again after its one rewording.
+    { id: "account", label: "unclear" },
+    { id: "plan", label: "repeat" },
+    { id: "region", label: undefined },
+  ] as const;
+  let reviews = 0;
   const f = await fixture(
     (turn) =>
       Effect.gen(function* () {
-        responses.push(
-          JSON.parse(yield* turn.actions.requestInput(textQuestion("Which account type?"))),
-        );
+        for (const { id } of asks)
+          responses.push(
+            JSON.parse(yield* turn.actions.requestInput(textQuestion("Which one?", id))),
+          );
       }),
     {
       reviewQuestion: () =>
-        Effect.succeed({ outcome: "reword" as const, rationale: "The site shows the types." }),
+        Effect.sync(() => {
+          const label = asks[reviews++]?.label;
+          return {
+            outcome: "reword" as const,
+            rationale: "Synthetic rationale.",
+            ...(label === undefined ? {} : { label }),
+          };
+        }),
     },
   );
   await f.run();
-  expect(responses).toEqual([
-    {
-      status: "question_rejected",
-      rationale: "The site shows the types.",
-      userInputRequired: false,
-      instruction:
-        "Reword the question using the rationale, or withdraw it and continue. Do not ask again for a value you were already given or that the site shows. A reworded question is reviewed again.",
-    },
-  ]);
+  expect(responses.map((response) => response["status"])).toEqual(
+    asks.map(() => "question_rejected"),
+  );
+  // A question that needs other words is asked again; one Guardian found unneeded is not.
+  expect(responses[0]).toMatchObject({ questionNeeded: true });
+  // It is asked again once: sent back after that, the minter goes on without it.
+  expect(responses[1]).toMatchObject({ questionNeeded: false });
+  expect(responses[2]).toMatchObject({ questionNeeded: false });
+  // An older reviewer gives no label, so the rationale alone says which.
+  expect(responses[3]).not.toHaveProperty("questionNeeded");
 });
 
 // The question review didn't know a build was a write build, so it rejected the true statement
@@ -5247,6 +5299,47 @@ it("ends a signed-in build as no_response when its example's script question goe
   expect(await f.run()).toMatchObject({
     build: "incomplete",
     noResponse: { possibleCommit: false },
+  });
+});
+
+/** What the minter's first request says about signing in. */
+const websiteAuthentication = (input: string) => modelInput(input).websiteAuthentication;
+
+const unboundSignInInstruction =
+  "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+const preAuthorizedSignInInstruction =
+  "A login the caller already authorized for this site is attached; the build has not signed in with it yet. Credential values are private host input. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate, with a signInStep for each sign-in screen, before dependent business work; the host signs in with the attached login and continues within the same call. Call authenticate before asking the caller for another login or to relax a rule about which login to use. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+it("tells a build with no login bound and none pre-authorized exactly what it was told before", async () => {
+  let seen: unknown;
+  const f = await fixture((turn) =>
+    Effect.sync(() => {
+      seen = websiteAuthentication(turn.input);
+    }),
+  );
+  await f.run();
+  expect(JSON.stringify(seen)).toBe(
+    JSON.stringify({ credentialsAvailable: false, instruction: unboundSignInInstruction }),
+  );
+});
+
+// A login the caller authorized that waits for the build's first sign-in is attached, not
+// missing: the minter calls authenticate for it before asking the caller about logins.
+it("tells a build with a pre-authorized login to sign in through authenticate", async () => {
+  let seen: unknown;
+  const f = await fixture(
+    (turn) =>
+      Effect.sync(() => {
+        seen = websiteAuthentication(turn.input);
+      }),
+    { websiteLoginPreAuthorized: true, autofillSignIn: true },
+  );
+  await f.run();
+  expect(seen).toEqual({
+    credentialsAvailable: false,
+    loginPreAuthorized: true,
+    instruction: preAuthorizedSignInInstruction,
   });
 });
 

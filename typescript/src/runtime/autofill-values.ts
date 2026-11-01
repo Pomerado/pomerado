@@ -7,7 +7,7 @@ import type {
   FillSlot,
   IdentifierKind,
 } from "../destinations/autofill-step.js";
-import { wholeDateLayouts } from "../destinations/login-field-formats.js";
+import { nationalDigits, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { WebsiteCredentials } from "./authentication.js";
 import { correctionTriesLeft } from "./credential-prompts.js";
 import type { InputAsker } from "./input-request.js";
@@ -44,15 +44,16 @@ export { heldField } from "./login-values.js";
 type CorrectionField = AnsweredLoginField | "recovery_code";
 
 /**
- * A saved date of birth or ZIP the site has not refused: the owner's edit of the saved login. A
- * refused saved value is never read again.
+ * A saved private identifier, date of birth or ZIP the site has not refused: the owner's edit of
+ * the saved login. A refused saved value is never read again.
  */
 const unrefusedSavedExtra = (
   slot: AnsweredLoginField,
   login: { readonly credentials: WebsiteCredentials },
   rejected: ReadonlySet<string>,
 ) => {
-  if (slot !== "date_of_birth" && slot !== "zip") return undefined;
+  if (slot !== "date_of_birth" && slot !== "zip" && slot !== "private_identifier")
+    return undefined;
   const saved = login.credentials[loginFieldKeys[slot]];
   return saved !== undefined && !rejected.has(saved) ? saved : undefined;
 };
@@ -197,22 +198,37 @@ const boxedCode = (found: Found, boxes: number): Found => {
     : new Unanswered(codeDoesNotFit);
 };
 
+/** The values with each `national` phone field's number written without its calling code. */
+const localValues = (step: Pick<AutofillStep<FillSlot>, "fields">, values: readonly string[]) =>
+  step.fields.some((field) => field.slot === "phone" && field.format === "national")
+    ? values.map((value, index) => {
+        const field = step.fields[index];
+        return field?.slot === "phone" && field.format === "national"
+          ? (nationalDigits(value) ?? value)
+          : value;
+      })
+    : values;
+
 /**
  * The values as the host types them: a screen with as many code fields as its code has characters,
  * one-digit boxes, takes one character in each, in order (`valuesInOrder` gives a screen of several
  * code fields no other code); any other screen takes its values as they are. Every code field's
  * value stays the whole code everywhere else, since what the host watches go out and what a
- * refusal rules out is the code.
+ * refusal rules out is the code. A phone field whose step says `format: "national"` takes the
+ * digits after the number's calling code (`nationalDigits`), which its read-back then checks; a
+ * number saved without its calling code is typed as saved, since nothing says which digits are
+ * the calling code.
  */
 export const typedValues = (
   step: Pick<AutofillStep<FillSlot>, "fields">,
   values: readonly string[],
 ) => {
+  const local = localValues(step, values);
   const boxes = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
   const [first] = boxes;
-  const characters = first === undefined ? [] : Array.from(values[first] ?? "");
-  if (boxes.length < 2 || characters.length !== boxes.length) return values;
-  return values.map((value, index) => {
+  const characters = first === undefined ? [] : Array.from(local[first] ?? "");
+  if (boxes.length < 2 || characters.length !== boxes.length) return local;
+  return local.map((value, index) => {
     const box = boxes.indexOf(index);
     return box === -1 ? value : (characters[box] ?? value);
   });
@@ -283,10 +299,11 @@ export interface HostedValues<E, L extends AutofillLogin> {
 
 /**
  * The values an autofill step fills, in field order: the login's stored username into a
- * `username` slot, its password, and an identifier, date of birth or ZIP its record holds. What the
- * login does not hold is asked of the owner in place: a plain host question for an identifier, the
- * same `system` source as every login ask, and a secret one for a date of birth, ZIP, code,
- * recovery code or security answer, unless the host gives one (`hosted`). An answered identifier
+ * `username` slot, its password, and an identifier, private identifier, date of birth or ZIP its
+ * record holds. What the login does not hold is asked of the owner in place: a plain host question
+ * for an identifier, the same `system` source as every login ask, and a secret one for a private
+ * identifier, date of birth, ZIP, code, recovery code or security answer, unless the host gives one
+ * (`hosted`). An answered identifier
  * is the same login, never another account. Each value is registered with the broker so every
  * channel masks it as the username is. Fields the owner gives are kept for the attempt (`given`);
  * a code is asked for each screen that shows one, once for all of that screen's code fields.
@@ -330,11 +347,18 @@ export const makeAutofillValues = <
       if (answered instanceof Unanswered) return answered;
       return { slot: "private_answer" as const, value: answered.value };
     });
-  /** A rejected extra never falls back to its saved value or the primary identifier's shape. */
-  const fieldValue = (slot: AnsweredLoginField, login: AutofillLogin) =>
+  /**
+   * A rejected extra never falls back to its saved value or the primary identifier's shape. A
+   * private identifier is asked by its field's label (`label`).
+   */
+  const fieldValue = (slot: AnsweredLoginField, login: AutofillLogin, label?: string) =>
     Effect.gen(function* () {
-      const privateExtra = slot === "date_of_birth" || slot === "zip";
-      const requested: Asked = privateExtra ? slot : [slot];
+      const requested: Asked =
+        slot === "date_of_birth" || slot === "zip"
+          ? slot
+          : slot === "private_identifier"
+            ? { privateIdentifier: label ?? "ID" }
+            : [slot];
       const rejected = login.rejectedValues?.[slot] ?? new Set<string>();
       if (rejected.size === 0) {
         const held = heldField(slot, login.credentials, given.current);
@@ -372,6 +396,18 @@ export const makeAutofillValues = <
       for (const layout of wholeDateLayouts(answered.value)) yield* register(slot, layout);
       return { slot, value: answered.value };
     });
+  /**
+   * A private identifier, such as a national identity number or a PIN that is itself the sign-in
+   * identifier: the record's, the owner's answer, else asked by the field's label with the save
+   * offer, and masked like a password.
+   */
+  const privateIdentifierValue = (field: AutofillField, login: AutofillLogin) =>
+    Effect.gen(function* () {
+      const answered = yield* fieldValue("private_identifier", login, field.label);
+      if (answered instanceof Unanswered) return answered;
+      yield* register("private_identifier", answered.value);
+      return { slot: "private_identifier" as const, value: answered.value };
+    });
   /** Resolves a secondary identifier without guessing a rejected primary alias. */
   const identifierValue = (field: AutofillField, slot: LoginIdentifierKind, login: AutofillLogin) =>
     Effect.gen(function* () {
@@ -384,7 +420,7 @@ export const makeAutofillValues = <
       const stored = heldField(slot, login.credentials, given.current);
       if (stored !== undefined) return { slot, value: stored };
       const asked = (field.accepts ?? [slot]).filter(
-        (kind): kind is LoginIdentifierKind => kind !== "username",
+        (kind): kind is LoginIdentifierKind => kind !== "username" && kind !== "private_identifier",
       );
       return yield* ask(login.ask, asked, undefined, login.offerSave === true);
     });
@@ -406,6 +442,7 @@ export const makeAutofillValues = <
       if (slot === "recovery_code") return yield* recoveryValue(login);
       if (slot === "username") return { slot, value: login.credentials.username };
       if (slot === "date_of_birth" || slot === "zip") return yield* checkedValue(slot, login);
+      if (slot === "private_identifier") return yield* privateIdentifierValue(field, login);
       return yield* identifierValue(field, slot, login);
     });
   const valuesFor = valuesInOrder<L, E>(

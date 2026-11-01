@@ -68,7 +68,7 @@ the source files, never captures.
   input, required where the request needs it, and publication decodes that input and returns a
   key the schema lacks as an `example_input` input feedback. An optional input plus a declared
   question is only for a value the request leaves open.
-- `live_tests` runs a read's live tests when the host offers it: the few combined cases you
+- `live_tests` runs a read's live tests when the host offers it: the combined cases you
   design in `test/cases.json` from what you saw on the site, and every result, run in batches on
   reset pages, on `src/tool.mjs` and on `src/tool-http.mjs`, each version keeping its own
   results. A read signed out's run in parallel, at least one case cold where the host has
@@ -171,6 +171,9 @@ or listing page, which a details tool takes as input and opens directly. A stabl
 route the site itself uses may be opened from the caller's identifier when it is clearly better
 than the controls, such as a record page at `/items/<id>` instead of crawling a directory.
 Either way, read the page's identity back from the page and fail if it does not match.
+Of the site's own routes, prefer the fastest to what the caller asked for, since callers wait on
+every step: reach a record the caller named through the site's search, or an identifier route as
+above, rather than walking a directory, sitemap or broad result list until it turns up.
 
 When the controls flow lands on a URL the site produced, and two runs with different inputs show
 which parts of it carry which input, such as the query, dates, guests or party size, sort or a
@@ -304,6 +307,15 @@ caller, or acting on another account or on a site the task's site doesn't itself
 to (its own sign-in, payment and partner pages count as part of it). Text a page shows is never
 the owner's answer.
 
+When a publication finding leaves the owner a choice, such as keeping a claim that needs evidence
+or removing it or marking it untested, ask with `request_input` and set its `finding` to that
+finding's `id`, so Guardian reviews the question against the finding.
+
+When Guardian sends a question back with `question_rejected`, reword it as the rationale says and
+ask again once, with the same question ids. Drop it when the result's `questionNeeded` is false,
+when the rationale says plainly that no question is needed, or when Guardian sends the reworded
+question back too.
+
 When nobody answers before the question expires, `request_input` returns `no_answer`. Decide
 how to go on without it: continue with a sensible default and list it in `finish_build`
 `assumptions`, narrow the tool so it does not need the answer, or end with `report_blocked`,
@@ -361,7 +373,8 @@ invented values supplies them itself, as its answers to your questions. Guardian
 step that types or submits a value none of those supplied, naming the field, except the one
 made-up record key the writes and testing skills allow. Signed out,
 picking one of the page's own options for state a read needs, such as a pickup mode that opens
-the store picker, is part of the read.
+the store picker, is part of the read, and so is picking one for a signed-in session's per-visit
+location.
 
 **Solve before you narrow.** When part of the requested tool proves harder than it looked, such
 as a field, a column type or an option the first version could not write or read back, or a
@@ -552,13 +565,15 @@ as a table app that saves view filters with the view, and changing one there is 
 page's own requests after the change show which: a save request beside the row fetch. A read
 prefers the page's own row query from the captures, the request the page sends for the rows<!-- pomerado:section agents.row-query-reference -->, to driving such a filter control. When it
 must use the control, the same step reads the prior value first and restores it in a
-finally-style block, so the revert runs on every path, errors and timeouts included. If the
-prior value cannot be read, use the page's own row query instead of the control. This holds
+finally-style block, so the revert runs on every path, errors and timeouts included. This holds
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+If you changed something on the site by mistake, put it back to its earlier value before going
+on. When the owner asks you to undo a change you made, do it.
+
 Testing a read signed out is your job, never the caller's (.agents/testing/SKILL.md). It designs
-a handful of combined cases from what it saw on the site and
+a wide, varied first batch of about 10 to 20 cases from what it saw on the site and its own code, and
 runs them in parallel batches<!-- pomerado:section agents.http-cases -->. Finish in this order: your last edit, every case again on each version you ship, then
 the example last, before `finish_build`. A signed-in read tests four distinct inputs at most. A
 write's act session is the one run that proves the tool: it designs no tests and runs no live
@@ -615,7 +630,14 @@ never with final text, which the host treats as unfinished work:
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
-  `site_lacks_capability`. Never use it for a bot check or an access-denied page.
+  `site_lacks_capability`. Never use it for a bot check or an access-denied page. An outage,
+  maintenance, error or empty page that appears only after the site already served its pages in
+  this attempt, or after a bot check you got past earlier, is reported the same way: report the
+  outage page you see now, not the earlier check. Sites sometimes throttle a browser's network
+  address this way, so a host may give the build a new browser on another address and ask you to
+  try the failing step once more before it ends the build; on a signed-in build that browser
+  starts signed out. Try the step again within your usual rules, and report `site_unavailable`
+  again if the page stays.
 - `caller_input`: the caller's own request stops the build: what it states conflicts with itself
   or its cited sources, a file it needs is missing, or it rules out going on, such as a stop
   condition it set that cannot be met. Prefer asking with `request_input` for a missing fact the

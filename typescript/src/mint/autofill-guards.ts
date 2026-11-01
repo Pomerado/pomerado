@@ -29,6 +29,7 @@ const identityValues = (
     credentials?.email,
     credentials?.phone,
     credentials?.accountNumber,
+    credentials?.privateIdentifier,
     open?.sentIdentifiers.email,
     open?.sentIdentifiers.phone,
     open?.sentIdentifiers.accountNumber,
@@ -36,6 +37,7 @@ const identityValues = (
     h.answeredLoginFields.current.email,
     h.answeredLoginFields.current.phone,
     h.answeredLoginFields.current.account_number,
+    h.answeredLoginFields.current.private_identifier,
   ].flatMap((value) => (value === undefined || value.length < 3 ? [] : [value.toLowerCase()]));
 };
 
@@ -51,10 +53,24 @@ const namesIdentityOrSharedMask = (text: string, values: readonly string[]) => {
   );
 };
 
+/**
+ * A signed-in check as the minter sends it: the marker, and the request a host may check in its
+ * place (`requestPath`), which publishes with the tool too.
+ */
+export type SignedInStepCheck = AutofillSignedIn & { readonly requestPath?: string | undefined };
+
+/** The check's parts that publish with the tool and run for every login. */
+export const signedInCheckParts = (indicator: SignedInStepCheck) => [
+  indicator.selector,
+  indicator.urlPath,
+  indicator.openPath,
+  indicator.requestPath,
+];
+
 /** Whether the check names a known identity value, or one of the shared masks. */
-const holdsIdentity = (indicator: AutofillSignedIn, values: readonly string[]) =>
+const holdsIdentity = (indicator: SignedInStepCheck, values: readonly string[]) =>
   namesIdentityOrSharedMask(
-    [indicator.selector, indicator.urlPath, indicator.openPath]
+    signedInCheckParts(indicator)
       .filter((part) => part !== undefined)
       .join(" "),
     values,
@@ -64,7 +80,11 @@ const holdsIdentity = (indicator: AutofillSignedIn, values: readonly string[]) =
  * A refusal of a signed-in check that names the account's own identity, or undefined. The check
  * ships with the tool and runs for every login.
  */
-export const identityRefusal = (h: Host, open: AutofillSignInState, indicator: AutofillSignedIn) =>
+export const identityRefusal = (
+  h: Host,
+  open: AutofillSignInState,
+  indicator: SignedInStepCheck,
+) =>
   holdsIdentity(indicator, identityValues(h, open))
     ? result({
         signedIn: false,

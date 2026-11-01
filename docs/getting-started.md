@@ -182,6 +182,7 @@ Your agent then calls `get_job`. Each call waits up to 30 seconds and returns th
 
 - `"build": "published"` means Pomerado ran the task, Guardian approved the source, and the integration is saved.
 - `"build": "incomplete"` comes with a `summary` and saves nothing. The folder is removed, so you can retry with the same name.
+  - When the outcome records them, it adds short codes that say why: `stopReason`, `hostFailure`, and `publicationDenial` with Guardian's `reason` and `category`.
 - A `"status": "failed"` job carries an `error`. See [Troubleshooting](#troubleshooting).
 
 To use the integration, follow the steps in the README's [Use your integration](../README.md#use-your-integration).
@@ -232,7 +233,7 @@ Pomerado owns its browser context on an attached server. Closing a job closes th
 
 ## Troubleshooting
 
-- A mint ends with `"build": "incomplete"` and the summary "Minting stopped before publication". One cause is a server without `OPENAI_API_KEY`, which ends the mint this way within seconds. Check [Client settings](#client-settings) for your client.
+- A mint ends with `"build": "incomplete"` and the summary "Minting stopped before publication". One cause is a server without `OPENAI_API_KEY`, which ends the mint this way within seconds. Check [Client settings](#client-settings) for your client. `pomerado mint` prints why under the summary and writes the outcome to `mint-report.json` in `--out`. Its `diagnostics` hold what the host saw, such as the model provider's error.
 - An error says "Model provider authentication failed". OpenAI rejected the key the server sent. Check that the key is current.
 - A mint ends with a summary saying the account's model quota is spent. Add credit or raise the limit on your OpenAI account, then mint again.
 - A job fails with "Model provider quota or rate limit was reached". Your OpenAI account hit a rate limit or quota. Wait, or check its limits, then try again.

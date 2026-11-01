@@ -4,8 +4,15 @@ import type { WebsiteCredentials } from "./authentication.js";
 
 /** An identifier a site may ask for besides the username: it picks which account signs in. */
 export type LoginIdentifierKind = "email" | "phone" | "account_number";
-/** A field the owner may be asked for during a sign-in: an identifier, a date of birth or a ZIP. */
-export type AnsweredLoginField = LoginIdentifierKind | "date_of_birth" | "zip";
+/**
+ * A field the owner may be asked for during a sign-in: an identifier, a private identifier, a date
+ * of birth or a ZIP.
+ */
+export type AnsweredLoginField =
+  | LoginIdentifierKind
+  | "private_identifier"
+  | "date_of_birth"
+  | "zip";
 /** The fields the owner gave in this build. */
 export type AnsweredLoginFields = Partial<Record<AnsweredLoginField, string>>;
 
@@ -14,13 +21,26 @@ export const kindNames = {
   phone: "phone number",
   account_number: "account number",
 } as const;
+/**
+ * A private identifier the host asks the owner for, by the site's own label for its field, such as
+ * "National ID number".
+ */
+export interface PrivateIdentifierAsk {
+  readonly privateIdentifier: string;
+}
 /** What the host asks the owner for: identifiers of the kinds a field accepts, or one secret. */
 export type Asked =
   | readonly LoginIdentifierKind[]
+  | PrivateIdentifierAsk
   | "code"
   | "recovery_code"
   | "date_of_birth"
   | "zip";
+/** Whether an ask is for a private identifier. */
+export const asksPrivateIdentifier = (asked: Asked): asked is PrivateIdentifierAsk =>
+  typeof asked === "object" && "privateIdentifier" in asked;
+/** The longest private identifier a login keeps. */
+export const privateIdentifierLimit = 128;
 
 export const emailShaped = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.trim());
 export const phoneShaped = (value: string) =>
@@ -64,6 +84,12 @@ export const parsedAnswer = (
     const zip = parseZip(value);
     return zip === undefined ? undefined : { slot: asked, value: zip };
   }
+  if (asksPrivateIdentifier(asked)) {
+    const kept = value.trim();
+    return kept === "" || kept.length > privateIdentifierLimit
+      ? undefined
+      : { slot: "private_identifier", value: kept };
+  }
   const kind = answeredKind(value, asked);
   return kind === undefined ? undefined : { slot: kind, value };
 };
@@ -73,6 +99,7 @@ export const loginFieldKeys = {
   email: "email",
   phone: "phone",
   account_number: "accountNumber",
+  private_identifier: "privateIdentifier",
   date_of_birth: "dateOfBirth",
   zip: "zip",
 } as const satisfies Record<AnsweredLoginField, keyof WebsiteCredentials>;

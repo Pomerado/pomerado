@@ -11,7 +11,7 @@ script from a reset start by running its example until it works (re-running a re
 example is normal); resolve its missing choices with reads when possible. A write build
 does the caller's requested task once, live (in as many write steps as it takes), then
 composes its script from what happened (the `writes` skill). A read tests what its example
-did not exercise with a few combined live cases (the `testing` skill). A write proves its tool
+did not exercise with combined live cases, a wide, varied batch when signed out (the `testing` skill). A write proves its tool
 with its act session; it never reads
 the `testing` skill or designs further tests<!-- pomerado:section core.write-http-check -->.
 That forbids running the write again or testing it live, not writing checks: a write's script
@@ -99,6 +99,12 @@ answers `{ success, result, error, stderr }`. Throw
   their one `waitForRows` or `waitForValues` after the last change, which passes at once on a
   settled page.
 - `waitForOutcome` already waited for its answer, so prefer no extra wait for that same answer after it.
+- A step that changes the site's own setting, such as a store, location, currency or language,
+  may reload the page some time after the site saves it, or redraw it without loading a new one,
+  and the element the next step uses may already show before then, where `waitForOutcome` counts
+  it once unchanged for 2 s. If the site may reload the page some time after saving a setting,
+  name an outcome only the new page shows, such as a changed URL, and look the next element up
+  again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
   nothing.
 - Start a response wait in the same call as the click that causes it: name the response as a
@@ -209,9 +215,13 @@ exception: it is optional unless the task can't run without it (below).
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
   up the way a person would, with `pickValue` from `pickerCode` (forms skill). It types the
   caller's value into the site's own search, reads every suggestion, matches names loosely
-  (case, accents, spacing, punctuation, and whole words, so a name with a neighborhood or an
-  airport code in brackets still matches) with a whole-name or code match outranking a partial
-  one, and counts the matches at the best rank. A read of a category or term passes `stem: true`
+  (case, accents, spacing, punctuation, whole words, then the same words with their
+  comma-separated parts in another order, so a name with a neighborhood or an airport code in
+  brackets, or a station the site lists as "Station, City", still matches, but never a name with
+  words the value lacks), tries the usual other forms of the value's words, such as 5th
+  and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
+  outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
+  site's closest options first. A read of a category or term passes `stem: true`
   so a caller's word also matches an option word it begins or that begins it, such as Dentist and
   Dentistry, and returns the option it used (forms skill). With none, throw its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, except on a write
@@ -233,6 +243,14 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- Look up anything the caller names that the site can search, such as a place, business,
+  product, provider or record, through the site's own search, typeahead or picker, rather than
+  matching only the options the page already shows, such as a menu of popular choices or the
+  page's buttons, or a list or aliases of your own: the site's search finds what no menu lists.
+  Trying the shown options first is fine when the tool falls back to that search for any other
+  value. When the site's only control for the value is a fixed list, the input is an enum of
+  that list, as above. In a signed-in tool where adding an entry saves it to the account, such
+  as a new address or payee, matching the account's saved entries is fine.
 - On a write, every choice the session met is an input, costly choices included, and any
   other option, such as a seat, is an optional input, as the writes skill says ("Compose and
   publish").
@@ -356,8 +374,10 @@ exception: it is optional unless the task can't run without it (below).
   booleans named as statements (`refundable`, not `is_refundable_flag`); lists named in the
   plural; and the unit in the field name or its description (`duration_minutes`). Convert
   between these and the site's own formats in code. The output check flags a date or timestamp
-  not in the form its field declares (`format_mismatch`) and one value in two letter cases
-  across a list (`case_variant`).
+  not in the form its field declares, a value in another notation than its description names
+  and a currency that is not an ISO 4217 code (`format_mismatch`), a field whose description
+  promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
+  letter cases across a list (`case_variant`).
 - When `reference/site-tools.json` exists, you can view the site's other tools. Read
   `reference/site-tools/README.md` first: it indexes them, one folder each, with each tool's
   effect, sign-in and a short description. Then read the folders you need: each holds a
@@ -412,7 +432,8 @@ names, the record's identifier as the site shows it, and the context those depen
 shows it, such as dates, a party size or a location. Make each one required and non-null, typed
 so a value the code could not read fails the output check (`Schema.NonEmptyTrimmedString` for
 text, `Schema.Int` for a count), never optional, nullable or plain `Schema.Number`, whatever a
-description says. A run whose output fails its schema goes to repair.
+description says, except as below and for a write's record later cancelled, refunded or deleted
+(publication skill). A run whose output fails its schema goes to repair.
 - The owner may settle a different form for every run: in the request's own explicit words, in
   an answer to your design question or in a task update, such as blank fields returned as empty
   strings. Publication review honours that decision as stated. Build it that way, and say in
@@ -444,6 +465,11 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   is null exactly when this record does not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
+- Prefer returning both a unit price and a line total for each line with a quantity, such as a
+  cart's or an order's, as `unit_price_minor` and `line_total_minor` in the money form above,
+  each read as the site shows it. When the site shows only one, keep both fields anyway, an
+  exception to the rules here on unread, always-null and never-filled fields: the other is null,
+  never computed, and its description says when it is null.
 - Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
   back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
   cut short.
@@ -530,8 +556,10 @@ that depends on them:
    with one option, or a disabled control showing one value, is a
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
-   presents the groups, since one choice can change the options of the next. When the value is
-   not among the options the page lists at all, throw
+   presents the groups, since one choice can change the options of the next. An input whose
+   options depend on another goes after it, such as times after their date, slots after the
+   party size, models after the make or regions after the country, even when the page shows it
+   first. When the value is not among the options the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
@@ -549,9 +577,9 @@ that depends on them:
      preselected substitute only when the caller's own task asks for whatever the site ends up
      with (writes skill).
    - For an input whose options depend on another, such as a check-out after a check-in or a
-     time after a date, apply the input it depends on first and read `available` from that
-     state, then drop the options the input alone rules out. Never list options read before
-     the input they depend on applied.
+     time after a date, pick from the dependent control only once its options have loaded for
+     that value, and read `available` from that state, then drop the options the input alone
+     rules out. Pick or list a dependent option only after the field it depends on is set.
    - A venue or record page that says it takes no online booking, or not yet, and shows no
      booking controls, such as "Reservations open November 1": the site says no to the whole
      request (caller-input skill), so a read returns those words, preferably as a declared
@@ -645,7 +673,14 @@ site's own data request<!-- pomerado:section core.data-request-reference -->, to
 each record's detail page, keep each to a few calls (open, wait, one read), and consider whether
 the request is better served as two tools, a search and a details read by identifier; say so in
 `coverage`. Prefer opening those detail pages only for the rows the call returns, after
-`readList`, not inside the list reader (pagination skill).
+`readList`, not inside the list reader (pagination skill). When a call needs many independent
+lookups or detail reads, such as one for each returned row, prefer running them in parallel
+batches over one after another, such as the site's own data request for each row sent together
+in one `evaluate` with the runtime's `batchFetch` (paste `batchFetchCode`), or with `batchRead`
+in an HTTP version. They start at 4 at once, send more after clean batches, halve on a 429 or 503
+and stop at a block. Send no more at once than the build showed the site handling without
+refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
+block at run time still fails the call, as the 429 rule above says.
 Prefer the page's own structured data, its embedded JSON or the data response it renders from,
 to its rendered cards when it holds the same fields for the same records, and check on the
 example that it matches what the page shows. Embedded JSON holds the page as first rendered:
@@ -849,6 +884,18 @@ wait again and recheck the final site, path and page identity before extraction.
 typed failures for every other state; never return interstitial fields as a detail
 result. `references/navigation.ts` shows this sequence in one call, reached through the site's
 search (`detailNavigation`) and from a caller's page URL opened unchanged (`detailFromUrl`).
+
+When the tool opens a record it picked from the site's results by a name the caller gave, such
+as a restaurant, venue, product or provider, prefer to confirm the page by the site's own id or
+link from that result, such as the path the result linked to. Compare visible names loosely, if
+at all, with `readBackMatches(shown, picked) || readBackMatches(picked, shown)` from
+`pomerado/runtime`, `picked` being the name the result showed, rather than equality or
+`sameText`, since a page's heading may add words to that name or drop some. Prefer not to fail a
+valid target over punctuation, case, accents, an article such as The, a location suffix or the
+heading's format. This is for the page opened from that result. A picker's selected label still
+compares with `sameText`, and choosing among results follows the proper-noun rule above, since
+this loose match also accepts another record whose name adds or drops a word, such as Bay Diner
+for Big Bay Diner.
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible

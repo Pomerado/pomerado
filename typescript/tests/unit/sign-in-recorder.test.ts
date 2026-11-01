@@ -642,6 +642,48 @@ it.each([
   expect(host.confirmed).toEqual([]);
 });
 
+it.each([
+  ["username", { username: account.username }],
+  ["email", { email: "ada.owner@example.com" }],
+  ["account number", { accountNumber: "40417733" }],
+])("refuses a signed-in check whose request names the login's %s before it reads the page", async (_, named) => {
+  const held = {
+    ...account,
+    email: "ada.owner@example.com",
+    accountNumber: "40417733",
+  };
+  const host = harness({ held });
+  const value = Object.values(named)[0] ?? "";
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      return yield* recorder.step(
+        { signedIn: { selector: "#account-menu", requestPath: `/api/accounts/${value}` } },
+        undefined,
+        Effect.void,
+      );
+    }),
+  );
+  expect(result.result).toMatchObject({ signedIn: false, failed: "indicator_holds_identity" });
+  expect(host.confirmed).toEqual([]);
+});
+
+it("refuses a signed-in check whose request holds [private] before it reads the page", async () => {
+  const host = harness({ held: account });
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      return yield* recorder.step(
+        { signedIn: { selector: "#account-menu", requestPath: "/api/accounts/[private]" } },
+        undefined,
+        Effect.void,
+      );
+    }),
+  );
+  expect(result.result).toMatchObject({ signedIn: false, failed: "indicator_holds_identity" });
+  expect(host.confirmed).toEqual([]);
+});
+
 it("refuses a password screen before any identifier screen while the build holds no login", async () => {
   const host = harness();
   const result = await host.run((recorder) => recorder.step(passwordOnly, undefined, Effect.void));
