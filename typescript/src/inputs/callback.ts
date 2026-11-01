@@ -17,6 +17,12 @@ export const makeInputAsker =
       const checked = yield* Schema.decodeUnknown(InputRequest)(request).pipe(
         Effect.mapError((cause) => new InputRequestFailure({ code: "Invalid", cause })),
       );
+      const remaining =
+        bounds?.sourceEndsAt === undefined
+          ? undefined
+          : bounds.sourceEndsAt - (yield* Clock.currentTimeMillis);
+      if (remaining !== undefined && remaining <= 0)
+        return yield* Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
       const collect = answer(checked).pipe(
         Effect.flatMap((value) => {
           const valid = validateAnswer(checked, value);
