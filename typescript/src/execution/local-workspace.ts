@@ -392,13 +392,17 @@ export const createLocalWorkspace = (
         ),
       );
     const list = alive.pipe(Effect.zipRight(listLocalFiles(root)));
+    // The files are read a few at a time. Each read settles, so none is cut off with its file
+    // open, and the first file in path order that fails to read fails the snapshot.
     const snapshot = list.pipe(
       Effect.flatMap((files) =>
         Effect.forEach(
           files.filter((path) => !installed.has(path)),
-          (path) => read(path).pipe(Effect.map((text) => [path, text] as const)),
+          (path) => Effect.either(read(path).pipe(Effect.map((text) => [path, text] as const))),
+          { concurrency: 4 },
         ),
       ),
+      Effect.flatMap(Effect.all),
     );
     const close = Effect.sync(() => {
       closed = true;
