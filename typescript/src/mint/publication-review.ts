@@ -236,23 +236,27 @@ const InlineChunk = Schema.Struct({ hasMore: Schema.Literal(false), source: Sche
 /**
  * Each listed publication file as one complete `read_source` chunk returns it, through the same
  * screen and publication gate, a JSON file parsed so the request shows it as JSON. A file whose
- * read fails or needs more than one chunk is left for Guardian to read itself.
+ * read fails or needs more than one chunk is left for Guardian to read itself. The reads run at
+ * once, as Guardian's other host reads of publication files do, and keep the listed order.
  */
 const inlinePublicationFiles = (readSource: ReviewTurn["readSource"], paths: readonly string[]) =>
-  Effect.forEach(paths, (path) =>
-    readSource(path, 0).pipe(
-      Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(InlineChunk))),
-      Effect.map(({ source }): NonNullable<PublicationScope["inline"]> => [
-        {
-          path,
-          content: path.endsWith(".json")
-            ? Option.getOrElse(decodeJson(source), () => source)
-            : source,
-        },
-      ]),
-      // error-reporting-allow: typed-recovery a file the host cannot inline is still in the index for Guardian to read
-      Effect.orElseSucceed(() => []),
-    ),
+  Effect.forEach(
+    paths,
+    (path) =>
+      readSource(path, 0).pipe(
+        Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(InlineChunk))),
+        Effect.map(({ source }): NonNullable<PublicationScope["inline"]> => [
+          {
+            path,
+            content: path.endsWith(".json")
+              ? Option.getOrElse(decodeJson(source), () => source)
+              : source,
+          },
+        ]),
+        // error-reporting-allow: typed-recovery a file the host cannot inline is still in the index for Guardian to read
+        Effect.orElseSucceed(() => []),
+      ),
+    { concurrency: 4 },
   ).pipe(Effect.map((files) => files.flat()));
 
 /**
