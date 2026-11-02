@@ -294,21 +294,10 @@ export const loadWorkspaceGuide = (
 ): Effect.Effect<WorkspaceGuide, MintFailure> =>
   Effect.gen(function* () {
     const rendering = hostRender(render, options);
-    const [instructions, guide] = yield* Effect.all(
-      [
-        readGuideFile(directory, "AGENTS.md", "agents", rendering),
-        Effect.forEach(
-          workspaceGuideFiles,
-          ({ path, sectionKey }) =>
-            readGuideFile(directory, path, sectionKey, rendering).pipe(
-              Effect.map((text) => [path, text] as const),
-            ),
-          { concurrency: "unbounded" },
-        ),
-      ],
-      { concurrency: "unbounded" },
-    );
-    const files = new Map<string, string>([["AGENTS.md", instructions], ...guide]);
+    const instructions = yield* readGuideFile(directory, "AGENTS.md", "agents", rendering);
+    const files = new Map([["AGENTS.md", instructions]]);
+    for (const { path, sectionKey } of workspaceGuideFiles)
+      files.set(path, yield* readGuideFile(directory, path, sectionKey, rendering));
     files.set(publicationReviewRules.path, publicationReviewRules.text);
     return { instructions, files };
   });
