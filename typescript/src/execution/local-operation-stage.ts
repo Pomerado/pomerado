@@ -49,9 +49,20 @@ const stageDependencies = (directory: string) =>
     const dependencies = yield* installedDependencies;
     const modules = join(directory, "node_modules");
     yield* localPromise(() => mkdir(modules));
-    for (const name of yield* localPromise(() => readdir(dependencies)))
-      if (name !== "pomerado")
-        yield* localPromise(() => symlink(join(dependencies, name), join(modules, name), "dir"));
+    const names = (yield* localPromise(() => readdir(dependencies))).filter(
+      (name) => name !== "pomerado",
+    );
+    // A few links at a time. Each settles before the stage goes on or fails, so none lands in the
+    // folder after its cleanup, and the first name in listing order whose link fails fails it.
+    const linked = yield* Effect.forEach(
+      names,
+      (name) =>
+        Effect.either(
+          localPromise(() => symlink(join(dependencies, name), join(modules, name), "dir")),
+        ),
+      { concurrency: 8 },
+    );
+    yield* Effect.all(linked, { discard: true });
     const pomerado = join(modules, "pomerado");
     yield* localPromise(() => mkdir(pomerado));
     const manifest = { name: "pomerado", type: "module", exports: { "./runtime": "./runtime.js" } };
