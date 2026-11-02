@@ -1511,23 +1511,24 @@ export const makeGuardian = (
             }
             return included;
           });
-          // The other executed files are compared through the host's reader too, apart from the
-          // entrypoint, so both run at once.
-          const [included, unchanged] = yield* Effect.all(
-            [
-              entrypointRead,
-              session === undefined
-                ? Effect.succeed([])
-                : unchangedSources(
-                    sourceLedger(session.history()),
-                    (pending.mintContext?.executedSources ?? []).filter(
-                      (path) => sourcePath(path) !== entrypoint,
+          // With a session, the other executed files are compared through the host's reader too,
+          // apart from the entrypoint, so both run at once. Without one, the read runs alone.
+          const [included, unchanged] =
+            session === undefined
+              ? ([yield* entrypointRead, [] as readonly string[]] as const)
+              : yield* Effect.all(
+                  [
+                    entrypointRead,
+                    unchangedSources(
+                      sourceLedger(session.history()),
+                      (pending.mintContext?.executedSources ?? []).filter(
+                        (path) => sourcePath(path) !== entrypoint,
+                      ),
+                      (path, offset) => readSource(sourcePath(path), offset),
                     ),
-                    (path, offset) => readSource(sourcePath(path), offset),
-                  ),
-            ],
-            { concurrency: "unbounded" },
-          );
+                  ],
+                  { concurrency: "unbounded" },
+                );
           sources = {
             ...(included._tag === "Right"
               ? {
