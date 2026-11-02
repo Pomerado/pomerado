@@ -312,23 +312,29 @@ export const loadAuthoringSkills = (
     try: async () =>
       Promise.all(
         catalog.map(async (entry): Promise<SkillDescriptor> => {
-          const references: Record<string, ReturnType<typeof file>> = {};
-          for (const name of entry.references)
-            references[name] = file({
-              content: await readScopedFile(directory, `examples/${name}`),
-            });
+          // A skill's files are read at once, as the skills are.
+          const [skill, references] = await Promise.all([
+            readScopedFile(directory, `${entry.name}/SKILL.md`),
+            Promise.all(
+              entry.references.map(
+                async (name) =>
+                  [
+                    name,
+                    file({ content: await readScopedFile(directory, `examples/${name}`) }),
+                  ] as const,
+              ),
+            ),
+          ]);
           return {
             name: entry.name,
             description: entry.description,
             content: new TextEncoder().encode(
               hostRender(render, options)(
-                new TextDecoder("utf-8", { fatal: true }).decode(
-                  await readScopedFile(directory, `${entry.name}/SKILL.md`),
-                ),
+                new TextDecoder("utf-8", { fatal: true }).decode(skill),
                 entry.name,
               ),
             ),
-            references,
+            references: Object.fromEntries(references),
           };
         }),
       ),
@@ -393,8 +399,10 @@ export const skillReferenceFiles = (
  */
 export const loadStandaloneAuthoring = (directory: string) =>
   Effect.gen(function* () {
-    const guide = yield* loadWorkspaceGuide(directory);
-    const skills = yield* loadAuthoringSkills(directory);
+    const [guide, skills] = yield* Effect.all(
+      [loadWorkspaceGuide(directory), loadAuthoringSkills(directory)],
+      { concurrency: "unbounded" },
+    );
     if (hostedFeaturesPreamble === "") return { ...guide, skills };
     const instructions = `${hostedFeaturesPreamble}\n\n${guide.instructions}`;
     const files = new Map(

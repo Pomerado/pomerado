@@ -4485,6 +4485,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           Effect.forEach(
             [...new Set(batchHistory.map(({ batch }) => batch.entrypoint))],
             (entrypoint) => stepDigest(entrypoint).pipe(Effect.map((digest) => [entrypoint, digest] as const)),
+            { concurrency: 4 },
           ),
         ).pipe(
           Effect.map((digests) => {
@@ -5301,7 +5302,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         },
       );
       const submissionKey = (proposed: PublicationRequest, paths: readonly string[]) =>
-        Effect.forEach(paths, stepDigest).pipe(
+        Effect.forEach(paths, stepDigest, { concurrency: 4 }).pipe(
           Effect.map((digests) =>
             JSON.stringify({
               proposed,

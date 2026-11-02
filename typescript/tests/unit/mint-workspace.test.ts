@@ -71,6 +71,32 @@ it("reads a source file through the local workspace and refuses one past 8 MiB",
   });
 });
 
+it("snapshots the workspace in path order and fails on the first file in that order it can't read", async () => {
+  const scope = await Effect.runPromise(Scope.make());
+  cleanup.push(() => Effect.runPromise(Scope.close(scope, Exit.void)));
+  const local = await Effect.runPromise(
+    createLocalWorkspace().pipe(Effect.provideService(Scope.Scope, scope)),
+  );
+  for (const [path, text] of [
+    ["src/z.mjs", "export const z = 26;"],
+    ["src/a.mjs", "export const a = 1;"],
+    ["notes.md", "Synthetic notes."],
+  ] as const)
+    await Effect.runPromise(local.write(path, text));
+  expect(await Effect.runPromise(local.snapshot)).toEqual([
+    ["notes.md", "Synthetic notes."],
+    ["src/a.mjs", "export const a = 1;"],
+    ["src/z.mjs", "export const z = 26;"],
+  ]);
+  // The first unreadable file in path order is read whole before its decoding fails; the second
+  // fails on its size alone, before any read.
+  mkdirSync(join(local.root, "scratch"));
+  writeFileSync(join(local.root, "scratch", "a.bin"), Buffer.alloc(4 * 1024 * 1024, 0xff));
+  writeFileSync(join(local.root, "scratch", "b.txt"), "x".repeat(8 * 1024 * 1024 + 1));
+  const failed = await Effect.runPromise(Effect.either(local.snapshot));
+  expect(failed).toMatchObject({ _tag: "Left", left: expect.any(TypeError) });
+}, 30_000);
+
 // Create, update and delete share one edit wrapper; an update stands for all three.
 it("reports an uncertain edit when the workspace writes before throwing", async () => {
   const workspace = await portableJobSession({ "src/tool.mjs": "export const value = 0;" });

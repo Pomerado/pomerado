@@ -1492,7 +1492,6 @@ export const makeGuardian = (
           // and Guardian reads it itself, and when only retaining the screened copy fails, the
           // source stays in view and the gap is recorded.
           const hostRead = timedRead(entrypoint, 0);
-          const included = yield* Effect.either(hostRead.effect);
           const gap = (error: ReviewFailure) =>
             bestEffort(
               emit("guardian.source_failed", {
@@ -1502,21 +1501,33 @@ export const makeGuardian = (
               }),
               "guardian.source_failed",
             );
-          if (included._tag === "Left") yield* gap(included.left);
-          else {
-            entrypointReadAt = epoch();
-            const retained = yield* Effect.either(retain(included.right));
-            if (retained._tag === "Left") yield* gap(retained.left);
-          }
-          const unchanged =
+          const entrypointRead = Effect.gen(function* () {
+            const included = yield* Effect.either(hostRead.effect);
+            if (included._tag === "Left") yield* gap(included.left);
+            else {
+              entrypointReadAt = epoch();
+              const retained = yield* Effect.either(retain(included.right));
+              if (retained._tag === "Left") yield* gap(retained.left);
+            }
+            return included;
+          });
+          // With a session, the other executed files are compared through the host's reader too,
+          // apart from the entrypoint, so both run at once. Without one, the read runs alone.
+          const [included, unchanged] =
             session === undefined
-              ? []
-              : yield* unchangedSources(
-                  sourceLedger(session.history()),
-                  (pending.mintContext?.executedSources ?? []).filter(
-                    (path) => sourcePath(path) !== entrypoint,
-                  ),
-                  (path, offset) => readSource(sourcePath(path), offset),
+              ? ([yield* entrypointRead, [] as readonly string[]] as const)
+              : yield* Effect.all(
+                  [
+                    entrypointRead,
+                    unchangedSources(
+                      sourceLedger(session.history()),
+                      (pending.mintContext?.executedSources ?? []).filter(
+                        (path) => sourcePath(path) !== entrypoint,
+                      ),
+                      (path, offset) => readSource(sourcePath(path), offset),
+                    ),
+                  ],
+                  { concurrency: "unbounded" },
                 );
           sources = {
             ...(included._tag === "Right"
