@@ -361,6 +361,11 @@ passkey, adding a phone number or turning on two-factor. Record its decline cont
 check, so runs pass it too; a run where it does not show skips it once the check verifies the
 session.
 
+When the page right after a sign-in step is optional setup and shows no decline control after one
+bounded wait, prefer loading the site's own start page and checking the signed-in indicator there
+before anything else. Record no step for that page: a run skips it once the check verifies the
+session. A setup page that never loads is not the site being unavailable.
+
 # Signed in
 
 Prefer an observed protected business/account page or authenticated workflow control that the
