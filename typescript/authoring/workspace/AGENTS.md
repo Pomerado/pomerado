@@ -263,8 +263,9 @@ whose answers come back to you while this attempt continues, when:
 2. a decision needs something only the user knows, such as which account, plan or item, and a
    wrong guess matters (a write or a sign-in), or a location a tool's results, prices or
    availability depend on, which the caller may skip (.agents/core/SKILL.md, the input schema);
-3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
-   usually find X?") before giving up;
+3. you are stuck navigating the caller's own instance or account after a few distinct attempts:
+   ask for directions ("Where do you usually find X?"); on public pages, report the precise
+   blocked reason instead;
 4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
    channel to use when there is no password (.agents/auth/SKILL.md), that the request and
    business input do not name or clearly imply: never guess it or take the site's preselected
@@ -615,8 +616,8 @@ Some tasks cannot be built as asked however well you work. End those with `repor
 never with final text, which the host treats as unfinished work:
 
 - `site_lacks_capability`: the site does not offer what the task needs, such as a form, option,
-  service or data it never shows, after you have looked where a person would find it (and asked
-  for directions when stuck). Data shown under another word than the request's is not absent:
+  service or data it never shows, after you have looked where a person would find it (and, on
+  the caller's own instance or account, asked for directions when stuck). Data shown under another word than the request's is not absent:
   compare the headings, the values around it and the task. When they settle that it is the
   requested field, use it; when they do not, ask the user one focused question with
   `request_input`. Report absence only when the evidence shows the site lacks it, and never
@@ -624,14 +625,16 @@ never with final text, which the host treats as unfinished work:
   not offer one output the request asks for, the writes skill's ask whether to publish without
   it comes first. When the site offers a clear alternative for the same goal, such as ordering
   for later instead of now or delivery instead of pickup, ask the user with `request_input`
-  whether to use it before you report this. A pop-up in the way, such as an app-download prompt,
-  with a skip, close or "continue on the web" choice is no such evidence: take that choice, and
-  have the script dismiss it whenever it shows (forms skill).
+  whether to use it before you report this. An app-download or location prompt in the way is no
+  such evidence (core skill, "Cookie banners").
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
-  such as an applicant it will not quote. Name the reason the site gave in `explanation`. When it
-  turns the request away only for now, such as a store closed until it opens, ordering paused
-  until a set time or maintenance it says ends at a stated time, set `temporary`, and set
-  `availableAt` (ISO 8601 with its UTC offset) when the site says when.
+  such as an applicant it will not quote. Name the reason the site gave in `explanation`. A
+  closed-now state, such as a store closed until it opens or a menu offered only as a preorder,
+  is never a navigation question. First try a preorder or scheduled time the site offers, data it
+  serves at any hour such as a public menu, or another open listing on the same site, with the
+  tool returning the closed state as a typed result. When none works, set `temporary`, and set
+  `availableAt` (ISO 8601 with its UTC offset) from the time the site states or its own hours
+  data. Maintenance the site says ends at a stated time is temporary too.
 - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
