@@ -4,7 +4,7 @@ import type { AutofillInspection, AutofillSignedInCheck } from "../../src/destin
 import type { SignInRecipe } from "../../src/destinations/sign-in-recipe.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
-import type { InputAnswers, Question } from "../../src/runtime/input-request.js";
+import type { Question } from "../../src/runtime/input-request.js";
 import { sameSite } from "../../src/runtime/same-site.js";
 import {
   signInForRun,
@@ -199,7 +199,7 @@ const owner = (username: string) =>
           question.id,
           question.type === "credential" ? { username, password, saveLogin: false } : "",
         ]),
-      ) as InputAnswers,
+      ),
     ),
   );
 

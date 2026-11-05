@@ -73,7 +73,7 @@ const reviewInput = (request: ModelRequest | undefined): Readonly<Record<string,
     try {
       const parsed: unknown = JSON.parse(text);
       if (typeof parsed === "object" && parsed !== null && "submitted_call" in parsed)
-        return parsed as Readonly<Record<string, unknown>>;
+        return parsed;
     } catch {
       // Not the review input.
     }

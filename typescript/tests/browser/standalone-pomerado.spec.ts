@@ -2437,7 +2437,7 @@ test("a sign-in code asked during sign-in is typed into the code screen; a later
     cert: await readFile(join(directory, "cert.pem")),
   };
   const server = createTlsServer(tls, (request, response) => {
-    void (async () => {
+    (async () => {
       const cookie = request.headers.cookie ?? "";
       if (request.method === "POST" && request.url === "/login") {
         await body(request);
@@ -2461,7 +2461,9 @@ test("a sign-in code asked during sign-in is typed into the code screen; a later
             ? `<title>Verify</title><form method="post" action="/code"><label>We texted you a code<input name="code" autocomplete="one-time-code" inputmode="numeric"></label><button>Verify</button></form>`
             : `<title>Sign in</title><form method="post" action="/login"><label>User<input name="username" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>`,
       );
-    })();
+    })().catch((error: unknown) => {
+      response.destroy(error instanceof Error ? error : undefined);
+    });
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

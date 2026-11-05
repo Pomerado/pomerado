@@ -1691,9 +1691,7 @@ export const makeGuardian = (
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
         // The closure above may have set it; the cast keeps the compiler from narrowing it away.
-        const pushback = groundPushback as
-          | { readonly ground: GuardianRefusalGround; readonly refused: object }
-          | undefined;
+        const pushback = groundPushback;
         const raw =
           pushback === undefined
             ? output

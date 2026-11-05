@@ -29,7 +29,9 @@ export const normalizeText = (text: string, options: { readonly lines?: boolean 
  * same function, so every option match folds names alike.
  */
 export const foldChoiceText = (text: unknown): string => {
-  const folded = String(text ?? "")
+  // oxlint-disable-next-line typescript/no-base-to-string -- page code may pass any value
+  const written = String(text ?? "");
+  const folded = written
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/gu, "")
     .normalize("NFC")
@@ -38,7 +40,7 @@ export const foldChoiceText = (text: unknown): string => {
     .replace(/\s+/gu, " ")
     .trim()
     .toLowerCase();
-  return folded === "" ? String(text ?? "").trim() : folded;
+  return folded === "" ? written.trim() : folded;
 };
 
 /**

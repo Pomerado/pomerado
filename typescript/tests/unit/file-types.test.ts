@@ -85,6 +85,7 @@ it("names give a media type, else the generic octet stream", () => {
 });
 
 it("the page code's accept check is the same function", () => {
+  // oxlint-disable-next-line typescript/no-implied-eval -- evaluates the page-side source under test
   const pageAccepts = new Function(`return (${acceptsSource});`)() as typeof accepts;
   for (const [accept, name, mediaType] of [
     [".pdf", "a.PDF", "application/pdf"],

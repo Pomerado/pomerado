@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { noOpScriptCode } from "../../src/destinations/autofill-locate-code.js";
 
+// oxlint-disable-next-line eslint/no-eval -- evaluates the page-side source under test
 const noOpScript = (0, eval)(noOpScriptCode) as (address: unknown, formAction?: boolean) => boolean;
 
 // Only a script action that does nothing is the page's own script submit. Any other script runs

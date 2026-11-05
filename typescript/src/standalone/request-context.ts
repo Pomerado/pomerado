@@ -25,7 +25,7 @@ import {
   sourceChunk,
   type SdkFiles,
 } from "../guardian/source.js";
-import { mintEntryNavigation, type ExecutionEvidence, type WritePath } from "../mint/contracts.js";
+import { mintEntryNavigation } from "../mint/contracts.js";
 import { publicDefinitionPath } from "../guardian/publication.js";
 import {
   exampleOutputPath,
@@ -51,9 +51,11 @@ import {
 } from "../mint/review-context.js";
 import { repeatableReadFor } from "../mint/step-checks.js";
 import type {
+  ExecutionEvidence,
   TaskUpdateApplication,
   TaskUpdateCandidate,
   TaskUpdateHostResult,
+  WritePath,
 } from "../mint/contracts.js";
 import type { ReviewedTaskUpdate } from "../guardian/task-update.js";
 import type { InputRequest, ValidAnswers } from "../runtime/input-request.js";

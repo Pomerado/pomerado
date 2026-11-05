@@ -305,7 +305,7 @@ describe("a site-field question", () => {
     const [asked] = text.questions;
     if (asked === undefined) throw new Error("No question asked");
     const as = (question: Record<string, unknown>) =>
-      asksAsDeclared({ ...text, questions: [{ ...asked, ...question } as never] }, declared);
+      asksAsDeclared({ ...text, questions: [{ ...asked, ...question }] }, declared);
     expect(as({ type: "secret", secretKind: "private_text" })).toBe(false);
     expect(as({ type: "confirm" })).toBe(false);
     expect(as({ type: "multi_choice", options: [{ id: "o1", label: "A" }], minSelections: 1, maxSelections: 1 })).toBe(false);

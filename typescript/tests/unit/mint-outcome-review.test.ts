@@ -5,7 +5,11 @@ import type { AgentInputItem, ModelProvider, ModelRequest, ModelResponse } from 
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { MintFailure } from "../../src/mint/contracts.js";
-import type { ExecutionEvidence, MintDependencies } from "../../src/mint/contracts.js";
+import type {
+  ExecutionEvidence,
+  MintDependencies,
+  MintHarnessSnapshot,
+} from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { makeOpenAIOutcomeReviewer } from "../../src/mint/outcome-review-openai.js";
 import type {
@@ -15,7 +19,6 @@ import type {
   OutcomeReviewSnapshot,
 } from "../../src/mint/outcome-review-contracts.js";
 import type { MintAgentSnapshot, MintRecoveryFactory } from "../../src/mint/recovery-contracts.js";
-import type { MintHarnessSnapshot } from "../../src/mint/contracts.js";
 import { makeMintContinuationFixture } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 import { instructionsOf } from "../support/guardian-requests.js";

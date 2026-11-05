@@ -9,6 +9,7 @@ import {
   isRandomKeyBody,
   providerKeyPattern,
 } from "../../src/privacy/credential-policy.js";
+import type * as CredentialPolicy from "../../src/privacy/credential-policy.js";
 import { publicationBlockFeedback } from "../../src/mint/publication-block.js";
 import { redactDiagnosticText } from "../../src/runtime/failure-detail.js";
 import { providerKeyRefusal } from "../../src/standalone/mint-publication.js";
@@ -230,7 +231,7 @@ describe("a key whose body holds another key's shape", () => {
     expect(changed).not.toBe(source);
     const policy = (await import(
       `data:text/javascript,${encodeURIComponent(stripTypeScriptTypes(changed))}`
-    )) as typeof import("../../src/privacy/credential-policy.js");
+    )) as typeof CredentialPolicy;
     const pattern = policy.providerKeyPattern();
     expect(pattern.source.startsWith("(?<!\\w)")).toBe(true);
     const key = fake("$tok_", "ABCDEFGH12345678abcd");

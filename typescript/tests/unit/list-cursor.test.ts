@@ -310,7 +310,7 @@ describe("an Effect operation's list", () => {
       input: Schema.Struct({ query: Schema.String, ...listInputFields }),
       output: Schema.Struct({ results: Schema.Array(Schema.String), ...listOutputFields }),
       run: (value) =>
-        Effect.gen(function* () {
+        Effect.sync(() => {
           const list = startList(value, { mechanism });
           const page = finishList(list, {
             rows: [],

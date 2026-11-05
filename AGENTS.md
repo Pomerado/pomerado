@@ -10,6 +10,7 @@ Use macOS or Linux, Node 24.21 or a later Node 24 release, git 2.36 or later, an
 corepack enable
 corepack pnpm install --frozen-lockfile
 corepack pnpm typecheck
+corepack pnpm lint
 corepack pnpm build
 corepack pnpm test
 corepack pnpm exec playwright install chromium
@@ -20,6 +21,7 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 ```
 
 - Browser tests run the built `dist/`, so build before you run them.
+- `pnpm lint` runs oxlint with type information, using the rules in `.oxlintrc.json`. `tools/lint-baseline.json` counts, per rule, the findings that predate the linter. A change may not add a finding; after fixing some, run `pnpm lint --update-baseline` to lower the counts. `pnpm lint --report` lists every finding.
 - Tests use synthetic sites and scripted model responses. They need no model key, and no test may call a real model.
 - CI runs gitleaks 8.30.1.
 - Set `EVENT=pull_request`, `PR_BASE` to the base commit and `PR_HEAD` to your head commit to scan your commits as CI does. The content scan then also checks your commit messages, and the secrets scan checks each commit's diff.

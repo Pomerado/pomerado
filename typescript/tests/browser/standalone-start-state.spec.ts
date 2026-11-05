@@ -454,6 +454,7 @@ const build = (
         return built;
       }),
     ),
+  // oxlint-disable-next-line typescript/no-misused-promises -- finally waits for the returned promise, so the site closes before the result is used
   ).finally(site.close);
 
 const readSteps = (signIn: boolean) => [
@@ -922,6 +923,7 @@ test("a later build in the same session starts its example signed out after an e
         return [signedIn, anonymous] as const;
       }),
     ),
+  // oxlint-disable-next-line typescript/no-misused-promises -- finally waits for the returned promise, so the site closes before the result is used
   ).finally(site.close);
   expect(first.build).toBe("published");
   expect(site.probe("example")).toMatchObject({ cookies: ["explored", "member"], token: "member" });

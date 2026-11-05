@@ -188,8 +188,11 @@ test("a read build's reviews carry each step's own context", async () => {
     expect(observationsOf(contract).slice(1).join("\n")).toContain("never calls operation.run");
     expect(
       historyOf(example2).map(
-        (entry) =>
-          `${String(entry["purpose"])}:${String(entry["status"])}${entry["input"] === undefined ? "" : `:${String(entry["input"])}`}`,
+        (entry) => {
+          const input = entry["input"];
+          const shown = typeof input === "string" ? input : JSON.stringify(input);
+          return `${String(entry["purpose"])}:${String(entry["status"])}${input === undefined ? "" : `:${shown}`}`;
+        },
       ),
     ).toEqual([
       "command:completed",
@@ -707,9 +710,9 @@ test("a read build signed out runs five live tests on inputs it chose and its ex
       "intent_derived",
     ]);
     const example = reviewed.at(-1);
-    expect((example?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
-      '{"venue":"Venue X"}',
-    );
+    const submitted = example?.input["submitted_call"] as Record<string, unknown> | undefined;
+    expect(submitted).toBeDefined();
+    expect(submitted?.["input"]).toBe('{"venue":"Venue X"}');
     expect(historyOf(example).map((entry) => entry["input"])).toEqual([
       "agent_chosen",
       "agent_chosen",
@@ -943,12 +946,12 @@ test("a write build refuses a copy of a write, and Guardian sees the write befor
   const site = await fixture.start();
   // Guardian denies a step that would commit an unassessed write's change again.
   const guardian = recordingGuardian({
-    decide: (review) =>
-      currentOf(review)?.["purpose"] === "act" &&
-      Array.isArray(contextOf(review)?.["writes"]) &&
-      (contextOf(review)?.["writes"] as readonly unknown[]).length > 0
+    decide: (review) => {
+      const writes = contextOf(review)?.["writes"];
+      return currentOf(review)?.["purpose"] === "act" && Array.isArray(writes) && writes.length > 0
         ? { outcome: "deny", rationale: "It would save the same change again.", action: "write" }
-        : "allow",
+        : "allow";
+    },
   });
   try {
     const { last } = await mint({
@@ -1097,9 +1100,9 @@ test("a write session runs the caller's own input and refuses exampleInput besid
     );
     expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
     const [review] = executions(guardian.reviews);
-    expect((review?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
-      '{"note":"given"}',
-    );
+    const submitted = review?.input["submitted_call"] as Record<string, unknown> | undefined;
+    expect(submitted).toBeDefined();
+    expect(submitted?.["input"]).toBe('{"note":"given"}');
     expect(effectsOf(review)[0]).toMatch(
       /^The caller's requested task, done once with the caller's values/u,
     );

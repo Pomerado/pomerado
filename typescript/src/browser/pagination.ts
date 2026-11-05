@@ -1307,7 +1307,8 @@ export const pagedListReader = <Row>(
         return `${options.start}\nreturn await pager.replay(${String(position?.steps ?? 0)}, ${String(count)});`;
       case "offset":
         return `${options.start}\nreturn await pager.read(${String(count)});`;
-      default:
+      case "next_link":
+      case "pages":
         return (position?.page ?? 1) <= 1
           ? `${options.start}\nreturn await pager.read(${String(count)});`
           : `${options.start}\nreturn await pager.goToPage(${String(position?.page)}, ${String(count)});`;

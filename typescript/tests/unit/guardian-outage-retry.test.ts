@@ -208,7 +208,8 @@ it("times each review attempt and ties the retry to the attempt that failed", as
   const timing = (event: { details: unknown } | undefined) =>
     (event?.details as { timing: Timing } | undefined)?.timing;
   const started = named("guardian.started");
-  expect(started.map((event) => timing(event)?.attempt).sort()).toEqual([1, 2]);
+  const attempts = started.map((event) => timing(event)?.attempt ?? Number.POSITIVE_INFINITY);
+  expect(attempts.sort((a, b) => (a === b ? 0 : a - b))).toEqual([1, 2]);
   const first = started.find((event) => timing(event)?.attempt === 1);
   const second = started.find((event) => timing(event)?.attempt === 2);
   expect(first?.reviewId).not.toBe(second?.reviewId);

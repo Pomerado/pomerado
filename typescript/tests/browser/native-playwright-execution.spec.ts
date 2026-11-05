@@ -212,7 +212,7 @@ const watchedRun =
     );
     const open = url === "" ? "" : `await page.goto('${url}');`;
     const response = await Effect.runPromise(watch.executeResponse(`${open} ${code}`, 30));
-    const typed = [...watch.typed()].sort();
+    const typed = [...watch.typed()].sort((a, b) => a - b);
     return { success: response.success, error: response.error, typed, result: response.result };
   };
 

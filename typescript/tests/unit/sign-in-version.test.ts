@@ -82,7 +82,7 @@ const withStep = (
   recipe: {
     ...base.recipe,
     steps: base.recipe.steps.map((step, at) => (at === index ? { ...step, ...parts } : step)),
-  } as SignInVersion["recipe"],
+  },
 });
 
 const withMarker =
@@ -457,7 +457,7 @@ describe("checkSignInVersion", () => {
         steps: first.recipe.steps.map((step, at) =>
           at === 0 ? { ...step, page: "https://www.example.com/*/login", anySegments: [0] } : step,
         ),
-      } as SignInVersion["recipe"],
+      },
     };
     expect(checkSignInVersion(input(() => firstListed))).toEqual([
       { rule: "invalid_recipe", part: "recipe" },

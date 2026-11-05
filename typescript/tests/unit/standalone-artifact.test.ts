@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Either } from "effect";
+import { Effect, Either, type Scope } from "effect";
 import { expect, it } from "vitest";
 import { signInRecipe, type RecordedSignInStep } from "../../src/destinations/sign-in-recipe.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
@@ -51,7 +51,7 @@ const scratch = async (use: (directory: string) => Promise<void>) => {
     await rm(directory, { recursive: true, force: true });
   }
 };
-const run = <A>(effect: Effect.Effect<A, unknown, import("effect").Scope.Scope>) =>
+const run = <A>(effect: Effect.Effect<A, unknown, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect));
 
 it("writes a sign-in as auth-fill.json beside pomerado.json and reads it back", () =>
@@ -91,7 +91,7 @@ it("keeps the questions publication reviewed in pomerado.json and reads them bac
     await scratch(async (other) => {
       await expect(
         run(writeArtifact(other, { ...source, questions: { Delivery: questions.delivery } })),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/question ids must start with a lowercase letter/);
       expect(await readdir(other)).toEqual([]);
     });
   }));
@@ -145,8 +145,8 @@ it("refuses a record of accepted confirms it cannot trust", () =>
       Array.from({ length: 33 }, () => ({ digest: "c".repeat(64) })),
     ])
       await expect(
-        run(writeArtifact(directory, { ...source, acceptedConfirms } as never)),
-      ).rejects.toThrow();
+        run(writeArtifact(directory, { ...source, acceptedConfirms })),
+      ).rejects.toThrow(/Expected (a string matching the pattern \^\[0-9a-f\]\{64\}\$|an array of at most 32 item)/);
     expect(await readdir(directory)).toEqual([]);
     await run(writeArtifact(directory, source));
     const metadata = JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"));
@@ -154,7 +154,7 @@ it("refuses a record of accepted confirms it cannot trust", () =>
       join(directory, "pomerado.json"),
       JSON.stringify({ ...metadata, acceptedConfirms: [{ digest: "short" }] }),
     );
-    await expect(run(readArtifact(directory))).rejects.toThrow();
+    await expect(run(readArtifact(directory))).rejects.toThrow(/actual "short"/);
   }));
 
 it.each([
@@ -216,7 +216,7 @@ it("refuses a sign-in origin that is not an https origin", () =>
             signIn: { ...signIn, authenticationOrigins: [origin] },
           }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/\["authenticationOrigins"\]/);
     expect(await readdir(directory)).toEqual([]);
   }));
 
@@ -276,7 +276,7 @@ it("refuses an entry address with a fragment or credentials", () =>
     for (const entryUrl of ["https://example.test/login#state", "https://user:secret@example.test/login"])
       await expect(
         run(writeArtifact(directory, { ...source, signIn: { ...signIn, entryUrl } })),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/\["entryUrl"\]/);
     expect(await readdir(directory)).toEqual([]);
   }));
 

@@ -106,12 +106,14 @@ describe("a host's added private suffixes", () => {
 
   it("builds page code that agrees with sameSite", () => {
     configureSiteIdentity({ privateSuffixes: ["apps.example.test"] });
+    // oxlint-disable-next-line eslint/no-eval -- evaluates the page-side source under test
     const onParent = eval(hostOnSiteSource("example.test")) as (host: string) => boolean;
     expect(onParent("example.test")).toBe(true);
     expect(onParent("www.example.test")).toBe(true);
     expect(onParent("apps.example.test")).toBe(false);
     expect(onParent("alpha.apps.example.test")).toBe(false);
     expect(onParent("notexample.test")).toBe(false);
+    // oxlint-disable-next-line eslint/no-eval -- evaluates the page-side source under test
     const onAlpha = eval(hostOnSiteSource("alpha.apps.example.test")) as (host: string) => boolean;
     expect(onAlpha("login.alpha.apps.example.test")).toBe(true);
     expect(onAlpha("beta.apps.example.test")).toBe(false);

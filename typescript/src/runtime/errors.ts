@@ -33,6 +33,7 @@ const childrenOf = (
   ast: SchemaAST.AST,
   key: PropertyKey,
 ): { readonly declared: boolean; readonly children: readonly SchemaAST.AST[] } => {
+  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- every other node is a leaf
   switch (ast._tag) {
     case "Refinement":
       return childrenOf(ast.from, key);
