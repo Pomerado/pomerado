@@ -861,6 +861,11 @@
       "import": "./dist/typescript/src/runtime/source-syntax.js",
       "default": "./dist/typescript/src/runtime/source-syntax.js"
     },
+    "./core/runtime/telemetry": {
+      "types": "./dist/typescript/src/runtime/telemetry.d.ts",
+      "import": "./dist/typescript/src/runtime/telemetry.js",
+      "default": "./dist/typescript/src/runtime/telemetry.js"
+    },
     "./core/testing/local-kernel": {
       "types": "./dist/typescript/src/testing/local-kernel.d.ts",
       "import": "./dist/typescript/src/testing/local-kernel.js",

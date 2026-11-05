@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 import type { Scope } from "effect";
-import { ExecutionContext, finishCaptureAsEvidence } from "./context.js";
+import { ExecutionContext, finishCaptureAsEvidence, inOperationSpan } from "./context.js";
 import type { EffectJournal } from "./context.js";
 import { DeadlineExceeded } from "./errors.js";
 import type { CaptureUnavailable, EventUnavailable, InvalidInput, InvalidOutput } from "./errors.js";
@@ -132,4 +132,4 @@ export const executeKernelOperation = <
         ),
       ),
     );
-  });
+  }).pipe(inOperationSpan(operation.name));

@@ -1,6 +1,7 @@
 import { Cause, Chunk, Effect, Exit, Layer, Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { ExecutionContext, makeEffectJournal } from "../../src/runtime/context.js";
+import type { OperationTelemetry } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import {
   CaptureUnavailable,
@@ -367,5 +368,40 @@ describe("authored runtime errors", () => {
     const observation: ConditionObservation = { name: "ready", state: "unknown" };
     const state: ConditionState = observation.state;
     expect(state).toBe("unknown");
+  });
+});
+
+describe("operation host telemetry", () => {
+  it("records one span around an operation, error when it fails, and changes nothing without one", async () => {
+    const spans: { attributes: unknown; status: unknown }[] = [];
+    const operation = defineOperation({
+      name: "read_amount",
+      input: Schema.Void,
+      output: Schema.Number,
+      run: () => Effect.fail(new Error("no amount")),
+    });
+    const runIt = async (telemetry?: OperationTelemetry) => {
+      const context = await Effect.runPromise(makeContext());
+      return Effect.runPromiseExit(
+        Effect.scoped(executeOperation(operation, undefined)).pipe(
+          Effect.provide(
+            Layer.succeed(ExecutionContext, {
+              ...context,
+              ...(telemetry === undefined ? {} : { telemetry }),
+            }),
+          ),
+        ),
+      );
+    };
+    const traced = await runIt({
+      startSpan: (_name, options) => ({
+        end: (ended) => spans.push({ attributes: options?.attributes, status: ended?.status }),
+      }),
+    });
+    expect(traced).toEqual(await runIt());
+    expect(Cause.failureOption(Exit.isFailure(traced) ? traced.cause : Cause.empty)).toEqual(
+      Option.some(new Error("no amount")),
+    );
+    expect(spans).toEqual([{ attributes: { operation: "read_amount" }, status: "error" }]);
   });
 });

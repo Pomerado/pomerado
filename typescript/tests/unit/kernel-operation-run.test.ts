@@ -6,6 +6,7 @@ import {
   makeEffectJournal,
   makeEffectJournalWith,
 } from "../../src/runtime/context.js";
+import type { OperationTelemetry } from "../../src/runtime/context.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { CaptureUnavailable } from "../../src/runtime/errors.js";
 import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
@@ -291,5 +292,92 @@ describe("executeKernelOperation", () => {
       ),
     );
     expect(replaced.exit).toEqual(Exit.succeed("first:b"));
+  });
+});
+
+describe("executeKernelOperation with a host's telemetry", () => {
+  /** A telemetry that keeps each span's start and end. */
+  const recording = () => {
+    const spans: { name: string; attributes: unknown; status?: unknown; ends: number }[] = [];
+    const telemetry: OperationTelemetry = {
+      startSpan: (name, options) => {
+        const span: (typeof spans)[number] = { name, attributes: options?.attributes, ends: 0 };
+        spans.push(span);
+        return {
+          end: (ended) => {
+            span.ends += 1;
+            span.status = ended?.status;
+          },
+        };
+      },
+    };
+    return { spans, telemetry };
+  };
+
+  const runWith = async <A, E>(
+    program: Effect.Effect<A, E, ExecutionContext | Scope.Scope>,
+    telemetry: OperationTelemetry | undefined,
+  ) => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    return Effect.runPromiseExit(
+      Effect.scoped(
+        program.pipe(
+          Effect.provideService(ExecutionContext, {
+            deadline: Deadline.after(60_000),
+            journal,
+            events: { emit: () => Effect.void },
+            capture: { start: Effect.void, finish: Effect.void },
+            ...(telemetry === undefined ? {} : { telemetry }),
+          }),
+        ),
+      ),
+    );
+  };
+
+  const reads = defineOperation(
+    { name: "read_title", input: Schema.Struct({}), output: Schema.String },
+    async () => "Example Domain",
+  );
+  const breaks = defineOperation(
+    { name: "read_broken", input: Schema.Struct({}), output: Schema.String },
+    async () => {
+      throw new Error("The page had no title");
+    },
+  );
+  const browser = { kernel: answeringKernel, sessionId: "s" };
+
+  it("records one span per operation, ok when it succeeds and error when it fails", async () => {
+    const { spans, telemetry } = recording();
+    const succeeded = await runWith(executeKernelOperation(reads, {}, browser), telemetry);
+    const failed = await runWith(executeKernelOperation(breaks, {}, browser), telemetry);
+
+    expect(succeeded).toEqual(Exit.succeed("Example Domain"));
+    // The failure is the one the run gives without telemetry.
+    expect(failed).toEqual(await runWith(executeKernelOperation(breaks, {}, browser), undefined));
+    expect(Exit.isFailure(failed)).toBe(true);
+    expect(spans).toEqual([
+      { name: "operation.run", attributes: { operation: "read_title" }, status: "ok", ends: 1 },
+      { name: "operation.run", attributes: { operation: "read_broken" }, status: "error", ends: 1 },
+    ]);
+  });
+
+  it("runs the same without telemetry, and with one whose spans throw", async () => {
+    const throwing: OperationTelemetry = {
+      startSpan: () => {
+        throw new Error("telemetry down");
+      },
+    };
+    const endThrows: OperationTelemetry = {
+      startSpan: () => ({
+        end: () => {
+          throw new Error("telemetry down");
+        },
+      }),
+    };
+    for (const operation of [reads, breaks]) {
+      const plain = await runWith(executeKernelOperation(operation, {}, browser), undefined);
+      expect(await runWith(executeKernelOperation(operation, {}, browser), throwing)).toEqual(plain);
+      expect(await runWith(executeKernelOperation(operation, {}, browser), endThrows)).toEqual(plain);
+    }
   });
 });
