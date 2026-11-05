@@ -12,7 +12,7 @@ To use Pomerado with your agent, start with [Get started](README.md#get-started)
 
 - macOS or Linux.
 - Node 24.21 or a later Node 24 release.
-- pnpm 10.34.5, which corepack installs for you.
+- pnpm 10.34.5, which corepack installs for you and checks against the SHA-512 that `packageManager` in package.json names.
 - git 2.36 or later, and jq.
 
 Fork the repository, then clone your fork and install its dependencies.

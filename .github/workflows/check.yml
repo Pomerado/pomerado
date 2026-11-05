@@ -8,7 +8,8 @@
 # - On a push to main, through the release workflow, the browser jobs use the runner the
 #   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
-# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 expects.
+# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 and the
+# browser plan's --workers 4 expect.
 # An unset variable falls back to a Blacksmith runner. The scans and the `CI` job are short and
 # always run on GitHub-hosted runners. typescript/tests/unit/ci-runner-routing.test.ts checks these
 # routes for forks, outside authors, maintainers and pushes.
@@ -19,7 +20,8 @@
 # Approved outside code can still reach a non-GitHub runner, and release publishes the tarball the
 # check job builds, so no job here restores a cache: setup-node's package manager cache is off, and
 # nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on a GitHub-hosted runner,
-# which npm provenance needs.
+# which npm provenance needs. The browser plan reads test durations that Release runs on main
+# record, and they decide only how the tests are split across shards, never what is built or run.
 name: Check
 on:
   # Pushes to main run this through the release workflow, which publishes the tarball it tests.
@@ -135,11 +137,34 @@ jobs:
       - run: corepack pnpm typecheck
       - run: corepack pnpm build
       - run: corepack pnpm test
+      # Pack, hash and upload the tarball before anything installs packages without a lockfile. The
+      # validation below installs its consumer's dependencies fresh from the registry, so the bytes
+      # release publishes, which it checks against this hash, are fixed before that code runs.
+      - name: Pack the package
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pomerado-artifact"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+      - name: Record the tarball's SHA-256
+        id: package-digest
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
+            exit 1
+          fi
+          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: package
+        with:
+          name: pomerado-package
+          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
       - name: Validate packed package outside the checkout
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/pomerado-artifact" "$RUNNER_TEMP/pomerado-consumer"
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+          mkdir -p "$RUNNER_TEMP/pomerado-consumer"
           cd "$RUNNER_TEMP/pomerado-consumer"
           npm init -y
           npm install --ignore-scripts "$RUNNER_TEMP/pomerado-artifact/"*.tgz @types/node@24.13.4 vitest@5.0.2
@@ -179,27 +204,69 @@ jobs:
           void expectFailure;
           TS
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck --target ES2024 --module NodeNext --moduleResolution NodeNext consumer.mts
-      - name: Record the tarball's SHA-256
-        id: package-digest
-        shell: bash
-        run: |
-          shopt -s nullglob
-          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
-          if [ "${#tarballs[@]}" -ne 1 ]; then
-            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
-            exit 1
-          fi
-          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        id: package
+  # Splits the browser tests into shards of about equal duration. tools/browser-shards.ts plans them
+  # from each test's duration in the latest successful Release run on main, which the browser job
+  # records there, and picks the shard count that keeps each shard near the target. The durations
+  # only weigh the split: every listed test runs, and each shard fails when a test it was given
+  # reports no result. Without durations, the plan splits by test count. The token reads the
+  # Release run's artifacts, which only pushes to main write. The plan is short and runs on a
+  # GitHub-hosted runner, like the scans.
+  browser-plan:
+    name: Plan browser shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: pomerado-package
-          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
-  # The browser tests, split by test across parallel shards. fullyParallel in playwright.config.ts
-  # lets Playwright give each shard an equal number of tests. Each shard builds dist/ itself, since
-  # the tests run the built package. Every shard runs to the end, so one run reports every failure.
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Find the latest recorded durations
+        id: durations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          run_id="$(gh api "repos/$REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')" || run_id=""
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.durations.outputs.run-id != ''
+        continue-on-error: true
+        with:
+          pattern: browser-durations-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/browser-durations
+          run-id: ${{ steps.durations.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - run: corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
+      - name: Plan the shards
+        id: plan
+        run: >-
+          node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json"
+          --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards"
+          --target-seconds 80 --workers 4 --max-shards 16
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards/
+          retention-days: 1
+          overwrite: true
+  # The browser tests, in the planned shards. Each shard builds dist/ itself, since the tests run the
+  # built package. Every shard runs to the end, so one run reports every failure. A push to main
+  # records each test's duration for the next plans.
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: browser-plan
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -214,7 +281,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(needs.browser-plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -240,14 +307,31 @@ jobs:
           else
             corepack pnpm exec playwright install chromium
           fi
-      # One worker per vCPU. Every runner this job uses has 4 vCPUs.
-      - run: corepack pnpm test:browser --shard=${{ matrix.shard }}/${{ strategy.job-total }} --workers=4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards
+      # One worker per vCPU. Every runner this job uses has 4 vCPUs, as the plan assumes.
+      - run: corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.txt" --workers=4
+      - name: Check that every planned test ran within the time budget
+        run: >-
+          mkdir -p "$RUNNER_TEMP/browser-durations" &&
+          node tools/browser-shards.ts record --results test-results/browser-results.json
+          --expected "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.json"
+          --out "$RUNNER_TEMP/browser-durations/durations-${{ matrix.shard }}.json" --budget-seconds 80
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          name: browser-durations-${{ matrix.shard }}
+          path: ${{ runner.temp }}/browser-durations/durations-${{ matrix.shard }}.json
+          retention-days: 30
+          overwrite: true
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`.
   ci:
     name: CI
     if: always()
-    needs: [check, browser, secret-scan, content-scan]
+    needs: [check, browser-plan, browser, secret-scan, content-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

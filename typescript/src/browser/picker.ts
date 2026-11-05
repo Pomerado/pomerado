@@ -852,12 +852,15 @@ const pickerChoices = (options) => options.map((option) => ({ names: option.name
 // Waits for the picker's options to answer an action: no loading sign, no request the action
 // started in flight, the author's answered() true, and the list unchanged for settleMs (or for
 // idleMs when nothing reacted at all), counted from the action's end, so typing a long query
-// uses none of it. Returns the last scan and whether anything reacted.
+// uses none of it. Returns the last scan and whether anything reacted. answered() looks after
+// each scan, so an answer that lands between the two makes it true for options read before the
+// answer: a scan counts only when answered() was already true at the look before it.
 const pickerSettle = async (s, since, before, query) => {
   let last = null;
   let changedAt = Date.now();
   let reacted = false;
   let looks = 0;
+  let answeredBefore = !s.options.answered;
   while (true) {
     const scan = await pickerEval(s, "scan", { near: s.kind === "dropdown" });
     looks++;
@@ -870,8 +873,10 @@ const pickerSettle = async (s, since, before, query) => {
     const busy = scan.loading || s.net.inflight(since) > 0;
     const quiet = now - Math.max(changedAt, s.net.lastAt(since));
     const answered = s.options.answered ? scan.popup && Boolean(await s.options.answered(pickerTag(s, "data-pomerado-pick-popup", s.token), query)) : true;
+    const scannedAnswered = answered && answeredBefore;
+    answeredBefore = answered;
     // No reaction needs a few looks across the idle window, so one slow read cannot end it.
-    if (!busy && answered && quiet >= (reacted ? s.settleMs : s.idleMs) && (reacted || looks >= 3)) return { scan, reacted };
+    if (!busy && scannedAnswered && quiet >= (reacted ? s.settleMs : s.idleMs) && (reacted || looks >= 3)) return { scan, reacted };
     if (now >= s.until) {
       if (busy || !answered) throw pickerLoadingFailure(s, scan, since, answered);
       return { scan, reacted };

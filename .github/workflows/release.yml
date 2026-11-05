@@ -89,6 +89,10 @@ jobs:
     needs: version
     if: needs.version.outputs.publish == 'true'
     uses: ./.github/workflows/check.yml
+    # Check's browser plan reads the test durations earlier Release runs recorded.
+    permissions:
+      contents: read
+      actions: read
     with:
       version: ${{ needs.version.outputs.version }}
   canary:

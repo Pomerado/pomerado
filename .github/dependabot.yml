@@ -1,0 +1,12 @@
+# Workflows pin every action to a commit SHA (tools/check-workflows.ts). Dependabot moves those pins,
+# and the version comments beside them, to each new release, in one weekly pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

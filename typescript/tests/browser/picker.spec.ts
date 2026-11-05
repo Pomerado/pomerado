@@ -1283,6 +1283,32 @@ list.addEventListener("click", (event) => { input.value = event.target.textConte
   ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
 });
 
+// The answer can land after the picker read the list and before answered() looks at the marker:
+// answered() is then true while the options read are still the older answer's. Here the site's
+// answer lands exactly then, as answered() starts its look, once the older answer has held still.
+test("pickValue never ranks options it read before the site's answered signal turned true", async ({ page }) => {
+  await serve(page, `<label>Code <input id="code" role="combobox" aria-controls="codes" autocomplete="off"></label>
+<ul id="codes" role="listbox" data-query=""></ul>
+<script>
+const input = document.getElementById("code"), list = document.getElementById("codes");
+const show = (query, names) => { list.innerHTML = names.map((name) => '<li role="option">' + name + "</li>").join(""); list.dataset.query = query; };
+let typed = "", typedAt = 0;
+// An older query's answer shows at once; the answer for what was typed waits for answerLate.
+input.addEventListener("input", () => { typed = input.value; typedAt = Date.now(); show("ZX", ["ZX10", "ZX9 Legacy"]); });
+window.answerLate = () => { if (list.dataset.query !== typed && Date.now() - typedAt >= 1000) show(typed, [typed, typed + " Legacy"]); };
+list.addEventListener("click", (event) => { input.value = event.target.textContent; list.innerHTML = ""; });
+</script>`);
+  expect(
+    await call(
+      page,
+      `return await pickValue(page.getByLabel("Code"), "ZX9", { ...fast, answered: async (popup, query) => {
+        await popup.evaluate(() => window.answerLate());
+        return (await popup.getAttribute("data-query")) === query;
+      } });`,
+    ),
+  ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
+});
+
 test("pickValue fails as timeout, a fixed reason, when its control never shows", async ({ page }) => {
   await serve(page, `<p>No picker here</p>`);
   expect(await call(page, `return await pickValue(page.getByLabel("Missing"), "Anything", { ...fast, timeout: 500 });`)).toEqual({

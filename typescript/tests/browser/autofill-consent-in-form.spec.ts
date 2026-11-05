@@ -342,6 +342,34 @@ test("a notice whose own handler submits the form later, after the click, never 
   expect(received).toEqual([acceptedEmpty]);
 });
 
+test("a click again whose dismiss emptied the fields reports the submit not attempted, even when the page's own late submission takes the page away from any later call", async ({
+  page,
+}) => {
+  const received = await serve(page, loginPage({ accepted: "setTimeout(() => postBack('accept'), 300);" }));
+  const hosted = await host(page);
+  expect(await fill(hosted, signInStep)).toMatchObject({ outcome: "filled", submit: "blocked" });
+  // Every submit call after the dismiss fails, as one does when the page's own submission
+  // replaces the document while the call reads it.
+  const execute = hosted.page.execute;
+  const leaving: typeof hosted = {
+    ...hosted,
+    page: {
+      ...hosted.page,
+      execute: (script, timeout) =>
+        script.includes("guardCall")
+          ? Effect.fail(new Error("Execution context was destroyed, most likely because of a navigation"))
+          : execute(script, timeout),
+    },
+  };
+  expect(await resubmit(leaving)).toMatchObject({
+    outcome: "filled",
+    fields: [{ status: "failed" }, { status: "filled" }],
+    submit: "not_attempted",
+  });
+  await expect.poll(() => received.length).toBe(1);
+  expect(received).toEqual([acceptedEmpty]);
+});
+
 test("the cancelled submission is the dismiss click's alone: once the notice is gone, the form's own submit still posts", async ({
   page,
 }) => {

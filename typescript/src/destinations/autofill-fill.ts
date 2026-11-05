@@ -1176,7 +1176,10 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
  * Clicks again the submit of a step whose fill the host reported `blocked`, typing nothing: the
  * fields still hold what that fill typed. It clicks the step's `dismiss` first, when the page shows
  * it, and refuses with nothing clicked when it is no covering notice's own control
- * (`dismissNotice`), or a control is gone or moved where the host refuses it. Then each field the
+ * (`dismissNotice`), or a control is gone or moved where the host refuses it. A dismiss that
+ * emptied the fields before its click left nothing typed to send: the first field the fill typed
+ * fails and the submit is not attempted, with no further call, so a page whose own code navigates
+ * a moment after the dismiss cannot make the report uncertain. Then each field the
  * fill typed must still hold something (lengths only, never a value), and each box of a code split
  * across one-character boxes exactly one character, or that field fails and the submit is not
  * attempted; otherwise the submit is judged, guarded and clicked as the fill's own was, with no
@@ -1208,6 +1211,13 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
     progress.check = typedFields(step, progress);
+    // Nothing typed is left to send: the first typed field fails as the submit's check would find
+    // it, with no call for the page's own navigation after the dismiss to lose.
+    const [emptiedField] = progress.check;
+    if (notice.emptied === true && emptiedField !== undefined) {
+      progress.statuses[emptiedField] = "failed";
+      return filledReport(step, progress, "not_attempted", notice.url ?? "");
+    }
     const codeFields = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
     return yield* submitStep(
       input,
@@ -1284,7 +1294,7 @@ const typedFields = (step: AutofillStep<FillSlot>, progress: FillProgress) =>
  * whose click failed or whose answer was lost clicks nothing that sends, so the fill goes on.
  * `dismissed` says whether the call clicked it, and `emptied` whether it emptied the step's fields
  * first, as it does before a click whose submission it cancels, so what was typed must be typed
- * again.
+ * again; `url` is the page's address once the call ended.
  */
 const dismissNotice = (
   input: CallInput,
@@ -1292,6 +1302,7 @@ const dismissNotice = (
 ): Effect.Effect<{
   readonly dismissed: boolean;
   readonly emptied?: true;
+  readonly url?: string;
   readonly refusal?: AutofillRefusal;
 }> =>
   Effect.gen(function* () {
@@ -1313,6 +1324,7 @@ const dismissNotice = (
     return {
       dismissed: answer.dismiss === "clicked",
       ...("emptied" in answer && answer.emptied === true ? { emptied: true as const } : {}),
+      url: answer.url,
     };
   });
 

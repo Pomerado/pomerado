@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/Pomerado/pomerado/issues"
   },
-  "packageManager": "pnpm@10.34.5",
+  "packageManager": "pnpm@10.34.5+sha512.a4ee05f2f73658255bd6a89859c065a45c28a57daefae2c893a168ee2b73168c37b91e83e57ea67654ad03f03031746430e8bce38e362e042605fb8abc80192e",
   "engines": {
     "node": ">=24.21.0 <25"
   },
@@ -1027,7 +1027,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "start": "node dist/typescript/src/standalone/cli.js",
     "mcp": "node dist/typescript/src/standalone/mcp-cli.js",
-    "test": "node tools/check-host-protocol.ts && vitest run",
+    "test": "node tools/check-host-protocol.ts && node tools/check-workflows.ts && vitest run",
     "test:browser": "playwright test",
     "prepack": "corepack pnpm build"
   },
