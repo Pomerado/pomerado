@@ -974,7 +974,7 @@ Whenever a cookie or tracking consent banner shows, or a privacy notice, consent
 pop-up, dismiss it before you do anything else on the page: in an `explore`, in each sign-in step as
 its `dismiss` (the auth skill), and in the tool's own code, which dismisses it on every run where it
 shows. Use its own control, in this order: its close or dismiss control, then one that rejects or
-declines what is not essential, then accept, only when that is the only way out. A control such as
+declines what is not essential in one click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
 otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or

@@ -743,8 +743,8 @@ export const SignInStep = Schema.Union(
     option: Schema.optional(MethodOption),
     /**
      * The own control of a cookie or tracking consent banner that shows on this screen: its close
-     * or dismiss control, else one that rejects what is not essential, else accept when that is
-     * the only way out. The host clicks it before it types, when the page shows it, and runs do the
+     * or dismiss control, else one that rejects what is not essential in one click, else accept.
+     * The host clicks it before it types, when the page shows it, and runs do the
      * same. After the host reports `submit: blocked`, send the same step again with it: the host
      * clicks it, then clicks the submit once more, typing nothing unless the dismiss emptied a
      * field. Never a submit, a field or a control of the sign-in's own form.

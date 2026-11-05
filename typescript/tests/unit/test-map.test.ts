@@ -8,6 +8,7 @@ import {
   compare,
   readResults,
   guard,
+  jobInputs,
   merge,
   normalize,
   readMap,
@@ -18,6 +19,7 @@ import {
 
 const script = fileURLToPath(new URL("../../../tools/test-map.ts", import.meta.url));
 const preload = new URL("../../../tools/test-map-trace.ts", import.meta.url).href;
+const selectScript = fileURLToPath(new URL("../../../tools/test-map-select.sh", import.meta.url));
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -56,13 +58,19 @@ const modified = (path: string): Change => ({ status: "modified", path });
 const added = (path: string): Change => ({ status: "added", path });
 const pick = (
   changes: readonly Change[],
-  options: { map?: TestMap | undefined; files?: Set<string>; head?: Record<string, string> } = {},
+  options: {
+    map?: TestMap | undefined;
+    files?: Set<string>;
+    head?: Record<string, string>;
+    drift?: readonly Change[];
+  } = {},
 ) =>
   select(
     "map" in options ? options.map : map,
     changes,
     options.files ?? headFiles,
     (path) => options.head?.[path] ?? "",
+    options.drift,
   );
 
 describe("select", () => {
@@ -98,6 +106,8 @@ describe("select", () => {
       "vitest.config.ts",
       ".github/workflows/check.yml",
       "tools/test-map-trace.ts",
+      "tools/test-map-select.sh",
+      "tools/browser-shards.ts",
     ])
       expect(pick([modified(path)]).mode).toBe("full");
     expect(pick([modified("typescript/src/only-b.ts")], { map: undefined }).mode).toBe("full");
@@ -173,7 +183,7 @@ describe("select", () => {
       unit: [unitB],
     });
     const wholeRepository: TestMap = { ...map, folders: { "**": [1] } };
-    expect(pick([added("tools/new-tool.ts")], { map: wholeRepository })).toMatchObject({
+    expect(pick([added("examples/new-example.ts")], { map: wholeRepository })).toMatchObject({
       mode: "selected",
       unit: [unitA],
     });
@@ -202,6 +212,63 @@ describe("select", () => {
       { files },
     );
     expect(selection.mode).toBe("full");
+  });
+
+  it("also runs the tests that reach what changed on the base after the map was built", () => {
+    // The map predates a base commit that changed a file the browser test reads, added a test and
+    // touched the toolchain and a file no test read. The pull request changes only one file.
+    const unitD = "typescript/tests/unit/d.test.ts";
+    const files = new Set([...headFiles, unitD, "package.json", "typescript/src/unread.ts"]);
+    const drift = [
+      modified("typescript/src/shared.ts"),
+      added(unitD),
+      modified("package.json"),
+      modified("typescript/src/unread.ts"),
+    ];
+    expect(pick([modified("typescript/src/only-b.ts")], { files, drift })).toMatchObject({
+      mode: "selected",
+      unit: [unitA, unitB, unitD],
+      browser: [specC],
+    });
+    // What the base changed never hides a pull request's own empty selection.
+    const emptied = pick(
+      [
+        { status: "deleted", path: "typescript/src/only-b.ts" },
+        { status: "deleted", path: unitB },
+      ],
+      { files: new Set([unitA, specC, "typescript/src/shared.ts"]), drift },
+    );
+    expect(emptied.mode).toBe("full");
+  });
+});
+
+describe("job inputs", () => {
+  const selected = {
+    mode: "selected",
+    reasons: [],
+    mapSha: null,
+    unit: [unitA],
+    browser: ["typescript/tests/browser/foo.spec.ts"],
+  } as const;
+
+  it("run the selection only when it is enforced, and every test otherwise", () => {
+    expect(jobInputs(selected, false)).toEqual({ run: "full", unit: [], browser: [] });
+    expect(jobInputs({ ...selected, mode: "full" }, true)).toEqual({
+      run: "full",
+      unit: [],
+      browser: [],
+    });
+    const enforced = jobInputs(selected, true);
+    expect(enforced).toMatchObject({ run: "selected", unit: [unitA] });
+  });
+
+  it("filter Playwright to each selected spec file and no file whose name ends the same way", () => {
+    // Playwright reads each filter as a regular expression over the absolute file path.
+    const [filter = ""] = jobInputs(selected, true).browser;
+    const matches = (path: string) => new RegExp(filter, "giu").test(path);
+    expect(matches("/checkout/typescript/tests/browser/foo.spec.ts")).toBe(true);
+    expect(matches("/checkout/typescript/tests/browser/other-foo.spec.ts")).toBe(false);
+    expect(matches("/checkout/typescript/tests/browser/fooXspec.ts")).toBe(false);
   });
 });
 
@@ -468,23 +535,40 @@ describe("select and guard commands", () => {
         env: { PATH: process.env["PATH"] ?? "" },
       });
 
-    const chosen = cli(
-      "select",
-      "--map",
-      "map.json",
-      "--base",
-      base,
-      "--head",
-      head,
-      "--out",
-      "selection.json",
+    // The workflow's script downloads the newest map through gh, selects and guards; a stand-in
+    // gh serves the map. Enforced, it hands the test jobs the selection as step outputs.
+    const bin = temporary();
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = api ]; then echo 42; exit; fi',
+        'while [ $# -gt 0 ]; do if [ "$1" = -D ]; then dir="$2"; fi; shift; done',
+        'mkdir -p "$dir" && cp "$MAP" "$dir/test-map.json"',
+      ].join("\n"),
+      { mode: 0o755 },
     );
-    expect(chosen.status, chosen.stderr).toBe(0);
+    const outputs = join(repo, "outputs.txt");
+    const selected = spawnSync("bash", [selectScript, repo], {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+        MAP: join(repo, "map.json"),
+        REPO: "example-org/example-repo",
+        BASE: base,
+        HEAD: head,
+        ENFORCE: "true",
+        GITHUB_OUTPUT: outputs,
+      },
+    });
+    expect(selected.status, selected.stderr).toBe(0);
     expect(JSON.parse(readFileSync(join(repo, "selection.json"), "utf8"))).toMatchObject({
       mode: "selected",
       unit: [unitB],
       browser: [],
     });
+    expect(readFileSync(outputs, "utf8")).toContain(`run=selected\nunit=["${unitB}"]\nbrowser=[]`);
     expect(
       cli("guard", "--selection", "selection.json", "--base", base, "--head", head).status,
     ).toBe(0);
@@ -496,6 +580,27 @@ describe("select and guard commands", () => {
     const rejected = cli("guard", "--selection", "empty.json", "--base", base, "--head", head);
     expect(rejected.status).toBe(1);
     expect(rejected.stdout).toContain("runs no test");
+
+    // The tests run on the merge of the pull request into a base that moved on since the map: a
+    // commit there changed a file two tests read and added a test, and both reach the selection.
+    git("checkout", "-q", "-b", "moved", base);
+    write("typescript/src/shared.ts", "export const moved = true;\n");
+    write("typescript/tests/unit/d.test.ts", "export {};\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "moved");
+    const movedBase = git("rev-parse", "HEAD");
+    git("merge", "-q", "--no-ff", "-m", "merge", head);
+    const merged = cli(
+      "select",
+      ...["--map", "map.json", "--base", movedBase, "--head", head],
+      ...["--tested", git("rev-parse", "HEAD"), "--out", "merged.json"],
+    );
+    expect(merged.status, merged.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(repo, "merged.json"), "utf8"))).toMatchObject({
+      mode: "selected",
+      unit: [unitA, unitB, "typescript/tests/unit/d.test.ts"],
+      browser: [specC],
+    });
 
     // No map, a map off the base's history and a stale map all select everything.
     expect(readMap(join(repo, "missing.json"), base, repo)).toBe("no test map");

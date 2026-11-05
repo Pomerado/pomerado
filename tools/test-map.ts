@@ -5,9 +5,9 @@
  * or ran while that test file ran alone, through tools/test-map-trace.ts. Maps are built only from
  * `main`, by trusted runs, never from a pull request. A pull request run only reads the newest one.
  *
- * Selection is shadow-only today: check.yml still runs every test, records which test files the
- * selection would have run and compares that with the results. It selects everything when it can't
- * see a change's reach:
+ * A pull request runs only the test files its change needs, unless the repository variable
+ * TEST_SELECTION_DISABLED is `true` or it carries the `ci:full` label; pushes to main always run
+ * every test. It selects everything when it can't see a change's reach:
  *
  * - no usable map, more than `maxChangedFiles` changed files, or a change to the toolchain, package
  *   manifests, test configuration, workflows or this selector;
@@ -16,12 +16,14 @@
  *   documentation.
  *
  * Changed and new test files always run, as do test files whose map run failed, since a test that
- * stopped partway has no record of what it would have read next.
+ * stopped partway has no record of what it would have read next. So do the tests that reach what
+ * changed on the base after the map was built, since the map can't know what those changes read.
  *
  * Usage:
  *   node tools/test-map.ts run --suite unit|browser [--shard k/n] --out partial.json
  *   node tools/test-map.ts merge --sha SHA --out test-map.json partial.json...
  *   node tools/test-map.ts select --base SHA --head SHA --out selection.json [--map test-map.json]
+ *     [--tested SHA] [--enforce]
  *   node tools/test-map.ts guard --base SHA --head SHA --selection selection.json [--warn]
  *   node tools/test-map.ts report --selection selection.json --out report.json results.json...
  */
@@ -82,7 +84,7 @@ export interface Selection {
 /** More changed files than this select everything. */
 export const maxChangedFiles = 300;
 
-/** Paths whose change selects everything: the toolchain, manifests, test setup and CI. */
+/** Paths whose change selects everything: the toolchain, manifests, test setup, CI and its tools. */
 const runsEverything = [
   /^package\.json$/u,
   /^pnpm-lock\.yaml$/u,
@@ -95,7 +97,9 @@ const runsEverything = [
   /^playwright[^/]*\.config\.ts$/u,
   /^\.github\/workflows\//u,
   /^\.github\/actions\//u,
-  /^tools\/test-map[^/]*\.ts$/u,
+  // Every tool, since CI runs several (the browser shard planner, the scans, the workflow and
+  // protocol checks) outside any test, and a tool's change must run the jobs that use it.
+  /^tools\//u,
 ];
 
 /** Documentation, which no test needs unless the map records one reading it. */
@@ -114,6 +118,7 @@ export const select = (
   changes: readonly Change[],
   headFiles: ReadonlySet<string>,
   readHead: (path: string) => string,
+  drift: readonly Change[] = [],
 ): Selection => {
   const full = (reasons: readonly string[]): Selection => ({
     mode: "full",
@@ -205,6 +210,23 @@ export const select = (
   for (const test of [...chosen]) if (!headFiles.has(test)) chosen.delete(test);
   if (chosen.size === 0 && substantive)
     return full(["the selection was empty for a change to more than documentation"]);
+  // The tested tree also holds what reached the base after the map was built, which the map
+  // knows nothing about: its tests, and the readers of what it changed, run too. Main ran every
+  // test on it, so its changes count only for the tests they reach.
+  const drifted = new Set<string>();
+  for (const change of drift) {
+    if (suiteOf(change.path) !== undefined) drifted.add(change.path);
+    for (const id of readersOf(change)) {
+      const test = map.tests[id];
+      if (test !== undefined) drifted.add(test);
+    }
+  }
+  const before = chosen.size;
+  for (const test of drifted) if (headFiles.has(test)) chosen.add(test);
+  if (chosen.size > before)
+    reasons.push(
+      `${chosen.size - before} more for ${drift.length} files changed on the base since the map`,
+    );
   const sorted = [...chosen].toSorted();
   return {
     mode: "selected",
@@ -214,6 +236,23 @@ export const select = (
     browser: sorted.filter((test) => suiteOf(test) === "browser"),
   };
 };
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
+
+/** A Playwright file filter, a regular expression, that matches one spec file and no other. */
+export const playwrightFilter = (path: string): string => `${escapeRegExp(`/${path}`)}$`;
+
+/**
+ * What the check and browser jobs run. They run a selection only when it is enforced; otherwise
+ * every test. `unit` lists Vitest file filters and `browser` Playwright file filters.
+ */
+export const jobInputs = (
+  selection: Selection,
+  enforce: boolean,
+): { run: "full" | "selected"; unit: readonly string[]; browser: readonly string[] } =>
+  enforce && selection.mode === "selected"
+    ? { run: "selected", unit: selection.unit, browser: selection.browser.map(playwrightFilter) }
+    : { run: "full", unit: [], browser: [] };
 
 /**
  * Checks a selection against its diff independently of `select`: a selection that runs no test
@@ -406,8 +445,6 @@ interface Partial {
   >;
 }
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
-
 /** Runs one test file alone with the trace preload and returns what its processes recorded. */
 const runOne = async (root: string, suite: Suite, test: string, workers: number) => {
   const out = mkdtempSync(join(tmpdir(), "test-map-"));
@@ -419,7 +456,7 @@ const runOne = async (root: string, suite: Suite, test: string, workers: number)
           "exec",
           "playwright",
           "test",
-          `${escapeRegExp(`/${test}`)}$`,
+          playwrightFilter(test),
           `--workers=${workers}`,
           "--reporter=line",
         ];
@@ -582,10 +619,12 @@ const main = async () => {
       map: { type: "string" },
       base: { type: "string" },
       head: { type: "string" },
+      tested: { type: "string" },
       selection: { type: "string" },
       workers: { type: "string", default: "4" },
       parallel: { type: "string", default: "1" },
       warn: { type: "boolean", default: false },
+      enforce: { type: "boolean", default: false },
     },
   });
   const need = (name: keyof typeof values): string => {
@@ -613,28 +652,48 @@ const main = async () => {
   } else if (command === "select") {
     const head = need("head");
     const base = need("base");
+    // The commit the tests run on: the merge of the pull request into its base, or its head.
+    const tested = values.tested ?? head;
     const changes = changesBetween(base, head);
-    const headFiles = trackedFiles(head);
+    const headFiles = trackedFiles(tested);
     const readHead = (path: string) =>
-      execFileSync("git", ["show", `${head}:${path}`], {
+      execFileSync("git", ["show", `${tested}:${path}`], {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
       });
     const map = readMap(values.map, base);
-    const chosen = select(typeof map === "string" ? undefined : map, changes, headFiles, readHead);
+    const drift =
+      typeof map === "string"
+        ? []
+        : changesBetween(map.sha, tested === head ? base : `${tested}^1`);
+    const chosen = select(
+      typeof map === "string" ? undefined : map,
+      changes,
+      headFiles,
+      readHead,
+      drift,
+    );
     const selection = typeof map === "string" ? { ...chosen, reasons: [map] } : chosen;
     writeFileSync(need("out"), `${JSON.stringify(selection, null, 2)}\n`);
+    const enforce = values.enforce === true;
+    const inputs = jobInputs(selection, enforce);
+    const output = process.env["GITHUB_OUTPUT"];
+    if (output !== undefined && output !== "")
+      appendFileSync(
+        output,
+        `run=${inputs.run}\nunit=${JSON.stringify(inputs.unit)}\nbrowser=${JSON.stringify(inputs.browser)}\n`,
+      );
     const line =
       selection.mode === "full"
-        ? `Test selection would run every test: ${selection.reasons.join("; ")}`
-        : `Test selection would run ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
+        ? `Test selection picks every test: ${selection.reasons.join("; ")}`
+        : `Test selection picks ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
     process.stdout.write(`${line}\n`);
-    summary(`### Test selection (shadow)\n\n${line}\n`);
+    summary(`### Test selection\n\n${line}\n`);
   } else if (command === "guard") {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
     const problem = guard(selection, changesBetween(need("base"), need("head")));
     if (problem !== undefined) {
-      // In shadow the guard only warns, since every test still runs.
+      // A job that only records the selection warns; the jobs that run it fail.
       process.stdout.write(`${values.warn === true ? "::warning::" : "::error::"}${problem}\n`);
       if (values.warn !== true) process.exitCode = 1;
     } else
@@ -651,9 +710,9 @@ const main = async () => {
       missed.length === 0
         ? `No failed test file fell outside the selection (${failed.length} failed).`
         : `${missed.length} failed test file(s) fell outside the selection: ${missed.join(", ")}`;
-    const time = `It would have run ${report.unit.selectedSeconds} of ${report.unit.totalSeconds} unit test-seconds and ${report.browser.selectedSeconds} of ${report.browser.totalSeconds} browser test-seconds.`;
+    const time = `The selection covers ${report.unit.selectedSeconds} of ${report.unit.totalSeconds} unit test-seconds and ${report.browser.selectedSeconds} of ${report.browser.totalSeconds} browser test-seconds in these results.`;
     process.stdout.write(`${missed.length === 0 ? "" : "::warning::"}${line}\n${time}\n`);
-    summary(`### Test selection report (shadow)\n\n${line} ${time}\n`);
+    summary(`### Test selection report\n\n${line} ${time}\n`);
   } else {
     throw new Error("Use run, merge, select, guard or report");
   }

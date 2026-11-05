@@ -17,7 +17,7 @@ const fallback = "blacksmith-4vcpu-ubuntu-2404";
 const variables = {
   CI_RUNNER_MAINTAINER: "maintainer-runner",
   CI_RUNNER_TRUSTED: "trusted-runner",
-  CI_MAINTAINERS: '["listed-maintainer"]',
+  CI_MAINTAINERS: '["listed-maintainer", "other-maintainer"]',
 };
 const associations = [
   "OWNER",
@@ -103,6 +103,10 @@ interface Run {
   readonly headRepository?: string;
   readonly association?: string;
   readonly login?: string;
+  /** The account whose push started the run; the author by default. */
+  readonly actor?: string;
+  /** The account that started this attempt, such as a re-run; the actor by default. */
+  readonly triggeringActor?: string;
   readonly vars?: Readonly<Record<string, string>>;
 }
 
@@ -111,6 +115,8 @@ const contextsOf = (run: Run) => ({
     repository: run.repository ?? repository,
     event_name: run.event,
     ref: run.ref ?? "refs/heads/main",
+    actor: run.actor ?? run.login ?? "someone",
+    triggering_actor: run.triggeringActor ?? run.actor ?? run.login ?? "someone",
     event:
       run.event === "pull_request"
         ? {
@@ -149,9 +155,23 @@ describe("CI runner routing", () => {
     }
   });
 
-  it("runs a pull request from a branch here by anyone but a maintainer on a GitHub-hosted runner", () => {
-    for (const association of associations.filter((name) => name !== "OWNER" && name !== "MEMBER")) {
+  it("runs a pull request from a branch here by anyone CI_MAINTAINERS doesn't list on a GitHub-hosted runner", () => {
+    // An owner or member who isn't listed included: a self-hosted maintainer runner admits only
+    // the accounts its own configuration lists.
+    for (const association of associations) {
       expect(runnersFor({ event: "pull_request", association })).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs a listed maintainer's pull request on a GitHub-hosted runner when an unlisted account pushed or re-ran it", () => {
+    for (const run of [
+      { actor: "someone" },
+      { triggeringActor: "someone" },
+      { actor: "someone", triggeringActor: "listed-maintainer" },
+    ]) {
+      expect(
+        runnersFor({ event: "pull_request", association: "OWNER", login: "listed-maintainer", ...run }),
+      ).toEqual(new Set([githubHosted]));
     }
   });
 
@@ -164,26 +184,18 @@ describe("CI runner routing", () => {
   });
 
   it("runs a pull request from a branch here by a login CI_MAINTAINERS lists on the maintainer runner", () => {
+    const { CI_MAINTAINERS: _, ...unlisted } = variables;
+    const { CI_RUNNER_MAINTAINER: __, ...noRunner } = variables;
     for (const association of associations) {
       for (const job of routed) {
         const run = { event: "pull_request", association, login: "listed-maintainer" };
         expect(runnerFor(job.runsOn, contextsOf(run))).toBe("maintainer-runner");
-        const { CI_MAINTAINERS: _, ...unlisted } = variables;
-        const expected = association === "OWNER" || association === "MEMBER" ? "maintainer-runner" : githubHosted;
-        expect(runnerFor(job.runsOn, contextsOf({ ...run, vars: unlisted }))).toBe(expected);
-      }
-    }
-  });
-
-  it("runs a maintainer's pull request from a branch here on the maintainer runner", () => {
-    for (const association of ["OWNER", "MEMBER"]) {
-      for (const job of routed) {
-        expect(runnerFor(job.runsOn, contextsOf({ event: "pull_request", association }))).toBe(
-          "maintainer-runner",
-        );
-        expect(runnerFor(job.runsOn, contextsOf({ event: "pull_request", association, vars: {} }))).toBe(
-          fallback,
-        );
+        // A push or re-run by another listed maintainer keeps the route.
+        for (const others of [{ actor: "other-maintainer" }, { triggeringActor: "other-maintainer" }]) {
+          expect(runnerFor(job.runsOn, contextsOf({ ...run, ...others }))).toBe("maintainer-runner");
+        }
+        expect(runnerFor(job.runsOn, contextsOf({ ...run, vars: unlisted }))).toBe(githubHosted);
+        expect(runnerFor(job.runsOn, contextsOf({ ...run, vars: noRunner }))).toBe(fallback);
       }
     }
   });
@@ -237,10 +249,9 @@ describe("CI runner routing", () => {
     // A pull request's author names its branch, title, labels and body, and so could set each to a
     // runner label. Neither a fork nor a non-maintainer here can steer the route with them.
     const steering = "maintainer-runner";
-    const outsiders = associations.filter((name) => name !== "OWNER" && name !== "MEMBER");
     for (const [headRepository, association] of [
       ...associations.map((name) => ["someone/pomerado", name] as const),
-      ...outsiders.map((name) => [repository, name] as const),
+      ...associations.map((name) => [repository, name] as const),
     ]) {
       const run = { event: "pull_request", headRepository, association };
       const contexts = contextsOf(run);
