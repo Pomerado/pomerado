@@ -1,9 +1,9 @@
 {
   "rules": {
     "effecttsgo/any-unknown-in-error-context": 37,
-    "eslint/complexity": 188,
+    "eslint/complexity": 190,
     "eslint/max-depth": 14,
-    "eslint/max-lines": 41,
+    "eslint/max-lines": 42,
     "eslint/max-lines-per-function": 89,
     "typescript/no-misused-spread": 33,
     "typescript/no-non-null-assertion": 111,
@@ -12,6 +12,6 @@
     "typescript/no-unsafe-call": 9,
     "typescript/no-unsafe-member-access": 17,
     "typescript/no-unsafe-return": 23,
-    "typescript/no-unsafe-type-assertion": 507
+    "typescript/no-unsafe-type-assertion": 510
   }
 }

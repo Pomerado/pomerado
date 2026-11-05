@@ -21,7 +21,7 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 ```
 
 - Browser tests run the built `dist/`, so build before you run them.
-- `pnpm lint` runs oxlint with type information, using the rules in `.oxlintrc.json`. `tools/lint-baseline.json` counts, per rule, the findings that predate the linter. A change may not add a finding; after fixing some, run `pnpm lint --update-baseline` to lower the counts. `pnpm lint --report` lists every finding.
+- `pnpm lint` runs oxlint with type information, using the rules in `.oxlintrc.json`. `tools/lint-baseline.json` counts, per rule, the findings that predate the linter. A change may not add a finding; after fixing some, run `pnpm lint --update-baseline` to lower the counts. `pnpm lint --report` lists every finding. CI lints your branch merged with `main`, so a lint failure that appears only there comes from `main`: merge `main` and fix what your change adds. The Effect rules come from `@effect/tsgo`, which supports only certain oxlint and oxlint-tsgolint versions, so upgrade the three together.
 - Tests use synthetic sites and scripted model responses. They need no model key, and no test may call a real model.
 - CI runs gitleaks 8.30.1.
 - CI runs a browser test that fails once more, in a fresh process, and reports one that passes then as flaky. Fix a flaky test at its cause. While a fix is under way, list the test in `typescript/tests/browser/quarantine.json` with `test` (as CI names it, `file › title`), `owner` (a GitHub login) and `issue` (a public issue's URL), and its failures warn instead of failing CI. Remove the entry with the fix. CI fails while an entry names a test that no longer exists.

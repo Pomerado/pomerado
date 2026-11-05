@@ -1690,12 +1690,11 @@ export const makeGuardian = (
         });
         const unavailableSource = unavailableSources.values().next().value;
         if (unavailableSource !== undefined) return yield* unavailableSource;
-        // The closure above may have set it; the cast keeps the compiler from narrowing it away.
-        const pushback = groundPushback;
+        // The closure above may have set it.
         const raw =
-          pushback === undefined
+          groundPushback === undefined
             ? output
-            : afterGroundPushback(pending, pushback, output, confirmedStep);
+            : afterGroundPushback(pending, groundPushback, output, confirmedStep);
         if (outcomeRefused(raw)) {
           // A private kind's failure names no outcome, as its decode failures name no value.
           const refused = privateKind ? undefined : refusedOutcome(raw);

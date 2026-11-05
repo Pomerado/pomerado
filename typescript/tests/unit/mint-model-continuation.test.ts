@@ -2097,7 +2097,7 @@ const reviewingSource = (read: () => Promise<string | Uint8Array | undefined>) =
 };
 
 const resultsFor = (request: ModelRequest | undefined) =>
-  (Array.isArray(request?.input) ? (request.input) : []).flatMap((item) =>
+  (Array.isArray(request?.input) ? request.input : []).flatMap((item) =>
     (item.type === "apply_patch_call_output" || item.type === "function_call_result") &&
     "callId" in item
       ? [item.callId]
@@ -2222,7 +2222,7 @@ it("runs reads sent together at the same time", async () => {
 /** The model's result for one call, as its next request carries it. */
 const resultOf = (request: ModelRequest | undefined, callId: string) =>
   JSON.stringify(
-    (Array.isArray(request?.input) ? (request.input) : []).find(
+    (Array.isArray(request?.input) ? request.input : []).find(
       (item) => item.type === "function_call_result" && item.callId === callId,
     ),
   );

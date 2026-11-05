@@ -212,7 +212,7 @@ export const confirmPopupOutcomes = async (
     .catch(() => undefined);
   const words = ((await outcome.textContent()) ?? "").trim().split(/\s+/u);
   return words.every((word) => word === "accepted" || word === "dismissed")
-    ? (words)
+    ? words
     : ["pending"];
 };
 
