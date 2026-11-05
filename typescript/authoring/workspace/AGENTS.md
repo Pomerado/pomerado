@@ -622,14 +622,22 @@ never with final text, which the host treats as unfinished work:
   `request_input`. Report absence only when the evidence shows the site lacks it, and never
   invent a value or substitute a different field. After a verified write, when the site does
   not offer one output the request asks for, the writes skill's ask whether to publish without
-  it comes first.
+  it comes first. When the site offers a clear alternative for the same goal, such as ordering
+  for later instead of now or delivery instead of pickup, ask the user with `request_input`
+  whether to use it before you report this. A pop-up in the way, such as an app-download prompt,
+  with a skip, close or "continue on the web" choice is no such evidence: take that choice, and
+  have the script dismiss it whenever it shows (forms skill).
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
-  such as an applicant it will not quote. Name the reason the site gave in `explanation`.
+  such as an applicant it will not quote. Name the reason the site gave in `explanation`. When it
+  turns the request away only for now, such as a store closed until it opens, ordering paused
+  until a set time or maintenance it says ends at a stated time, set `temporary`, and set
+  `availableAt` (ISO 8601 with its UTC offset) when the site says when.
 - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
-  `site_lacks_capability`. Never use it for a bot check or an access-denied page. A site-wide
+  `site_lacks_capability`. Never use it for a bot check or an access-denied page, and a
+  maintenance notice that says when it ends is a temporary `site_declined` instead. A site-wide
   outage, maintenance, error or empty page that appears only after the site already served its
   pages in this attempt, or after a bot check you got past earlier, is reported the same way:
   report the outage page you see now, not the earlier check. Sites sometimes throttle a browser's

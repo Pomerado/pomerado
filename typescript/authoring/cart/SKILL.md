@@ -83,6 +83,9 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 `report_blocked` and explain the site's limit: a build that only reached the limit never
 completed the write, so it never publishes.
 
+An example item that is out of stock doesn't end the build. The tool returns that as the site's
+refusal for the item, and you ask the caller with `request_input` which item to use instead.
+
 ## Description
 
 The description states the decisions a caller needs to use the tool right (the publication
