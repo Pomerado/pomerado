@@ -90,8 +90,8 @@ import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { isCardSlot } from "../destinations/payment-frames.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
-import { fileReadbackRule } from "./file-readback.js";
-import { cardReadbackRule } from "./card-readback.js";
+import { fileReadbackRule, isFileReadbackRefusal } from "./file-readback.js";
+import { cardReadbackRule, isCardReadbackRefusal } from "./card-readback.js";
 import { citesCallerRequest, citesConfirmedUpdate } from "./caller-citation.js";
 import type {
   AcceptedTaskUpdate,
@@ -607,6 +607,24 @@ const taskUpdateRefusalCode = (
     ? reason
     : "other";
 /**
+ * The host source rule that refused an execution before it ran, read from its `unsupported`
+ * reason as core's own check gives it: a placed or downloaded file's bytes stay with the host
+ * (`fileReadbackRefusal`), or a typed card does (`cardReadbackRefusal`). No source the build
+ * writes gets those bytes past it. A file refusal that names the file API to use instead, and any
+ * other unsupported answer, such as a refused preflight, a handle the minter misplaced or a reason
+ * the host words itself, names none.
+ */
+const hostSourceRule = (
+  evidence: ExecutionEvidence,
+): Extract<HostRefusalSource, { source: "source_rule" }>["rule"] | undefined =>
+  evidence.status !== "unsupported"
+    ? undefined
+    : isFileReadbackRefusal(evidence.observations)
+      ? "file_readback"
+      : isCardReadbackRefusal(evidence.observations)
+        ? "card_readback"
+        : undefined;
+/**
  * The standing host refusals a checkpoint kept (`MintHarnessSnapshot.hostRefusalSources`), read
  * entry by entry: a source this worker cannot decode, such as one a later release added, reads as
  * none (`unrecorded`), and a checkpoint that kept none, from an older worker, as one unrecorded
@@ -629,8 +647,9 @@ const restoredHostRefusals = (kept: unknown) => {
  * Whether a host refusal a `host_refused` report stands on is apart from an unconfirmed sign-in,
  * so the report keeps its reason: a sign-in screen the host refused at its destination check,
  * which a later password or code screen that passes clears; a sign-in step the host refused with
- * no login sent since (`beforeSignIn` false); and a task update the host refused. A publication or
- * live tests refused while the sign-in never confirmed may be its consequence, such as a recipe
+ * no login sent since (`beforeSignIn` false); a task update the host refused; and a step whose
+ * source a host source rule refused, which no sign-in causes or clears. A publication or live
+ * tests refused while the sign-in never confirmed may be its consequence, such as a recipe
  * nothing verified, as may a refused refill, and a refusal an older checkpoint kept without its
  * source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
  * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
@@ -639,6 +658,7 @@ const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boo
   refusal.source === "sign_in_destination" ||
   refusal.source === "task_update" ||
   refusal.source === "file_cap" ||
+  refusal.source === "source_rule" ||
   (refusal.source === "sign_in_step" && !beforeSignIn);
 /**
  * A failure's code as diagnostics and publication evidence name it. A review whose outcome
@@ -1458,10 +1478,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let actRefusalsInRow = 0;
       /**
        * A host check refused a step the build needs in this attempt: a publication its checks
-       * refused, a sign-in the host refused, a task update the host refused, or a download over
-       * its file caps, until a later example or act step settles without one. A `host_refused`
-       * block stands on it. A later finish_build that gets past the host's checks to Guardian's
-       * review clears it, setting `hostRefusalPassed`.
+       * refused, a sign-in the host refused, a task update the host refused, a step a host source
+       * rule refused before it ran, or a download over its file caps, until a later example or
+       * act step settles without one. A `host_refused` block stands on it. A later finish_build
+       * that gets past the host's checks to Guardian's review clears it, setting
+       * `hostRefusalPassed`.
        */
       let hostRefused = recovered?.hostRefused === true;
       /**
@@ -2195,6 +2216,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             (evidence.status === "completed" || evidence.status === "failed")
           )
             dropFileCapRefusals();
+          // A step a host source rule refused before it ran, such as one that reads a file's
+          // bytes back, is a host check's refusal: a host_refused report stands on it.
+          const sourceRule = hostSourceRule(evidence);
+          if (sourceRule !== undefined) refuseByHost({ source: "source_rule", rule: sourceRule });
           const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
           if (handedBack) yield* questionHandedBack();
           const receipt = yield* visible(evidence, purpose, handedBack);

@@ -232,9 +232,13 @@ jobs:
       actions: read
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
+      repeat-browser: ${{ steps.plan.outputs.repeat }}
+      repeat-unit: ${{ steps.changes.outputs.unit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # A pull request checks out its merge with the base branch, whose first parent is the base.
+          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -261,21 +265,37 @@ jobs:
           run-id: ${{ steps.durations.outputs.run-id }}
           github-token: ${{ github.token }}
       - run: corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
+      - name: Find the tests this pull request changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-shards"
+          git diff --unified=0 HEAD^1 HEAD -- typescript/tests/browser > "$RUNNER_TEMP/browser-changes.diff"
+          git diff --name-only -z --diff-filter=d HEAD^1 HEAD -- 'typescript/tests/unit/*.test.ts' \
+            > "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
+          if [ -s "$RUNNER_TEMP/browser-shards/unit-repeat.txt" ]; then echo "unit=true" >> "$GITHUB_OUTPUT"; fi
       - name: Plan the shards
         id: plan
-        run: >-
-          node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json"
-          --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards"
-          --target-seconds 80 --workers 4 --max-shards 16
+        run: |
+          changes=()
+          if [ -f "$RUNNER_TEMP/browser-changes.diff" ]; then changes=(--diff "$RUNNER_TEMP/browser-changes.diff"); fi
+          node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json" \
+            --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards" \
+            --target-seconds 80 --workers 4 --max-shards 16 \
+            --quarantine typescript/tests/browser/quarantine.json "${changes[@]}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-shards
           path: ${{ runner.temp }}/browser-shards/
-          retention-days: 1
+          # A week, so a shard re-run days later still finds its list.
+          retention-days: 7
           overwrite: true
   # The browser tests, in the planned shards. Each shard builds dist/ itself, since the tests run the
   # built package. Every shard runs to the end, so one run reports every failure. A push to main
   # records each test's duration for the next plans.
+  # A test that fails runs once more in a fresh process. If it passes then, it is flaky: the shard
+  # passes and names it in a warning and the job summary. A test that fails twice fails the shard,
+  # unless typescript/tests/browser/quarantine.json lists it with an owner and an issue.
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: browser-plan
@@ -324,13 +344,33 @@ jobs:
           name: browser-shards
           path: ${{ runner.temp }}/browser-shards
       # One worker per vCPU. Every runner this job uses has 4 vCPUs, as the plan assumes.
-      - run: corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.txt" --workers=4
-      - name: Check that every planned test ran within the time budget
-        run: >-
-          mkdir -p "$RUNNER_TEMP/browser-durations" &&
-          node tools/browser-shards.ts record --results test-results/browser-results.json
-          --expected "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.json"
-          --out "$RUNNER_TEMP/browser-durations/durations-${{ matrix.shard }}.json" --budget-seconds 80
+      - name: Run the shard's tests
+        id: tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if ! corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-$SHARD.txt" --workers=4; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+          cp test-results/browser-results.json "$RUNNER_TEMP/browser-results.json"
+      - name: Run the failed tests again in a fresh process
+        if: steps.tests.outputs.failed == 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-$SHARD.txt" --last-failed --workers=4 || true
+          cp test-results/browser-results.json "$RUNNER_TEMP/browser-rerun.json"
+      - name: Judge the results
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          rerun=()
+          if [ -f "$RUNNER_TEMP/browser-rerun.json" ]; then rerun=(--rerun "$RUNNER_TEMP/browser-rerun.json"); fi
+          mkdir -p "$RUNNER_TEMP/browser-durations"
+          node tools/browser-shards.ts record --results "$RUNNER_TEMP/browser-results.json" "${rerun[@]}" \
+            --expected "$RUNNER_TEMP/browser-shards/shard-$SHARD.json" \
+            --quarantine typescript/tests/browser/quarantine.json \
+            --out "$RUNNER_TEMP/browser-durations/durations-$SHARD.json" --budget-seconds 80
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: github.event_name == 'push'
         with:
@@ -342,9 +382,46 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-browser-${{ matrix.shard }}
-          path: test-results/browser-results.json
+          path: ${{ runner.temp }}/browser-results.json
           retention-days: 7
           if-no-files-found: ignore
+  # Runs the tests a pull request adds or changes several times over, so a new flaky test fails
+  # here, before it merges, rather than in later runs. Browser tests whose own lines in a spec file
+  # change run three times each, as many as fit about 80 s (tools/browser-shards.ts says how lines
+  # map to tests). Each test in a changed unit test file runs three times too.
+  repeat-changed:
+    name: Repeat changed tests
+    needs: browser-plan
+    if: needs.browser-plan.outputs.repeat-browser == 'true' || needs.browser-plan.outputs.repeat-unit == 'true'
+    # Off the critical path, so a GitHub-hosted runner, with 4 vCPUs, for every author.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards
+      - name: Repeat the changed unit test files
+        if: needs.browser-plan.outputs.repeat-unit == 'true'
+        run: |
+          mapfile -d '' -t files < "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
+          corepack pnpm exec vitest run --repeats 2 "${files[@]}"
+      - if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm build
+      - if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm exec playwright install --with-deps chromium
+      - name: Repeat the changed browser tests
+        if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/repeat.txt" --repeat-each 3 --workers=4
   # Test selection in shadow (tools/test-map.ts). On a pull request it works out which test files a
   # selection would run, from the newest test map main's test-map.yml built, while every test still
   # runs. The report job then compares that with the results. Neither job is in CI's `needs`, so
@@ -424,12 +501,13 @@ jobs:
           path: test-selection-report.json
           retention-days: 30
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
-  # skipped or cancelled job never passes for a green one. Add every new job to `needs`, except
-  # test selection's shadow jobs, which never decide a run.
+  # skipped or cancelled job never passes for a green one. Add every new job to `needs`. The
+  # exceptions are repeat-changed, which skips when a run changes no tests, and test selection's
+  # shadow jobs, which never decide a run.
   ci:
     name: CI
     if: always()
-    needs: [check, browser-plan, browser, secret-scan, content-scan]
+    needs: [check, browser-plan, browser, repeat-changed, secret-scan, content-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -450,7 +528,9 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          failed=$(jq -r 'to_entries[]
+            | select(.value.result != "success" and (.key != "repeat-changed" or .value.result != "skipped"))
+            | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Jobs that didn't succeed: ${failed//$'\n'/, }"
             exit 1

@@ -199,7 +199,10 @@ const ClosedCode = Schema.String.pipe(
  * - `task_update`: the host refused to apply a task update, with its reason, or `other` for one
  *   core does not name;
  * - `file_cap`: an execution's download went over the host's own file caps, with the cap
- *   (`DownloadCap`).
+ *   (`DownloadCap`);
+ * - `source_rule`: the host refused an execution before it ran, as `unsupported`, because its
+ *   source broke a host source rule core states, with the rule: a placed or downloaded file's
+ *   bytes stay with the host (`file_readback`), or a typed card does (`card_readback`).
  */
 export const HostRefusalSource = Schema.Union(
   Schema.Struct({
@@ -230,6 +233,10 @@ export const HostRefusalSource = Schema.Union(
   Schema.Struct({
     source: Schema.Literal("file_cap"),
     ...DownloadCap.fields,
+  }),
+  Schema.Struct({
+    source: Schema.Literal("source_rule"),
+    rule: Schema.Literal("file_readback", "card_readback"),
   }),
 );
 export type HostRefusalSource = typeof HostRefusalSource.Type;

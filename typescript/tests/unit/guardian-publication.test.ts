@@ -12,6 +12,7 @@ import {
   decodePublicationDecision,
   guardianPublicationPolicy,
   publicationCallerDecisionPolicy,
+  publicationCartPolicy,
   publicationDecisionPolicy,
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
@@ -987,6 +988,17 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("schema_mismatch");
     expect(publicationReasons).toContain("source_correction");
+  });
+
+  // A cart tool whose own guest cart lives only inside one run may publish signed out, as the cart
+  // skill lets it build: no later call needs that cart. A cart a later call must find still needs
+  // a verified sign-in, and the same-run guest checkout keeps its own clause. Hosts with their own
+  // publication policy get it with publicationCartPolicy.
+  it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
+    const rule =
+      "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is an unsupported_claim finding with reason evidence at the description.";
+    expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
   });
 
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or

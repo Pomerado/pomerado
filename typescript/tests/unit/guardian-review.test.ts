@@ -696,6 +696,35 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     );
   });
 
+  // A signed-in write build saved an account payment setting the caller never named on its way to
+  // the one write the caller asked for, and Guardian let it through as part of that write. Such a
+  // save now goes to the owner first. The undo rule, which needs no confirmation, is unchanged.
+  it("tells Guardian an account setting the task does not name needs the owner's confirmation", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "In a signed-in session, changing the account's saved address, default store, payment settings, preferences or profile is a write; one that trusted intent, an answer or submitted_call.input does not name is not part of the requested write, so escalate it with refusalGround owner_confirmation, naming the setting.";
+    const undo =
+      "A step that only puts back something an earlier step of this job changed on the site, such as a saved filter, sort, setting or field, to the value it held before that change, undoes the build's own change: allow it in any build, read builds included, with no write authority, task update or confirmation, and label it a read.";
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      const writeRule =
+        policy.split("\n").find((line) => line.startsWith("Classify actual website effects")) ??
+        "";
+      expect(writeRule).toContain(` ${sentence} Setting a signed-in session's delivery`);
+      expect(writeRule).toContain(` ${undo} `);
+    }
+  });
+
   // Guardian escalated example runs because it could not read an SDK helper the source imports,
   // such as a browser script built from formControlsCode, and guessed SDK paths that don't exist.
   it("tells Guardian the SDK a source imports is trusted host code", async () => {

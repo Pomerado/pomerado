@@ -24,6 +24,8 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - `pnpm lint` runs oxlint with type information, using the rules in `.oxlintrc.json`. `tools/lint-baseline.json` counts, per rule, the findings that predate the linter. A change may not add a finding; after fixing some, run `pnpm lint --update-baseline` to lower the counts. `pnpm lint --report` lists every finding.
 - Tests use synthetic sites and scripted model responses. They need no model key, and no test may call a real model.
 - CI runs gitleaks 8.30.1.
+- CI runs a browser test that fails once more, in a fresh process, and reports one that passes then as flaky. Fix a flaky test at its cause. While a fix is under way, list the test in `typescript/tests/browser/quarantine.json` with `test` (as CI names it, `file › title`), `owner` (a GitHub login) and `issue` (a public issue's URL), and its failures warn instead of failing CI. Remove the entry with the fix. CI fails while an entry names a test that no longer exists.
+- On a pull request, CI runs each browser test whose own lines in a spec file change three times, as many as fit about 80 s, and each test in a changed unit test file three times, so a new flaky test fails before it merges. A change above a spec file's first test counts for every test in the file; changed fixture files outside the spec files repeat nothing.
 - Set `EVENT=pull_request`, `PR_BASE` to the base commit and `PR_HEAD` to your head commit to scan your commits as CI does. The content scan then also checks your commit messages, and the secrets scan checks each commit's diff.
 
 ## Layout

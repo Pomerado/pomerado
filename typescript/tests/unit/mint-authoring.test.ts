@@ -1302,7 +1302,7 @@ it("renders the pinned standalone authoring", async () => {
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
     ["a5efd3a978cfd00f32b71a57884c8a73579978868cecb40acca57cc33a3897b3", "writes"],
-    ["bdcb2ec20d9528b12017e73e8fd6cf1c2545fd411eb6e79dac1f7e74580c35c6", "cart"],
+    ["95b21e2164990308565c275902fd14fa2777ea8fc7ddd9e9fbe1cb22773d02be", "cart"],
     ["bc7bb91f330493fe7c4fda697b974a175d83702e6b20d6b4a632d9bcb250a14b", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
     ["17e31d249ccfcb4957f499fca6b3bf542c9be78c38bd15275111c7038000050f", "workspace/AGENTS.md"],

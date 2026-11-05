@@ -86,5 +86,6 @@ completed the write, so it never publishes.
 ## Description
 
 The description states the decisions a caller needs to use the tool right (the publication
-skill): that it acts on the signed-in account's cart or checks out as a guest, whether
+skill): that it acts on the signed-in account's cart, checks out as a guest or starts its own
+guest cart that lives only inside one run, which no later call or person must find, whether
 quantity adds or sets, what it returns, and what it leaves out, such as placing the order.
