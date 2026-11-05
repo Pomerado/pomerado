@@ -1,6 +1,6 @@
 import { Effect, JSONSchema, Option, Schema } from "effect";
 import type { Scope } from "effect";
-import { ExecutionContext, finishCaptureAsEvidence } from "./context.js";
+import { ExecutionContext, finishCaptureAsEvidence, inOperationSpan } from "./context.js";
 import type { EffectJournal } from "./context.js";
 import {
   DeadlineExceeded,
@@ -266,4 +266,4 @@ export const executeOperation = <Input, EncodedInput, Output, EncodedOutput, Err
         ),
       ),
     );
-  });
+  }).pipe(inOperationSpan(operation.name));

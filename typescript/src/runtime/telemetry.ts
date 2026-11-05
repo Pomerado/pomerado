@@ -8,10 +8,13 @@ import { readFileSync } from "node:fs";
  * hands every span and resource reading to the writer as a plain JSON-safe object; the host decides
  * where they go. This module opens no connection, loads no telemetry SDK and has no dependency.
  * Without a valid trace context or a writer it records nothing.
+ * What `createRuntimeTelemetry` returns serves as the operation runtime's `OperationTelemetry`
+ * (`ExecutionServices.telemetry`), which records a span around each operation it executes.
  *
  * Attribute values are limited to booleans, finite numbers and short tokens, and span names to
- * short tokens, so page text, URLs and email addresses can't be recorded by accident. A host that
- * exports spans still screens them as it would any record.
+ * short tokens. That keeps out text with spaces, `/`, `:`, `?` or `@`, such as page text, URLs and
+ * email addresses, but a short token can still be sensitive, so callers pass IDs, kinds, counts
+ * and durations, and a host that exports spans still screens them as it would any record.
  *
  * Trace context: https://www.w3.org/TR/trace-context/
  */
@@ -24,6 +27,7 @@ export interface TraceContext {
 }
 
 const hexField = /^[0-9a-f]+$/u;
+const spanIdField = /^[0-9a-f]{16}$/u;
 const allZero = /^0+$/u;
 
 /**
@@ -61,12 +65,16 @@ export type Attributes = Readonly<Record<string, AttributeValue>>;
 /** Letters, digits, `_`, `.` and `-`, from 1 to 64 characters. */
 const token = /^[A-Za-z0-9_.-]{1,64}$/u;
 
+/** Names that would read as an object's own machinery rather than an attribute. */
+const reservedNames = new Set(["__proto__", "constructor", "prototype"]);
+
 /** At most this many attributes are kept on one span or reading. */
 export const maxAttributes = 32;
 
 /**
- * The attributes the runtime may record: a token name with a boolean, a finite number or a token
- * string, the first 32 such. Everything else is dropped without a trace.
+ * The attributes the runtime may record: a token name, other than `__proto__`, `constructor` and
+ * `prototype`, with a boolean, a finite number or a token string, the first 32 such. Everything
+ * else is dropped without a trace.
  */
 export const screenAttributes = (
   attributes: Readonly<Record<string, unknown>> | undefined,
@@ -74,7 +82,7 @@ export const screenAttributes = (
   const kept = new Map<string, AttributeValue>();
   for (const [name, value] of Object.entries(attributes ?? {})) {
     if (kept.size >= maxAttributes) break;
-    if (!token.test(name)) continue;
+    if (!token.test(name) || reservedNames.has(name)) continue;
     if (
       typeof value === "boolean" ||
       (typeof value === "number" && Number.isFinite(value)) ||
@@ -87,6 +95,9 @@ export const screenAttributes = (
 
 /** How a span ended. */
 export type SpanStatus = "unset" | "ok" | "error";
+
+/** A status as given, or `unset` for anything that isn't one. */
+const spanStatus = (value: unknown): SpanStatus => (value === "ok" || value === "error" ? value : "unset");
 
 /** One finished span. Times are Unix epoch milliseconds, possibly fractional. */
 export interface SpanEvent {
@@ -148,9 +159,10 @@ export type TelemetryEvent = SpanEvent | ResourceEvent;
 
 /**
  * Where events go, set by the host, such as a line on a channel it reads. It is called
- * synchronously, and an error it throws is dropped so recording never fails a run.
+ * synchronously and not awaited. An error it throws, or a promise it returns that rejects, is
+ * dropped, so recording never fails a run.
  */
-export type TelemetryWriter = (event: TelemetryEvent) => void;
+export type TelemetryWriter = (event: TelemetryEvent) => unknown;
 
 /** How resource use is read. Each reader defaults to the running process's own. */
 export interface ResourceReaders {
@@ -174,16 +186,22 @@ export interface ResourceReaders {
   readonly readCgroupFile?: (name: string) => string | undefined;
 }
 
-/** The process's cgroup v2 folder, from `/proc/self/cgroup`, or `undefined` without one. */
-const cgroupFolder = () => {
+/**
+ * The cgroup v2 folder a `/proc/self/cgroup` text names: its `0::` line's path under
+ * `/sys/fs/cgroup`. `undefined` for a text with no such line, as under cgroup v1 alone, or with a
+ * path that isn't absolute or climbs with `..`.
+ */
+export const cgroupFolderOf = (procSelfCgroup: string | undefined) => {
+  const line = procSelfCgroup?.split("\n").find((entry) => entry.startsWith("0::"));
+  if (line === undefined) return undefined;
+  const path = line.slice(3).trim();
+  if (!path.startsWith("/") || path.split("/").includes("..")) return undefined;
+  return `/sys/fs/cgroup${path === "/" ? "" : path}`;
+};
+
+const readText = (path: string) => {
   try {
-    const line = readFileSync("/proc/self/cgroup", "utf8")
-      .split("\n")
-      .find((entry) => entry.startsWith("0::"));
-    if (line === undefined) return undefined;
-    const path = line.slice(3).trim();
-    if (!path.startsWith("/") || path.split("/").includes("..")) return undefined;
-    return `/sys/fs/cgroup${path === "/" ? "" : path}`;
+    return readFileSync(path, "utf8");
   } catch {
     return undefined;
   }
@@ -195,13 +213,8 @@ let folder: string | null | undefined;
 
 const readOwnCgroupFile = (name: string) => {
   if (!cgroupFiles.has(name)) return undefined;
-  if (folder === undefined) folder = cgroupFolder() ?? null;
-  if (folder === null) return undefined;
-  try {
-    return readFileSync(`${folder}/${name}`, "utf8");
-  } catch {
-    return undefined;
-  }
+  if (folder === undefined) folder = cgroupFolderOf(readText("/proc/self/cgroup")) ?? null;
+  return folder === null ? undefined : readText(`${folder}/${name}`);
 };
 
 const wholeNumber = (text: string | undefined) => {
@@ -301,7 +314,11 @@ export interface RuntimeTelemetry {
   readonly enabled: boolean;
   /** The host's trace context, when valid. */
   readonly parent: TraceContext | undefined;
-  /** Starts a span. A name that is not a short token is recorded as `unnamed`. */
+  /**
+   * Starts a span. A name that is not a short token is recorded as `unnamed`, a status other than
+   * `unset`, `ok` and `error` as `unset`, and a parent without a well-formed span ID as the host's
+   * trace context.
+   */
   readonly startSpan: (name: string, options?: StartSpanOptions) => RecordingSpan;
   /** Runs `work` in a span that ends `ok` when it returns and `error` when it throws. */
   readonly span: <A>(
@@ -366,7 +383,10 @@ export const createRuntimeTelemetry = (options: RuntimeTelemetryOptions = {}): R
   const randomBytes = options.randomBytes ?? defaultRandomBytes;
   const write = (event: TelemetryEvent) => {
     try {
-      writer(event);
+      const written: unknown = writer(event);
+      // An async writer's rejection is dropped too, never left unhandled.
+      if (typeof (written as { then?: unknown } | null)?.then === "function")
+        (written as PromiseLike<unknown>).then(undefined, () => undefined);
     } catch {
       // Recording never fails the run it records.
     }
@@ -377,7 +397,11 @@ export const createRuntimeTelemetry = (options: RuntimeTelemetryOptions = {}): R
       if (!allZero.test(id)) return id;
     }
   };
-  const parentIdOf = (span: RecordingSpan | undefined) => span?.spanId ?? parent.spanId;
+  // A parent from elsewhere counts only with a well-formed span ID.
+  const parentIdOf = (span: RecordingSpan | undefined) => {
+    const id: unknown = span?.spanId;
+    return typeof id === "string" && spanIdField.test(id) && !allZero.test(id) ? id : parent.spanId;
+  };
 
   const startSpan = (name: string, spanOptions: StartSpanOptions = {}): RecordingSpan => {
     const spanId = newSpanId();
@@ -406,10 +430,10 @@ export const createRuntimeTelemetry = (options: RuntimeTelemetryOptions = {}): R
           spanId,
           parentSpanId,
           traceFlags: parent.traceFlags,
-          name: token.test(name) ? name : "unnamed",
+          name: typeof name === "string" && token.test(name) ? name : "unnamed",
           startTimeMs,
           endTimeMs: now(),
-          status: endOptions.status ?? "unset",
+          status: spanStatus(endOptions.status),
           attributes: Object.fromEntries(attributes),
         });
       },

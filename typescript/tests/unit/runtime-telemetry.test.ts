@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { OperationTelemetry } from "../../src/runtime/context.js";
 import {
+  cgroupFolderOf,
   createRuntimeTelemetry,
   parseTraceparent,
   readResources,
@@ -133,14 +135,63 @@ describe("createRuntimeTelemetry", () => {
 
   it("ends a wrapped span with the outcome of its work", async () => {
     const { telemetry, events } = recorder({ traceparent });
+    const thrown = new Error("thrown");
     await expect(telemetry.span("ok.step", async () => 3)).resolves.toBe(3);
     await expect(
       telemetry.span("failed.step", () => Promise.reject(new Error("no"))),
     ).rejects.toThrow("no");
+    await expect(
+      telemetry.span("thrown.step", () => {
+        throw thrown;
+      }),
+    ).rejects.toBe(thrown);
     expect(events.map((event) => event.type === "span" && [event.name, event.status])).toEqual([
       ["ok.step", "ok"],
       ["failed.step", "error"],
+      ["thrown.step", "error"],
     ]);
+  });
+
+  it("records a status, name or parent that doesn't conform as the safe default", () => {
+    const { telemetry, events } = recorder({ traceparent });
+    const looksOk = { toString: () => "ok" };
+    telemetry.startSpan(looksOk as never).end({ status: "Login failed for someone@example.com" as never });
+    for (const spanId of ["someone@example.com", "0".repeat(16), "ABCDEF0123456789", "abc", 7])
+      telemetry.startSpan("child", { parent: { spanId } as never }).end({ status: looksOk as never });
+    telemetry.recordResources({ parent: { spanId: "someone@example.com" } as never });
+    expect(events).toHaveLength(7);
+    expect(events[0]).toMatchObject({ name: "unnamed", status: "unset", parentSpanId: parentId });
+    for (const event of events.slice(1, 6))
+      expect(event).toMatchObject({ name: "child", status: "unset", parentSpanId: parentId });
+    expect(events[6]).toMatchObject({ type: "resource", parentSpanId: parentId });
+  });
+
+  it("drops an async writer's rejection rather than leaving it unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      let writes = 0;
+      const telemetry = createRuntimeTelemetry({
+        traceparent,
+        env: {},
+        writer: async () => {
+          writes += 1;
+          throw new Error("closed");
+        },
+      });
+      telemetry.startSpan("step").end();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(writes).toBe(1);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("serves as the operation runtime's telemetry", () => {
+    const telemetry: OperationTelemetry = createRuntimeTelemetry({ env: {} });
+    expect(telemetry.startSpan("operation.run").end()).toBeUndefined();
   });
 
   it("draws span IDs again until they are not all zero", () => {
@@ -249,10 +300,12 @@ describe("screenAttributes", () => {
     expect(event?.attributes).not.toHaveProperty("late");
   });
 
-  it("records a name that looks like an object key as a plain attribute", () => {
-    const screened = screenAttributes(JSON.parse('{"__proto__": "x", "kind": "read"}'));
+  it("drops names that read as an object's own machinery", () => {
+    const screened = screenAttributes(
+      JSON.parse('{"__proto__": "x", "constructor": 1, "prototype": true, "kind": "read"}'),
+    );
     expect(Object.getPrototypeOf(screened)).toBe(Object.prototype);
-    expect(Object.keys(screened)).toEqual(["__proto__", "kind"]);
+    expect(Object.keys(screened)).toEqual(["kind"]);
   });
 
   it("names a span whose name is not a short token as unnamed", () => {
@@ -314,5 +367,22 @@ describe("readResources", () => {
         readCgroupFile: (name) => (name === "memory.max" ? "1073741824" : undefined),
       }).cgroup,
     ).toEqual({ memoryMaxBytes: 1073741824 });
+  });
+});
+
+describe("cgroupFolderOf", () => {
+  it("finds the cgroup v2 folder from its 0:: line", () => {
+    expect(cgroupFolderOf("0::/\n")).toBe("/sys/fs/cgroup");
+    expect(cgroupFolderOf("12:pids:/legacy\n0::/system.slice/app.service\n")).toBe(
+      "/sys/fs/cgroup/system.slice/app.service",
+    );
+  });
+
+  it("finds none under cgroup v1 alone, without the file, or for a path that climbs", () => {
+    expect(cgroupFolderOf("12:pids:/legacy\n4:memory:/legacy\n")).toBeUndefined();
+    expect(cgroupFolderOf(undefined)).toBeUndefined();
+    expect(cgroupFolderOf("")).toBeUndefined();
+    expect(cgroupFolderOf("0::/../../etc\n")).toBeUndefined();
+    expect(cgroupFolderOf("0::relative\n")).toBeUndefined();
   });
 });

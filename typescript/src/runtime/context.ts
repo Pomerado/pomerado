@@ -1,4 +1,4 @@
-import { Context, Effect, Ref } from "effect";
+import { Context, Effect, Exit, Ref } from "effect";
 import { CommitAlreadySent } from "./errors.js";
 import type { CaptureUnavailable, EventUnavailable, WriteConfirmationRefused } from "./errors.js";
 import type { Deadline } from "./deadline.js";
@@ -193,14 +193,59 @@ export const makeEffectJournalWith = (options: {
 
 export const makeEffectJournal: Effect.Effect<EffectJournal> = makeEffectJournalWith({});
 
+/**
+ * Where a host records a span around each operation the runtime executes, such as the telemetry
+ * `createRuntimeTelemetry` in `pomerado/core/runtime/telemetry` returns. The host screens and
+ * exports what it records.
+ */
+export interface OperationTelemetry {
+  readonly startSpan: (
+    name: string,
+    options?: { readonly attributes?: Readonly<Record<string, unknown>> },
+  ) => { readonly end: (options?: { readonly status?: "ok" | "error" }) => void };
+}
+
 export interface ExecutionServices {
   readonly deadline: Deadline;
   readonly events: EventSink;
   readonly capture: CaptureLifecycle;
   readonly journal: EffectJournal;
+  /** Optional: a host that passes none runs every operation exactly as before. */
+  readonly telemetry?: OperationTelemetry;
 }
 
 export class ExecutionContext extends Context.Tag("pomerado/ExecutionContext")<
   ExecutionContext,
   ExecutionServices
 >() {}
+
+/**
+ * Runs an operation in one `operation.run` span of the execution context's telemetry, ended `ok`
+ * when it succeeds and `error` when it fails, with its outcome unchanged. Without telemetry it is
+ * the operation's own effect. A span that throws as it starts or ends is dropped.
+ */
+export const inOperationSpan =
+  (operation: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R | ExecutionContext> =>
+    Effect.flatMap(ExecutionContext, ({ telemetry }) =>
+      telemetry === undefined
+        ? effect
+        : Effect.acquireUseRelease(
+            Effect.sync(() => {
+              try {
+                return telemetry.startSpan("operation.run", { attributes: { operation } });
+              } catch {
+                return undefined;
+              }
+            }),
+            () => effect,
+            (span, exit) =>
+              Effect.sync(() => {
+                try {
+                  span?.end({ status: Exit.isSuccess(exit) ? "ok" : "error" });
+                } catch {
+                  // Recording never changes the run it records.
+                }
+              }),
+          ),
+    );
