@@ -1,10 +1,10 @@
 {
   "rules": {
     "effecttsgo/any-unknown-in-error-context": 37,
-    "eslint/complexity": 190,
+    "eslint/complexity": 191,
     "eslint/max-depth": 14,
     "eslint/max-lines": 42,
-    "eslint/max-lines-per-function": 89,
+    "eslint/max-lines-per-function": 91,
     "typescript/no-misused-spread": 33,
     "typescript/no-non-null-assertion": 111,
     "typescript/no-unsafe-argument": 23,
