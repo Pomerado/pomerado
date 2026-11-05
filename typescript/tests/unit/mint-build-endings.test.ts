@@ -158,6 +158,53 @@ it("ends a build the site declined for the example's own facts as site_declined"
   });
 });
 
+// A site that declines the request only for now, such as a store closed until it opens, keeps its
+// decline temporary and the time the site gave, so a host can tell its caller when to try again.
+it("ends a build the site declined for now as a temporary site_declined with its time", async () => {
+  const explanation = "Pickup ordering is closed now; the store says it opens at 9 AM.";
+  const availableAt = "2099-11-06T09:00:00-05:00";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "site_declined", explanation, temporary: true, availableAt })][
+        index
+      ] ?? prose("Stopping."),
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true, availableAt },
+    stopReason: "site_declined",
+  });
+});
+
+it.each([
+  {
+    name: "a temporary time on another reason",
+    report: { reason: "site_lacks_capability", availableAt: "2099-11-06T09:00:00-05:00" },
+    refusal: "temporary_not_declined",
+  },
+  {
+    name: "a time already past",
+    report: { reason: "site_declined", temporary: true, availableAt: "2001-01-01T09:00:00Z" },
+    refusal: "available_at_past",
+  },
+])("refuses $name, then ends with the corrected report", async ({ report, refusal }) => {
+  const explanation = "Ordering is paused for now.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { ...report, explanation }, "first"),
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(JSON.stringify(f.requests[1]?.input)).toContain(refusal);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true },
+  });
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
 // A site that is temporarily down for the failing input ends under its own reason, so a host can
 // tell its caller to try again later instead of reading it as a site that lacks the capability.
 it("ends a build whose site is temporarily down as site_unavailable", async () => {
