@@ -1490,6 +1490,8 @@ export const AvailableAt = Schema.String.pipe(
   Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/),
   Schema.filter((value) => !Number.isNaN(Date.parse(value)), {
     message: () => "availableAt must be a real date and time",
+    // Adds nothing to the pattern's JSON Schema, so a description on it reaches the model.
+    jsonSchema: {},
   }),
 );
 export const BuildBlocked = Schema.Struct({
