@@ -8,6 +8,7 @@ import {
   mintIdleCompactionTokens,
 } from "../../src/mint/idle-compaction.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
+import type { MintRecoveryFactory } from "../../src/mint/recovery-contracts.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
@@ -619,4 +620,134 @@ it("sends no note after a compaction when no skill was read", async () => {
     "function_call",
     "function_call_result",
   ]);
+});
+
+// One tool result can exceed the model's whole context, such as a result a takeover replays from
+// an earlier worker. A compaction keeps the items after the request it compacts as they are, so
+// it never shrinks that result: the request carries the result's first part and size instead,
+// with the same bytes on every later request.
+it("sends a tool result too large for the context as its bounded first part, after a compaction too", async () => {
+  const oversized = JSON.stringify({
+    results: Array.from({ length: 40_000 }, (_unused, index) => ({
+      name: `Synthetic item ${index}`,
+      description: `A synthetic description of item ${index}. `.repeat(3),
+    })),
+  });
+  expect(oversized.length).toBeGreaterThan(4_000_000);
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_catalog" ? Effect.succeed(oversized) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const responses: ModelResponse[] = [
+    {
+      ...call("execute", explore, mintCompactionLimitTokens + 8_500, "explore_catalog"),
+      output: [compactedItem, ...call("execute", explore, 2_000, "explore_catalog").output],
+    },
+    call("execute", example, 30_000),
+    call("finish_build", finish, 30_000),
+  ];
+  const requests: ModelRequest[] = [];
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            requests.push(request);
+            return responses[requests.length - 1] ?? call("finish_build", finish);
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  const sentResult = (request: ModelRequest | undefined) =>
+    JSON.stringify(
+      items(request).find(
+        (item) => item.type === "function_call_result" && item.callId === "explore_catalog",
+      ),
+    );
+  const [, afterCompaction, later] = requests;
+  expect(items(afterCompaction)[0]).toMatchObject(compactedItem);
+  const sent = sentResult(afterCompaction);
+  expect(sent.length).toBeLessThan(64 * 1024);
+  expect(sent).toContain("result_truncated");
+  expect(sent).toContain(String(oversized.length));
+  expect(JSON.stringify(afterCompaction?.input).length).toBeLessThan(256 * 1024);
+  expect(sentResult(later)).toBe(sent);
+});
+
+// A request the provider refuses as over the model's context is sent again with its long tool
+// results cut to their first part, and every later request keeps them cut, instead of ending the
+// run on the refusal.
+it("sends a request refused as over the context again with its long tool results cut", async () => {
+  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(10_000) });
+  expect(long.length).toBeGreaterThan(150_000);
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_page" ? Effect.succeed(long) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const responses: ModelResponse[] = [
+    call("execute", explore, 2_000, "explore_page"),
+    call("execute", example, 30_000),
+    call("finish_build", finish, 30_000),
+  ];
+  const requests: ModelRequest[] = [];
+  let answered = 0;
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            requests.push(request);
+            // The provider refuses any request that carries the long result whole.
+            if (JSON.stringify(request.input).length > long.length)
+              throw Object.assign(new Error("Input exceeds the context window"), {
+                status: 400,
+                code: "context_length_exceeded",
+              });
+            answered += 1;
+            return responses[answered - 1] ?? call("finish_build", finish);
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  const sentResult = (request: ModelRequest | undefined) =>
+    JSON.stringify(
+      items(request).find(
+        (item) => item.type === "function_call_result" && item.callId === "explore_page",
+      ),
+    );
+  // One refused request, then the same request with the result cut, and later ones keep it cut.
+  expect(requests).toHaveLength(4);
+  const [, refused, retried, later] = requests;
+  expect(sentResult(refused).length).toBeGreaterThan(long.length);
+  expect(sentResult(retried)).toContain("result_truncated");
+  expect(sentResult(retried).length).toBeLessThan(64 * 1024);
+  expect(sentResult(later)).toBe(sentResult(retried));
 });

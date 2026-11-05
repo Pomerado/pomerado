@@ -125,7 +125,13 @@ import {
   minterHistory,
 } from "./outcome-review.js";
 import { readImportClosure } from "./operation-source.js";
-import { boundedResult, digestResult, resultDigestPath } from "./result-digest.js";
+import {
+  boundedResult,
+  byteLength,
+  digestResult,
+  resultDigestPath,
+  resultDigestThresholdBytes,
+} from "./result-digest.js";
 import { contentDigest } from "./step-checks.js";
 import { writePathNotice } from "./write-session.js";
 import {
@@ -4766,6 +4772,84 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const emptyCases: LiveTestCasesFile = { cases: [] };
       /** What a signed-in read designs, in place of a read signed out's suite. */
       const signedInPlanInstruction = `This read signed in, so it runs live tests on at most ${signedInTestInputLimit} distinct inputs beyond its example, as the testing skill says: one combined case in ${liveTestCasesPath} that sets every optional input and filter the example left unset, with values the site shows (a picker's options, or values in the example's own rows, never a person's or record's name, number or email). Choose each value so at least one example row fails it while some rows still pass every filter, since a value every example row already satisfies passes even when the tool ignores it, and name in purpose the row each value excludes. Set next_page true when the tool pages. Add a second case only for inputs that cannot be set with the others, and one no-match case, a made-up key for an input that takes a record's own id, key or URL, else a query or filter the site has no results for (testing skill). Then run it with live_tests action run and check that every row it returns satisfies each input it set, that the excluded rows are gone, and that page two holds new rows. Running it again after a fix, or on src/tool-http.mjs, is free.`;
+      /**
+       * The outputs one plan shows for the cases it names, as a host returns an execution's
+       * result: each whole while it fits `resultDigestThresholdBytes`, else saved whole through
+       * `saveResult` as a workspace file and shown as its digest. Together they take at most
+       * `planOutputBytes`; a case past that shows only where its output is saved. A host without
+       * `saveResult`, or a save that fails, shows the output's first part when it fits.
+       */
+      const planOutputBytes = 32 * 1024;
+      const planOutputs = (entrypoint: string, ids: readonly string[]) =>
+        Effect.gen(function* () {
+          const shown = new Map<string, Readonly<Record<string, unknown>>>();
+          let room = planOutputBytes;
+          const fits = (text: string) => byteLength(text) <= room;
+          for (const id of ids) {
+            const key = outputKey(entrypoint, id);
+            if (shown.has(id) || !liveTestOutputs.has(key)) continue;
+            const output = liveTestOutputs.get(key);
+            const text = JSON.stringify(output) ?? "null";
+            const totalBytes = byteLength(text);
+            const path = resultDigestPath(`live-test-${liveTestVersion(entrypoint)}-${id}`);
+            let saveFailed = false;
+            const save = (file: string) =>
+              Effect.gen(function* () {
+                const saveResult = dependencies.saveResult;
+                if (saveResult === undefined || saveFailed) return false;
+                const saved = yield* Effect.either(
+                  Effect.suspend(() => saveResult(path, file)).pipe(
+                    Effect.catchAllDefect(() => Effect.fail(new MintFailure({ code: "Unavailable" }))),
+                  ),
+                );
+                saveFailed = Either.isLeft(saved);
+                return Either.isRight(saved);
+              });
+            let view: Readonly<Record<string, unknown>> | undefined;
+            if (totalBytes <= resultDigestThresholdBytes) {
+              if (fits(text)) view = { output };
+            } else {
+              const digest = Either.getOrUndefined(
+                Either.try(() => digestResult(text, { path, failed: false })),
+              );
+              if (
+                digest !== undefined &&
+                "file" in digest &&
+                fits(digest.text) &&
+                (yield* save(digest.file))
+              )
+                view = { outputDigest: JSON.parse(digest.text) as unknown };
+            }
+            if (view === undefined) {
+              if (yield* save(`${JSON.stringify(output, null, 2)}\n`))
+                view = {
+                  outputDigest: {
+                    kind: "result_saved",
+                    totalBytes,
+                    path,
+                    instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show, so it is saved whole in ${path}: read it with read_source (offset and limit) or search it with rg in exec_command, or name fewer cases.`,
+                  },
+                };
+              else {
+                const bounded = boundedResult(text);
+                view = !fits(bounded)
+                  ? {
+                      outputDigest: {
+                        kind: "result_omitted",
+                        totalBytes,
+                        instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show. Name fewer cases to see its first part.`,
+                      },
+                    }
+                  : bounded === text
+                    ? { output }
+                    : { outputDigest: JSON.parse(bounded) as unknown };
+              }
+            }
+            room -= byteLength(JSON.stringify(view));
+            shown.set(id, view);
+          }
+          return shown;
+        });
       /** What the agent reads about its tests: its cases and their results. */
       const liveTestPlanView = (
         entrypoint: string,
@@ -4775,12 +4859,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const read = yield* readCasesFile;
           const file = Either.isRight(read) ? read.right : emptyCases;
           const digest = yield* stepDigest(entrypoint);
+          const outputs = yield* planOutputs(
+            entrypoint,
+            file.cases
+              .map((testCase) => testCase.id)
+              .filter((id) => options.show?.includes(id) === true),
+          );
           const cases = file.cases.map((testCase) => ({
             ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest),
-            ...(options.show?.includes(testCase.id) &&
-            liveTestOutputs.has(outputKey(entrypoint, testCase.id))
-              ? { output: liveTestOutputs.get(outputKey(entrypoint, testCase.id)) }
-              : {}),
+            ...outputs.get(testCase.id),
           }));
           const shown =
             options.ran === undefined

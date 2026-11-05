@@ -20,6 +20,7 @@ import type { MintAgentSnapshot, MintRecoveryFactory } from "../../src/mint/reco
 import { Deadline } from "../../src/runtime/deadline.js";
 import type { FieldFill } from "../../src/runtime/output-lint.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
+import { resultHardCapBytes } from "../../src/mint/result-digest.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
@@ -1929,6 +1930,76 @@ it("keeps a case marked noMatch in the publication record, and marking a passed 
   // A case without the flag is recorded as it always was.
   expect(record.cases.find((testCase) => testCase.id === "busy-month")).not.toHaveProperty(
     "noMatch",
+  );
+});
+
+// A whole-catalog read can return megabytes. The plan shows a named case's output
+// whole only while it is small; a larger one is saved as a workspace file and the plan shows its
+// digest, so one plan never carries more than the host returns for any result.
+it("shows a named case's multi-megabyte output as a digest naming the file that holds it", async () => {
+  const catalog = {
+    results: Array.from({ length: 12_000 }, (_unused, index) => ({
+      name: `Synthetic item ${index}`,
+      description: `A synthetic description of item ${index}. `.repeat(8),
+      price: { amount: 5 + (index % 40), currency: "USD" },
+    })),
+    has_next_page: false,
+    next_cursor: null,
+  };
+  const { host } = liveTestHost({
+    "repeat-1": { status: "completed", output: catalog },
+    nothing: { status: "completed", output: { results: [], has_next_page: false, next_cursor: null } },
+  });
+  const saved = new Map<string, string>();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "example"),
+        call("live_tests", runAll, "run"),
+        call("live_tests", { ...plan, cases: ["repeat-1", "nothing"] }, "plan"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      saveResult: (path, text) =>
+        Effect.sync(() => {
+          saved.set(path, text);
+        }),
+    },
+    read,
+  );
+  await writeWorkspace((f.workspace as unknown as { root: string }).root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify(cases),
+  });
+  await f.run();
+
+  const catalogBytes = new TextEncoder().encode(JSON.stringify(catalog)).byteLength;
+  expect(catalogBytes).toBeGreaterThan(4_000_000);
+  const afterPlan = f.requests.find((request) =>
+    JSON.stringify(request.input).includes('"callId":"plan"'),
+  );
+  const planned = resultOf(afterPlan, "plan");
+  // The whole plan stays within the most the host returns for one result.
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  const shown = planned["cases"] as Record<string, unknown>[];
+  // A small output comes back whole, as before.
+  expect(shown.find((testCase) => testCase["id"] === "nothing")).toMatchObject({
+    output: { results: [], has_next_page: false, next_cursor: null },
+  });
+  // A large one comes back as its size, shape and first items, naming the file with all of it.
+  const large = shown.find((testCase) => testCase["id"] === "repeat-1");
+  expect(large).not.toHaveProperty("output");
+  const digest = large?.["outputDigest"] as { totalBytes: number; path: string; shape: unknown };
+  expect(digest.totalBytes).toBe(catalogBytes);
+  expect(digest.shape).toMatchObject({ fields: { results: { type: "array", length: 12_000 } } });
+  expect(JSON.parse(saved.get(digest.path) ?? "null")).toEqual(catalog);
+  // Cases the plan did not name show no output at all.
+  expect(shown.find((testCase) => testCase["id"] === "sort-price")).not.toHaveProperty(
+    "outputDigest",
   );
 });
 

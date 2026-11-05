@@ -1107,8 +1107,9 @@ export type LiveTestBatchResult =
   | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
 
 /**
- * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result
- * (with full outputs for the cases named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result,
+ * with the output of each case named in `cases`, a large one as a digest naming the workspace file
+ * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
  */

@@ -109,3 +109,10 @@ export const modelCauseMetadata = (cause: Cause.Cause<unknown>): ModelFailureMet
     interrupted: Cause.isInterrupted(cause),
   };
 };
+
+/**
+ * The provider refused the request as over the model's input limit, its context window, by its own
+ * code. That is no outage, and the same request fails the same way.
+ */
+export const overContextWindow = (finite: ModelFailureMetadata) =>
+  finite.code === "context_length_exceeded" || finite.providerCode === "context_length_exceeded";

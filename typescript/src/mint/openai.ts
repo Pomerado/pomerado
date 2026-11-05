@@ -1,7 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MintRecoveryFactory } from "./recovery-contracts.js";
 import { failureDetail, failureRootCause } from "../runtime/failure-detail.js";
-import { modelCauseMetadata, modelFailureMetadata } from "../models/model-failure.js";
+import {
+  modelCauseMetadata,
+  modelFailureMetadata,
+  overContextWindow,
+} from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
 import {
   effectiveReasoningContext,
@@ -22,6 +26,7 @@ import {
   mintCompactionLimitTokens,
   mintIdleCompactionTokens,
 } from "./idle-compaction.js";
+import { boundedToolResults, longToolResults } from "./request-bounds.js";
 import { solModel } from "../models/models.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { transientTransportFailure } from "../models/transport-failure.js";
@@ -1413,6 +1418,8 @@ const openAIMinter = (
             };
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
+            /** Calls whose long results go out cut, since a request carrying them was refused. */
+            const cutResults = new Set<string>();
             const sdkProvider = cacheFallback(runner.config.modelProvider);
             const cacheLayout: ModelProvider = {
               getModel: async (name) => {
@@ -1429,7 +1436,14 @@ const openAIMinter = (
                 const model = await provider.getModel(name);
                 return {
                   ...model,
-                  getResponse: async (request) => {
+                  getResponse: async (sdkRequest) => {
+                    // No tool result goes out longer than the model can read, whatever produced
+                    // it, nor longer than the cut a refused request set for it.
+                    const bounded = () => {
+                      const input = boundedToolResults(sdkRequest.input, cutResults);
+                      return input === sdkRequest.input ? sdkRequest : { ...sdkRequest, input };
+                    };
+                    let request = bounded();
                     // The SDK model opens its span in the runner's AsyncLocalStorage trace
                     // context and throws without one. An Effect fiber resumes in the async
                     // context of whatever woke it (a recovery save completed by another fiber),
@@ -1439,10 +1453,16 @@ const openAIMinter = (
                     await idle?.beforeSend(request.input, signal);
                     // A compaction that ran while the tools ran replaces the prefix it covers, and
                     // its window holds its own note. Otherwise a provider compaction gets one.
-                    const viewed = idle?.view(request.input) ?? request.input;
-                    const input =
-                      viewed === request.input ? afterProviderCompaction(request.input) : viewed;
-                    const sent = input === request.input ? request : { ...request, input };
+                    const viewOf = (current: ModelRequest) => {
+                      const viewed = idle?.view(current.input) ?? current.input;
+                      const input =
+                        viewed === current.input ? afterProviderCompaction(current.input) : viewed;
+                      return {
+                        windowed: viewed !== current.input,
+                        sent: input === current.input ? current : { ...current, input },
+                      };
+                    };
+                    let { windowed, sent } = viewOf(request);
                     // The SDK's client has already retried; an outage it could not get past is
                     // retried here with the same request, within the attempt's deadline.
                     const respond = Effect.gen(function* () {
@@ -1457,7 +1477,7 @@ const openAIMinter = (
                         );
                         if (Either.isRight(outcome)) {
                           const response = outcome.right;
-                          yield* reportUsage(response, call, "turn", viewed !== request.input);
+                          yield* reportUsage(response, call, "turn", windowed);
                           if (response.responseId !== undefined) lastResponseId = response.responseId;
                           // The provider compacted this request: its note names the skills read
                           // before it, not those this response's calls read next.
@@ -1478,6 +1498,25 @@ const openAIMinter = (
                           return { ...response, usage: flatUsage(response.usage) };
                         }
                         const error = outcome.left;
+                        // Refused as over the model's context: its long tool results go out cut to
+                        // their first part from now on, and the request goes again at once.
+                        const uncut = overContextWindow(failureMetadata(error))
+                          ? longToolResults(sent.input).filter((id) => !cutResults.has(id))
+                          : [];
+                        if (uncut.length > 0 && !signal.aborted) {
+                          for (const id of uncut) cutResults.add(id);
+                          yield* turn.reportTrace?.({
+                            phase: "model_retry",
+                            retry: retries + 1,
+                            waitMs: 0,
+                            reason: "tool_results_cut",
+                            cutResults: uncut.length,
+                            failure: failureMetadata(error),
+                          }) ?? Effect.void;
+                          request = bounded();
+                          ({ windowed, sent } = viewOf(request));
+                          continue;
+                        }
                         const now = yield* Clock.currentTimeMillis;
                         firstFailureAt ??= now;
                         const waitMs =

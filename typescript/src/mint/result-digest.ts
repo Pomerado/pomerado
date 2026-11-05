@@ -37,7 +37,8 @@ const maxFields = 40;
 const shapeSampleItems = 20;
 
 const encoder = new TextEncoder();
-const byteLength = (text: string) => encoder.encode(text).byteLength;
+/** `text`'s size in UTF-8 bytes. */
+export const byteLength = (text: string) => encoder.encode(text).byteLength;
 
 /** `text` within `bytes` UTF-8 bytes, cut on a character, with a marker when it was cut. */
 const cut = (text: string, bytes: number) => {
