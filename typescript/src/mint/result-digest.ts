@@ -52,20 +52,39 @@ const cut = (text: string, bytes: number) => {
 const shortKey = (key: string) =>
   key.length <= maxKeyChars ? key : `${key.slice(0, maxKeyChars)}…`;
 
-/**
- * A result the host could not save or digest: whole within the threshold, else its first
- * `resultDigestThresholdBytes` bytes with its size and a note that the rest was not kept.
- */
-export const boundedResult = (text: string) => {
+/** `text` within the threshold, else its first part and size, with `note` saying why. */
+const truncated = (text: string, note: (totalBytes: number) => string) => {
   const totalBytes = byteLength(text);
   if (totalBytes <= resultDigestThresholdBytes) return text;
   return JSON.stringify({
     kind: "result_truncated",
     totalBytes,
-    note: `This result is ${totalBytes} bytes and the full output could not be saved, so only its first ${resultDigestThresholdBytes} bytes are shown. Run again with a narrower read if you need the rest.`,
+    note: note(totalBytes),
     excerpt: cut(text, resultDigestThresholdBytes),
   });
 };
+
+/**
+ * A result the host could not save or digest: whole within the threshold, else its first
+ * `resultDigestThresholdBytes` bytes with its size and a note that the rest was not kept.
+ */
+export const boundedResult = (text: string) =>
+  truncated(
+    text,
+    (totalBytes) =>
+      `This result is ${totalBytes} bytes and the full output could not be saved, so only its first ${resultDigestThresholdBytes} bytes are shown. Run again with a narrower read if you need the rest.`,
+  );
+
+/**
+ * A result too long for a model request to carry whole, whatever produced it: whole within the
+ * threshold, else its first `resultDigestThresholdBytes` bytes with its size.
+ */
+export const cutResult = (text: string) =>
+  truncated(
+    text,
+    (totalBytes) =>
+      `This result is ${totalBytes} bytes, too long to send whole, so only its first ${resultDigestThresholdBytes} bytes are shown. Ask for a smaller part if you need the rest.`,
+  );
 
 /** Where a digested result is saved: one file per execution, so a takeover rewrites the same. */
 export const resultDigestPath = (executionId: string) =>

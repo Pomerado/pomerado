@@ -1,5 +1,5 @@
 import type { AgentInputItem } from "@openai/agents";
-import { boundedResult, resultHardCapBytes } from "./result-digest.js";
+import { cutResult, resultHardCapBytes } from "./result-digest.js";
 
 /**
  * The longest tool result, in UTF-16 code units, that a minter request carries whole. Each host
@@ -20,7 +20,7 @@ type FunctionResult = Extract<AgentInputItem, { readonly type: "function_call_re
 type FunctionOutput = FunctionResult["output"];
 
 const boundedText = (text: string, limit: number) =>
-  text.length <= limit ? text : boundedResult(text);
+  text.length <= limit ? text : cutResult(text);
 
 /** A text output part with its text bounded; any other part as it is. */
 const boundedPart =
