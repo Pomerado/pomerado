@@ -1498,8 +1498,11 @@ const openAIMinter = (
                           return { ...response, usage: flatUsage(response.usage) };
                         }
                         const error = outcome.left;
-                        // Refused as over the model's context: its long tool results go out cut to
-                        // their first part from now on, and the request goes again at once.
+                        // Refused as over the model's context: its tool results over
+                        // `cutToolResultMaxChars` (64 Ki characters, counted as UTF-16 code units
+                        // like `toolResultMaxChars`) go out cut to their first part from now on,
+                        // and the request goes again at once. With none that long, it fails as
+                        // before.
                         const uncut = overContextWindow(failureMetadata(error))
                           ? longToolResults(sent.input).filter((id) => !cutResults.has(id))
                           : [];

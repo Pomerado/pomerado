@@ -4791,7 +4791,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             const output = liveTestOutputs.get(key);
             const text = JSON.stringify(output) ?? "null";
             const totalBytes = byteLength(text);
-            const path = resultDigestPath(`live-test-${liveTestVersion(entrypoint)}-${id}`);
+            // The path keeps only some characters of the id, so a hash of the whole id keeps two
+            // ids that differ elsewhere, such as "a.b" and "a_b", in files of their own.
+            const idHash = createHash("sha256").update(id, "utf8").digest("hex").slice(0, 12);
+            const path = resultDigestPath(
+              `live-test-${liveTestVersion(entrypoint)}-${id.slice(0, 64)}-${idHash}`,
+            );
             let saveFailed = false;
             const save = (file: string) =>
               Effect.gen(function* () {

@@ -2003,6 +2003,129 @@ it("shows a named case's multi-megabyte output as a digest naming the file that 
   );
 });
 
+/** A list output of `count` synthetic items, about 190 bytes each. */
+const itemsOutput = (count: number, tag: string) => ({
+  results: Array.from({ length: count }, (_unused, index) => ({
+    name: `Synthetic ${tag} item ${index}`,
+    description: `A synthetic description of ${tag} item ${index}. `.repeat(3),
+  })),
+  has_next_page: false,
+  next_cursor: null,
+});
+
+/**
+ * Runs every case in `ids` once, each returning `outputs[id]`, then a plan naming them all, and
+ * returns the plan's cases by id and the files the host saved (none without `saveResult`).
+ */
+const planNaming = async (
+  outputs: Readonly<Record<string, unknown>>,
+  options: { readonly saves: boolean },
+) => {
+  const ids = Object.keys(outputs);
+  const { host } = liveTestHost(
+    Object.fromEntries(
+      ids.map((id) => [id, { status: "completed" as const, output: outputs[id] }]),
+    ),
+  );
+  const saved = new Map<string, string>();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "example"),
+        call("live_tests", runAll, "run"),
+        call("live_tests", { ...plan, cases: ids }, "plan"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      ...(options.saves
+        ? {
+            saveResult: (path: string, text: string) =>
+              Effect.sync(() => {
+                saved.set(path, text);
+              }),
+          }
+        : {}),
+    },
+    read,
+  );
+  await writeWorkspace((f.workspace as unknown as { root: string }).root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify({
+      cases: ids.map((id) => ({
+        id,
+        purpose: "A query that returns many results.",
+        input: { query: id },
+        expect: "result",
+      })),
+    }),
+  });
+  await f.run();
+  const afterPlan = f.requests.find((request) =>
+    JSON.stringify(request.input).includes('"callId":"plan"'),
+  );
+  const planned = resultOf(afterPlan, "plan");
+  const byId = new Map(
+    (planned["cases"] as Record<string, unknown>[]).map((testCase) => [
+      String(testCase["id"]),
+      testCase,
+    ]),
+  );
+  return { planned, byId, saved };
+};
+
+it("shows a plan's outputs whole until their budget is spent, then only where each is saved", async () => {
+  // Four outputs of about 12 KiB, each small enough to come back whole on its own.
+  const outputs = Object.fromEntries(
+    ["first", "second", "third", "fourth"].map((id) => [id, itemsOutput(64, id)]),
+  );
+  const { planned, byId, saved } = await planNaming(outputs, { saves: true });
+
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  expect(byId.get("first")?.["output"]).toEqual(outputs["first"]);
+  expect(byId.get("second")?.["output"]).toEqual(outputs["second"]);
+  // Past the budget a case shows its size and the file holding all of it, never the output.
+  for (const id of ["third", "fourth"]) {
+    const testCase = byId.get(id);
+    expect(testCase).not.toHaveProperty("output");
+    const digest = testCase?.["outputDigest"] as { kind: string; path: string };
+    expect(digest.kind).toBe("result_saved");
+    expect(JSON.parse(saved.get(digest.path) ?? "null")).toEqual(outputs[id]);
+  }
+});
+
+it("shows a large output's first part when the host saves no results, and omits it past the budget", async () => {
+  const outputs = { large: itemsOutput(20_000, "large"), later: itemsOutput(20_000, "later") };
+  const { planned, byId } = await planNaming(outputs, { saves: false });
+
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  const first = byId.get("large")?.["outputDigest"] as { kind: string; excerpt: string };
+  expect(first.kind).toBe("result_truncated");
+  expect(first.excerpt).toContain("Synthetic large item 0");
+  // The first part fills most of the budget, so the next case shows only its size.
+  const next = byId.get("later")?.["outputDigest"] as { kind: string; totalBytes: number };
+  expect(next.kind).toBe("result_omitted");
+  expect(next.totalBytes).toBe(new TextEncoder().encode(JSON.stringify(outputs.later)).byteLength);
+  expect(byId.get("later")).not.toHaveProperty("output");
+});
+
+it("saves the outputs of two cases whose ids differ only in punctuation to files of their own", async () => {
+  const outputs = { "store.one": itemsOutput(200, "dotted"), store_one: itemsOutput(200, "plain") };
+  const { byId, saved } = await planNaming(outputs, { saves: true });
+
+  const paths = ["store.one", "store_one"].map(
+    (id) => (byId.get(id)?.["outputDigest"] as { path: string }).path,
+  );
+  expect(new Set(paths).size).toBe(2);
+  expect(JSON.parse(saved.get(paths[0] ?? "") ?? "null")).toEqual(outputs["store.one"]);
+  expect(JSON.parse(saved.get(paths[1] ?? "") ?? "null")).toEqual(outputs.store_one);
+});
+
 it("keeps a case's noMatch in its result across a takeover", async () => {
   const { host } = liveTestHost(
     { "busy-month": monthCount(4, 351), "quiet-month": monthCount(2, 0) },
