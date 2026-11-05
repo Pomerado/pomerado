@@ -424,6 +424,17 @@ The package has these entry points.
 - `package.json` declares `"pomerado": { "hostProtocol": N }`, the version of the interface hosts compose, the `./core/*` exports. A release that removes a `./core/*` export hosts use, or changes one incompatibly, raises N by one. A host reads it as data from the package it installs, without running the package. A package without the field is protocol 1. `pnpm test` checks a removed `./core/*` export against the versions on npm, as [RELEASING.md](RELEASING.md) describes.
 - Contributors can test a host against a locally built package before a version is published.
 
+### Runtime telemetry
+
+A host that traces its work can have the runtime record spans and resource use for the host to export, through `pomerado/core/runtime/telemetry`. The local host uses none of it, nothing else in the package imports it, and it adds no dependency.
+
+- `createRuntimeTelemetry({ writer })` records under the W3C trace context ([Trace Context](https://www.w3.org/TR/trace-context/)) in the `TRACEPARENT` environment variable, or the `traceparent` option. Each span is a child of that context, or of the span given as `parent`, with a new random span ID. `startSpan(name)` returns a span with its `traceparent` for work it starts elsewhere, and `end({ status })` writes it once. `span(name, work)` ends the span `ok` or `error` by how `work` settles.
+- `recordResources()` reads the process's CPU time and memory from Node, and its cgroup v2 CPU, memory and I/O figures where those files are readable, and writes them under a span. `readResources` reads the same without a trace. Every reader can be replaced, for tests.
+- Every span and reading goes to the host's `writer` as a plain JSON-safe object: trace, span and parent IDs, flags, name, times in Unix epoch milliseconds, status and attributes. The host decides where they go. The runtime opens no connection and loads no telemetry SDK, and an error the writer throws is dropped, so recording never fails a run.
+- Without a valid trace context or a writer, every call does nothing. A trace context with version `ff`, an all-zero ID, a wrong field length or uppercase hex is invalid.
+- Attribute names and string values must be short tokens, letters, digits, `_`, `.` and `-` up to 64 characters, and other values booleans or finite numbers. Anything else is dropped, at most 32 attributes are kept, and a span name that isn't a token is recorded as `unnamed`, so page text, URLs and email addresses can't be recorded by accident. Pass IDs, kinds, counts and durations; the host still screens what it exports.
+- The subpath is additive. A host that runs revisions pinned to an older release checks for it before relying on it, and a revision without it records no spans.
+
 ## Source layout
 
 | Path | Responsibility |
