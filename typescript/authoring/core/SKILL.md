@@ -1066,10 +1066,11 @@ belongs to the `authenticate` step (auth skill). A code the site sends later, to
 declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
 `caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
-current page state within the existing deadline. When a few distinct attempts have
-not found the way on the caller's own instance or account, whose layout only they may know, ask
-them for directions with `request_input`; on public pages, end with the precise blocked reason
-instead. Completing a
+current page state within the existing deadline. Work out the way yourself first, from the
+site's menus, links, search and other pages. When a few distinct attempts have not found it and
+it seems impossible, or something looks wrong, ask the caller for directions or confirmation
+with `request_input` before reporting a blocked or unknown state whose cause cannot be
+established. Completing a
 challenge does not prove login.
 
 For a native dialog, the call that raises it keeps it on `globalThis.dialog` from a

@@ -1437,8 +1437,7 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  * - `site_lacks_capability`: the site does not offer what the task needs.
  * - `site_declined`: the site offers what the task needs but declines this example's own facts,
  *   such as an applicant it will not quote; the explanation names the reason the site gave. A
- *   decline the site states only for now, such as a store closed until it opens, ordering paused
- *   until a set time or maintenance the site says ends at a stated time, is `temporary`, with
+ *   decline the site states only for now, such as a store closed until it opens, is `temporary`, with
  *   `availableAt` when the site says when it takes the request again, so a host can tell its
  *   caller to try again then rather than change the request.
  * - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
