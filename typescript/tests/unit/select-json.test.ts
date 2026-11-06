@@ -134,13 +134,38 @@ describe("selectJson", () => {
     expect(failureOf(() => selectJson("no data here", { a: "a" }))).toMatchObject({
       name: "PageDataFailure",
       reason: "not_json",
-      message: "not_json: the text holds no JSON object or array",
     });
     expect(failureOf(() => selectJson('{"a":"secret value', { a: "a" }))).toMatchObject({
       reason: "not_json",
-      message: "not_json: the data ends inside a string",
       at: 5,
     });
+    const invalid = failureOf(() => selectJson('{"a":SECRET_TOKEN}', { a: "a" })) as Record<string, unknown>;
+    expect(invalid).toMatchObject({ name: "PageDataFailure", reason: "not_json", at: 5 });
+    expect(String(invalid.message)).not.toContain("SECRET");
+  });
+
+  it("never looks for a selection inside its own match, so matches keep document order and limits", () => {
+    const text = '{"id":{"id":1},"z":5}';
+    expect(selectJson(text, { a: { path: "**.id", limit: 1 }, b: "z" })).toEqual({ a: [{ id: 1 }], b: [5] });
+    expect(selectJson(JSON.parse(text), { ids: "**.id" })).toEqual({ ids: [{ id: 1 }] });
+    const nested = { item: { name: "outer", item: { name: "inner" } } };
+    for (const input of [nested, JSON.stringify(nested)])
+      expect(
+        selectJson(input, { items: { path: "**.item", fields: { name: "**.name", child: "item.name", self: "" } } }),
+      ).toEqual({ items: [{ name: "outer", child: "inner", self: nested.item }] });
+  });
+
+  it("keeps fields named like built-in object members", () => {
+    expect(both({ x: { path: "store", fields: { constructor: "name", toString: "missing" } } })).toEqual({
+      x: [{ constructor: "Corner Market", toString: null }],
+    });
+  });
+
+  it("sizes a value with shared and cyclic parts without walking them again", () => {
+    const shared: Record<string, unknown> = { a: 1 };
+    shared.left = shared;
+    shared.right = shared;
+    expect(selectJson({ root: { left: shared, right: shared } }, { x: "root" }).x).toHaveLength(1);
   });
 
   it("walks a value with cycles without looping", () => {

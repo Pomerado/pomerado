@@ -16,6 +16,8 @@
  *   those fields only, the first value each path finds, or `null` where it finds none, and the
  *   parts of the match no field names are skipped, never parsed.
  * - `limit` stops a selection after that many matches.
+ * - A match's inside is never searched for more matches of the same selection, nor a field's for
+ *   the same field, so `"**.id"` on `{"id":{"id":1}}` returns only the outer value.
  * - `outline: depth` returns each match's shape instead of its value: its `type`, its size in
  *   `chars` (JSON text only), an object's `keys` count and its first `maxKeys` (default 40) keys'
  *   outlines as `children`, an array's `length` and its `first` item's outline, and a short
@@ -40,8 +42,8 @@
  * It throws an `Error` named `PageDataFailure` with a `reason`, and a message that carries
  * counts, never the data's text:
  *
- * - `not_json`: the text holds no object or array, or ends or breaks inside one (`at`, the
- *   character index).
+ * - `not_json`: the text holds no object or array, or ends or breaks inside one, or a value it
+ *   reads is not valid JSON (`at`, the character index).
  * - `not_found`: the `after` marker is not in the text.
  * - `too_large`: what it would return is over `maxChars` (`maxChars`, and `field`, the result
  *   name that crossed it). Select fewer fields, or set a `limit`.
@@ -146,12 +148,25 @@ export function selectJson(
   let open = entries.filter((entry) => entry.parent === undefined).length;
   let taken = 0;
   const stop = {};
-  const sizeOf = (value: unknown, depth: number): number => {
-    if (typeof value === "string") return value.length + 2;
-    if (value === null || typeof value !== "object" || depth > 64) return 8;
-    let size = 2;
-    for (const key of Object.keys(value))
-      size += key.length + 4 + sizeOf((value as Record<string, unknown>)[key], depth + 1);
+  // The size of what a value returns, counted once per object and only as far as the budget left.
+  const sizeOf = (value: unknown): number => {
+    const budget = maxChars - taken + 1;
+    const seen = new Set<object>();
+    let size = 0;
+    const pending: unknown[] = [value];
+    while (pending.length > 0 && size <= budget) {
+      const next = pending.pop();
+      if (typeof next === "string") size += next.length + 2;
+      else if (next === null || typeof next !== "object" || seen.has(next)) size += 8;
+      else {
+        seen.add(next);
+        size += 2;
+        for (const key of Object.keys(next)) {
+          size += key.length + 4;
+          pending.push((next as Record<string, unknown>)[key]);
+        }
+      }
+    }
     return size;
   };
   const count = (size: number, name: string) => {
@@ -164,30 +179,48 @@ export function selectJson(
       );
   };
   const records = new Map<Entry, Record<string, unknown>>();
-  // What a value matched: the selections it completes, and whether some path goes on below it.
-  const matched = (states: number[]) => {
-    let descend = false;
+  const has = (record: Record<string, unknown> | undefined, name: string) =>
+    record !== undefined && Object.hasOwn(record, name);
+  // The selections a value completes among `states`, never a field its record already holds.
+  const completing = (states: number[]) => {
     let complete: Entry[] | undefined;
     for (let k = 0; k < states.length; k += 2) {
       const entry = at(states[k] as number);
-      if (full(entry)) continue;
-      if (states[k + 1] !== entry.segs.length) descend = true;
-      else if (entry.parent === undefined || !(entry.name in (records.get(entry.parent) ?? {})))
-        (complete ??= []).push(entry);
+      if (full(entry) || states[k + 1] !== entry.segs.length) continue;
+      if (entry.parent !== undefined && has(records.get(entry.parent), entry.name)) continue;
+      if (!complete?.includes(entry)) (complete ??= []).push(entry);
     }
-    // A selection that names fields starts its record here and looks for them inside.
+    return complete;
+  };
+  // What a value matched: the selections it completes, and the paths that go on below it. A
+  // match's inside is never searched for more matches of the same selection or field, so matches
+  // never nest and come in document order.
+  const matched = (states: number[]) => {
+    const own = completing(states);
     let saved: [Entry, Record<string, unknown> | undefined][] | undefined;
-    if (complete !== undefined)
-      for (const entry of complete)
+    let fields: Entry[] | undefined;
+    if (own !== undefined)
+      for (const entry of own)
         if (entry.fields !== undefined) {
+          // A selection that names fields starts its record here and looks for them inside.
           (saved ??= []).push([entry, records.get(entry)]);
           records.set(entry, {});
           const extra: number[] = [];
           for (const field of entry.fields) extra.push(field, 0);
-          states = closure(states.concat(extra));
-          descend = true;
+          const started = closure(extra);
+          const here = completing(started);
+          if (here !== undefined) (fields ??= []).push(...here);
+          states = states.concat(started);
         }
-    return { descend, complete, saved, states };
+    // Fields first, so a record holds its fields before it is counted.
+    const complete = fields === undefined ? own : own === undefined ? fields : [...fields, ...own];
+    const below: number[] = [];
+    for (let k = 0; k < states.length; k += 2) {
+      const entry = at(states[k] as number);
+      if (states[k + 1] !== entry.segs.length && !full(entry) && !complete?.includes(entry))
+        below.push(states[k] as number, states[k + 1] as number);
+    }
+    return { descend: below.length > 0, complete, saved, states: below };
   };
   const settle = (
     complete: Entry[],
@@ -204,15 +237,15 @@ export function selectJson(
       let item: unknown;
       if (entry.outline !== undefined) {
         item = outline(entry.outline);
-        count(sizeOf(item, 0), entry.name);
+        count(sizeOf(item), entry.name);
       } else if (entry.fields === undefined) {
         item = read(entry.name);
-        count(size ?? sizeOf(item, 0), entry.name);
+        count(size ?? sizeOf(item), entry.name);
       } else {
         const record = records.get(entry) as Record<string, unknown>;
-        for (const field of entry.fields) if (!(at(field).name in record)) record[at(field).name] = null;
+        for (const field of entry.fields) if (!has(record, at(field).name)) record[at(field).name] = null;
         item = record;
-        count(sizeOf(record, 0), entry.name);
+        count(sizeOf(record), entry.name);
       }
       entry.values.push(item);
       if (entry.values.length >= entry.limit && --open === 0) throw stop;
@@ -228,7 +261,7 @@ export function selectJson(
   });
 
   if (typeof input !== "string") {
-    // A value in memory: walk it, visiting each object once.
+    // A value in memory: walk it, never into an object it is already inside, so a cycle ends.
     const seen = new WeakSet<object>();
     const outlineOf = (value: unknown, depth: number): Outline => {
       if (Array.isArray(value)) {
@@ -240,7 +273,7 @@ export function selectJson(
         const keys = Object.keys(value);
         const node: Outline = { type: "object", keys: keys.length };
         if (depth > 0) {
-          const children: Outline = {};
+          const children: Outline = Object.create(null) as Outline;
           for (const key of keys.slice(0, maxKeys))
             children[key] = outlineOf((value as Record<string, unknown>)[key], depth - 1);
           node.children = children;
@@ -275,6 +308,14 @@ export function selectJson(
     // JSON text: scan it, skipping every value no path goes into without parsing it.
     const text = input;
     const n = text.length;
+    // JSON.parse quotes the text it refuses, so its error never leaves here.
+    const parse = (start: number, end: number): unknown => {
+      try {
+        return JSON.parse(text.slice(start, end));
+      } catch {
+        throw failure("not_json", "the data is not valid JSON", { at: start });
+      }
+    };
     const ws = (i: number) => {
       let c = text.charCodeAt(i);
       while (c === 32 || c === 10 || c === 13 || c === 9) c = text.charCodeAt(++i);
@@ -326,7 +367,7 @@ export function selectJson(
           if (text.charCodeAt(j) !== 34) throw failure("not_json", "an object key is not a string", { at: j });
           const keyEnd = stringEnd(j);
           key = text.slice(j + 1, keyEnd - 1);
-          if (key.includes("\\")) key = JSON.parse(text.slice(j, keyEnd)) as string;
+          if (key.includes("\\")) key = parse(j, keyEnd) as string;
           j = ws(keyEnd);
           if (text.charCodeAt(j) !== 58) throw failure("not_json", "an object key has no colon", { at: j });
           j = ws(j + 1);
@@ -341,7 +382,7 @@ export function selectJson(
     const outlineAt = (i: number, depth: number): [number, Outline] => {
       const c = text.charCodeAt(i);
       if (c === 123) {
-        const children: Outline = {};
+        const children: Outline = Object.create(null) as Outline;
         let keys = 0;
         const end = members(i, (key, j) => {
           keys++;
@@ -372,7 +413,7 @@ export function selectJson(
       const end = skip(i);
       if (c === 34) {
         const preview =
-          end - i < 4096 ? (JSON.parse(text.slice(i, end)) as string).slice(0, 60) : text.slice(i + 1, i + 61);
+          end - i < 4096 ? (parse(i, end) as string).slice(0, 60) : text.slice(i + 1, i + 61);
         return [end, { type: "string", chars: end - i - 2, preview }];
       }
       const raw = text.slice(i, end);
@@ -399,7 +440,7 @@ export function selectJson(
           (name) => {
             if (!read) {
               if (end - i > maxChars) count(end - i, name);
-              parsed = JSON.parse(text.slice(i, end));
+              parsed = parse(i, end);
               read = true;
             }
             return parsed;

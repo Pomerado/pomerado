@@ -54,7 +54,8 @@ test("reads only the selected fields of a script's embedded state, and its outli
       items: { path: "queries.*.data.sections.*.items.*", fields: { id: "id", price: "price.amount" }, limit: 3 },
     });
     const outline = await readPageData("script#__STATE__", { count: { path: "queries.1.data.sections", outline: 0 } });
-    return { fields, outline };`,
+    const own = selectJson('{"a":[1,2]}', { a: "a.1" });
+    return { fields, outline, own };`,
   );
   expect(result).toEqual({
     fields: {
@@ -65,6 +66,7 @@ test("reads only the selected fields of a script's embedded state, and its outli
         { id: "item-0-2", price: 102 },
       ],
     },
+    own: { a: [2] },
     outline: {
       count: [{ type: "array", chars: JSON.stringify(state.queries[1]?.data.sections).length, length: 20 }],
     },

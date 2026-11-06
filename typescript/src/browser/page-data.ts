@@ -30,12 +30,15 @@ import { selectJson } from "../runtime/select-json.js";
  * the page percent-encodes, which it decodes in the page first. It reads the page as it is now and
  * never waits: wait for the page first.
  *
+ * It also declares `selectJson` for the call's own code, such as for a data response's text.
+ *
  * It throws an `Error` named `PageDataFailure` with the `reason`s of `selectJson`, `not_found`
  * also when no element matches the selector (`matched` 0) or the global is missing, and
  * `ambiguous` when several elements match (`matched`). The message carries counts, never page
  * text.
  */
 export const pageDataCode = String.raw`
+const selectJson = ${selectJson.toString()};
 const readPageData = async (source, select, options = {}) => {
   if (typeof source !== "string" && typeof source?.global !== "string")
     throw new TypeError('source is a CSS selector or { global: "name" }');
@@ -65,7 +68,12 @@ const readPageData = async (source, select, options = {}) => {
           );
         input = elements[0].textContent ?? "";
       }
-      if (typeof input === "string" && arg.decode === "uri") input = decodeURIComponent(input);
+      if (typeof input === "string" && arg.decode === "uri")
+        try {
+          input = decodeURIComponent(input);
+        } catch {
+          throw failure("not_json", "the data is not percent-encoded", {});
+        }
       return { values: selectJson(input, arg.select, arg.options) };
     } catch (error) {
       if (error?.name !== "PageDataFailure") throw error;
