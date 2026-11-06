@@ -121,12 +121,21 @@ export const sessionEnteredMarks = (steps: readonly WriteSessionMarks[]) => {
   return entered;
 };
 
-/** The commit marks of a recorded write path that `entered` lacks, in path order. */
+/**
+ * The commit marks of a recorded write path that `entered` lacks, in path order. A setup step is
+ * no commit step: the site makes its session state once, and may have before the session started,
+ * so its mark is never owed.
+ */
 export const writePathRemaining = (
   path: WritePath | undefined,
   entered: ReadonlySet<string>,
 ): readonly string[] =>
-  path === undefined ? [] : path.steps.map((step) => step.commit).filter((name) => !entered.has(name));
+  path === undefined
+    ? []
+    : path.steps
+        .filter((step) => step.setup !== true)
+        .map((step) => step.commit)
+        .filter((name) => !entered.has(name));
 
 /**
  * The marks of the recorded path the session entered that a revision drops or moves out of their

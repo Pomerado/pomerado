@@ -24,7 +24,8 @@ const SiteOrigin = Schema.String.pipe(
  * - `input`: business input values by top-level key; `null` removes one.
  * - `requirement`: a requirement, constraint or prerequisite of the task added, dropped or revised.
  * - `purpose`: what the finished tool is for, restated.
- * - `effect`: a read build becomes a write build. Nothing turns a write back into a read.
+ * - `effect`: a read build becomes a write build (`write`), or a write build that has sent no write
+ *   becomes a read build (`read`), on a host that applies that (`MintDependencies.lowersEffect`).
  * - `site`: the build moves to another site origin of the same product's workflow.
  * - `login`: the task now needs a sign-in, or a different login than the one it has, or it runs
  *   signed out (`signed_out`): the owner chose the part the site shows without signing in.
@@ -47,7 +48,7 @@ export const TaskChange = Schema.Union(
     text: UpdateText,
   }),
   Schema.Struct({ setting: Schema.Literal("purpose"), text: UpdateText }),
-  Schema.Struct({ setting: Schema.Literal("effect"), effect: Schema.Literal("write") }),
+  Schema.Struct({ setting: Schema.Literal("effect"), effect: Schema.Literal("read", "write") }),
   Schema.Struct({ setting: Schema.Literal("site"), origin: SiteOrigin }),
   Schema.Struct({
     setting: Schema.Literal("login"),

@@ -589,6 +589,24 @@ describe("a write build's write path", () => {
       expect(marksOf(result)).toEqual(["save-coverage"]);
     });
 
+    // A cart or session the site creates once per visit, such as on opening its menu, may already
+    // exist when the session starts, so its step never runs; the session's confirmed write stands.
+    it("publishes a confirmed session that never entered a setup step of its path", () => {
+      const setupPath: WritePath = {
+        steps: [
+          { commit: "open-cart", does: "starts the site's empty cart", setup: true },
+          { commit: "add-items", does: "adds the requested items" },
+        ],
+        ends: "The cart's priced items",
+      };
+      const added: WriteSessionMarks = { enteredMarks: ["add-items"], confirmation: "readback" };
+      const adding = contract({ confirmation: "readback", commits: ["add-items"] });
+      expect(run([added], adding, setupPath).result).toEqual(
+        Exit.succeed({ extracted: adding, declared: "readback" }),
+      );
+      expect(writePathRemaining(setupPath, new Set())).toEqual(["add-items"]);
+    });
+
     it("publishes the whole path, and a session with no recorded path as before", () => {
       expect(run([draft, rest], quoted).result).toEqual(
         Exit.succeed({ extracted: quoted, declared: "message" }),
