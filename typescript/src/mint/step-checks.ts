@@ -117,7 +117,7 @@ export const emptyCallerInput = (callerInput: unknown) =>
 
 /** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
 const exampleInputPlaceRefusal = (
-  purpose: ExecutionRequest["purpose"],
+  { purpose, target }: Pick<ExecutionRequest, "purpose" | "target">,
   scope: ExampleInputScope,
 ) => {
   const act = purpose === "act";
@@ -131,9 +131,11 @@ const exampleInputPlaceRefusal = (
       : "A write build passes exampleInput on its act steps, never on an example.";
   if (emptyCallerInput(scope.callerInput)) return undefined;
   if (act) return "The caller supplied input, and the session runs it as it is.";
-  return scope.callerExampleRefused === true
+  if (scope.callerExampleRefused !== true)
+    return "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput may an example run another input in its place.";
+  return target === "liveBrowser"
     ? undefined
-    : "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput may an example run another input in its place.";
+    : "An example in place of the caller's refused input runs live, with target liveBrowser.";
 };
 
 /** Why an act step's `exampleInput` differs from the one input its session runs, if it does. */
@@ -158,7 +160,7 @@ export const exampleInputRefusal = (
   if (submitted.exampleInput === undefined) return undefined;
   const decoded = intentDerivedInput(submitted);
   const refusal =
-    exampleInputPlaceRefusal(submitted.purpose, scope) ??
+    exampleInputPlaceRefusal(submitted, scope) ??
     (decoded === undefined
       ? "exampleInput must be JSON text of the tool's input object."
       : submitted.purpose === "act"

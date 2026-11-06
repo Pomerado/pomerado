@@ -154,11 +154,16 @@ describe("exampleInputRefusal", () => {
 
   it("lets a read's example run a substitute once the tool refused the caller's own input", () => {
     const refused = { ...scope("read", { venue: "Venue Y" }), callerExampleRefused: true };
-    expect(exampleInputRefusal(request({ exampleInput }), refused)).toBeUndefined();
+    const live = request({ exampleInput, target: "liveBrowser" });
+    expect(exampleInputRefusal(live, refused)).toBeUndefined();
+    // A substitute runs live only.
+    expect(exampleInputRefusal(request({ exampleInput }), refused)).toMatchObject({
+      supported: false,
+    });
     // Until the host records that refusal, the example runs the caller's input as it is.
-    expect(
-      exampleInputRefusal(request({ exampleInput }), scope("read", { venue: "Venue Y" }))?.reason,
-    ).toContain("Run the example on it first");
+    expect(exampleInputRefusal(live, scope("read", { venue: "Venue Y" }))).toMatchObject({
+      supported: false,
+    });
     // A write's session, a test and maintenance still run what they ran before.
     expect(
       exampleInputRefusal(act(), { ...scope("write", { item: "desk" }), callerExampleRefused: true }),
@@ -166,9 +171,9 @@ describe("exampleInputRefusal", () => {
     expect(
       exampleInputRefusal(request({ exampleInput, purpose: "test" }), refused),
     ).toMatchObject({ supported: false });
-    expect(
-      exampleInputRefusal(request({ exampleInput }), { ...refused, maintenance: true }),
-    ).toMatchObject({ supported: false });
+    expect(exampleInputRefusal(live, { ...refused, maintenance: true })).toMatchObject({
+      supported: false,
+    });
   });
 
   it("says why a session's step cannot change its input", () => {

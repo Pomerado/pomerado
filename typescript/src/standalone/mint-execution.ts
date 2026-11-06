@@ -371,14 +371,15 @@ const failedReceipt = (
             effect: execution.target === "pureFiles" ? "not_sent" : "possible",
             commits: [],
           };
-    // A live example on the caller's own input that the tool refused as invalid lets a
-    // substitute example run in its place.
+    // A live example on the caller's own input that the tool itself refused as invalid, never
+    // its schema's decode of that input, lets a substitute example run in its place.
     if (
       execution.purpose === "example" &&
       execution.target === "liveBrowser" &&
       intentDerivedInput === undefined &&
       failure instanceof LocalOperationFailure &&
-      (failure.tag === "InvalidInput" || failure.code === "InvalidInput")
+      (failure.tag === "InvalidInput" || failure.code === "InvalidInput") &&
+      failure.inputIssues === undefined
     )
       state.refusedCallerExamples.push(input);
     runs.set(id, {

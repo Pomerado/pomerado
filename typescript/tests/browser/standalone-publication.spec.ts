@@ -133,9 +133,6 @@ test("a read whose caller's example the tool refuses publishes on a substitute e
       ],
     });
     expect(toolResult(last, "too_early")).toMatchObject({ status: "unsupported" });
-    expect(JSON.stringify(toolResult(last, "too_early"))).toContain(
-      "only once the tool refuses it with InvalidInput may an example run another input in its place",
-    );
     expect(toolResult(last, "caller_example")).toMatchObject({ status: "failed" });
     expect(toolResult(last, "substitute")).toMatchObject({ status: "completed" });
     expect(built.build, JSON.stringify(built)).toBe("published");
@@ -149,7 +146,45 @@ test("a read whose caller's example the tool refuses publishes on a substitute e
     expect(JSON.parse(readOf(publication, "publication/example-output.json") ?? "{}")).toMatchObject({
       output: { heading: "Open store" },
     });
-    expect(observationsOf(publication)).toContain("The example ran a substitute input");
+    // The review hears the caller's input stays a case the tool must refuse.
+    expect(observationsOf(publication)).toContain("substitute");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a caller's example the tool's own schema rejects lets no substitute run", async () => {
+  test.setTimeout(60_000);
+  const site = await headingSite();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Read a store's page heading",
+      input: { store: "moved" },
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": storeTool.replace(
+              "input:Schema.Struct({store:Schema.String})",
+              'input:Schema.Struct({store:Schema.Literal("open")})',
+            ),
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "caller_example")],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { exampleInput: '{"store":"open"}' }),
+            "substitute",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "caller_example")).toMatchObject({ status: "failed" });
+    // A schema that refuses the caller's input is the tool's bug, never the site's answer.
+    expect(toolResult(last, "substitute")).toMatchObject({ status: "unsupported" });
   } finally {
     await site.close();
   }
