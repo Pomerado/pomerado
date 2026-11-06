@@ -2590,7 +2590,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             return {
               reason: "write_sent",
               instruction:
-                "This build already started its write on the site, so it stays a write build and nothing changed. Tell the caller with request_input that changes were already made on the site, so the build can't become a read now, and list what it did so far. Ask with a confirm question set endsBuild whether to end this build so they can start a read build; a no means finishing the write.",
+                "This build already started its write on the site, so it stays a write build and nothing changed. Tell the caller with request_input that changes may already have been made on the site, so the build can't become a read now, and list what it did so far. Ask, in a confirm question with endsBuild set, whether to end this build so they can start a read build; a no means finishing the write.",
             };
           // Publication needs a live read example, so the build must still be able to run one.
           if (executionClosed)

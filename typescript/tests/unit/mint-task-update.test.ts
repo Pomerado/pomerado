@@ -232,7 +232,7 @@ it("gives a write build's update review the write effect before its first act st
   const mintUpdate = f.requests[0]?.tools.find((tool) => tool.name === "mint_update");
   expect(JSON.stringify(mintUpdate ?? null)).toContain(
     JSON.stringify(
-      "No update removes the requested action itself, except that a write build that sent nothing may become a read of the same task the caller confirmed, or allows repeating a write that may have committed. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety.",
+      "No update removes the requested action itself or allows repeating a write that may have committed. The one exception to the first: a write build that has sent no write may become a read of the same task when the caller confirms that change. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety.",
     ).slice(1, -1),
   );
 });

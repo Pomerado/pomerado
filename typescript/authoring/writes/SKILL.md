@@ -82,8 +82,8 @@ enter and what it saves (`does`); in `ends`, what the last step leaves the calle
 such as an empty cart when the menu opens, and saves nothing of the caller's, or leave that step
 out.
 Guardian reviews the path before anything is sent, and the host keeps it: the session is not
-over until every mark on it but a setup step's is entered, so a step that confirms earlier leaves the session
-open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
+over until every mark on it but a setup step's is entered, so a step that confirms earlier
+leaves the session open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
 path must change, such as a page the site skips or adds for this input, declare the revised
 path in `writePath` on the next `act` step, keeping every mark already entered. When no single
 session can reach the outcome, such as a step that waits for another person's approval, an
