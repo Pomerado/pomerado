@@ -693,6 +693,16 @@ after an in-page change, such as a filter that reloads the list without a naviga
 change's data response or the rendered rows, never the initial JSON. Read the rendered page for
 a value that exists only after client-side rendering, or that the page computes where you see
 it, such as a total.
+Large page data: a call's code runs in a script runner whose memory is small next to the
+page's, and a page's embedded data can run to hundreds of megabytes. Read it where it is: paste
+`pageDataCode` from `pomerado/runtime` and call `readPageData`, which reads a script element's
+JSON or a page global inside the page and returns only the fields you select, up to the `limit`
+the call returns. Never bring the whole data into the call, with `textContent`, `innerText`,
+`page.content()` or an `evaluate` that returns it; read a large data response's text with
+`selectJson` rather than `response.json()`. Never parse it in a wait's `check`, which runs again
+on every poll, and keep nothing large on `globalThis` between calls: return the ids and cursors
+the next call needs. While building, find where the values are with a selection's `outline`, then
+read a few matches, never the whole.
 Budgets: navigation 30 s for the document to commit; a click, fill or other action 5 s, taken
 only on an element a wait has shown ready. After a navigation commits or an action returns, the
 page gets 8 s without progress to show one of the answers you named, and up to 30 s while it
