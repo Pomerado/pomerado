@@ -23,6 +23,9 @@ remember-this-device box with its checked state. Then send the code step at once
 minutes, so send that step before any other probing.
 
 Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
+Once you know the task needs a sign-in, sign in first and run the task from its start signed in,
+unless part of it works only signed out: every run of a tool that signs in does so before its
+first step.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
 or settings the task does not concern.
 
