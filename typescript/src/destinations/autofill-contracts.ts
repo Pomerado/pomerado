@@ -8,6 +8,23 @@ export type SignInMethod = typeof SignInMethod.Type;
 export const SignInMethodChoice = Schema.Literal(...signInMethodChoices);
 export type SignInMethodChoice = typeof SignInMethodChoice.Type;
 /**
+ * A way into the account that a sign-in screen's method choice may offer beside a code the site
+ * sends: a password, or the identifier a control switches the screen to ask for. A run takes the
+ * way its recorded sign-in picked, and asks nothing about it.
+ */
+const wayMethods = [
+  "password",
+  "identifier_username",
+  "identifier_email",
+  "identifier_phone",
+  "identifier_account_number",
+] as const;
+/** Whether a method choice's method is a way in rather than a two-factor method. */
+export const isWayMethod = Schema.is(Schema.Literal(...wayMethods));
+/** A recorded method choice's method: a two-factor method, or from recipe version 14 a way in. */
+export const RecipeMethodChoice = Schema.Literal(...signInMethodChoices, ...wayMethods);
+export type RecipeMethodChoice = typeof RecipeMethodChoice.Type;
+/**
  * The value a native select lists for a sign-in method, when that select is the method's control:
  * the host chooses it with the browser's own select action, which fires the page's change handler.
  */

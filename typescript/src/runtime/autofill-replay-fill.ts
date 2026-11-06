@@ -255,6 +255,8 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     }
     yield* input.emit(stepDiagnostic(step, stepReport));
     progress.ran.push(step);
+    // A step run after a screen's wait ended in place, such as a code retried, leaves that page.
+    progress.landedInPlace = false;
     return fillFailure(stepReport);
   });
 

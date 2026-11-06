@@ -1299,17 +1299,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["7623d70313ebfd12aa6f80de42fad37d8dae09a808eb8033bf2f5da331cd2539", "core"],
+    ["862c7dfe4804de90caea22599d9800a022d8848aa6fc0ddab8fb4560ba7b5938", "core"],
     ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
-    ["910bdd3fcfe04d4f2dcef3c5ef29d3310558cf30718d35007087aa2367ca1c4e", "auth"],
+    ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["00665d244ef97dedc3c646648cc6c734d08219dd6ec2ab54db84a713eaef55dd", "forms"],
-    ["b8eb296cdad346e7f6364ff62da4cb05eddbee6423e43e49395f2b35f365e0dd", "writes"],
-    ["2a5b55ab4f8c5c5d7cca691b07d93ce549e3c571412d2be0ee7736782d5bf043", "cart"],
-    ["bc7bb91f330493fe7c4fda697b974a175d83702e6b20d6b4a632d9bcb250a14b", "caller-input"],
+    ["1a915d0e49ee6fbcd1c99796adc0c12d44874b5df82f452794bcd59bba2c4359", "writes"],
+    ["c927a6315c07a8aa94f8b509f6a72333fa65985d308fdb1e4c337c45774d78a3", "cart"],
+    ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
-    ["4666793f22a60b1547342e437f296f5e0b11b6123b1875a8a08f2465c17abbaa", "workspace/AGENTS.md"],
+    ["722469aea576f5302dc7c76113ed3e8fa1456a0d123e4125feff6fdf113a66a3", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1430,7 +1430,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
-    ["fd2777b53ee02f476e4c4bce253ef3f866b82d2baef5fc3dc8ab883eb9078750", "workspace/AGENTS.md"],
+    ["fd7a3d766426dd6ce10ced6024b2b43833101f6176e975b4a1fc0514f03a6464", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

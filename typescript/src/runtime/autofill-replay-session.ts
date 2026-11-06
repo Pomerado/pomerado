@@ -28,7 +28,7 @@ import {
   provesLogin,
 } from "./autofill-state.js";
 import { type AutofillLogin, makeAutofillValues } from "./autofill-values.js";
-import { cantTell, leftSignInScreens } from "./autofill-replay-pages.js";
+import { cantTell, cantTellInPlace, leftSignInScreens } from "./autofill-replay-pages.js";
 import {
   type AutofillReplayInput,
   type AutofillRetryState,
@@ -36,6 +36,7 @@ import {
   defaultTiming,
   pickMethod,
   shownAgain,
+  type SignInMethodOption,
 } from "./autofill-replay-steps.js";
 import { runReplayStep, correctReplayExtras, settleCarried } from "./autofill-replay-fill.js";
 
@@ -179,6 +180,11 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     alreadySignedIn: false,
     /** The first screen's wait ended on a login entry that can't tell (`entryCantTell`). */
     entryCantTell: false,
+    /**
+     * A screen's wait ended on the entry address every recorded screen shares, which can't tell,
+     * once the login's password or code went in (`inPlaceShape`).
+     */
+    landedInPlace: false,
     /** A screen went while the host filled it, which sent nothing (`screenGoneUnsent`). */
     screenGone: false,
     /** The vendor of a challenge behind a screen that never showed, which the gate could not clear. */
@@ -345,9 +351,10 @@ const answerShownAgain = <E extends YieldableError, V extends string, L extends 
 
 /**
  * Whether the replay, its login sent cleanly and no security question shown again, ended on a page
- * that can't tell: `here`, the check the caller already holds, else the page as it is now. The host
- * checks the identifiers it sent (`confirmCantTell`), binding nothing until the operation
- * succeeds; a host without that hook fails the sign-in as before.
+ * that can't tell: `here`, the check the caller already holds, else the page as it is now. After a
+ * screen's wait ended on the shared entry address (`landedInPlace`), that address can tell nothing
+ * either (`cantTellInPlace`). The host checks the identifiers it sent (`confirmCantTell`), binding
+ * nothing until the operation succeeds; a host without that hook fails the sign-in as before.
  */
 const endedCantTell =
   <E extends YieldableError, V extends string, L extends AutofillLogin>(session: ReplaySession<E, V, L>) =>
@@ -359,7 +366,11 @@ const endedCantTell =
     const onScreens = (page: string) =>
       session.recipe.steps.some((step) => session.matchesRecorded(page, step));
     const recorded = { signedIn: session.recipe.signedIn, steps: session.resolvedSteps() };
-    if (!cantTell(here ?? (yield* session.checkHere), recorded, onScreens)) return false;
+    const check = here ?? (yield* session.checkHere);
+    const inPlace =
+      session.progress.landedInPlace &&
+      cantTellInPlace(check, session.recipe, session.matchesRecorded, session.input.entryUrl);
+    if (!inPlace && !cantTell(check, recorded, onScreens)) return false;
     yield* confirmCantTell(session.state.sentIdentifiers);
     return true;
   });
@@ -478,8 +489,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     shownAgain: (slot: AutofillSecret) =>
       shownAgain(session.hooks, session.progress.ran, session.sent.maySent, slot),
     refuseShownAnswer: refuseShownAnswer(session),
-    pickMethod: (methods: NonNullable<AutofillRecipeStep["methods"]>) =>
-      pickMethod(input, methods),
+    pickMethod: (methods: readonly SignInMethodOption[]) => pickMethod(input, methods),
   };
 };
 export type Replay<

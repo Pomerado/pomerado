@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
@@ -8,7 +8,7 @@ import {
   isSecondFactor,
   type RejectedMarker,
   type SignInChoice,
-  type SignInMethodChoice,
+  SignInMethodChoice,
 } from "../destinations/autofill-recipe.js";
 import type {
   AutofillSlot,
@@ -141,8 +141,15 @@ export const methodLabels: Record<SignInMethodChoice, string> = {
   recovery_code: "Recovery code",
 };
 
-/** A recorded method choice's option. */
-export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[number];
+/** A recorded method choice's two-factor option, which a run picks again; never a way in. */
+export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[number] & {
+  readonly method: SignInMethodChoice;
+};
+const isTwoFactorMethod = Schema.is(SignInMethodChoice);
+/** Whether a recorded method choice's option is a two-factor method rather than a way in. */
+export const isTwoFactorOption = (
+  option: NonNullable<AutofillRecipeStep["methods"]>[number],
+): option is SignInMethodOption => isTwoFactorMethod(option.method);
 
 /**
  * What a host adds to a replay from what it keeps besides the login's record, each optional: the
@@ -171,9 +178,7 @@ export interface HostedSignIn<
       ) => L)
     | undefined;
   readonly method?:
-    | ((
-        methods: NonNullable<AutofillRecipeStep["methods"]>,
-      ) => Effect.Effect<SignInMethodOption | undefined, E>)
+    | ((methods: readonly SignInMethodOption[]) => Effect.Effect<SignInMethodOption | undefined, E>)
     | undefined;
   readonly settleRecoveryCodes?:
     | ((taken: readonly TakenRecoveryCode[], reached: boolean) => Effect.Effect<void>)
@@ -279,7 +284,7 @@ export const settleFilled = <E extends YieldableError, V extends string, L exten
  */
 export const pickMethod = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
-  methods: NonNullable<AutofillRecipeStep["methods"]>,
+  methods: readonly SignInMethodOption[],
 ) =>
   Effect.gen(function* () {
     const hosted = yield* input.hosted?.method?.(methods) ?? Effect.succeed(undefined);

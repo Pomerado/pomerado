@@ -2252,8 +2252,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             };
           // The owner never answered the example's question. The minter decides how to go on,
           // with the execution's `scriptQuestion` saying so, unless the question could gate a
-          // write repair's write, the build is signed in or holds a login, or it already handed
-          // back its limit: then the build ends as no_response.
+          // write repair's write, the build is signed in or holds a login outside a read repair
+          // whose host allows it, or it already handed back its limit: then the build ends as
+          // no_response.
           if (evidence.noResponse !== undefined && !handedBack && !stopUnavailableHost()) {
             const asked = evidence.scriptQuestion?.requestId;
             yield* suspendUnanswered({
@@ -2649,14 +2650,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * how the build goes on, decided for each question when it goes unanswered. Not when the
        * question decides what the build may do: the read-or-write and capability questions, any
        * question in a write repair, which could gate its write, and any asked while the build is
-       * signed in or holds a login, which acts as the account's owner. Nor once the build handed
-       * back `noAnswerHandBackLimit` questions.
+       * signed in or holds a login, which acts as the account's owner, unless it is a read repair
+       * whose host sets `handBackSignedInReadRepair`. Nor once the build handed back
+       * `noAnswerHandBackLimit` questions.
        */
       const handsBackNoAnswer = () =>
         request.effect !== "ask" &&
         dependencies.capabilityQuestion === undefined &&
         !(request.mode === "maintenance" && buildEffect === "write") &&
-        !signedInOrHoldsLogin() &&
+        (!signedInOrHoldsLogin() ||
+          (dependencies.handBackSignedInReadRepair === true &&
+            request.mode === "maintenance" &&
+            buildEffect === "read")) &&
         noAnswerHandBacks < noAnswerHandBackLimit;
       /**
        * The minter's latest question handed back as no answer, while no other question was asked
