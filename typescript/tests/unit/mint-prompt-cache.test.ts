@@ -780,7 +780,7 @@ it("recovers from a request over the context by compacting, then saving its long
   expect(sent).toContain(String(long.length));
   // The whole result is in the workspace file the request names.
   expect(saved.size).toBe(1);
-  const [[path, file]] = [...saved];
+  const [path = "", file] = [...saved][0] ?? [];
   expect(path).toMatch(/^captures\/results\//u);
   expect(sent).toContain(path);
   expect(file).toBe(long);
