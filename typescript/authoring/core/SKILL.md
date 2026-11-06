@@ -73,7 +73,9 @@ answers `{ success, result, error, stderr }`. Throw
 - Prefer clicking a control's visible label when its input is hidden.
 - Prefer taking a role locator's name from an ARIA snapshot (the host's `*.aria.yml` capture or a
   scoped `ariaSnapshot()`) over `textContent` or `innerText`, which include hidden labels. When the
-  snapshot shows a link with no name, prefer its `href`.
+  snapshot shows a link with no name, prefer its `href`. On a sign-in screen, prefer reading each
+  field's label, type, placeholder, id and name over an `ariaSnapshot()`, which can include typed
+  values.
 - After a step whose answer can vary or that redraws part of the page, such as a click that may
   navigate, a search, a filter, a pick from a list, a date pick, adding a table row or a submit,
   prefer `waitForOutcome`, the step passed as its `action`, naming every result it can lead to: the
@@ -1050,8 +1052,10 @@ the site does not support it. Listing a filter panel's or option group's control
 focused observation. Return explicit partial coverage when an observation is bounded; never
 describe a truncated list as complete. In a probe, count a locator before acting on it and give
 each action `timeout: 5000`, the default the host also gives probe actions; take names from a
-scoped `ariaSnapshot()`, not visible text. A probe that waits out a long timeout for a missing
-element learns nothing a count would not. Return `waitReport()` from a probe that waits.
+scoped `ariaSnapshot()`, not visible text. On a sign-in screen, prefer reading each field's label,
+type, placeholder, id and name over an `ariaSnapshot()`, which can include typed values. A probe
+that waits out a long timeout for a missing element learns nothing a count would not. Return
+`waitReport()` from a probe that waits.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code

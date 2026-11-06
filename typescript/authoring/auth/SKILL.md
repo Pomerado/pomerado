@@ -232,6 +232,12 @@ attribute.
   method order above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
+  A screen that offers a password route beside a code the site sends is a method choice too: list
+  `password` with each code method it offers, each with its own control, and name this login's
+  route as `submit`. So is a control that switches which identifier the screen asks for, when this
+  login's identifier needs it: list it as `identifier_username`, `identifier_email`,
+  `identifier_phone` or `identifier_account_number`, by the identifier it brings up. The tool's
+  runs keep the route each recorded sign-in took.
   A method choice in a native drop-down (a `select`) names the drop-down as each method's selector
   and as `submit`, the value it lists for each method as that method's `option`, and the one to
   pick now as the step's own `option`; the host chooses that option. Prefer this over clicking the

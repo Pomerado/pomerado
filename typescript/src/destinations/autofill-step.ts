@@ -36,8 +36,8 @@ import type {
   DateControl,
   DateOfBirthFormat,
   PhoneFormat,
+  RecipeMethodChoice,
   SignInChoice,
-  SignInMethodChoice,
   RejectedMarker,
   SubmitKey,
 } from "./autofill-contracts.js";
@@ -134,7 +134,7 @@ export interface AutofillStepRequest {
   readonly submit?: string | undefined;
   /** Enter, pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
-  /** A two-factor method choice: every method offered, and `submit` the one picked. */
+  /** A method choice: every method or way in offered, and `submit` the one picked. */
   readonly methods?: AutofillStep["methods"];
   /** The picked method's `option`, when it is chosen from a native select (`AutofillStep`). */
   readonly option?: string | undefined;
@@ -160,13 +160,13 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
   /** Enter, pressed in the last field to submit its form; never with `submit`. */
   readonly submitKey?: SubmitKey | undefined;
   /**
-   * A two-factor method choice: every method offered, and `submit` the one picked. A method
-   * chosen from a native select names that select and the value it lists for the method
+   * A method choice: every two-factor method or way in offered, and `submit` the one picked. A
+   * method chosen from a native select names that select and the value it lists for the method
    * (`option`).
    */
   readonly methods?:
     | readonly {
-        readonly method: SignInMethodChoice;
+        readonly method: RecipeMethodChoice;
         readonly selector: string;
         readonly option?: string | undefined;
       }[]

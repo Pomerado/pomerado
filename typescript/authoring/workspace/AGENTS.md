@@ -115,7 +115,8 @@ When the site does not match the request exactly, tell two cases apart:
 
 **Sign in only when the task needs it.** Try a public task signed out first. Sign in when the
 request asks for it, the task is about the caller's own account, such as a cart a later call must find
-(.agents/cart/SKILL.md), or the site puts the data behind a login wall. A login page on the
+(.agents/cart/SKILL.md), or the site puts the data behind a login wall. A tool that fills a cart
+and returns its quote in one run may use the site's guest cart instead. A login page on the
 first load of a public task is not a reason to sign in: look for the public route first.
 
 **Check the page is on the site before exploring it.** The site is every `https:` origin on
@@ -322,9 +323,10 @@ reason `question_unanswered`, when only the caller's answer would let the build 
 consent: it authorizes no write, sign-in or change of task, and `confirmedBy` never names it. Ask
 again only when the answer is essential: after two questions have gone unanswered, the next one
 left unanswered ends the build.
-Once the build is signed in or holds a login, it is not told no answer: a question left unanswered
-then ends the build, though one left unanswered before the build signed in went back to you. That
-is no reason to narrow the tool without asking. Ask design questions early, while exploring and
+Once the build is signed in or holds a login, a question left unanswered then ends the build,
+though one left unanswered before the build signed in went back to you. That is no reason to
+narrow the tool without asking. A read repair may still get `no_answer` while signed in: go on as
+above. Ask design questions early, while exploring and
 before signing in where you can, and state in each the choice you recommend, so the owner can
 accept it in one step.
 

@@ -171,7 +171,7 @@ describe("decodeSignInRecipe", () => {
   });
 
   it("refuses a version it does not know, so a run never drops what that version adds", () => {
-    expect(decodeSignInRecipe(JSON.stringify({ version: 14, steps, signedIn }))).toBe(
+    expect(decodeSignInRecipe(JSON.stringify({ version: 15, steps, signedIn }))).toBe(
       "unknown_version",
     );
   });
@@ -482,6 +482,24 @@ describe("signInRecipe", () => {
       "steps",
       "signedIn",
     ]);
+  });
+
+  it("writes version 14 only for a method choice that names a way in, which version 13 refuses", () => {
+    const twoFactor = {
+      page: "https://example.test/login",
+      fields: [],
+      submit: "#by-email",
+      methods: [{ method: "email" as const, selector: "#by-email" }],
+    };
+    const ways = {
+      ...twoFactor,
+      methods: [{ method: "password" as const, selector: "#by-password" }, ...twoFactor.methods],
+    };
+    expect(signInRecipe([twoFactor], signedIn).version).toBe(1);
+    const recipe = signInRecipe([ways], signedIn);
+    expect(recipe.version).toBe(14);
+    expect(decodeSignInRecipe(signInRecipeText(recipe))).toEqual(recipe);
+    expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 13 }))).toBe("invalid");
   });
 
   it("holds no value, question text, label or after-submit control", () => {

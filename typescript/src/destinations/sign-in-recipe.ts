@@ -20,6 +20,7 @@ import {
   PrivateIdentifierAutofillRecipe,
   publishedAutofillRecipe,
   SignInChoiceAutofillRecipe,
+  SignInWayAutofillRecipe,
   WildcardAutofillRecipe,
   WorkspaceAutofillRecipe,
   type AutofillRecipeOrigins,
@@ -57,8 +58,8 @@ export const SignInRecipeV3 = Schema.Struct({
   ),
 );
 /**
- * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12 or 13 as every host writes
- * it, or this host's version 3.
+ * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 or 14 as every host
+ * writes it, or this host's version 3.
  */
 export const SignInRecipe = Schema.Union(
   LegacyAutofillRecipe,
@@ -74,6 +75,7 @@ export const SignInRecipe = Schema.Union(
   ClickLayerAutofillRecipe,
   MethodOptionAutofillRecipe,
   SignInChoiceAutofillRecipe,
+  SignInWayAutofillRecipe,
 );
 export type SignInRecipe = typeof SignInRecipe.Type;
 export type SignInRecipeStep = AutofillRecipeStep;
@@ -84,12 +86,12 @@ export const resolvedPage = (step: SignInRecipeStep, workspace: string | undefin
     ? undefined
     : recordedScreenPage(step, workspace);
 
-const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13 decode as every host
- * reads them; version 3 is read only here.
+ * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 and 14 decode as every
+ * host reads them; version 3 is read only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
   const shared = publishedAutofillRecipe(new Map([[autofillRecipePath, text]]));
@@ -200,7 +202,7 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 13's `workspace`, then each
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 14's `workspace`, then each
  * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
  * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
@@ -218,7 +220,8 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
         recipe.version !== 10 &&
         recipe.version !== 11 &&
         recipe.version !== 12 &&
-        recipe.version !== 13) ||
+        recipe.version !== 13 &&
+        recipe.version !== 14) ||
       recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),

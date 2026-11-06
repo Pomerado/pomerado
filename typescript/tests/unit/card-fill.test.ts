@@ -305,6 +305,23 @@ describe("a card-fill step", () => {
     expect(reviews).toEqual([]);
   });
 
+  it("types each card answer into Toast's hosted checkout frame", async () => {
+    const { outcome, typed } = run({
+      frameUrl: "https://payments.toasttab.com/assets/checkout.production.html",
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+  });
+
+  it.each([
+    "https://www.toasttab.com/checkout/card.html",
+    "https://payments.toasttab.com.evil.example/assets/checkout.production.html",
+  ])("refuses card fields in a frame on %s", async (frameUrl) => {
+    const { outcome, typed } = run({ frameUrl });
+    expect((await outcome).status).toBe("refused");
+    expect(typed).toEqual([]);
+  });
+
   it("refuses a payment frame that a frame off the site wraps, naming that frame", async () => {
     const { outcome, typed, reviews } = run({ ancestors: ["https://wrapper.example"] });
     const result = await outcome;
