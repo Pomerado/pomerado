@@ -688,12 +688,14 @@ it("sends a tool result too large for the context as its bounded first part, aft
   expect(sentResult(later)).toBe(sent);
 });
 
-// A request the provider refuses as over the model's context is sent again with its long tool
-// results cut to their first part, and every later request keeps them cut, instead of ending the
-// run on the refusal.
-it("sends a request refused as over the context again with its long tool results cut", async () => {
-  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(10_000) });
-  expect(long.length).toBeGreaterThan(150_000);
+// A request the provider refuses as over the model's context does not end the run while a way to
+// shrink it remains: the minter compacts the history first, then saves each long tool result
+// whole as a workspace file and sends its first part and the file's path, a smaller part each
+// time the provider refuses again. The file keeps the whole result, and later requests send the
+// same bytes.
+it("recovers from a request over the context by compacting, then saving its long tool results to files", async () => {
+  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(5_000) });
+  expect(long.length).toBeGreaterThan(100_000);
   const recoveryFactory: MintRecoveryFactory = () =>
     Effect.succeed({
       model: (_state, _counters, invoke) => invoke,
@@ -706,20 +708,38 @@ it("sends a request refused as over the context again with its long tool results
     call("execute", example, 30_000),
     call("finish_build", finish, 30_000),
   ];
+  const sentResult = (request: ModelRequest | undefined) =>
+    JSON.stringify(
+      items(request).find(
+        (item) => item.type === "function_call_result" && item.callId === "explore_page",
+      ) ?? null,
+    );
   const requests: ModelRequest[] = [];
+  const steps: string[] = [];
   let answered = 0;
+  const saved = new Map<string, string>();
   const f = await fixture(() => call("finish_build", finish), {
     model: makeOpenAIMinter(
       {
         getModel: () => ({
           getResponse: async (request) => {
             requests.push(request);
-            // The provider refuses any request that carries the long result whole.
-            if (JSON.stringify(request.input).length > long.length)
+            if (isCompaction(request)) {
+              steps.push("compaction");
+              return compacted();
+            }
+            // The provider refuses a request that carries the page's result before a compaction,
+            // or more than 6,000 characters of it after one.
+            const result = sentResult(request);
+            const compactedRequest = items(request)[0]?.type === "compaction";
+            if (result !== "null" && (!compactedRequest || result.length > 6_000)) {
+              steps.push("refused");
               throw Object.assign(new Error("Input exceeds the context window"), {
                 status: 400,
                 code: "context_length_exceeded",
               });
+            }
+            steps.push("answered");
             answered += 1;
             return responses[answered - 1] ?? call("finish_build", finish);
           },
@@ -733,21 +753,36 @@ it("sends a request refused as over the context again with its long tool results
       { recoveryFactory },
     ),
     agentRecovery: { save: () => Effect.void },
+    saveResult: (path, text) =>
+      Effect.sync(() => {
+        saved.set(path, text);
+      }),
   });
   const outcome = await f.run();
 
   expect(outcome.build).toBe("published");
-  const sentResult = (request: ModelRequest | undefined) =>
-    JSON.stringify(
-      items(request).find(
-        (item) => item.type === "function_call_result" && item.callId === "explore_page",
-      ),
-    );
-  // One refused request, then the same request with the result cut, and later ones keep it cut.
-  expect(requests).toHaveLength(4);
-  const [, refused, retried, later] = requests;
-  expect(sentResult(refused).length).toBeGreaterThan(long.length);
-  expect(sentResult(retried)).toContain("result_truncated");
-  expect(sentResult(retried).length).toBeLessThan(64 * 1024);
-  expect(sentResult(later)).toBe(sentResult(retried));
+  expect(steps).toEqual([
+    "answered",
+    "refused",
+    "compaction",
+    "refused",
+    "refused",
+    "answered",
+    "answered",
+  ]);
+  const [, , , afterCompaction, firstCut, secondCut, later] = requests;
+  expect(sentResult(afterCompaction)).toContain("Synthetic page text. ".repeat(40));
+  expect(sentResult(afterCompaction).length).toBeGreaterThan(long.length);
+  expect(sentResult(firstCut).length).toBeLessThan(sentResult(afterCompaction).length);
+  const sent = sentResult(secondCut);
+  expect(sent.length).toBeLessThan(6_000);
+  expect(sent).toContain("result_truncated");
+  expect(sent).toContain(String(long.length));
+  // The whole result is in the workspace file the request names.
+  expect(saved.size).toBe(1);
+  const [[path, file]] = [...saved];
+  expect(path).toMatch(/^captures\/results\//u);
+  expect(sent).toContain(path);
+  expect(file).toBe(long);
+  expect(sentResult(later)).toBe(sent);
 });

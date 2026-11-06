@@ -26,7 +26,7 @@ import {
   mintCompactionLimitTokens,
   mintIdleCompactionTokens,
 } from "./idle-compaction.js";
-import { boundedToolResults, longToolResults } from "./request-bounds.js";
+import { makeToolResultBounds, overflowToolResultMaxChars } from "./request-bounds.js";
 import { solModel } from "../models/models.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { transientTransportFailure } from "../models/transport-failure.js";
@@ -1418,8 +1418,20 @@ const openAIMinter = (
             };
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
-            /** Calls whose long results go out cut, since a request carrying them was refused. */
-            const cutResults = new Set<string>();
+            /**
+             * The tool results requests carry: one too long goes out as its first part and the
+             * workspace file the host saved it whole in, through `MintTurn.saveResult`.
+             */
+            const saveResult = turn.saveResult;
+            const resultBounds = makeToolResultBounds(
+              saveResult === undefined
+                ? undefined
+                : (path, text) =>
+                    turn.runTool(saveResult(path, text)).then(
+                      () => true,
+                      () => false,
+                    ),
+            );
             const sdkProvider = cacheFallback(runner.config.modelProvider);
             const cacheLayout: ModelProvider = {
               getModel: async (name) => {
@@ -1438,12 +1450,12 @@ const openAIMinter = (
                   ...model,
                   getResponse: async (sdkRequest) => {
                     // No tool result goes out longer than the model can read, whatever produced
-                    // it, nor longer than the cut a refused request set for it.
-                    const bounded = () => {
-                      const input = boundedToolResults(sdkRequest.input, cutResults);
+                    // it, nor longer than the limit a refused request set for it.
+                    const bounded = async () => {
+                      const input = await resultBounds.apply(sdkRequest.input);
                       return input === sdkRequest.input ? sdkRequest : { ...sdkRequest, input };
                     };
-                    let request = bounded();
+                    let request = await bounded();
                     // The SDK model opens its span in the runner's AsyncLocalStorage trace
                     // context and throws without one. An Effect fiber resumes in the async
                     // context of whatever woke it (a recovery save completed by another fiber),
@@ -1465,6 +1477,31 @@ const openAIMinter = (
                     let { windowed, sent } = viewOf(request);
                     // The SDK's client has already retried; an outage it could not get past is
                     // retried here with the same request, within the attempt's deadline.
+                    /** Whether recovery from a refusal as over the context compacted already. */
+                    let overflowCompacted = false;
+                    /**
+                     * The next step that may bring a request the provider refused as over the
+                     * model's context within it: a compaction first, then each tool result over
+                     * 64 KiB, then over 16 KiB, sent as its first part and the file holding it
+                     * whole. None when every step was taken.
+                     */
+                    const overflowStep = async (refused: ModelRequest) => {
+                      if (!overflowCompacted && idle !== undefined) {
+                        overflowCompacted = true;
+                        if (await idle.compactNow(signal))
+                          return { reason: "context_compacted" } as const;
+                      }
+                      for (const limit of overflowToolResultMaxChars) {
+                        const lowered = resultBounds.lower(refused.input, limit);
+                        if (lowered > 0)
+                          return {
+                            reason: "tool_results_cut",
+                            cutResults: lowered,
+                            limitChars: limit,
+                          } as const;
+                      }
+                      return undefined;
+                    };
                     const respond = Effect.gen(function* () {
                       const call = modelCalls;
                       let firstFailureAt: number | undefined;
@@ -1498,25 +1535,22 @@ const openAIMinter = (
                           return { ...response, usage: flatUsage(response.usage) };
                         }
                         const error = outcome.left;
-                        // Refused as over the model's context: its tool results over
-                        // `cutToolResultMaxChars` (64 Ki characters, counted as UTF-16 code units
-                        // like `toolResultMaxChars`) go out cut to their first part from now on,
-                        // and the request goes again at once. With none that long, it fails as
-                        // before.
-                        const uncut = overContextWindow(failureMetadata(error))
-                          ? longToolResults(sent.input).filter((id) => !cutResults.has(id))
-                          : [];
-                        if (uncut.length > 0 && !signal.aborted) {
-                          for (const id of uncut) cutResults.add(id);
+                        // Refused as over the model's context: the run recovers while a step
+                        // remains (`overflowStep`) and the request goes again at once. Only once
+                        // every step was taken does it fail as before.
+                        const step =
+                          overContextWindow(failureMetadata(error)) && !signal.aborted
+                            ? yield* Effect.promise(() => overflowStep(sent))
+                            : undefined;
+                        if (step !== undefined && !signal.aborted) {
                           yield* turn.reportTrace?.({
                             phase: "model_retry",
                             retry: retries + 1,
                             waitMs: 0,
-                            reason: "tool_results_cut",
-                            cutResults: uncut.length,
+                            ...step,
                             failure: failureMetadata(error),
                           }) ?? Effect.void;
-                          request = bounded();
+                          request = yield* Effect.promise(bounded);
                           ({ windowed, sent } = viewOf(request));
                           continue;
                         }

@@ -52,15 +52,24 @@ const cut = (text: string, bytes: number) => {
 const shortKey = (key: string) =>
   key.length <= maxKeyChars ? key : `${key.slice(0, maxKeyChars)}…`;
 
-/** `text` within the threshold, else its first part and size, with `note` saying why. */
-const truncated = (text: string, note: (totalBytes: number) => string) => {
+/**
+ * `text` within the threshold, else its first `excerptBytes` bytes and size, with `note` saying
+ * why and `path` naming the file that holds it whole, when one does.
+ */
+const truncated = (
+  text: string,
+  note: (totalBytes: number) => string,
+  excerptBytes = resultDigestThresholdBytes,
+  path?: string,
+) => {
   const totalBytes = byteLength(text);
   if (totalBytes <= resultDigestThresholdBytes) return text;
   return JSON.stringify({
     kind: "result_truncated",
     totalBytes,
+    ...(path === undefined ? {} : { path }),
     note: note(totalBytes),
-    excerpt: cut(text, resultDigestThresholdBytes),
+    excerpt: cut(text, excerptBytes),
   });
 };
 
@@ -77,14 +86,26 @@ export const boundedResult = (text: string) =>
 
 /**
  * A result too long for a model request to carry whole, whatever produced it: whole within the
- * threshold, else its first `resultDigestThresholdBytes` bytes with its size.
+ * threshold, else its first `excerptBytes` bytes (`resultDigestThresholdBytes` unless less is
+ * asked) with its size, and the workspace file `path` that holds it whole, when it was saved.
  */
-export const cutResult = (text: string) =>
-  truncated(
+export const cutResult = (
+  text: string,
+  options: { readonly excerptBytes?: number; readonly path?: string } = {},
+) => {
+  const excerptBytes = Math.min(
+    options.excerptBytes ?? resultDigestThresholdBytes,
+    resultDigestThresholdBytes,
+  );
+  const { path } = options;
+  return truncated(
     text,
     (totalBytes) =>
-      `This result is ${totalBytes} bytes, too long to send whole, so only its first ${resultDigestThresholdBytes} bytes are shown. Ask for a smaller part if you need the rest.`,
+      `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. Ask for a smaller part if you need the rest.`,
+    excerptBytes,
+    path,
   );
+};
 
 /** Where a digested result is saved: one file per execution, so a takeover rewrites the same. */
 export const resultDigestPath = (executionId: string) =>
