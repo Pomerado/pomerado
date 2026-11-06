@@ -243,5 +243,5 @@ export const mintRequest = (
     const outcome = yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
       Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
     );
-    return outcome;
+    return context.buildEffect === undefined ? outcome : { ...outcome, effect: context.buildEffect };
   });
