@@ -1427,10 +1427,13 @@ const openAIMinter = (
               saveResult === undefined
                 ? undefined
                 : (path, text) =>
-                    turn.runTool(saveResult(path, text)).then(
-                      () => true,
-                      () => false,
-                    ),
+                    // A host whose save throws, as well as one whose save fails, saved nothing.
+                    Promise.resolve()
+                      .then(() => turn.runTool(saveResult(path, text)))
+                      .then(
+                        () => true,
+                        () => false,
+                      ),
             );
             const sdkProvider = cacheFallback(runner.config.modelProvider);
             const cacheLayout: ModelProvider = {

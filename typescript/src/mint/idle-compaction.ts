@@ -247,7 +247,8 @@ export const makeIdleCompaction = (options: {
   const compactNow = async (signal?: AbortSignal) => {
     if (disabled || controller.signal.aborted || last === undefined) return false;
     if (running === undefined) {
-      if (ready !== undefined && ready.length >= last.length) return false;
+      // A window that landed while the refused request was out has not gone yet: send it.
+      if (ready !== undefined && ready.length >= last.length) return unapplied;
       start(last.request, last.sent, last.compact, {
         inputTokens: last.tokens,
         trigger: "overflow",

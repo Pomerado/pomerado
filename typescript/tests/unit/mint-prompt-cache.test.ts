@@ -786,3 +786,54 @@ it("recovers from a request over the context by compacting, then saving its long
   expect(file).toBe(long);
   expect(sentResult(later)).toBe(sent);
 });
+
+// Recovery ends: a request the provider still refuses as over the context once every step was
+// taken fails as before, after one compaction and one send per step.
+it("ends a run whose request stays over the context after every recovery step", async () => {
+  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(5_000) });
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_page" ? Effect.succeed(long) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const steps: string[] = [];
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            if (isCompaction(request)) {
+              steps.push("compaction");
+              return compacted();
+            }
+            const carries = items(request).some(
+              (item) => item.type === "function_call_result" && item.callId === "explore_page",
+            );
+            if (carries) {
+              steps.push("refused");
+              throw Object.assign(new Error("Input exceeds the context window"), {
+                status: 400,
+                code: "context_length_exceeded",
+              });
+            }
+            steps.push("answered");
+            return call("execute", explore, 2_000, "explore_page");
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).not.toBe("published");
+  expect(steps).toEqual(["answered", "refused", "compaction", "refused", "refused", "refused"]);
+});
