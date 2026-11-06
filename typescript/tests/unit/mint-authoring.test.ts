@@ -1299,17 +1299,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["ed4002e3abf62e9d33f4b7fe89a037ecf6d69ec366f3d3ea70c059dceb245fe1", "core"],
+    ["feb391e107014c2529817c012f5a87cc1c210a119b405a6ddde2a8226576812f", "core"],
     ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["1a915d0e49ee6fbcd1c99796adc0c12d44874b5df82f452794bcd59bba2c4359", "writes"],
+    ["0dc6cc0b8105304db91e7a2e0e8224067db55f319766590fd97e1e16fee7ee45", "writes"],
     ["8e42776229364b5eebc9899c429f7716a5cc801497fbef09084bb1e8f4841e77", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
-    ["34ea9283866001cc4fca79128638f970cc0fdea87950eafd593091cc6d707d61", "workspace/AGENTS.md"],
+    ["878e0e04afa2888b70d1089b1fd2dd954bc87469fd4e78f5bf6511e89c27f201", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1430,7 +1430,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
-    ["3aa501213d21aec07d8af5729895521446b26e458c6cc0fc76f19a3f1580a5c9", "workspace/AGENTS.md"],
+    ["e39d65f1b0bb8d958d578ac51680412debc5485cf021c54cdd84ea510a18b5c3", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

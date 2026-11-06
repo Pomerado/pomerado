@@ -121,12 +121,39 @@ export const sessionEnteredMarks = (steps: readonly WriteSessionMarks[]) => {
   return entered;
 };
 
-/** The commit marks of a recorded write path that `entered` lacks, in path order. */
+/**
+ * How many steps lead the path as setup steps: those before its first other step, and never its
+ * last, which reaches the outcome. Setup is state the site makes by itself as the session starts,
+ * so `setup` on any later step claims nothing.
+ */
+const setupLead = (path: WritePath) => {
+  const first = path.steps.findIndex((step) => step.setup !== true);
+  return first === -1 ? path.steps.length - 1 : first;
+};
+
+/** The marks of steps that claim `setup` where the path may not have one, in path order. */
+const setupMisplaced = (path: WritePath) =>
+  path.steps
+    .slice(setupLead(path))
+    .filter((step) => step.setup === true)
+    .map((step) => step.commit);
+
+/**
+ * The commit marks of a recorded write path that `entered` lacks, in path order. A leading setup
+ * step is no commit step: the site makes its session state once, and may have before the session
+ * started, so its mark is never owed. Every other step's mark is, `setup` or not, so the step that
+ * reaches the outcome always is.
+ */
 export const writePathRemaining = (
   path: WritePath | undefined,
   entered: ReadonlySet<string>,
 ): readonly string[] =>
-  path === undefined ? [] : path.steps.map((step) => step.commit).filter((name) => !entered.has(name));
+  path === undefined
+    ? []
+    : path.steps
+        .slice(setupLead(path))
+        .map((step) => step.commit)
+        .filter((name) => !entered.has(name));
 
 /**
  * The marks of the recorded path the session entered that a revision drops or moves out of their
@@ -153,8 +180,10 @@ const enteredMarksLost = (
  * Why a write build's act step may not run with the write path it carries, if it may not, before
  * any review or dispatch. A build's first act step declares its whole write path; a later one may
  * revise it, keeping every mark of the recorded path the session already entered, in the same
- * order. A session that started without a recorded path, as one a host started before it kept
- * paths, runs on without one. Hosts apply it to a build's write session, never to a repair's.
+ * order. A path, first or revised, marks `setup` only on steps before its first other step, and
+ * never on its last. A session that started without a recorded path, as one a host started before
+ * it kept paths, runs on without one. Hosts apply it to a build's write session, never to a
+ * repair's.
  */
 export const writePathRefusal = (
   submitted: Pick<ExecutionRequest, "purpose" | "target" | "writePath">,
@@ -169,6 +198,9 @@ export const writePathRefusal = (
     return session.started
       ? undefined
       : "A write build's first act step declares writePath before anything is sent: in steps, each step that saves or submits on the site through to the outcome the request asks for, by the commit mark its helper enters, in order; in ends, what the last step leaves the caller with. Guardian reviews the path as publication will review the tool, and the session runs until every mark on it is entered. Add writePath and execute again. Nothing was executed.";
+  const misplaced = setupMisplaced(submitted.writePath);
+  if (misplaced.length > 0)
+    return `A setup step only comes before every other step of writePath, and its last step, which reaches the outcome, is never one. Remove setup: ${misplaced.join(", ")}. Nothing was executed.`;
   if (session.path === undefined) return undefined;
   const lost = enteredMarksLost(session.path, submitted.writePath, session.enteredMarks);
   return lost.length === 0
