@@ -77,9 +77,11 @@ placed order or the confirmed booking; prefer not to end at a saved draft or a n
 the way to it. Publication judges the finished tool by the same rule
 (`reference/publication-review.md`). Declare it as `writePath` on the first `act` step: in
 `steps`, each step that saves or submits, in order, with the `commit` mark its helper will
-enter and what it saves (`does`); in `ends`, what the last step leaves the caller with.
+enter and what it saves (`does`); in `ends`, what the last step leaves the caller with. A step
+that only makes state the site creates by itself as the session starts, such as an empty cart
+when the menu opens, saves nothing of the caller's: mark it `setup: true`, or leave it out.
 Guardian reviews the path before anything is sent, and the host keeps it: the session is not
-over until every mark on it is entered, so a step that confirms earlier leaves the session
+over until every mark on it but a setup step's is entered, so a step that confirms earlier leaves the session
 open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
 path must change, such as a page the site skips or adds for this input, declare the revised
 path in `writePath` on the next `act` step, keeping every mark already entered. When no single

@@ -543,7 +543,7 @@ export const publicationWriteOutcomePolicy =
  * execution review allowed by `publicationWriteOutcomePolicy` before anything was sent.
  */
 export const publicationWritePathPolicy =
-  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each of its steps, entering each mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding.";
+  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each of its steps but a setup one, entering each mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =
