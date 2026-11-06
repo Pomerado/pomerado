@@ -934,7 +934,7 @@ export const WritePath = Schema.Struct({
       }),
       setup: Schema.optional(Schema.Literal(true)).annotations({
         description:
-          "true when the step only makes state the site creates by itself as the session starts, such as an empty cart, and saves none of the caller's values: no run need enter its mark, since the site may already have made it",
+          "true when the step only makes state the site creates by itself as the session starts, such as an empty cart, and saves none of the caller's values: no run need enter its mark, since the site may already have made it. Only steps before the path's first other step may be setup, and never its last",
       }),
     }),
   ).pipe(
