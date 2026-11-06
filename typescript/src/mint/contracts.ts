@@ -46,8 +46,9 @@ import {
   privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
+  isWayMethod,
+  RecipeMethodChoice,
   SignInChoice,
-  SignInMethodChoice,
   stepFieldsFit,
   stepFieldsMessage,
   SubmitKey,
@@ -739,15 +740,17 @@ export const SignInStep = Schema.Union(
      */
     submitKey: Schema.optional(SubmitKey),
     /**
-     * A two-factor method choice: every method the screen offers, each with the control that
-     * picks it, and `submit` the one to pick now. A method chosen from a native select names that
-     * select and the value it lists for the method (`option`), and the step names the one to pick
-     * now as its own `option`. Runs pick again from these.
+     * A method choice: every method the screen offers, each with the control that picks it, and
+     * `submit` the one to pick now. A method chosen from a native select names that select and the
+     * value it lists for the method (`option`), and the step names the one to pick now as its own
+     * `option`. Runs pick again from its two-factor methods. A way in, `password` beside a code
+     * the site sends or an `identifier_` kind a control switches the screen to, has a control of
+     * its own, and runs keep the one this sign-in picks.
      */
     methods: Schema.optional(
       Schema.Array(
         Schema.Struct({
-          method: SignInMethodChoice,
+          method: RecipeMethodChoice,
           selector: SignInSelector,
           option: Schema.optional(MethodOption),
         }),
@@ -816,6 +819,24 @@ export const SignInStep = Schema.Union(
         step.choice === undefined ||
         (step.fields.length === 0 && step.submit !== undefined && step.methods === undefined),
       { message: () => "a choice step fills no field and names one submit, with no method choice" },
+    ),
+    Schema.filter(
+      (step) => {
+        const methods = step.methods ?? [];
+        const ways = methods.filter((method) => isWayMethod(method.method));
+        return (
+          ways.every(
+            (way) =>
+              way.option === undefined &&
+              methods.filter((method) => method.selector === way.selector).length === 1,
+          ) &&
+          (!ways.some((way) => way.method === "password") || ways.length < methods.length)
+        );
+      },
+      {
+        message: () =>
+          "a way in is its own control, with no option, and a method choice that lists password lists a code method too",
+      },
     ),
   ),
   Schema.Struct({
@@ -2745,6 +2766,14 @@ export interface MintDependencies {
    * it.
    */
   readonly websiteLoginPreAuthorized?: true;
+  /**
+   * A read repair hands an unanswered question back to the minter as no answer even while it is
+   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * Every other rule for an unanswered question stands. Without it, any question left unanswered
+   * while the build is signed in or holds a login ends the build as before. A core without it
+   * ignores it.
+   */
+  readonly handBackSignedInReadRepair?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**

@@ -15,6 +15,7 @@ import {
   type AutofillReplayInput,
   emptyRetryFields,
   askOne,
+  isTwoFactorOption,
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
@@ -30,6 +31,7 @@ import {
 } from "./autofill-unrecorded-code.js";
 import {
   cantTell,
+  cantTellInPlace,
   offScreens,
   landingSettleMs,
   stillOff,
@@ -104,7 +106,9 @@ const shownScreen = (step: AutofillStep, inspection: AutofillInspection): ShownS
 
 /**
  * The recorded screen as it runs now: a method choice clicks the method this run picks, or
- * chooses its option in a native select.
+ * chooses its option in a native select. A way in that the recorded sign-in picked there, a
+ * password or an identifier, is the run's route: it clicks that, asking nothing, and otherwise
+ * picks only among the choice's two-factor methods, taking a lone one beside a way in unasked.
  */
 const screenFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   replay: Replay<E, V, L>,
@@ -140,8 +144,19 @@ const screenFor = <E extends YieldableError, V extends string, L extends Autofil
     if (typeof shown === "string" || "outcome" in shown.found) return shown;
     // Picking a method may send a code: a value-free replay stops before it.
     if (replay.valueFree) return valuesNeeded;
-    const picked = yield* replay.pickMethod(recorded.methods);
-    replay.progress.chosen = picked.method;
+    const twoFactor = recorded.methods.filter(isTwoFactorOption);
+    const picked =
+      recorded.methods.find(
+        (method) =>
+          !isTwoFactorOption(method) &&
+          method.option === undefined &&
+          method.selector === recorded.submit,
+      ) ??
+      (twoFactor.length === 1 && twoFactor.length < recorded.methods.length
+        ? twoFactor[0]
+        : undefined) ??
+      (yield* replay.pickMethod(twoFactor));
+    if (isTwoFactorOption(picked)) replay.progress.chosen = picked.method;
     return {
       fields: [],
       submit: picked.selector,
@@ -363,8 +378,9 @@ const runScreens = <E extends YieldableError, V extends string, L extends Autofi
  * Waits, bounded, for the marker to show on the current page. Once the page left the recorded
  * login screens and stayed put a moment, a read's sign-in on a page that can't tell stops waiting
  * and returns that page's check
- * (`cantTellHere`) for the last check to decide from. A page that reads signed out, such as the
- * marker's own path, waits out a marker drawn late.
+ * (`cantTellHere`) for the last check to decide from, as it does at once on the shared entry
+ * address a screen's wait already found settled there (`landedInPlace`). A page that reads signed
+ * out, such as the marker's own path, waits out a marker drawn late.
  * A caller that hands over at a code screen the recipe never recorded stops once the page is one
  * (`endsAtCodeScreen`), which the probe after the wait answers.
  */
@@ -382,6 +398,11 @@ const awaitIndicator = <E extends YieldableError, V extends string, L extends Au
       const check = yield* replay.checkHere;
       if (check.signedIn) return { shown: true } as const;
       if (yield* endsAtCodeScreen(input, replay, check.url, look)) return { shown: false } as const;
+      if (
+        replay.progress.landedInPlace &&
+        cantTellInPlace(check, input.recipe, replay.matchesRecorded, input.entryUrl)
+      )
+        return { shown: false, cantTellHere: check } as const;
       off = stillOff(off, offScreens(replay.onScreens, check.url), now);
       if (off !== undefined && now - off.since >= landingSettleMs) {
         if (

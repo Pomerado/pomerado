@@ -61,7 +61,8 @@ write build with `mint_update` and `recommend: "new_mint"`.
 ## Before the session
 
 Sign in first when the site needs it, and for a cart or checkout as .agents/cart/SKILL.md
-says, with the auth skill: read-only `explore` to find the login, then
+says (a tool that fills a cart and returns its quote in one run may use the site's guest cart),
+with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, and set the session's delivery or
 pickup location as a read (above), with `pickValue` and the site's own confirm control in one
