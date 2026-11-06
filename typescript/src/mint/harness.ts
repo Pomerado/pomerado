@@ -7310,7 +7310,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ...(temporary && submitted.reason === "site_declined"
                         ? { temporary: true as const }
                         : {}),
-                      ...(availableAt === undefined ? {} : { availableAt }),
+                      // Guardian reviewed the time with the words, so it shows only beside them.
+                      ...(shown && availableAt !== undefined ? { availableAt } : {}),
                     };
                     // A report that stood on refused live tests names them and the standing
                     // denial; the outcome keeps the denial's reason and category.

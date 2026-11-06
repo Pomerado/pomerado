@@ -176,6 +176,30 @@ it("ends a build the site declined for now as a temporary site_declined with its
   });
 });
 
+// The site's time reaches the caller only beside an explanation Guardian allowed, since Guardian
+// reviews the two together: a review that never allowed it keeps the decline temporary, with no time.
+it("keeps a temporary decline's time only when Guardian allowed its explanation", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", {
+          reason: "site_declined",
+          explanation: "Pickup ordering is closed now; the store says it opens at 9 AM.",
+          temporary: true,
+          availableAt: "2099-11-06T09:00:00-05:00",
+        }),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.fail(new MintFailure({ code: "ReviewUnavailable", modelOutage: "quota_exhausted" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", blocked: { reason: "site_declined", temporary: true } });
+  expect(outcome).not.toHaveProperty("blocked.explanation");
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
 it.each([
   {
     name: "a temporary time on another reason",
