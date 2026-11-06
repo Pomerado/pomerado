@@ -58,7 +58,7 @@ export const preflightTestInput = (
   if (submitted.testInput === undefined) return undefined;
   if (submitted.purpose !== "test" || submitted.target !== "liveBrowser")
     return refused(
-      "testInput is only for a read's live test: purpose test, target liveBrowser. An example or a write's act step runs the caller's input (or exampleInput when that input is empty), and an offline test and every other purpose run the caller's input. Nothing was executed.",
+      "testInput is only for a read's live test: purpose test, target liveBrowser. An example or a write's act step runs the caller's input (or exampleInput when that input is empty, or on a read's example once the tool refused it with InvalidInput), and an offline test and every other purpose run the caller's input. Nothing was executed.",
     );
   if (scope.buildEffect !== "read")
     return refused(
@@ -99,7 +99,21 @@ interface ExampleInputScope {
    * The local host never repairs one, so it never sets it.
    */
   readonly maintenance?: boolean;
+  /**
+   * Host fact: this read build already ran its example on the caller's own input as it is now, and
+   * the tool refused that input with `InvalidInput`. A read's example may then run a substitute
+   * `exampleInput` in its place, which the caller's input stays the tool's case for that refusal
+   * beside. A host that never sets it keeps the caller's input as the only example.
+   */
+  readonly callerExampleRefused?: boolean;
 }
+
+/** Whether a caller's input is the empty object a build with no structured input gets. */
+export const emptyCallerInput = (callerInput: unknown) =>
+  typeof callerInput === "object" &&
+  callerInput !== null &&
+  !Array.isArray(callerInput) &&
+  Object.keys(callerInput).length === 0;
 
 /** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
 const exampleInputPlaceRefusal = (
@@ -115,15 +129,11 @@ const exampleInputPlaceRefusal = (
     return act
       ? "exampleInput is valid on act steps only in a write build."
       : "A write build passes exampleInput on its act steps, never on an example.";
-  const { callerInput } = scope;
-  const empty =
-    typeof callerInput === "object" &&
-    callerInput !== null &&
-    !Array.isArray(callerInput) &&
-    Object.keys(callerInput).length === 0;
-  return empty
+  if (emptyCallerInput(scope.callerInput)) return undefined;
+  if (act) return "The caller supplied input, and the session runs it as it is.";
+  return scope.callerExampleRefused === true
     ? undefined
-    : `The caller supplied input, and the ${act ? "session" : "example"} runs it as it is.`;
+    : "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput may an example run another input in its place.";
 };
 
 /** Why an act step's `exampleInput` differs from the one input its session runs, if it does. */
@@ -137,6 +147,9 @@ const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
  * only where the caller gave it nothing to run, as a read's example or a write's act session. A
  * session runs one input: the first act step that passes it fixes it, whichever step that is, and
  * a later step repeats it unchanged or omits it. Act steps before it run the caller's empty input.
+ * A read's example also runs one in place of the caller's own input once the host records the
+ * tool refusing that input with `InvalidInput` (`callerExampleRefused`): a substitute example,
+ * another record of the same kind on the site, which Guardian reviews as one.
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
@@ -160,7 +173,8 @@ export const exampleInputRefusal = (
  * The input a step runs, with its mark for Guardian and the history: a read's live test on an
  * input the agent chose is `agent_chosen`; a read's example, or a write's act step, on the agent's
  * reading of an empty caller input is `intent_derived`, and an act step that omits it runs the
- * one its session fixed, if an earlier step fixed one; every other step runs the caller's input
+ * one its session fixed, if an earlier step fixed one; a read's example on an `exampleInput` in
+ * place of the caller's own input is `substitute`; every other step runs the caller's input
  * unmarked. Preflight already refused a misplaced input.
  */
 export const stepInput = (
@@ -168,7 +182,7 @@ export const stepInput = (
   scope: { readonly callerInput: unknown; readonly sessionInput: InputObject | undefined },
 ): Effect.Effect<
   | { readonly input: unknown; readonly mark?: "agent_chosen" }
-  | { readonly input: InputObject; readonly mark: "intent_derived" },
+  | { readonly input: InputObject; readonly mark: "intent_derived" | "substitute" },
   MintFailure
 > => {
   if (submitted.testInput !== undefined)
@@ -195,7 +209,13 @@ export const stepInput = (
   return Effect.succeed(
     derived === undefined
       ? { input: scope.callerInput }
-      : { input: derived, mark: "intent_derived" as const },
+      : {
+          input: derived,
+          mark:
+            submitted.purpose === "example" && !emptyCallerInput(scope.callerInput)
+              ? ("substitute" as const)
+              : ("intent_derived" as const),
+        },
   );
 };
 

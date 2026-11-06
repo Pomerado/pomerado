@@ -28,7 +28,7 @@ import { fileReadback } from "../mint/file-readback.js";
 import { cardReadback } from "../mint/card-readback.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
 import { checkSignInVersion } from "../mint/sign-in-version.js";
-import { sourceDigest } from "../mint/step-checks.js";
+import { emptyCallerInput, sourceDigest } from "../mint/step-checks.js";
 import { liveTestsEvidencePath } from "../mint/live-tests.js";
 import { checkWriteSession } from "../mint/write-session.js";
 import {
@@ -419,6 +419,8 @@ export const mintPublication =
                   entrypoint: sample.entrypoint,
                   completed: evidence.status === "completed",
                   schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
+                  substitute:
+                    sample.intentDerivedInput !== undefined && !emptyCallerInput(context.input),
                 }),
                 files: new Map([
                   [exampleOutputPath, output.text],

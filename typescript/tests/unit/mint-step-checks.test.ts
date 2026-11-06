@@ -152,6 +152,25 @@ describe("exampleInputRefusal", () => {
     expect(refusal?.reason).toContain("Nothing was executed.");
   });
 
+  it("lets a read's example run a substitute once the tool refused the caller's own input", () => {
+    const refused = { ...scope("read", { venue: "Venue Y" }), callerExampleRefused: true };
+    expect(exampleInputRefusal(request({ exampleInput }), refused)).toBeUndefined();
+    // Until the host records that refusal, the example runs the caller's input as it is.
+    expect(
+      exampleInputRefusal(request({ exampleInput }), scope("read", { venue: "Venue Y" }))?.reason,
+    ).toContain("Run the example on it first");
+    // A write's session, a test and maintenance still run what they ran before.
+    expect(
+      exampleInputRefusal(act(), { ...scope("write", { item: "desk" }), callerExampleRefused: true }),
+    ).toMatchObject({ supported: false });
+    expect(
+      exampleInputRefusal(request({ exampleInput, purpose: "test" }), refused),
+    ).toMatchObject({ supported: false });
+    expect(
+      exampleInputRefusal(request({ exampleInput }), { ...refused, maintenance: true }),
+    ).toMatchObject({ supported: false });
+  });
+
   it("says why a session's step cannot change its input", () => {
     expect(
       exampleInputRefusal(
@@ -205,6 +224,13 @@ describe("stepInput", () => {
       _tag: "Right",
       right: { input: reservation, mark: "intent_derived" },
     });
+  });
+
+  it("runs a read's example on a substitute in place of the caller's own input, marked substitute", async () => {
+    const store = { store: "open" };
+    expect(
+      await run(request({ exampleInput: JSON.stringify(store) }), { store: "moved" }),
+    ).toMatchObject({ _tag: "Right", right: { input: store, mark: "substitute" } });
   });
 
   it("runs a write session's act steps on the input the first act step that passed one fixed", async () => {
