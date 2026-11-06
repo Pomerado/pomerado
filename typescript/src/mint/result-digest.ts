@@ -101,7 +101,9 @@ export const cutResult = (
   return truncated(
     text,
     (totalBytes) =>
-      `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. Ask for a smaller part if you need the rest.`,
+      path === undefined
+        ? `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. Ask for a smaller part if you need the rest.`
+        : `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. The whole result is saved in ${path}: read it with read_source (offset and limit) or search it with rg in exec_command.`,
     excerptBytes,
     path,
   );
