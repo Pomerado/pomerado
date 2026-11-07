@@ -261,7 +261,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   the browser's cookies and site storage (a signed-in build keeps its session), so that
   step starts the flow there and sets every value its input controls itself.
 - Later steps continue on the page exactly as the previous step left it. Keep steps
-  small and read the actual state after each submission. On multi-step forms, a
+  small and read the actual state after each submission. Small steps never split a choice
+  from the control that carries it to the next page, such as a time slot and its Continue
+  button: pick it and click that control in the same step, since a page may keep the
+  choice only in its own state and drop it between steps. On multi-step forms, a
   button named Continue, Next or Save may save a draft, persist that page, or finish
   the task immediately; its label does not establish that another review or final
   submit follows. A step that saves or advances a form page is part of the task,
@@ -376,7 +379,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   once the form is filled and just before the click's wait, and pass it the `{ response }`
   answer of that click's `waitForOutcomeResult` and the page. It applies the commit-response and
   page-error rules above in one place, so prefer it over writing your own status and body
-  checks, and call `verified()` only when it reports done.
+  checks, and call `verified()` only when it reports done. Confirm in that commit step
+  itself, so it is the confirming step: a later step only to confirm is the fallback above,
+  for a commit step that returned without `verified()`.
 - Read the site's own proof instead only when the commit request can't confirm the write:
   no such request went out; it failed, got no answer or returned an error status; its body
   shows an error, or can't be read on an endpoint that reports errors with a 200, such as
