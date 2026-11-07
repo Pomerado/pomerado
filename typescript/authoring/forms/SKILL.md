@@ -31,8 +31,9 @@ For an in-page update, wait for evidence that the new query has completed. An
 immediate snapshot with an empty title and missing controls can be a transition
 observation; it does not establish an empty business result. The same holds for content a
 page loads after it appears, such as a calendar's open days or a list of time slots: one read
-before its data arrives can show every day unavailable, so wait until an open day or slot, or
-the site's own no-availability message, shows before reading it.
+before its data arrives can show every day unavailable, so wait until an open day or slot,
+the site's own no-availability message, or other evidence its data has loaded, such as the
+request that fills it completing, shows before reading it.
 
 Derive `getByRole` names from a scoped `locator.ariaSnapshot()` or a retained ARIA
 snapshot. Read the name there before writing the locator, never from the wording such a
