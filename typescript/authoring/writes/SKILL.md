@@ -282,7 +282,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   answer. Prefer returning it as a refusal the output schema declares (below), with a
   `reason` code of the tool's own, listed in the tool's description, `site_message`, the
   site's own words exactly as the page shows them, and any alternatives the site offers,
-  exactly as shown. Return it only from what the site shows in this run, never from a rule
+  exactly as shown. When the request describes that answer in its own terms, such as
+  `confirmed: false` with a message in the caller's words, keep those fields and words in
+  the refusal beside `status` and `reason`, and choose the `reason` code yourself from what
+  the site shows, such as `no_availability`: never put the caller's words in `reason`, and
+  never ask the caller for a code. Return it only from what the site shows in this run, never from a rule
   copied into the tool's own checks, and never from a challenge, block, access-denied,
   error or maintenance page, which is a failure (`OperationFailure`). After a commit mark,
   return it only where the declared-refusal rule below says one returned there completes
