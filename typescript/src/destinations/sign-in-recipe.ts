@@ -1,4 +1,4 @@
-import { Effect, Either, Option, Schema } from "effect";
+import { Either, Option, Schema, type Effect } from "effect";
 import type {
   AutofillApproval,
   AutofillPopup,

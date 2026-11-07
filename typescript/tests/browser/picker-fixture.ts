@@ -66,5 +66,5 @@ export const submitted = (page: Page) =>
     const form = document.forms[0];
     if (form === undefined) return {};
     const data = new FormData(form);
-    return Object.fromEntries([...new Set(data.keys())].map((key) => [key, data.getAll(key).join(",")]));
+    return Object.fromEntries([...new Set(data.keys())].map((key) => [key, data.getAll(key).map((value) => (typeof value === "string" ? value : value.name)).join(",")]));
   });

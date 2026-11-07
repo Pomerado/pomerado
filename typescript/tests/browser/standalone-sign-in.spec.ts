@@ -319,7 +319,7 @@ test("a local build asks for its login once and publishes its sign-in without a 
     // The written folder holds the recipe and no value, and a new session runs from it.
     const folder = await mkdtemp(join(tmpdir(), "pomerado-sign-in-artifact-"));
     try {
-      await Effect.runPromise(Effect.scoped(writeArtifact(folder, artifact as MintArtifact)));
+      await Effect.runPromise(Effect.scoped(writeArtifact(folder, artifact)));
       const written = await Promise.all(
         (await readdir(folder, { recursive: true, withFileTypes: true }))
           .filter((entry) => entry.isFile())
@@ -444,7 +444,7 @@ test("a local build whose code screen has no button submits it with Enter, publi
     const output = await runInNewSession(
       endpoint,
       answers(runAsked),
-      built.artifact as MintArtifact,
+      built.artifact,
       request.url,
     );
     expect(output).toEqual(Either.right({ signedIn: true }));
@@ -581,7 +581,7 @@ for (const [limit, partial] of [
       const output = await runInNewSession(
         endpoint,
         answers(runAsked),
-        built.artifact as MintArtifact,
+        built.artifact,
         request.url,
       );
       expect(output).toEqual(Either.right({ signedIn: true }));
@@ -695,7 +695,7 @@ for (const count of [7, 8])
       const output = await runInNewSession(
         endpoint,
         answers(runAsked, code),
-        built.artifact as MintArtifact,
+        built.artifact,
         request.url,
       );
       expect(output).toEqual(Either.right({ signedIn: true }));

@@ -200,7 +200,9 @@ test.describe("outcome race after an action", () => {
     const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
     expect(answer.outcome).toBe("invalid");
     expect(answer.evidence).toMatchObject({ fields: [{ field: "Name" }] });
-    expect((answer.evidence?.["fields"] as { message: string }[])[0]?.message).not.toBe("");
+    const fields = answer.evidence?.["fields"] as { message: string }[] | undefined;
+    expect(fields).toBeDefined();
+    expect((fields ?? [])[0]?.message).not.toBe("");
   });
 
   test("invalid fields already flagged before the action, and unchanged, wait for the unchanged window", async ({

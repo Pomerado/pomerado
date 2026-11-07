@@ -243,11 +243,13 @@ describe("decodeSignInRecipe", () => {
       "a version 4 parent that is not a lower-case host name",
       JSON.stringify({ version: 4, workspace: { parent: "Example.com" }, steps, signedIn }),
     ],
-    ...[
-      ["a submit", { submit: "#verify" }],
-      ["no field", { fields: [] }],
-    ].map(([name, change]) => [
-      `a version 5 key-submitted step with ${String(name)}`,
+    ...(
+      [
+        ["a submit", { submit: "#verify" }],
+        ["no field", { fields: [] }],
+      ] as [string, object][]
+    ).map(([name, change]) => [
+      `a version 5 key-submitted step with ${name}`,
       JSON.stringify({
         version: 5,
         steps: [
@@ -255,7 +257,7 @@ describe("decodeSignInRecipe", () => {
             page: "https://example.test/login/code",
             fields: [{ selector: "#code", slot: "code" }],
             submitKey: "Enter",
-            ...Object(change),
+            ...change,
           },
         ],
         signedIn,

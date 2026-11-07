@@ -340,9 +340,11 @@ it("runs the cases a read designed as one batch and hands publication the host's
   expect(record.notTested).toEqual(cases.notTested);
   // Each result says how its browser started, and each version counts the cases that passed cold.
   expect(
-    record.cases.map((entry) => (entry.results["playwright"] as { start?: string }).start).sort(),
+    record.cases.map((entry) => (entry.results["playwright"] as { start?: string }).start ?? "").sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
   ).toEqual(["cold", "cold", "warm", "warm"]);
-  expect((published.seen[0]?.liveTests as { versions: unknown[] }).versions).toEqual([
+  const liveTests = published.seen[0]?.liveTests as { versions: unknown[] } | undefined;
+  expect(liveTests).toBeDefined();
+  expect(liveTests?.versions).toEqual([
     expect.objectContaining({ version: "playwright", coldPasses: 1 }),
   ]);
   expect(published.seen[0]?.coverage).toContain(

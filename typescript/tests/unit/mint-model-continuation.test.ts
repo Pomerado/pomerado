@@ -2210,7 +2210,7 @@ const reviewingSource = (read: () => Promise<string | Uint8Array | undefined>) =
 };
 
 const resultsFor = (request: ModelRequest | undefined) =>
-  (Array.isArray(request?.input) ? (request.input as AgentInputItem[]) : []).flatMap((item) =>
+  (Array.isArray(request?.input) ? request.input : []).flatMap((item) =>
     (item.type === "apply_patch_call_output" || item.type === "function_call_result") &&
     "callId" in item
       ? [item.callId]
@@ -2218,8 +2218,9 @@ const resultsFor = (request: ModelRequest | undefined) =>
   );
 
 it("runs a step written in the same response once the write lands, with no model call between", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2240,8 +2241,9 @@ it("runs a step written in the same response once the write lands, with no model
 });
 
 it("runs a response's calls in the model's order around its write", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   const read = (callId: string) =>
     call("read_source", { path: "src/tool.ts", offset: null, limit: null, paths: null }, callId);
   f = await fixture(
@@ -2258,9 +2260,11 @@ it("runs a response's calls in the model's order around its write", async () => 
     { reviewAndExecute: review.reviewAndExecute },
   );
   expect(await f.run()).toMatchObject({ build: "published" });
+  const secondInput = f.requests[1]?.input;
+  expect(secondInput).toBeDefined();
   const output = (callId: string) =>
     JSON.stringify(
-      (f!.requests[1]?.input as AgentInputItem[]).find(
+      (secondInput as AgentInputItem[]).find(
         (item) => item.type === "function_call_result" && item.callId === callId,
       ),
     );
@@ -2273,8 +2277,9 @@ it("runs a response's calls in the model's order around its write", async () => 
 });
 
 it("runs a response's actions one at a time in the model's order, then its host tool", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2330,14 +2335,15 @@ it("runs reads sent together at the same time", async () => {
 /** The model's result for one call, as its next request carries it. */
 const resultOf = (request: ModelRequest | undefined, callId: string) =>
   JSON.stringify(
-    (Array.isArray(request?.input) ? (request.input as AgentInputItem[]) : []).find(
+    (Array.isArray(request?.input) ? request.input : []).find(
       (item) => item.type === "function_call_result" && item.callId === callId,
     ),
   );
 
 it("runs nothing held behind an edit that did not apply", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2367,8 +2373,9 @@ it("runs nothing held behind an edit that did not apply", async () => {
 });
 
 it("runs nothing held behind an edit the model sent after it", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2438,8 +2445,9 @@ it.each([
 });
 
 it("runs a step after its edits when an earlier call of the response did not parse", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2475,8 +2483,9 @@ it("runs a step after its edits when an earlier call of the response did not par
 });
 
 it("gives a host's recovery and observer each call of a response with a write once, in order", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   const recorded: string[] = [];
   let announced: string | undefined;
   // As a host's observer does: the SDK names a native edit's call just before the edit runs.
@@ -2555,8 +2564,9 @@ it("gives a host's recovery and observer each call of a response with a write on
 });
 
 it("still runs a step written in one response and executed in the next", async () => {
+  // oxlint-disable-next-line eslint/prefer-const -- the review callback reads the fixture that is assigned after it is created
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
-  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const review = reviewingSource(() => f!.workspace.readFile({ path: "src/tool.ts" }));
   f = await fixture(
     (_request, index) =>
       [
@@ -2688,7 +2698,7 @@ it("applies no edit of a response after an execute that did not succeed", async 
     { reviewAndExecute: host.reviewAndExecute },
   );
   expect(await f.run()).toMatchObject({ build: "published" });
-  expect(await f.workspace.readFile!({ path: "src/tool.ts" })).not.toContain("step: 2");
+  expect(await f.workspace.readFile({ path: "src/tool.ts" })).not.toContain("step: 2");
   const edit = (Array.isArray(f.requests[1]?.input) ? f.requests[1].input : []).find(
     (item) => item.type === "apply_patch_call_output" && item.callId === "write_step",
   );

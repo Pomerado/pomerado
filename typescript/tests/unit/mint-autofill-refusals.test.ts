@@ -443,7 +443,7 @@ it("keeps an unconfirmed cleanup's advice when the host also refused a field", a
               );
               return Effect.fail(
                 new MintFailure({
-                  ...failure,
+                  code: failure.code,
                   authentication: {
                     ...(failure.authentication ?? {
                       phase: "credential_submit",

@@ -1018,8 +1018,10 @@
     "third-party/playwright/NOTICE"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && node tools/copy-assets.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node tools/copy-assets.ts",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.json",
+    "lint": "node tools/check-lint.ts",
+    "lint:fix": "effect-tsgo patch --no-typescript --oxlint && oxlint --type-aware --fix typescript tools vitest.config.ts playwright.config.ts",
     "start": "node dist/typescript/src/standalone/cli.js",
     "mcp": "node dist/typescript/src/standalone/mcp-cli.js",
     "test": "node tools/check-host-protocol.ts && node tools/check-workflows.ts && vitest run",
@@ -1039,11 +1041,14 @@
   },
   "devDependencies": {
     "@actions/expressions": "0.3.61",
+    "@effect/tsgo": "0.46.1",
     "@modelcontextprotocol/client": "2.3.1",
     "@openai/agents": "0.18.0",
     "@playwright/test": "1.64.1",
     "@types/node": "24.13.4",
     "effect": "3.22.2",
+    "oxlint": "1.85.0",
+    "oxlint-tsgolint": "7.0.2001",
     "patchright": "1.64.2",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

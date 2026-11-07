@@ -234,7 +234,7 @@ export const mintState = (
      * and the build's start. A task update that moves the build to another site binds them anew.
      */
     const bindSite = (siteOrigin: string, authenticationOrigins: readonly string[]) =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         /** The site's sign-in origins: the request's. */
         const signInOrigins = { all: (): readonly string[] => authenticationOrigins };
         const signInBrowser = makeSignInBrowser({

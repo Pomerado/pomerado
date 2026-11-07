@@ -876,7 +876,7 @@ const hostRefusedAfterTakeover = async (
     (turn) =>
       Effect.gen(function* () {
         yield* turn.actions.execute(execution);
-        for (const _ of decisions) yield* turn.actions.finish(publication);
+        for (let i = 0; i < decisions.length; i += 1) yield* turn.actions.finish(publication);
       }),
     {
       publish: () => Effect.fail(decisions[published++] ?? hostCheckRefusal),

@@ -168,7 +168,7 @@ describe("browser shards", () => {
       { file: "z.spec.ts", titles: ["long two"], seconds: 8 },
     ];
     const { shards, output } = planShards(specs, recorded(specs), ["--target-seconds", "8", "--workers", "2"]);
-    expect(shards.map((shard) => shard.tests.length).sort()).toEqual([16, 2]);
+    expect(shards.map((shard) => shard.tests.length).sort((a, b) => a - b)).toEqual([2, 16]);
     expect(shards.find((shard) => shard.tests.length === 2)?.tests).toEqual(["z.spec.ts › long one", "z.spec.ts › long two"]);
     expect(output).not.toContain("about 12 s");
   });

@@ -115,7 +115,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.event.after }}
         run: bash tools/ci-scan.sh content
-  # Typecheck, build, unit tests and the packed package check. The browser tests run apart, in the
+  # Typecheck, lint, build, unit tests and the packed package check. The browser tests run apart, in the
   # browser job's shards, so the two run at once.
   # On a push to main it builds the tarball the release workflow publishes, so there it runs on a
   # GitHub-hosted runner, a fresh machine, never on CI_RUNNER_TRUSTED.
@@ -153,6 +153,9 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
+      # Type-aware oxlint. It fails on a finding of a rule tools/lint-baseline.json doesn't list,
+      # and on a rule with more findings than the baseline allows.
+      - run: corepack pnpm lint
       - run: corepack pnpm build
       # On a pull request with test selection (see the test-selection job), only the selected unit
       # test files run. Everything else here always runs.

@@ -57,6 +57,7 @@ From the repository root, run these.
 
 ```sh
 corepack pnpm typecheck
+corepack pnpm lint
 corepack pnpm build
 corepack pnpm test
 corepack pnpm test:browser
@@ -64,7 +65,7 @@ npm pack --dry-run
 bash tools/ci-scan.sh content
 ```
 
-Browser tests run the built `dist/`, so build before you run them. If you encounter test timeouts in resource-constrained or virtualized environments, reducing worker concurrency with `corepack pnpm test:browser --workers=2` may help. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
+Browser tests run the built `dist/`, so build before you run them. `corepack pnpm lint` fails on any finding a change adds; findings that predate the linter are counted in `tools/lint-baseline.json`. If you encounter test timeouts in resource-constrained or virtualized environments, reducing worker concurrency with `corepack pnpm test:browser --workers=2` may help. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
 
 On a pull request, [tools/test-map.ts](tools/test-map.ts) uses a daily map of the files each test file reads to work out which test files a change needs. A pull request runs only those test files, and every test when it can't tell. Pushes to `main` always run every test. To run every test on a pull request, label it `ci:full` and push again. The repository variable `TEST_SELECTION_DISABLED=true` turns selection off for every pull request.
 

@@ -725,7 +725,9 @@ test("a write's publication review reads each act step under publication/session
       file["owner"],
     ]);
     // Every src/ file ships, in the bundle's order; then the host's files, the definition first.
-    expect(index.slice(0, 3).sort()).toEqual(
+    const byPath = (a: unknown[], b: unknown[]) =>
+      String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0;
+    expect(index.slice(0, 3).sort(byPath)).toEqual(
       ["read", "save", "tool"].map((name) => [`operation/src/${name}.mjs`, true, true, "minter"]),
     );
     expect(index.slice(3)).toEqual([

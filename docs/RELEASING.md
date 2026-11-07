@@ -17,7 +17,7 @@ There are two channels:
 2. The merge starts the Release workflow. It picks the canary version `X.Y.Z-canary.N`:
    - `X.Y.Z` is the `version` in `package.json` while npm doesn't have it, and the next patch version once it does.
    - `N` is the workflow's run number, so a later canary always sorts higher.
-3. The workflow writes that version into `package.json` and runs the full Check workflow on it. Check typechecks, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
+3. The workflow writes that version into `package.json` and runs the full Check workflow on it. Check typechecks, lints, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
 4. The publish job verifies that the tested tarball carries the canary's name and version, and that the version sorts above every version npm has. Then it publishes exactly that tarball under `canary`, with a provenance attestation naming this repository, the workflow and the commit. A re-run that finds the canary already on npm stops without publishing.
 
 A newer merge replaces a canary that is still waiting to start, and the newer canary includes its commits. The replaced merge gets no Check run of its own on `main`, but its pull request passed CI on the same tree.
