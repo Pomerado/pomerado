@@ -49,7 +49,7 @@ Design it as soon as you know the page and its inputs, and run it once the examp
   unless the caller's own input supplied its value.
 - Expect `result`, and say in `purpose`, for each input, the row field that shows it applied and
   an example row it excludes. After it runs, read its full output (`live_tests` action `plan`,
-  naming the case) and check that every returned row satisfies every input it set, such as each
+  naming the case, then the file a large output's digest names) and check that every returned row satisfies every input it set, such as each
   row's status the one asked for, each date inside the range and each price under the ceiling;
   that the rows it excludes are absent, so the rows differ from the example's; and that the tool
   read each input back as the site applied it. A row that breaks a filter, or a result no
@@ -204,8 +204,8 @@ store, or a pop-up or banner covering a control, fix that step first and run onl
 passes, before the whole batch again. A pop-up
 or banner that shows only on some visits is closed whenever it shows, never waited for (forms
 skill). You get every result: its status, what it returned, and a failure's
-error with the source line that threw. Name cases in action `plan` to read their full outputs,
-and check what they mean, not just pass or fail: every item matches the filters, the order follows
+error with the source line that threw. Name cases in action `plan` to read their outputs (a large one comes
+as a digest naming the file that holds it), and check what they mean, not just pass or fail: every item matches the filters, the order follows
 the sort, the applied location is the one asked for or labeled as another, page 2 differs from
 page 1. A failing case is a bug in the tool: fix the code at that line. Never drop the input,
 narrow the schema except where the site itself bounds the value, or change a case's expectation

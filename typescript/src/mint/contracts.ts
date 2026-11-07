@@ -1128,8 +1128,9 @@ export type LiveTestBatchResult =
   | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
 
 /**
- * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result
- * (with full outputs for the cases named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result,
+ * with the output of each case named in `cases`, a large one as a digest naming the workspace file
+ * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
  */
@@ -2011,6 +2012,11 @@ export interface MintTurn {
    * note.
    */
   readonly compactionSkillsNote?: (skills: readonly string[]) => string;
+  /**
+   * `MintDependencies.saveResult`: saves a tool result too long for a model request whole, as the
+   * workspace file the request then names in its place.
+   */
+  readonly saveResult?: (path: string, text: string) => Effect.Effect<void, MintFailure>;
   readonly screen: (value: unknown) => Effect.Effect<string, MintFailure>;
   readonly isComplete: () => boolean;
   readonly reportDiagnostic: (value: unknown) => Effect.Effect<void, MintFailure>;
@@ -2995,8 +3001,9 @@ export interface MintDependencies {
   /**
    * Saves an execution result too large to return whole (`resultDigestThresholdBytes`) as the
    * read-only workspace file `path`, under `captures/results/`, which `read_source` and offline
-   * commands read; the agent then receives the result's digest naming it. The text is already
-   * screened for the model. A host without it returns every result whole.
+   * commands read; the agent then receives the result's digest naming it. The minter saves the
+   * same way a live test's output a plan names and any tool result too long for a model request.
+   * The text is already screened for the model. A host without it returns every result whole.
    */
   readonly saveResult?: (path: string, text: string) => Effect.Effect<void, MintFailure>;
   /** Host-selected original attempt evidence. Content is fetched only for a requested indexed path. */

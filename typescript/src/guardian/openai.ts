@@ -37,7 +37,11 @@ import { withTenantPolicy } from "./upstream-policy.js";
 import type { GuardianUsage, Reviewer, ReviewTurn } from "./review.js";
 import type { ModelObserver, ModelObserverFactory } from "../models/model-observer.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
-import { modelFailureMetadata, modelCauseMetadata } from "../models/model-failure.js";
+import {
+  modelFailureMetadata,
+  modelCauseMetadata,
+  overContextWindow,
+} from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
 import type { AgentInputItem, ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
 import type { Cause } from "effect";
@@ -411,13 +415,6 @@ const withheldFromObserver = (
   });
   return through(observe(through(base, restore)), hide);
 };
-
-/**
- * The provider refused the request as over the model's input limit, its context window, by its own
- * code. That is no outage, and the same request fails the same way.
- */
-const overContextWindow = (finite: ModelFailureMetadata) =>
-  finite.code === "context_length_exceeded" || finite.providerCode === "context_length_exceeded";
 
 /** One model call went without a response for the per-call bound, each time it was sent. */
 class ModelCallStalled extends Error {
