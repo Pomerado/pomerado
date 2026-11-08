@@ -15,18 +15,19 @@ const declaresCommitMarks = (commits: readonly unknown[] | undefined) =>
 /**
  * The marks `commitsUnproven` may excuse from having been entered: distinct marks of `commits`
  * after the last one the session entered. A session that entered none has nothing to follow, so
- * it may excuse none, unless it ended in the site's own refusal (`refused`), which may excuse all.
+ * it may excuse none, unless its outcome stands without a save (`fromStart`): it ended in the
+ * site's own refusal, or its read-back showed the request's end state, and then it may excuse all.
  * Undefined when the declaration lists anything else.
  */
 const unprovenMarks = (
   commits: readonly unknown[],
   unproven: readonly unknown[] | undefined,
   entered: ReadonlySet<string>,
-  refused: boolean,
+  fromStart: boolean,
 ): ReadonlySet<unknown> | undefined => {
   if (unproven === undefined) return new Set();
   const last = commits.findLastIndex((name) => typeof name === "string" && entered.has(name));
-  const later = new Set(last === -1 && !refused ? [] : commits.slice(last + 1));
+  const later = new Set(last === -1 && !fromStart ? [] : commits.slice(last + 1));
   return Array.isArray(unproven) &&
     new Set(unproven).size === unproven.length &&
     unproven.every((name) => later.has(name))
@@ -45,6 +46,10 @@ const unprovenMarks = (
  * A session that ended in the site's own refusal (`refused`, which only a host that publishes on
  * one passes) proved that refusal, not a confirmation: every commit step after the last one it
  * entered, all of them when it entered none, may be unproven, and no confirmation is matched.
+ * Given `readBack`, which only a host that publishes on the named step's read-back passes, the
+ * same commit steps may be unproven, and its confirmation is matched as usual. Given
+ * `stopsBeforeSave`, which such a host passes for a recorded write path with no step, the contract
+ * may declare no commit steps at all.
  */
 export const writeContractRefusal = (
   declared:
@@ -60,13 +65,24 @@ export const writeContractRefusal = (
     readonly confirmed: boolean;
     readonly enteredMarks: ReadonlySet<string>;
     readonly refused?: boolean;
+    readonly readBack?: boolean;
+    readonly stopsBeforeSave?: boolean;
   },
 ) => {
   if (declared === undefined) return "confirmation_undeclared" as const;
-  if (!declaresCommitMarks(declared.commits)) return "commit_marks_undeclared" as const;
   const commits = declared.commits ?? [];
+  if (
+    !declaresCommitMarks(declared.commits) &&
+    !(session.stopsBeforeSave === true && commits.length === 0)
+  )
+    return "commit_marks_undeclared" as const;
   const refused = session.refused === true;
-  const excused = unprovenMarks(commits, declared.commitsUnproven, session.enteredMarks, refused);
+  const excused = unprovenMarks(
+    commits,
+    declared.commitsUnproven,
+    session.enteredMarks,
+    refused || session.readBack === true,
+  );
   if (
     excused === undefined ||
     commits.some(
