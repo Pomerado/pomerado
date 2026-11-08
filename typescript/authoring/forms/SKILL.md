@@ -29,10 +29,15 @@ the site can give under the verified query: its results, its explicit empty stat
 choice, its error or refusal (core skill).
 For an in-page update, wait for evidence that the new query has completed. An
 immediate snapshot with an empty title and missing controls can be a transition
-observation; it does not establish an empty business result.
+observation; it does not establish an empty business result. The same holds for content a
+page loads after it appears, such as a calendar's open days or a list of time slots: one read
+before its data arrives can show every day unavailable, so wait until an open day or slot,
+the site's own no-availability message, or other evidence its data has loaded, such as the
+request that fills it completing, shows before reading it.
 
 Derive `getByRole` names from a scoped `locator.ariaSnapshot()` or a retained ARIA
-snapshot. `getAttribute("aria-label")` reads only that DOM attribute, not the
+snapshot. Read the name there before writing the locator, never from the wording such a
+control usually has, such as Next or Continue. `getAttribute("aria-label")` reads only that DOM attribute, not the
 computed accessible name. The name may exist when the attribute is absent because
 it comes from text, labels or `aria-labelledby`. Read the snapshot or use an
 observed `getByRole` name; an `aria-label || innerText` fallback does not compute it.
@@ -72,7 +77,8 @@ larger flow into an intermediate success assertion; the read-back before returni
 (`AGENTS.md`) checks each input the page shows. Reuse the current authorized
 page for missing observations instead of restarting a completed search.
 
-A committed selection can change a control's accessible name. During exploration,
+A committed selection can change a control's accessible name, or another control's, such as
+a Continue button whose name gains the chosen time once a time slot is picked. During exploration,
 reinspect its owned container to learn the committed state. If a later action needs
 that control, locate it by the observed label and value instead of reusing an exact
 name from the empty control; an airport code, for example, may be in the label while
