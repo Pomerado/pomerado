@@ -861,6 +861,31 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       );
   });
 
+  // A first build's step that turned a preselected marketing opt-in off was denied again and again
+  // as a choice none of the caller's sources settled. The rule against such a choice came first
+  // and the safety default only sentences later, so the review read the rule without it.
+  it("names the safety default in the rule against a choice nobody settled", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      const rule = policy
+        .split(/(?<=\.) /u)
+        .find((sentence) => sentence.includes("a choice among the site's options that none"));
+      expect(rule).toContain("a safety default below needs no caller input or answer");
+      expect(policy).toContain(`${safetyDefaultRule} ${requestedChangeSafetyDefault}`);
+    }
+  });
+
   // A sign-in page's notice that signing in accepts the site's terms read as a separate terms
   // acceptance that only the caller could authorize.
   it("tells Guardian that accepting the terms a site requires for the requested action needs no other authority", async () => {

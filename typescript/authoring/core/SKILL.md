@@ -220,7 +220,8 @@ exception: it is optional unless the task can't run without it (below).
   (case, accents, spacing, punctuation, whole words, then the same words with their
   comma-separated parts in another order, so a name with a neighborhood or an airport code in
   brackets, or a station the site lists as "Station, City", still matches, but never a name with
-  words the value lacks), tries the usual other forms of the value's words, such as 5th
+  words the value lacks, except with `extraWords: true` below), tries the usual other forms of
+  the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
   outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
   site's closest options first. A read of a category or term passes `stem: true`
@@ -245,6 +246,14 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- In a product or catalog search, unlike a proper noun, a result whose name has every word of
+  the caller's value, in any order, each as written or in its singular or plural form, matches
+  even with words the value lacks, when it names the item itself rather than something made from
+  it or flavored with it. A value with a number in it gets no such match. Take the closest match
+  first, as `pickValue` ranks matches, then the first in the site's order, since the site's own
+  ranking already weighs relevance. Return the one it used, as the site labels it. With none,
+  throw `InvalidInput` with `field` and `available`, the closest names first. `pickValue` matches
+  such names with `extraWords: true`, and takes the first with `tie: "first"`.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the
@@ -901,9 +910,9 @@ at all, with `readBackMatches(shown, picked) || readBackMatches(picked, shown)` 
 `sameText`, since a page's heading may add words to that name or drop some. Prefer not to fail a
 valid target over punctuation, case, accents, an article such as The, a location suffix or the
 heading's format. This is for the page opened from that result. A picker's selected label still
-compares with `sameText`, and choosing among results follows the proper-noun rule above, since
-this loose match also accepts another record whose name adds or drops a word, such as Bay Diner
-for Big Bay Diner.
+compares with `sameText`, and choosing among results follows the proper-noun rule above, or in a
+product or catalog search the product-search rule above, since this loose match also accepts
+another record whose name adds or drops a word, such as Bay Diner for Big Bay Diner.
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible

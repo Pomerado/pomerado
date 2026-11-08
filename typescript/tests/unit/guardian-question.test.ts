@@ -259,6 +259,34 @@ it("allows a caller-input report whose reason is a limit the tool's input descri
   );
 });
 
+// A requested change asked to leave every checkbox as the page sets it, a preselected marketing
+// opt-in included. The question review read that request as trusted intent to keep the opt-in on:
+// it told the agent asking about turning it off that no question was needed, and reworded the
+// agent's decline until the reason, the safety default, was gone.
+it("tells the question review a requested change's request to keep a safety default on is not trusted intent", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  const rules = reviewPolicyOf(requests[0]).split("\n");
+  const alreadyRequested = rules.find((rule) =>
+    rule.startsWith("- asks permission to do what trusted intent already requests"),
+  );
+  expect(alreadyRequested).toContain(
+    "a requested change's request to keep on an option a safety default turns off doesn't count as trusted intent unless the site refuses to submit with it off",
+  );
+  const blockedReport = rules.find((rule) =>
+    rule.startsWith("- question_review.blockedOutcome is true:"),
+  );
+  expect(blockedReport).toMatch(
+    /build agent itself declined.*That the tool keeps a safety default is a true reason it may state\./u,
+  );
+});
+
 // A repair asked whether the caller's refused value was invalid or real, and the question review
 // reworded it to offer a replacement value. The host keeps a repair's input fixed, so that answer
 // could never apply.
@@ -282,8 +310,8 @@ it("keeps a repair's caller-input question to invalid or real", async () => {
 // A write build's one real write was done and confirmed when it found the site offers one of the
 // requested outputs by email only. Outside maintenance nothing allowed a question about publishing
 // without it, so the build ended blocked with no tool. After a confirmed write only, that question
-// is the caller's decision.
-it("allows asking, after a confirmed write, whether to publish without an output the site does not offer", async () => {
+// is the caller's decision, and so is one about an optional input the site has no field for.
+it("allows asking, after a confirmed write, whether to publish without an output or optional input the site does not offer", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -293,7 +321,7 @@ it("allows asking, after a confirmed write, whether to publish without an output
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason; prefer allow.\n- question_review.blockedOutcome is true:",
+    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional, that neither submitted_call.input, trusted intent nor an earlier answer gives a value for, and the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
   );
 });
 

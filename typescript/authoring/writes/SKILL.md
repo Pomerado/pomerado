@@ -335,7 +335,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `unaskable` (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
   throwing `InvalidInput` with the site's words when it flags one or more fields and every one
   holds the caller's own value, since the caller can fix it, and `OperationFailure` with the site's
-  words otherwise, since the tool filled or left one of them wrong.
+  words otherwise, since the tool filled or left one of them wrong. When the page shows the site's
+  own refusal of that write, or the site answered the commit with an error that is not a server
+  error and a fresh read of the same view you read before the mark shows each field whose sent
+  value differs from that read unchanged, prefer the same put-back and ending as above; never on
+  silence or a missing element.
 - A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
   the commit, for example while the step waits for review. Prefer having the commit step reload
   or re-select it right before its mark, so the site issues a fresh one, and check that one
@@ -670,8 +674,12 @@ is not the write. An unreadable step output never justifies a run either: the wr
 publishes with its output recorded as unavailable.
 
 In a write build, after a verified write, if the site does not offer one output the request
-asks for, prefer asking the caller once with `request_input` whether to publish the tool with
-that output null and a reason field, rather than ending blocked; never invent the value.
+asks for, or has no field for one input the request marks optional and the input the write
+session ran leaves unset, and lacks nothing else the request names, prefer asking the caller
+once with `request_input` whether to publish the tool with that output null and a reason field,
+or without that input and with the tool's description saying the site has no field for it,
+rather than ending blocked; never invent the value, and prefer finishing the write's read-back
+before you ask, so Guardian sees the verified write when it reviews the question.
 
 After a `not_published`, live `act` steps are open again while the write session is still
 open (a commit that recorded its confirmation stays done), on the same browser, still signed

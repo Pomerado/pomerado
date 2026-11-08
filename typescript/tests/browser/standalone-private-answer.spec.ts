@@ -523,14 +523,15 @@ test("a run's replay asks the private answer on every run, from the question its
 });
 
 // A run reads a recipe's recorded rejection markers only as shown or not: on the screen's own
-// origin, in the page or a frame on that origin, never in another site's frame or on a page the
-// screen isn't on, and never through a selector that chains into other content.
+// origin, in the page, a frame on that origin or the sign-in's own frame on another host of the
+// site, never in another site's frame or on a page the screen isn't on, and never through a
+// selector that chains into other content.
 test("the local rejection marker check reads only whether a marker shows, on the screen's own origin", async ({ page }) => {
   const site = "https://bank.example.test";
   await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
-    '<p id="password-error">Wrong password</p><p id="code-error" hidden>Wrong code</p><iframe id="own" src="https://bank.example.test/frame"></iframe><iframe id="other" src="https://other.example.test/frame"></iframe><iframe id="sign-in" src="https://login.bank.example.test/frame"></iframe>' }));
+    '<p id="password-error">Wrong password</p><p id="code-error" hidden>Wrong code</p><iframe id="own" src="https://bank.example.test/frame"></iframe><iframe id="other" src="https://other.test/frame"></iframe><iframe id="sign-in" src="https://login.bank.example.test/frame"></iframe>' }));
   await page.route(`${site}/frame`, (route) => route.fulfill({ contentType: "text/html", body: '<p id="frame-error">Wrong answer</p>' }));
-  await page.route("https://other.example.test/frame", (route) => route.fulfill({ contentType: "text/html", body: '<p id="other-error">Wrong answer</p>' }));
+  await page.route("https://other.test/frame", (route) => route.fulfill({ contentType: "text/html", body: '<p id="other-error">Wrong answer</p>' }));
   await page.route("https://login.bank.example.test/frame", (route) => route.fulfill({ contentType: "text/html", body: '<p id="sign-in-error">Wrong answer</p>' }));
   await page.goto(`${site}/login`);
   await page.frameLocator("#own").locator("#frame-error").waitFor();
@@ -550,11 +551,11 @@ test("the local rejection marker check reads only whether a marker shows, on the
   expect(await shows("#code-error")).toBe(false);
   expect(await shows("#frame-error")).toBe(true);
   expect(await shows("#other-error")).toBe(false);
+  expect(await shows("#sign-in-error")).toBe(true);
   // A screen on another origin of the site, or off the site, shows no marker on this page, even
   // in a frame on the screen's origin.
   expect(await shows("#password-error", "https://login.bank.example.test/login")).toBe(false);
   expect(await shows("#sign-in-error", "https://login.bank.example.test/login")).toBe(false);
-  expect(await shows("#sign-in-error")).toBe(false);
   expect(await shows("#password-error", "https://elsewhere.test/login")).toBe(false);
   // A recorded popup that is gone shows none.
   expect(await shows("#password-error", `${site}/login`, { opener: "primary", origin: site })).toBe(false);

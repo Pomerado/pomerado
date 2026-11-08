@@ -10,7 +10,7 @@ export interface PickerChoice {
 }
 
 /** How closely the winning option matched, best first. */
-export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "stem"] as const;
+export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "stem", "extraWords"] as const;
 export type PickerRank = (typeof pickerRanks)[number];
 
 export type PickerRanking =
@@ -40,19 +40,24 @@ export type PickerRanking =
  * words pair when they are equal, or when both are Latin letters only and the shorter, of five or
  * more letters, is the whole start of the longer, such as Dentist and Dentistry or Dentists and
  * Dentist, but not Employee and Employer, County and Country, Physician and Physics, Adam and
- * Adams, or UK and Ukraine. The value never matches by stem. A name beats the value at each rank.
+ * Adams, or UK and Ukraine. Then, only with `options.extraWords` and when no spelling holds a
+ * digit, a name holding every word of a spelling, in any order and among words the spelling lacks,
+ * each as written or in its singular or plural form, plus or minus a final s or es, or with y for
+ * ies (`extraWords`: Green Seedless Grapes for green grape, but not Lemonade for lemon), as a
+ * product search asks for. The value never matches by stem. A name beats the value at each rank.
  * Options at the first rank that matches decide: one option (by key) is picked, or reported
  * disabled when every copy of it is; two or more are ambiguous, never guessed. A weaker rank never
  * overrules a stronger one, so a disabled exact match is not replaced by a looser one. Without
- * `options.leading`, no option ranks `leading`; without `options.stem`, none ranks `stem`. With
+ * `options.leading`, no option ranks `leading`; without `options.stem`, none ranks `stem`; without
+ * `options.extraWords`, none ranks `extraWords`. With
  * `options.spellings`, such as `spellingsOf`, each rank also tries the other written forms of a
  * spelling against option names, never values, once the spellings as given match nothing at that
  * rank: so Fifth Avenue for 5th Avenue matches as a name before any option holding the same words
  * in another order, while a spelling that already matches at a rank is never overruled by one of
  * its forms. As whole words, a place's other form counts only after the value's other words and
  * where it ends the name or one of its parts, so Ontario never matches Turn on and Example City,
- * Oregon never matches Example City or Town. Each name and each list of spellings is read once per
- * call.
+ * Oregon never matches Example City or Town; at `extraWords`, only the forms that are no place
+ * count. Each name and each list of spellings is read once per call.
  *
  * It is pure and self-contained: the page code of `pickerCode` embeds this same function with
  * `fold` set to `foldChoiceText`.
@@ -64,6 +69,7 @@ export const rankChoices = (
   options: {
     readonly leading?: boolean;
     readonly stem?: boolean;
+    readonly extraWords?: boolean;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
@@ -126,7 +132,14 @@ export const rankChoices = (
     const [short, long] = want.length <= have.length ? [want, have] : [have, want];
     return short.length >= 5 && long.startsWith(short);
   };
+  // At `extraWords`, two words pair when they are equal, or when one is the other plus s or es, or
+  // with y for ies.
+  const plural = (one: string, other: string) =>
+    other === one + "s" || other === one + "es" || (one.endsWith("y") && other === one.slice(0, -1) + "ies");
+  const pairsAsNoun = (want: string, have: string) => want === have || plural(want, have) || plural(have, want);
   const spellings = wanted.map(squash).filter((spelling) => spelling !== "");
+  // A value with a number in it, such as a size or a count, never matches with extra words.
+  const numbered = spellings.some((spelling) => /\p{N}/u.test(spelling));
   // The other written forms of the spellings, such as Fifth for 5th, which only names match.
   const formsOf = (places: "end" | "after-words" | "never") => [
     ...new Set(
@@ -238,11 +251,25 @@ export const rankChoices = (
       },
       true,
     ],
+    [
+      "extraWords",
+      // Every word of the spelling, in any order, among words it lacks.
+      (choice, list) => {
+        if (options.extraWords !== true || numbered) return false;
+        const wants = wordLists(list);
+        return choice.names.some((name) => {
+          const have = named.words(name);
+          return wants.some((want) => want.every((word) => have.some((each) => pairsAsNoun(word, each))));
+        });
+      },
+      true,
+    ],
   ];
   for (const [rank, test, byName] of tests) {
     // At each rank the spellings as given decide first; their other forms only when they match
     // nothing there, and never an option's value.
-    const forms = rank === "words" ? wordOthers : others;
+    // At `extraWords`, a place's other form is never tried, since that rank reads words anywhere.
+    const forms = rank === "words" ? wordOthers : rank === "extraWords" ? plainOthers : others;
     const lists = byName && forms.length > 0 ? [spellings, forms] : [spellings];
     for (const list of lists) {
       const matched = choices.flatMap((choice, index) => (test(choice, list) ? [index] : []));

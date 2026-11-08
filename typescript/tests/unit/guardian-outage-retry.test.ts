@@ -10,6 +10,7 @@ import type {
   Reviewer,
   ReviewRetry,
 } from "../../src/guardian/review.js";
+import type { GuardianSessionOptions } from "../../src/guardian/session.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -432,8 +433,14 @@ const onTestClock = <A, E>(effect: Effect.Effect<A, E>) =>
     }).pipe(Effect.provide(TestContext.TestContext)),
   );
 
-/** Guardian's own model call failing every time with the provider's error `providerError`. */
-const failingModelReview = async (providerError: () => Error) => {
+/**
+ * Guardian's own model call failing every time with the provider's error `providerError`, in a
+ * conversation kept across reviews when `continuity` is given.
+ */
+const failingModelReview = async (
+  providerError: () => Error,
+  continuity?: GuardianSessionOptions,
+) => {
   let calls = 0;
   const retried: unknown[] = [];
   const record: GuardianDiagnostics["emit"] = (name, details) =>
@@ -460,6 +467,7 @@ const failingModelReview = async (providerError: () => Error) => {
             retry: guardianOutageRetry,
           },
           { emit: record, retainModelTranscript: record, retainScreenedSource: () => Effect.void },
+          continuity,
         ).review(pending, readSource),
       ),
     );
@@ -482,6 +490,30 @@ it("fails a review over the model's context window once, without reviewing again
   expect(review.result).toMatchObject({ _tag: "Left", left: { code: "InputTooLarge" } });
   // The request is over the model's input limit, so the outage retry neither waits nor sends it
   // again.
+  expect(review.calls).toBe(1);
+  expect(review.retried).toEqual([]);
+});
+
+it("fails a review whose encrypted item the provider cannot read back once, without reviewing again", async () => {
+  // In a conversation kept across reviews, as a mint's are.
+  const review = await failingModelReview(
+    () =>
+      Object.assign(new Error("400 Synthetic encrypted content could not be verified"), {
+        name: "BadRequestError",
+        status: 400,
+        code: "invalid_encrypted_content",
+      }),
+    {},
+  );
+  expect(review.result).toMatchObject({
+    _tag: "Left",
+    left: {
+      code: "InputTooLarge",
+      failureDetail: { context: { providerCode: "invalid_encrypted_content", httpStatus: 400 } },
+    },
+  });
+  // The provider refuses the same item each time it is sent again, so the outage retry neither
+  // waits nor sends it again.
   expect(review.calls).toBe(1);
   expect(review.retried).toEqual([]);
 });
