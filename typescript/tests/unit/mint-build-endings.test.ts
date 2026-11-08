@@ -1626,11 +1626,11 @@ const declinedExample = {
 
 /**
  * A build that signs in through `steps`, one authenticate each, then sends `report`. A step that is
- * a failure fails its authenticate before its dispatch fence, and `{ afterFence }` fails it past
- * the fence.
+ * a failure fails its authenticate before its dispatch fence, `{ afterFence }` fails it past the
+ * fence, and a function gives the step's result when the step runs.
  */
 const signInThenDecline = (
-  steps: readonly (object | MintFailure)[],
+  steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
   report: {
     readonly reason: string;
@@ -1647,7 +1647,8 @@ const signInThenDecline = (
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
-        const step = steps[executions++] ?? submittedScreen;
+        const next = steps[executions++] ?? submittedScreen;
+        const step = typeof next === "function" ? next() : next;
         if (step instanceof MintFailure) return Effect.fail(step);
         const dispatched = beforeDispatch({ reviewId: "review_sign_in", action: "authentication" });
         return "afterFence" in step && step.afterFence instanceof MintFailure
@@ -1734,21 +1735,46 @@ it.each([
   },
 );
 
-// A sign-in that confirmed still stands when a later sign-in goes unchecked and nothing since
-// showed the site signed out, so the site gap the build then reports keeps its own reason.
-it("keeps site_lacks_capability after a confirmed sign-in and a later one nothing checked", async () => {
-  const explanation = "The signed-in account pages offer no way to do this task.";
+// A sign-in that confirmed still stands when a later sign-in goes unchecked, so the site gap the
+// build then reports keeps its own reason, until something shows the site signed out: a signed-in
+// check that did not confirm, a session the host saw lost, or a browser the host replaced, which
+// starts on a new, empty profile.
+let browserReplaced = false;
+it.each([
+  { after: "nothing else", steps: [submittedScreen], ends: { blocked: { reason: "site_lacks_capability" } } },
+  {
+    after: "a failed signed-in check",
+    steps: [signInCheck("failed"), submittedScreen],
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a session the host saw lost",
+    steps: [submittedScreen],
+    overrides: { signInSessionLoss: () => "session_not_kept" as const },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a browser the host replaced",
+    steps: [
+      () => {
+        browserReplaced = true;
+        return submittedScreen;
+      },
+    ],
+    overrides: {
+      entryNavigation: () =>
+        browserReplaced ? { state: "replaced" as const, reason: "recovery" } : undefined,
+    },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+])("decides a site_lacks_capability report after a confirmed sign-in, $after and an unchecked one", async (row) => {
+  browserReplaced = false;
   const f = await signInThenDecline(
-    [submittedScreen, signInCheck("authenticated"), submittedScreen],
-    {},
-    { reason: "site_lacks_capability", explanation },
+    [submittedScreen, signInCheck("authenticated"), ...row.steps],
+    row.overrides,
+    { reason: "site_lacks_capability", explanation: "The signed-in pages offer no way to do this." },
   );
-  const outcome = await f.run();
-  expect(outcome).not.toHaveProperty("recoveryReason");
-  expect(outcome).toMatchObject({
-    blocked: { reason: "site_lacks_capability", explanation },
-    stopReason: "site_lacks_capability",
-  });
+  expect(await f.run()).toMatchObject(row.ends);
 });
 
 // A report rewritten to sign-in unavailable still says why the build stopped. Its caller reads the

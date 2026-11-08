@@ -1342,12 +1342,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             }
           : notice;
       };
-      const changedEntryNotice = (): { readonly hostEntryNavigation?: object } => {
+      /** The host's entry state now, as a key that changes whenever its notice would. */
+      const entryState = () => {
         const current = dependencies.entryNavigation?.();
-        const state =
-          current === undefined
-            ? undefined
-            : `${current.state}:${"outcome" in current ? current.outcome : ""}:${"reason" in current ? current.reason : ""}:${"page" in current ? (current.page ?? "") : ""}:${"instruction" in current ? (current.instruction ?? "") : ""}`;
+        return current === undefined
+          ? undefined
+          : `${current.state}:${"outcome" in current ? current.outcome : ""}:${"reason" in current ? current.reason : ""}:${"page" in current ? (current.page ?? "") : ""}:${"instruction" in current ? (current.instruction ?? "") : ""}`;
+      };
+      const changedEntryNotice = (): { readonly hostEntryNavigation?: object } => {
+        const state = entryState();
         if (state === undefined || state === shownEntryState) return {};
         const notice = entryNotice();
         shownEntryState = state;
@@ -1405,9 +1408,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * the site signed out: no signed-in check that did not confirm, no marker check that found
        * the site not signed in, and no sign-in the site rejected or that failed leaving it signed
        * out. While it holds, a later sign-in that never confirmed leaves the build counted as
-       * signed in. A takeover keeps it, and a move to another site clears it.
+       * signed in. A move to another site, a login change and a browser the host replaced clear
+       * it, and a takeover starts without it.
        */
-      let confirmedSignInStands = recovered?.confirmedSignInStands === true;
+      let confirmedSignInStands = false;
       /**
        * Updates `signInUnconfirmed` and `confirmedSignInStands` once an authenticate ends, by what
        * it did and which sign-in `step` it ran; a confirmed sign-in also clears
@@ -4480,6 +4484,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           // sign-in runs until a later update asks for one, which the owner then confirmed.
           for (const change of accepted.changes)
             if (change.setting === "login") {
+              // Another login, or none, is no longer the one that confirmed.
+              confirmedSignInStands = false;
               if (change.change === "signed_out") {
                 signInAbandoned = true;
                 unresolvedSignIn = undefined;
@@ -5795,6 +5801,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       )
                         actRefusalsInRow++;
                     }
+                    // A browser the host replaced since the minter last heard of it starts on a
+                    // new, empty profile; a sign-in this step confirmed on it still counts.
+                    if (
+                      dependencies.entryNavigation?.()?.state === "replaced" &&
+                      entryState() !== shownEntryState
+                    )
+                      confirmedSignInStands = false;
                     if (submitted.purpose === "authenticate") {
                       noteSignIn(result, crossedDispatchBoundary, submitted.signInStep);
                       // A screen the host refused at its destination check comes back as the
@@ -8055,7 +8068,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(loginDeclined === undefined ? {} : { loginDeclined }),
         ...(signInAbandoned ? { signInAbandoned: true as const } : {}),
         ...(signInUnconfirmed ? { signInUnconfirmed: true as const } : {}),
-        ...(confirmedSignInStands ? { confirmedSignInStands: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,
