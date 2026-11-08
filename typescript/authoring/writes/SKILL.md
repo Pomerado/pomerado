@@ -264,8 +264,7 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   small and read the actual state after each submission. Small steps never split a choice
   from the control that carries it to the next page, such as a time slot and its Continue
   button: pick it and click that control in the same step, since a page may keep the
-  choice only in its own state and drop it between steps. When that control is the
-  commit, make the pick and its read-back in the commit step, before its mark. On multi-step forms, a
+  choice only in its own state and drop it between steps. On multi-step forms, a
   button named Continue, Next or Save may save a draft, persist that page, or finish
   the task immediately; its label does not establish that another review or final
   submit follows. A step that saves or advances a form page is part of the task,
@@ -287,7 +286,7 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `confirmed: false` with a message in the caller's words, keep those fields and words in
   the refusal beside `status` and `reason`, with the site's own words still in
   `site_message`, and choose the `reason` code yourself from what
-  the site shows, such as `no_availability`: never put the caller's words in `reason`, and
+  the site shows, such as `no_availability`, and list it in the tool's description: never put the caller's words in `reason`, and
   never ask the caller for a code. Return it only from what the site shows in this run, never from a rule
   copied into the tool's own checks, and never from a challenge, block, access-denied,
   error or maintenance page, which is a failure (`OperationFailure`). After a commit mark,
@@ -390,8 +389,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   answer of that click's `waitForOutcomeResult` and the page. It applies the commit-response and
   page-error rules above in one place, so prefer it over writing your own status and body
   checks, and call `verified()` only when it reports done. Confirm in that commit step
-  itself, so it is the confirming step: a later step only to confirm is the fallback above,
-  for a commit step that returned without `verified()`.
+  itself, so it is the confirming step: a later step that only confirms, by the site's own proof below, is the
+  fallback for a commit step that returned without `verified()`.
 - Read the site's own proof instead only when the commit request can't confirm the write:
   no such request went out; it failed, got no answer or returned an error status; its body
   shows an error, or can't be read on an endpoint that reports errors with a 200, such as
