@@ -633,7 +633,7 @@ export type AutofillStepReport =
        * otherwise (`runReplayStep`).
        */
       readonly closedInPlace?: true;
-      /** What caught a `blocked` click, by its markup's own names, never its text or a value. */
+      /** What caught a `blocked` click: tag, role and `controls`, whose names the host screens. */
       readonly blockedBy?: typeof CoveringElement.Type;
       /** The primary page after the submit settled, byte-exact like every URL. */
       readonly url: string;
