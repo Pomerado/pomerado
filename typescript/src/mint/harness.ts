@@ -1053,18 +1053,20 @@ const siteRefusalPublication =
   "If the site said in its own words that it declines the example's valid inputs before any save (not a field error on your fill, a failed page or a challenge), such as a product it does not offer for these facts, that no is the example's answer: the act step returns it right after reading it, before entering any commit mark, as a refusal its output schema declares (`status` `\"refused\"`, a listed `reason` and `site_message`). Compose the whole path the request asks for, with that refusal in its output schema, list every save step in write.commits and again in write.commitsUnproven each one the session never reached, and call finish_build naming that act step. Keep the caller's facts as given.";
 
 /**
- * What a minter hears, on a host that publishes on a read-back (`publishOnReadBack`), when its
- * session entered none of the save steps because the page already showed the request's end state.
+ * What a minter hears, on a host that publishes on a read-back (`publishOnReadBack`), about a save
+ * step the session never reached because the page already showed the request's end state. It names
+ * only a step that saves: one that saves nothing leaves the path instead.
  */
 const readBackPublication =
-  "If the session's steps entered none because the page already showed the request's end state, every commit step goes in commitsUnproven as well as in commits; then call finish_build again naming the act step whose read-back confirmed that state.";
+  "A step that saves on the site, after those the session entered, and never ran because the page already showed the request's end state, stays in writePath and write.commits and goes in write.commitsUnproven too; then call finish_build naming the act step whose read-back confirmed that state.";
 
 /**
  * What a `write_path_unfinished` refusal asks of the minter. A read-back that confirms the write
  * settles only the marks a lost step streamed, so marks no step entered or streamed
- * (`writePathUnreached`) are named apart with the ways out that remain, and, on a host that
- * publishes on a read-back, how a session whose page already showed the request's end state
- * publishes. The other marks, all of them when the refusal does not say, keep the read-back advice.
+ * (`writePathUnreached`) are named apart with the ways out that remain. When each of them comes
+ * after the session's entered marks on a host that publishes on a read-back (`publishesOnReadBack`),
+ * it says too how they stand when the page already showed the request's end state. The other
+ * marks, all of them when the refusal does not say, keep the read-back advice.
  */
 const writePathUnfinishedInstruction = (
   error: Pick<MintFailure, "writePathMarks" | "writePathUnreached" | "publishesOnReadBack">,
@@ -1082,12 +1084,8 @@ const writePathUnfinishedInstruction = (
     ...(unreached.length === 0
       ? []
       : [
-          `No step entered ${unreached.join(", ")}, so no read-back settles ${unreached.length === 1 ? "it" : "them"}.`,
-          ...(error.publishesOnReadBack === true
-            ? [
-                `When the page already shows the request's end state, keep ${unreached.length === 1 ? "that step" : "those steps"} on the path, declare ${unreached.length === 1 ? "it" : "them"} in write.commitsUnproven as well as write.commits, and call finish_build naming the act step whose read-back confirmed that state.`,
-              ]
-            : []),
+          `No step is recorded entering ${unreached.join(", ")}, so no read-back settles ${unreached.length === 1 ? "it" : "them"}.`,
+          ...(error.publishesOnReadBack === true ? [readBackPublication] : []),
         ]),
     "Then run only steps that never ran, on the page as it stands, and call finish_build naming the step that confirmed the path's end. Never redo a step that finished or may have. When the page shows the path must change, such as a step the site skips for this input or one that saves nothing, declare the revised path in writePath on the next act step. When the site refuses to go on, or nothing can settle a mark, end with report_blocked.",
   ].join(" ");
@@ -6858,7 +6856,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       : error.reason === "commit_marks_undeclared"
                         ? "Not published: the composed script names none of its commit steps. List every step that can change the site (an autosave, a saved form step, the final submit) in order as write.commits, such as commits: ['save-address', 'place-order'], using short lowercase hyphenated names, and mark each with the context's enteringCommit(name) right before the execute call that can send it (an HTTP implementation calls journal.enteringCommit(name) before that request). Opening a form and typing into its fields are not commit steps unless the site's requests show they save the caller's change; a lookup, suggestion, validation or analytics request saves nothing. Then call finish_build again with the same executionId."
                         : error.reason === "commit_marks_unentered"
-                          ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnReadBack === true ? `${readBackPublication} ` : ""}${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : error.publishesOnReadBack === true ? "If they entered none for any other reason, it cannot publish" : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
+                          ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnReadBack === true ? `${readBackPublication} ` : ""}${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : error.publishesOnReadBack === true ? "If the session's steps entered none for any other reason, it cannot publish" : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
                           : error.reason === "confirmation_unrecorded"
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"

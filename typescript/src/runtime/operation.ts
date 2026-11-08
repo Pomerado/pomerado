@@ -33,8 +33,9 @@ import { withListHost, type ListHost } from "./list-host.js";
  * `commitsUnproven` names commit steps of `commits` after the last one the build's write session
  * entered, which the session never reached, as when the caller's facts ran out before them, such
  * as `["place-order"]` after a session that saved the address. Publication accepts them unentered
- * only after a step the session entered, and reports them as unproven until a run reaches them.
- * Runs ignore it.
+ * only after a step the session entered, or, on a host that publishes on a read-back, from the
+ * first step when the session's read-back showed the request's end state already in place, and
+ * reports them as unproven until a run reaches them. Runs ignore it.
  */
 export interface WriteDeclaration {
   readonly confirmation: "message" | "readback" | "unverifiable";

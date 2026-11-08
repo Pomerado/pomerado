@@ -540,14 +540,14 @@ export const publicationWriteOutcomePolicy =
 
 /**
  * How the publication review judges a write against the path its first act step declared and an
- * execution review allowed by `publicationWriteOutcomePolicy` before anything was sent: a path with
- * no step, and steps of it the session never entered and the script declares unproven, are gaps
- * the read-back of the step named for publication must show stand. A save the site made by itself
- * outside the session's marked steps is a gap too: the execution policy's rule that state the site
- * creates by itself, holding nothing the caller entered, is no write leaves such a save a write.
+ * execution review allowed by `publicationWriteOutcomePolicy` before anything was sent. A step of
+ * the path the session never reached, declared unproven, stands on the read-back of the step named
+ * for publication. A save the site made by itself outside the session's marked steps is disclosed,
+ * not marked: unlike state the site creates holding nothing the caller entered, which the
+ * execution policy counts as no write, such a save is a write.
  */
 export const publicationWritePathPolicy =
-  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each step of the path except a setup step, entering its mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path other than a setup step, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding. A path with no step, for a request that ends before any save, and a step of the path that no session step entered, declared in write.commitsUnproven, are disclosed gaps, not findings, when the read-back of the step named for publication shows what ends names already in place. A save the site made by itself outside the session's marked steps is a gap the tool's description discloses, not a finding that asks for a new commit mark.";
+  "trusted_execution_context.writePath, when present, is the write path the host recorded before the session sent anything: each step that saves or submits on the site, by its commit mark, in order, and in ends what the last step leaves the caller with. Judge the composed script against it, and never ask for another session; the rule above still decides whether its outcome satisfies the request. The script must run each step of the path except a setup step, entering its mark, and return what ends names, as the session's steps, output and captures show; one that leaves out a step of the path other than a setup step, or returns before its last step other than by a declared refusal before its first commit mark, is a confirmation finding. A step of the path that no session step entered, declared in write.commitsUnproven, is no finding when the read-back of the step named for publication shows what ends names already in place. A save the site made by itself outside the session's marked steps is no finding either: the tool's description discloses it, and it needs no commit mark.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =

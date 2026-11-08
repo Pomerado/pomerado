@@ -584,8 +584,9 @@ input, output, write: { confirmation: "readback", commits: ["place-order"] } }, 
 (or `"unverifiable"` when the site shows neither a confirmation nor the saved state),
 marking the same commit steps as the session. A script declared `unverifiable` cannot call
 `verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
-unless its session's `writePath` has no steps, and one that declares a mark no `act` step
-of the session entered is refused as `commit_marks_unentered`. If the declaration names the wrong marks, correct it to
+unless, on a host that publishes on a read-back, its session's `writePath` has no steps and
+the named step read the filled form back, and one that declares a mark no `act` step of the
+session entered is refused as `commit_marks_unentered`. If the declaration names the wrong marks, correct it to
 match the marks the session actually entered. It declares every mark of the session's
 recorded `writePath`, in order: one that leaves a mark out is refused as
 `write_path_undeclared`, and a publication before the session entered every mark of the

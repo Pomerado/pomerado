@@ -217,11 +217,11 @@ export const writePathRefusal = (
  * as unentered or entered only by a step that lost its result: the session runs on until they are,
  * and a confirmation the step recorded does not end it. A read-back settles only the marks a lost
  * step streamed (`sessionEnteredMarks`), never one no step entered; the host's receipt does not say
- * which is which, so the note gives both rules.
+ * which is which, so the note gives both rules. The refusal at publication tells them apart.
  */
 export const writePathNotice = (remaining: readonly string[], confirmed: boolean) => ({
   remaining,
-  instruction: `${confirmed ? "This step's confirmation does not end the write session. " : ""}The session's recorded write path has commit marks not yet settled: ${remaining.join(", ")}. The session runs until every one is settled. Read back first where a receipt says so: a read-back that confirms the write settles the marks a lost step entered, never one no step entered. Then run only steps that never ran, on the page as it stands; never redo one that finished or may have. When the page shows the path must change, such as a step the site skips for this input or one that saves nothing, declare the revised path in writePath on the next act step. When the page already shows the request's end state, call finish_build naming the act step whose read-back confirmed it.`,
+  instruction: `${confirmed ? "This step's confirmation does not end the write session. " : ""}The session's recorded write path has commit marks not yet settled: ${remaining.join(", ")}. The session runs until every one is settled. Read back first where a receipt says so: a read-back that confirms the write settles the marks a lost step entered, never one no step entered. Then run only steps that never ran, on the page as it stands; never redo one that finished or may have. When the page shows the path must change, such as a step the site skips for this input or one that saves nothing, declare the revised path in writePath on the next act step.`,
 });
 
 /** Whether a step of the session recorded a confirmation. */
@@ -297,11 +297,14 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  * publication recorded a `readback` confirmation, two outcomes that stand without a save may
  * publish on it, each still a write the publication review judges against that read-back. A
  * recorded write path with no step, for a request that ends before any save, publishes a contract
- * that declares no commit steps, and the result says so as `stopsBeforeSave`. And marks the
+ * that declares no commit steps while no step entered or streamed a mark, and the result says so
+ * as `stopsBeforeSave`. And marks the
  * session never entered, as when the site already showed the request's end state, may be named in
  * `commitsUnproven`: every commit step after the last one the session entered, all of them when it
- * entered none, and so may marks of the path no step entered or streamed, which the write path
- * check then leaves to the contract. A host that leaves it unset refuses both as before.
+ * entered none, and so may marks of the path no step entered or streamed after the last mark of
+ * the path it entered, which the write path check then leaves to the contract. With a recorded
+ * path, a session that entered none may leave unproven only marks of that path. A host that leaves
+ * it unset refuses both as before.
  */
 export const checkWriteSession = <
   Extracted extends {
@@ -368,14 +371,9 @@ export const checkWriteSession = <
       reason: NonNullable<MintFailure["reason"]>,
       writePathMarks?: readonly string[],
       writePathUnreached?: readonly string[],
+      publishesOnReadBack = check.publishOnReadBack === true,
     ) =>
-      sessionRefusal(
-        reason,
-        writePathMarks,
-        refusable,
-        check.publishOnReadBack === true,
-        writePathUnreached,
-      );
+      sessionRefusal(reason, writePathMarks, refusable, publishesOnReadBack, writePathUnreached);
     const siteRefusal = refusable ? step.refused : undefined;
     if (siteRefusal === undefined && !sessionSentWrite(session))
       return yield* refuse("write_not_submitted");
@@ -384,24 +382,44 @@ export const checkWriteSession = <
     // path's later marks stay unentered.
     const unrun =
       siteRefusal === undefined ? writePathRemaining(check.writePath, enteredMarks) : [];
-    // No read-back settles a mark no step entered or streamed; on a read-back the contract may
-    // declare such marks unproven.
+    // No read-back settles a mark no step entered or streamed. On a read-back, the contract may
+    // declare such marks unproven when each comes after the last mark of the path the session
+    // entered, all of them when it entered none, as `writeContractRefusal` takes them; an earlier
+    // one, as a step the site skipped, leaves the path to revise.
     const unreached = unreachedMarks(unrun, session.steps);
-    if (unrun.length > 0 && !(readBack && unreached.length === unrun.length))
-      return yield* refuse("write_path_unfinished", unrun, unreached);
+    const pathMarks = check.writePath?.steps.map((pathStep) => pathStep.commit) ?? [];
+    const lastEntered = pathMarks.findLastIndex((name) => enteredMarks.has(name));
+    const escapes =
+      check.publishOnReadBack === true &&
+      unreached.length > 0 &&
+      unreached.every((name) => pathMarks.indexOf(name) > lastEntered);
+    if (unrun.length > 0 && !(readBack && escapes && unreached.length === unrun.length))
+      return yield* refuse("write_path_unfinished", unrun, unreached, escapes);
     const extracted = yield* check.extract;
     const declared = extracted.contract.write?.confirmation;
     const declaredUnproven = new Set(extracted.contract.write?.commitsUnproven ?? []);
     const owed = unrun.filter((name) => !declaredUnproven.has(name));
     if (owed.length > 0) return yield* refuse("write_path_unfinished", owed, owed);
     const commits = extracted.contract.write?.commits ?? [];
-    // A path with no step, for a request that ends before any save, publishes saving nothing.
-    const stopsBeforeSave = readBack && check.writePath?.steps.length === 0;
+    // A path with no step, for a request that ends before any save, publishes saving nothing, and
+    // only while no step entered or streamed a mark.
+    const stopsBeforeSave =
+      readBack &&
+      check.writePath?.steps.length === 0 &&
+      session.steps.every(
+        (entry) => entry.enteredMarks.length === 0 && (entry.streamedMarks ?? []).length === 0,
+      );
     const refusal = writeContractRefusal(extracted.contract.write, extracted.inputDecodes, step, {
       confirmed: sessionConfirmed(session.steps),
       enteredMarks,
       ...(siteRefusal === undefined ? {} : { refused: true }),
-      ...(readBack ? { readBack: true } : {}),
+      // With a recorded path, a read-back leaves unproven from the start only steps of that path,
+      // which Guardian reviewed before anything was sent.
+      ...(readBack &&
+      (check.writePath === undefined ||
+        [...declaredUnproven].every((name) => typeof name === "string" && pathMarks.includes(name)))
+        ? { readBack: true }
+        : {}),
       ...(stopsBeforeSave ? { stopsBeforeSave: true } : {}),
     });
     if (refusal !== undefined || declared === undefined)

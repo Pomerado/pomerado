@@ -669,12 +669,13 @@ describe("a write build's write path", () => {
         writePath: WritePath,
         write: Parameters<typeof contract>[0] & { readonly commitsUnproven?: readonly string[] },
         publishOnReadBack?: true,
+        steps: readonly WriteSessionMarks[] = [readBack],
       ) => {
         const extracted = { contract: { write }, inputDecodes: true };
         const result = Effect.runSyncExit(
           checkWriteSession({
-            session: { steps: [readBack] },
-            step: readBack,
+            session: { steps },
+            step: steps.at(-1) ?? readBack,
             extract: Effect.succeed(extracted),
             writePath,
             ...(publishOnReadBack === undefined ? {} : { publishOnReadBack }),
@@ -734,6 +735,62 @@ describe("a write build's write path", () => {
         writePathUnreached: ["archive-listing"],
       });
       expect(before).not.toHaveProperty("publishesOnReadBack");
+      // Only a read-back stands for the save: a step named for publication that read a message does not.
+      const message: WriteSessionMarks = { enteredMarks: [], confirmation: "message" };
+      expect(
+        reason(publish(filled, { confirmation: "message", commits: [] }, true, [message]).result),
+      ).toBe("commit_marks_undeclared");
+      expect(
+        reason(
+          publish(
+            archive,
+            {
+              confirmation: "message",
+              commits: ["archive-listing"],
+              commitsUnproven: ["archive-listing"],
+            },
+            true,
+            [message],
+          ).result,
+        ),
+      ).toBe("write_path_unfinished");
+      // A step the site skipped before an entered one is no escape: the path is revised instead.
+      const skipped = failure(
+        publish(
+          path("page-one", "page-two", "submit"),
+          {
+            confirmation: "readback",
+            commits: ["page-one", "page-two", "submit"],
+            commitsUnproven: ["page-two"],
+          },
+          true,
+          [{ enteredMarks: ["page-one"] }, { enteredMarks: ["submit"] }, readBack],
+        ).result,
+      );
+      expect(skipped).toMatchObject({
+        reason: "write_path_unfinished",
+        writePathUnreached: ["page-two"],
+      });
+      expect(skipped).not.toHaveProperty("publishesOnReadBack");
+      // A path with no step stops before any save only while no step entered a mark, and leaves
+      // no other save step unproven.
+      expect(
+        reason(
+          publish(filled, { confirmation: "readback", commits: [] }, true, [
+            { enteredMarks: ["submit"] },
+            readBack,
+          ]).result,
+        ),
+      ).toBe("commit_marks_undeclared");
+      expect(
+        reason(
+          publish(
+            filled,
+            { confirmation: "readback", commits: ["submit"], commitsUnproven: ["submit"] },
+            true,
+          ).result,
+        ),
+      ).toBe("commit_marks_unentered");
     });
 
     it("publishes the whole path, and a session with no recorded path as before", () => {
