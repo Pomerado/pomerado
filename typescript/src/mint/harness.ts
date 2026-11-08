@@ -667,6 +667,14 @@ const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boo
   refusal.source === "source_rule" ||
   (refusal.source === "sign_in_step" && !beforeSignIn);
 /**
+ * Whether a failed sign-in left the site signed out, as its own result tells the agent: the site
+ * rejected the login, or the failure says the site is not signed in. Unknown otherwise.
+ */
+const signInLeftSignedOut = (error: MintFailure) =>
+  error.code === "CredentialsRejected" ||
+  (error.authentication !== undefined &&
+    signInFailureFeedback(error.authentication).signInOutcome === "signed_out");
+/**
  * A failure's code as diagnostics and publication evidence name it. A review whose outcome
  * Guardian kept refusing fails as `ReviewUnavailable`, but it is a verdict that did not form, not
  * an outage, so it is named `InvalidOutcome`.
@@ -1393,19 +1401,39 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       let signInUnconfirmed = recovered?.signInUnconfirmed === true;
       /**
-       * Updates `signInUnconfirmed` once an authenticate ends, by what it did; a confirmed sign-in
-       * also clears `signInRefusalOnly`.
+       * A sign-in on the build's current site confirmed in this attempt, and nothing since showed
+       * the site signed out: no signed-in check that did not confirm, no marker check that found
+       * the site not signed in, and no sign-in the site rejected or that failed leaving it signed
+       * out. While it holds, a later sign-in that never confirmed leaves the build counted as
+       * signed in. A takeover keeps it, and a move to another site clears it.
+       */
+      let confirmedSignInStands = recovered?.confirmedSignInStands === true;
+      /**
+       * Updates `signInUnconfirmed` and `confirmedSignInStands` once an authenticate ends, by what
+       * it did and which sign-in `step` it ran; a confirmed sign-in also clears
+       * `signInRefusalOnly`.
        */
       const noteSignIn = (
         exit: Exit.Exit<ExecutionEvidence, MintFailure>,
         crossedDispatch: boolean,
+        step: ExecutionRequest["signInStep"],
       ) => {
         if (Exit.isSuccess(exit)) {
           const { authentication, effect } = exit.value;
           if (authentication?.state === "authenticated") {
             signInUnconfirmed = false;
             signInRefusalOnly = false;
-          } else if (effect !== "not_sent") {
+            confirmedSignInStands = true;
+            return;
+          }
+          // A signed-in check that did not confirm, a rejected login, or a failed sign-in the
+          // host verified shows the site signed out.
+          if (
+            authentication?.effect === "verified" ||
+            (step !== undefined && ("signedIn" in step || "rejected" in step))
+          )
+            confirmedSignInStands = false;
+          if (effect !== "not_sent") {
             signInUnconfirmed = true;
             loginSentSinceHostRefusals();
           }
@@ -1422,6 +1450,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           failure?.execution?.dispatch !== "not_sent"
         ) {
           signInUnconfirmed = true;
+          // A login the site rejected, or any sign-in that failed leaving the site signed out.
+          if (failure !== undefined && signInLeftSignedOut(failure)) confirmedSignInStands = false;
           // The host's own refusal of this authenticate is no later login sent after it.
           if (!(failure !== undefined && hostSignInRefusal(failure))) loginSentSinceHostRefusals();
         }
@@ -4444,6 +4474,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           if (siteChanged) {
             signInUnconfirmed = false;
             signInRefusalOnly = false;
+            confirmedSignInStands = false;
           }
           // The task now runs signed out: a failed sign-in no longer holds anything back, and no
           // sign-in runs until a later update asks for one, which the owner then confirmed.
@@ -5765,7 +5796,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         actRefusalsInRow++;
                     }
                     if (submitted.purpose === "authenticate") {
-                      noteSignIn(result, crossedDispatchBoundary);
+                      noteSignIn(result, crossedDispatchBoundary, submitted.signInStep);
                       // A screen the host refused at its destination check comes back as the
                       // step's result, so the host's own record is the basis, read as it stands
                       // after this sign-in step.
@@ -5821,10 +5852,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                               // Possible only while the sign-in's outcome is unknown.
                               effect:
                                 Cause.isFailType(result.cause) &&
-                                (result.cause.error.code === "CredentialsRejected" ||
-                                  (result.cause.error.authentication !== undefined &&
-                                    signInFailureFeedback(result.cause.error.authentication)
-                                      .signInOutcome === "signed_out"))
+                                signInLeftSignedOut(result.cause.error)
                                   ? ("verified" as const)
                                   : ("possible" as const),
                             },
@@ -7294,10 +7322,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     );
                     if ("refusal" in ending) return ending.refusal;
                     // An ending the checks above accepted, while the build's latest sign-in
-                    // never confirmed, or while the only refusal on record is Guardian's final
-                    // refusal of a sign-in step: the site never got as far as judging the task, so it
-                    // cannot have declined it or lacked it, and a policy or host check that
-                    // stopped it stopped a sign-in. With no failed sign-in pending, whose own
+                    // never confirmed and either no earlier confirmed sign-in still stands
+                    // (`confirmedSignInStands`) or the host saw the site lose its session after
+                    // it (`signInSessionLoss`), or while the only refusal on record is Guardian's
+                    // final refusal of a sign-in step: the site never got as far as judging the
+                    // task, so it cannot have declined it or lacked it, and a policy or host check
+                    // that stopped it stopped a sign-in. With no failed sign-in pending, whose own
                     // refusal above asks the agent to resolve it, the build ends as sign-in
                     // unavailable, worded by what the host saw, and its caller is never told to
                     // change the request. The owner's own no, a question they left unanswered and
@@ -7312,19 +7342,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // refill or a publication of a recipe nothing verified, ends as sign-in
                     // unavailable, its record naming the checks.
                     const hostRefusals = "hostRefusals" in ending ? ending.hostRefusals : undefined;
+                    const sessionLoss = dependencies.signInSessionLoss?.();
                     if (
                       ending.reason !== "owner_declined" &&
                       ending.reason !== "question_unanswered" &&
                       ending.reason !== "owner_ended" &&
                       ending.reason !== "caller_input" &&
                       !("apartFromSignIn" in ending && ending.apartFromSignIn === true) &&
-                      (signInUnconfirmed ||
+                      ((signInUnconfirmed &&
+                        (!confirmedSignInStands || sessionLoss !== undefined)) ||
                         (signInRefusalOnly && !hostRefused && !hostRefusalPassed)) &&
                       unresolvedSignIn === undefined &&
                       loginDeclined === undefined &&
                       !signInAbandoned
                     ) {
-                      const sessionLoss = dependencies.signInSessionLoss?.();
                       // The minter's explanation still says why, kept only as a last answer is:
                       // once Guardian's review of a blocked outcome allows its caller to read it.
                       const stopExplanation =
@@ -7662,6 +7693,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           "This host cannot test a marker. Confirm yourself that it is absent on the signed-out pages you explored before signing in, and present on the signed-in page and on another page you visited signed in.",
                       });
                     const result = yield* check(marker);
+                    // A marker the live page does not show found the site not signed in.
+                    if (!result.signedInNow) confirmedSignInStands = false;
                     const verdict = validateSignedInMarker({ marker, check: result });
                     return JSON.stringify({
                       kind: "host_signed_in_marker",
@@ -8022,6 +8055,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(loginDeclined === undefined ? {} : { loginDeclined }),
         ...(signInAbandoned ? { signInAbandoned: true as const } : {}),
         ...(signInUnconfirmed ? { signInUnconfirmed: true as const } : {}),
+        ...(confirmedSignInStands ? { confirmedSignInStands: true as const } : {}),
         destinationEvidenceRefusals,
         inputFeedbackRounds,
         inputFeedbackPublicTool,

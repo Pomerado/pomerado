@@ -1734,6 +1734,23 @@ it.each([
   },
 );
 
+// A sign-in that confirmed still stands when a later sign-in goes unchecked and nothing since
+// showed the site signed out, so the site gap the build then reports keeps its own reason.
+it("keeps site_lacks_capability after a confirmed sign-in and a later one nothing checked", async () => {
+  const explanation = "The signed-in account pages offer no way to do this task.";
+  const f = await signInThenDecline(
+    [submittedScreen, signInCheck("authenticated"), submittedScreen],
+    {},
+    { reason: "site_lacks_capability", explanation },
+  );
+  const outcome = await f.run();
+  expect(outcome).not.toHaveProperty("recoveryReason");
+  expect(outcome).toMatchObject({
+    blocked: { reason: "site_lacks_capability", explanation },
+    stopReason: "site_lacks_capability",
+  });
+});
+
 // A report rewritten to sign-in unavailable still says why the build stopped. Its caller reads the
 // minter's explanation only after the pipeline a blocked explanation takes: the login's secrets
 // masked, host-private values removed and Guardian's review of a blocked outcome allowing it.
