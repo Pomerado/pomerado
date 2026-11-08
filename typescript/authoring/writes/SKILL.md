@@ -34,6 +34,8 @@ each fine as one tool.
 
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
+Opening pages that the site then marks as visited or as progress, without submitting an answer
+or a form, is part of a read, unless the request asks to change that progress.
 Signed out, setting the session's store, location or delivery or pickup mode is part of a
 read, even through a Save button, and so is entering the details the caller gave to set it,
 unless the step creates an account or a lasting record on the site (core skill). Signed in,
