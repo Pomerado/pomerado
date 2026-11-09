@@ -436,17 +436,22 @@ test("a step that lost its result after entering its mark, with no read-back con
       writePathMarks: ["save"],
     });
     // The save may have committed, so neither the receipts nor the refusal ask to run it again:
-    // they name its mark as not yet settled and ask for the read-back first.
+    // they name its mark as not yet settled and ask for the read-back first. The refusal knows the
+    // lost step streamed the mark, so it never says no step entered it.
     for (const text of [
       ...[lost, toolResult(last, "look")].map((receipt) => pathNoticeOf(receipt)?.instruction),
       refused?.["instruction"],
     ]) {
-      expect(text).toContain("not yet settled (a step that lost its result may have entered them)");
+      expect(text).toContain("not yet settled");
       expect(text).toContain("Read back first where a receipt says so");
       expect(text).toContain("run only steps that never ran");
       expect(text).toMatch(/never redo (a step|one) that finished or may have/i);
-      expect(text).not.toMatch(/continue with the next act step|no step (has )?entered/i);
+      expect(text).not.toMatch(/continue with the next act step/i);
     }
+    expect(refused?.["instruction"]).toContain(
+      "not yet settled (a step that lost its result may have entered them)",
+    );
+    expect(refused?.["instruction"]).not.toMatch(/no step (has )?entered/i);
     expect(pathNoticeOf(lost)?.remaining).toEqual(["save"]);
     expect(built.build).not.toBe("published");
     expect(executions(guardian.reviews).map((review) => currentOf(review)?.["purpose"])).toEqual([

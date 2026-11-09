@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import { questionForReview } from "../guardian/question.js";
 import {
@@ -10,6 +11,7 @@ import {
 } from "../mint/contracts.js";
 import { runMint } from "../mint/harness.js";
 import { mintSourceSyntaxFailure } from "../mint/operation-source.js";
+import { repeatableReadFor } from "../mint/step-checks.js";
 import { makeOpenAIMinter } from "../mint/openai.js";
 import { makeOpenAIOutcomeReviewer } from "../mint/outcome-review-openai.js";
 import {
@@ -123,7 +125,12 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
         ),
         Effect.mapError(mintError),
       ),
-    repeatableRead: context.repeatableRead(),
+    lowersEffect: true,
+    // The read authority the build has when it reads, which a write lowered to a read takes on.
+    repeatableRead:
+      context.buildEffect === "write"
+        ? repeatableReadFor("read", context.claimed)
+        : context.repeatableRead(),
     // A repeatable read's example claims nothing, so it may run again.
     claimExample: Effect.suspend(() =>
       context.repeatableRead()
@@ -162,6 +169,9 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
             buildEffect,
             callerInput: context.input,
             writeSession: state.writeSession,
+            callerExampleRefused: state.refusedCallerExamples.some((refused) =>
+              isDeepStrictEqual(refused, context.input),
+            ),
           });
         if (refusal !== undefined) return refusal;
         const boundary =
@@ -237,5 +247,5 @@ export const mintRequest = (
     const outcome = yield* runMint({ ...mintRequest, effect: context.buildEffect }).pipe(
       Effect.provideService(MintServices, mintDependencies(state, publicationDecisions)),
     );
-    return outcome;
+    return context.buildEffect === undefined ? outcome : { ...outcome, effect: context.buildEffect };
   });

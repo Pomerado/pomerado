@@ -22,7 +22,9 @@ belong to the host; never request a password, cookie or TOTP seed in model-visib
 
 Asking the caller follows `AGENTS.md` ("Try hard, then ask"). When neither the request nor an
 answer says whether the tool looks things up or changes something, prefer asking the
-read-or-write choice before your first execution.
+read-or-write choice before your first execution. When the request and its example disagree on
+read or write, ask the caller which they mean before your first execution, and when the answer
+changes the build's effect, apply it with `mint_update`.
 
 Write ordinary TypeScript or JavaScript files. Export a default Kernel script, as
 described below. Import the actual canonical SDK entrypoint given in the workspace
@@ -73,7 +75,9 @@ answers `{ success, result, error, stderr }`. Throw
 - Prefer clicking a control's visible label when its input is hidden.
 - Prefer taking a role locator's name from an ARIA snapshot (the host's `*.aria.yml` capture or a
   scoped `ariaSnapshot()`) over `textContent` or `innerText`, which include hidden labels. When the
-  snapshot shows a link with no name, prefer its `href`.
+  snapshot shows a link with no name, prefer its `href`. On a sign-in screen, prefer reading each
+  field's label, type, placeholder, id and name over an `ariaSnapshot()`, which can include typed
+  values.
 - After a step whose answer can vary or that redraws part of the page, such as a click that may
   navigate, a search, a filter, a pick from a list, a date pick, adding a table row or a submit,
   prefer `waitForOutcome`, the step passed as its `action`, naming every result it can lead to: the
@@ -218,7 +222,8 @@ exception: it is optional unless the task can't run without it (below).
   (case, accents, spacing, punctuation, whole words, then the same words with their
   comma-separated parts in another order, so a name with a neighborhood or an airport code in
   brackets, or a station the site lists as "Station, City", still matches, but never a name with
-  words the value lacks), tries the usual other forms of the value's words, such as 5th
+  words the value lacks, except with `extraWords: true` below), tries the usual other forms of
+  the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
   outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
   site's closest options first. A read of a category or term passes `stem: true`
@@ -243,6 +248,14 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- In a product or catalog search, unlike a proper noun, a result whose name has every word of
+  the caller's value, in any order, each as written or in its singular or plural form, matches
+  even with words the value lacks, when it names the item itself rather than something made from
+  it or flavored with it. A value with a number in it gets no such match. Take the closest match
+  first, as `pickValue` ranks matches, then the first in the site's order, since the site's own
+  ranking already weighs relevance. Return the one it used, as the site labels it. With none,
+  throw `InvalidInput` with `field` and `available`, the closest names first. `pickValue` matches
+  such names with `extraWords: true`, and takes the first with `tie: "first"`.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the
@@ -680,7 +693,7 @@ call needs many independent
 lookups or detail reads, such as one for each returned row, prefer running them in parallel
 batches over one after another, such as the site's own data request for each row sent together
 in one `evaluate` with the runtime's `batchFetch` (paste `batchFetchCode`), or with `batchRead`
-in an HTTP version. They start at 4 at once, send more after clean batches, halve on a 429 or 503
+in an HTTP version. They start at 4 at once, send more after clean batches, halve on a 429 or a 5xx
 and stop at a block. Send no more at once than the build showed the site handling without
 refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
 block at run time still fails the call, as the 429 rule above says.
@@ -691,6 +704,16 @@ after an in-page change, such as a filter that reloads the list without a naviga
 change's data response or the rendered rows, never the initial JSON. Read the rendered page for
 a value that exists only after client-side rendering, or that the page computes where you see
 it, such as a total.
+Large page data: a call's code runs in a script runner whose memory is small next to the
+page's, and a page's embedded data can run to hundreds of megabytes. Read it where it is: paste
+`pageDataCode` from `pomerado/runtime` and call `readPageData`, which reads a script element's
+JSON or a page global inside the page and returns only the fields you select, and no more items
+than the call returns (`limit`). Never bring the whole data into the call, with `textContent`,
+`innerText`, `page.content()` or an `evaluate` that returns it. Parse a large data response's
+text with `selectJson`, which `pageDataCode` also declares, never with `response.json()`. Never
+parse page data in a wait's `check`, which runs again on every poll, and keep nothing large on
+`globalThis` between calls: return the ids and cursors the next call needs. While building, find
+where the values are with a selection's `outline`, then read a few matches, never the whole.
 Budgets: navigation 30 s for the document to commit; a click, fill or other action 5 s, taken
 only on an element a wait has shown ready. After a navigation commits or an action returns, the
 page gets 8 s without progress to show one of the answers you named, and up to 30 s while it
@@ -899,9 +922,9 @@ at all, with `readBackMatches(shown, picked) || readBackMatches(picked, shown)` 
 `sameText`, since a page's heading may add words to that name or drop some. Prefer not to fail a
 valid target over punctuation, case, accents, an article such as The, a location suffix or the
 heading's format. This is for the page opened from that result. A picker's selected label still
-compares with `sameText`, and choosing among results follows the proper-noun rule above, since
-this loose match also accepts another record whose name adds or drops a word, such as Bay Diner
-for Big Bay Diner.
+compares with `sameText`, and choosing among results follows the proper-noun rule above, or in a
+product or catalog search the product-search rule above, since this loose match also accepts
+another record whose name adds or drops a word, such as Bay Diner for Big Bay Diner.
 
 Target identity guards, effect authority and semantic completion are separate.
 A dispatched click is not completed work. Missing completion after a possible
@@ -978,7 +1001,7 @@ declines what is not essential in one click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
 otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or
-terms the site asks you to accept, other than the notice below that every visitor accepts.
+terms the site asks you to accept, other than the notices below.
 
 A notice the site shows every visitor before it lets them use the page, such as a demo or
 test-environment warning, an age gate or a region notice, is page setup on a read. Prefer accepting
@@ -986,6 +1009,12 @@ it with its own control the way you dismiss a cookie banner, waiting until the p
 usable, with no commit mark and without making the tool a write for it, even when accepting it
 sends a request. Prefer its close control when it has one. When the request is about that notice
 itself, accepting it is the write.
+
+An app-download, open-in-app or location-permission prompt is an obstacle, not a reason to stop.
+Dismiss it with its skip, close, "not now", "continue on the web" or "type address instead"
+control, in the tool's code only when it shows. When a path ends at an app-only wall, try the
+page's other routes, such as a web or delivery storefront on the site's own linked domain, before
+you decide the site has no web data.
 
 ## Safety defaults
 
@@ -1050,8 +1079,10 @@ the site does not support it. Listing a filter panel's or option group's control
 focused observation. Return explicit partial coverage when an observation is bounded; never
 describe a truncated list as complete. In a probe, count a locator before acting on it and give
 each action `timeout: 5000`, the default the host also gives probe actions; take names from a
-scoped `ariaSnapshot()`, not visible text. A probe that waits out a long timeout for a missing
-element learns nothing a count would not. Return `waitReport()` from a probe that waits.
+scoped `ariaSnapshot()`, not visible text. On a sign-in screen, prefer reading each field's label,
+type, placeholder, id and name over an `ariaSnapshot()`, which can include typed values. A probe
+that waits out a long timeout for a missing element learns nothing a count would not. Return
+`waitReport()` from a probe that waits.
 
 Supported login challenges during `authenticate` belong to the host's sign-in
 (autofill or an explicit direct HTTP step) and its protected input requests. Generated `operation.run` and `explore` code
@@ -1060,9 +1091,11 @@ belongs to the `authenticate` step (auth skill). A code the site sends later, to
 declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
 `caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
-current page state within the existing deadline. When a few distinct attempts have
-not found the way, ask the caller for directions with `request_input` before
-reporting a blocked or unknown state whose cause cannot be established. Completing a
+current page state within the existing deadline. Work out the way yourself first, from the
+site's menus, links, search and other pages. When a few distinct attempts have not found it and
+it seems impossible, or something looks wrong, ask the caller for directions or confirmation
+with `request_input` before reporting a blocked or unknown state whose cause cannot be
+established. Completing a
 challenge does not prove login.
 
 For a native dialog, the call that raises it keeps it on `globalThis.dialog` from a

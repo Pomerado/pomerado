@@ -255,8 +255,8 @@ export class ReviewFailure extends Data.TaggedError("ReviewFailure")<{
     | "ModelCallStalled"
     /**
      * The model provider refused the review's request as over the model's input limit, its context
-     * window. That is no outage, and the same request fails the same way, so it is never retried as
-     * one.
+     * window, or because it could not decrypt an encrypted item the request sent back. That is no
+     * outage, and the same request fails the same way, so it is never retried as one.
      */
     | "InputTooLarge"
     /**
@@ -471,10 +471,13 @@ export interface PendingExecution {
        * agent_chosen: a read's live test on an input the minting agent chose instead of the
        * caller's. intent_derived: a read's example or a write's act step whose caller sent empty
        * input runs the agent's reading of the intent and the owner's answered questions as its
-       * submitted input. agent_chosen_batch: a batch of a read's live tests on inputs the minting
-       * agent chose, whose submitted input lists each case's input under `cases`.
+       * submitted input. substitute: a read's example that runs another record of the same kind,
+       * which the agent found on the site or an answer gave, in place of the caller's own input,
+       * after the host recorded the tool refusing that input with InvalidInput.
+       * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
+       * submitted input lists each case's input under `cases`.
        */
-      readonly input?: "agent_chosen" | "intent_derived" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "intent_derived" | "substitute" | "agent_chosen_batch";
       /**
        * Host facts about an offline command's sandbox. The submitted entrypoint is the command
        * text itself; the host runs it through its own shell wrapper, which is not reviewed.
@@ -715,9 +718,10 @@ export interface ReviewRetry {
 
 /**
  * Production retry for Guardian outages: provider errors and a required source read that failed.
- * A review that ran out of turns, whose model call stalled or whose request is over the model's
- * context window is not an outage, and is not started again. A decision that did not decode is
- * reviewed once more only when its review got no correction.
+ * A review that ran out of turns, whose model call stalled, or whose request is over the model's
+ * context window or carries an encrypted item the provider could not decrypt is not an outage, and
+ * is not started again. A decision that did not decode is reviewed once more only when its review
+ * got no correction.
  */
 export const guardianOutageRetry: ReviewRetry = {
   delays: ["2 seconds", "5 seconds", "15 seconds", "30 seconds", "60 seconds"],

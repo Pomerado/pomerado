@@ -183,7 +183,10 @@ export const mintState = (
         readonly sources: readonly (readonly [string, string])[];
         readonly entrypoint: string;
         readonly input: unknown;
-        /** The agent's exampleInput the step ran because the caller sent none. */
+        /**
+         * The agent's exampleInput the step ran because the caller sent none, or in place of the
+         * caller's own input the tool refused.
+         */
         readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
         readonly output: unknown;
         /** The names of the expand controls on the page the step left, for the output check. */
@@ -223,6 +226,11 @@ export const mintState = (
     };
     /** The owner's answers to scripts' questions that the same question asked again reuses. */
     const scriptAnswers: { kept: readonly KeptScriptAnswer[] } = { kept: [] };
+    /**
+     * The caller's own inputs a read's example ran that the tool refused with `InvalidInput`: a
+     * read whose caller's input is one of them may run a substitute example in its place.
+     */
+    const refusedCallerExamples: unknown[] = [];
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
@@ -359,6 +367,7 @@ export const mintState = (
       assessments,
       writeSession,
       scriptAnswers,
+      refusedCallerExamples,
       oneTimeLoginUrlsAsked,
       afterSubmit,
       get recorder() {

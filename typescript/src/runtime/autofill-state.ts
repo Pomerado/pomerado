@@ -94,6 +94,12 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
   ) => Effect.Effect<AutofillSignedInCheck, E>;
   /** Opens a page on the sign-in's tab, as a replay starts from the login URL. */
   readonly open: (url: string) => Effect.Effect<void, E>;
+  /**
+   * Runs `effect`, the opening of a sign-in link the owner pasted (`delivery: "paste"`), with no
+   * recording of the browser's screen or requests, since the address holds the link. A host that
+   * records neither leaves it out.
+   */
+  readonly withoutRecording?: <A, E2, R>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
   /** Reads a recorded error marker without reading a field's value or verifying a login. */
   readonly markerVisible?: (
     selector: string,
@@ -158,7 +164,9 @@ export type RegisteredEntity =
   | "ZIP"
   | "RECOVERY_CODE"
   | "ONE_TIME_CODE"
-  | "SECURITY_ANSWER";
+  | "SECURITY_ANSWER"
+  /** A sign-in link the owner pasted for the host to open (`delivery: "paste"`). */
+  | "SIGN_IN_LINK";
 
 /**
  * A host's record of the security answers it typed from the login's saved answers, which it keeps
@@ -183,6 +191,8 @@ interface AutofillRecordedStep {
   readonly approval?: AutofillRecipeStep["approval"];
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string;
+  /** `paste` for an email-link approval whose link the owner pasted for the host to open. */
+  readonly delivery?: AutofillRecipeStep["delivery"];
   readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"];
   /**
    * With each identifier field's accepted, held and sent kinds, never a value, and what named each

@@ -120,3 +120,29 @@ test("a fixed footer over Log In catches the host's click: the fill reports it b
   expect(sent).toEqual([]);
   expect(await unfocused.evaluate(() => sessionStorage.getItem("footer"))).toBeNull();
 });
+
+test("an empty overlay beside a modal dialog in one portal catches the host's click: the fill reports a dialog with the dialog's own controls, its icon-only close among them", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    `document.body.insertAdjacentHTML("beforeend", '<span><div data-state="open" style="position:fixed;inset:0;z-index:10"></div>'
++ '<div data-state="open" role="dialog" aria-modal="true" tabindex="-1" style="position:fixed;top:20px;left:20px;z-index:11;background:#fff">'
++ '<button type="button"><img src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E" width="16" height="16"></button>'
++ '<div>Join to see more</div><button type="button">Create Account</button><div>Already have an account? <span>Sign in</span></div></div></span>');`,
+  );
+  expect(await fill(page)).toMatchObject({
+    outcome: "filled",
+    fields: filled,
+    submit: "blocked",
+    blockedBy: {
+      tag: "span",
+      role: "dialog",
+      controls: [
+        { role: "button", name: "", iconOnly: true },
+        { role: "button", name: "Create Account" },
+      ],
+    },
+  });
+  expect(received).toEqual([]);
+});
