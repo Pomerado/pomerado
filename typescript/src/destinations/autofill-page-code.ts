@@ -428,11 +428,23 @@ const allEmptied = async () => {
   return true;
 };`;
 
+/** The most of a covering element's own controls page code reads (`CoveringElement.controls`). */
+export const coveringControlsLimit = 5;
+/**
+ * The longest name of a covering element's control page code reads. A longer name is left out
+ * whole, never cut: a cut could keep the start of a typed value that screening for the whole value
+ * misses.
+ */
+export const coveringControlNameLimit = 120;
+
 /**
  * Page code: the element at the centre of `element`, a submit whose click failed, when it is
  * neither the submit, inside it nor around it: the outermost element over the submit that holds it,
  * as a notice holds its own buttons, by its tag and role attribute, each cut short, never anything
- * else of it (`coveringElement` keeps those on its lists). Null when the submit has no box or
+ * else of it (`coveringElement` keeps those on its lists), and its own buttons and links a person
+ * sees, in page order and then its open shadow roots', at most `coveringControlsLimit`, each by
+ * role and accessible name (`accessibleNames`), as the page has it: a control with no name, or a
+ * name longer than `coveringControlNameLimit`, is left out. Null when the submit has no box or
  * nothing else sits over it.
  */
 const coveringCode = `(element) => {
@@ -452,7 +464,27 @@ const coveringCode = `(element) => {
   const page = [element.ownerDocument.body, element.ownerDocument.documentElement];
   while (cover.parentElement !== null && !page.includes(cover.parentElement) && !cover.parentElement.contains(element))
     cover = cover.parentElement;
-  return { tag: String(cover.tagName).slice(0, 40), role: cover.getAttribute("role")?.slice(0, 40) ?? null };
+  const name = (${String(accessibleNames)})();
+  const controls = [];
+  const roots = [cover];
+  for (const scope of roots) {
+    for (const control of scope.querySelectorAll("*")) {
+      if (controls.length >= ${coveringControlsLimit}) break;
+      if (control.shadowRoot !== null) roots.push(control.shadowRoot);
+      if (!control.matches('button, a[href], input[type="button"], input[type="submit"], [role~="button"], [role~="link"]')) continue;
+      const area = control.getBoundingClientRect();
+      if (area.width <= 0 || area.height <= 0 || !control.checkVisibility({ visibilityProperty: true })) continue;
+      let named = null;
+      try {
+        named = name(control);
+      } catch {}
+      if (typeof named !== "string" || named.trim() === "" || named.length > ${coveringControlNameLimit}) continue;
+      const own = (control.getAttribute("role") ?? "").trim().split(/\\s+/)[0];
+      const link = own === "link" || (own !== "button" && control.localName === "a");
+      controls.push({ role: link ? "link" : "button", name: named });
+    }
+  }
+  return { tag: String(cover.tagName).slice(0, 40), role: cover.getAttribute("role")?.slice(0, 40) ?? null, controls };
 }`;
 
 /**
