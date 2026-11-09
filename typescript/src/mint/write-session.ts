@@ -283,8 +283,8 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  * `outputSchema`, every refusal it lists is one the host reads as declared. Last, given
  * `confirms`, the script names each step its session accepted a confirm popup at. The composed
  * script is never run. Its result names, as `commitsUnproven` in the order `commits` declares
- * them, the commit steps the contract declares unproven, after the last one the session entered,
- * which no run has shown yet; it leaves the key out when there are none.
+ * them, the commit steps the contract declares unproven, after the last one the session entered or
+ * named by `skippableCommits`, which no run has shown yet; it leaves the key out when there are none.
  *
  * A host that publishes a write whose example ended in the site's own no sets `publishOnRefusal`.
  * Then, when the step named for publication entered no commit mark, recorded no confirmation and
@@ -356,6 +356,14 @@ export const checkWriteSession = <
    * leaves it unset refuses such a session as before.
    */
   readonly publishOnReadBack?: boolean;
+  /**
+   * For a publication that replaces a published revision, such as a repair or a change: given the
+   * read contract, the commit steps that `commitsUnproven` may name wherever they sit in `commits`,
+   * not only after the last one the session entered, as conditional steps the session's input
+   * skipped whose code the replacement left as the revision has it. Still only once the session
+   * entered a mark. A host that leaves it unset refuses them as before.
+   */
+  readonly skippableCommits?: (extracted: Extracted) => Iterable<string>;
 }) =>
   Effect.gen(function* () {
     const { session, step } = check;
@@ -421,6 +429,9 @@ export const checkWriteSession = <
         ? { readBack: true }
         : {}),
       ...(stopsBeforeSave ? { stopsBeforeSave: true } : {}),
+      ...(check.skippableCommits === undefined
+        ? {}
+        : { skippable: new Set(check.skippableCommits(extracted)) }),
     });
     if (refusal !== undefined || declared === undefined)
       return yield* refuse(refusal ?? "confirmation_undeclared");

@@ -497,7 +497,7 @@ it("keeps automatic compaction as the backstop for a session that never changes 
   const bodies = wire();
   await build("Read the listed opening hours");
   for (const body of bodies)
-    expect(body["context_management"]).toEqual([{ type: "compaction", compact_threshold: 240000 }]);
+    expect(body["context_management"]).toEqual([{ type: "compaction", compact_threshold: 268000 }]);
   expect(JSON.stringify(bodies)).not.toContain("configuration_update");
 });
 
@@ -621,7 +621,7 @@ it("keeps the provider's compaction for a session at another effort when its own
   // The crossing request keeps the provider's compaction, so it holds no configuration update
   // and carries the effort in force as its own.
   expect(crossing?.["context_management"]).toEqual([
-    { type: "compaction", compact_threshold: 240000 },
+    { type: "compaction", compact_threshold: 268000 },
   ]);
   expect(itemsOf(crossing).some((item) => item.type === "configuration_update")).toBe(false);
   expect(crossing?.["reasoning"]).toMatchObject({ effort: "low" });

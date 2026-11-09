@@ -67,7 +67,9 @@ the source files, never captures.
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input and returns a
   key the schema lacks as an `example_input` input feedback. An optional input plus a declared
-  question is only for a value the request leaves open.
+  question is only for a value the request leaves open. A read's example also passes it in place
+  of the caller's own input once the tool refused that input with `InvalidInput` ("Reads, writes
+  and examples").
 - `live_tests` runs a read's live tests when the host offers it: the combined cases you
   design in `test/cases.json` from what you saw on the site, and every result, run in batches on
   reset pages, on `src/tool.mjs` and on `src/tool-http.mjs`, each version keeping its own
@@ -218,7 +220,8 @@ read also checks the page's stable identity (.agents/core/SKILL.md). Building or
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
 probe, return only the slice you need, such as the relevant container, the matching rows and
 their count, never a whole page's text or every control on it. A filter panel's or option
-group's controls, once you open it, are such a slice. An execution result over 16 KiB comes
+group's controls, once you open it, are such a slice. For a page's large embedded data, return its
+`outline` first, then the few matches you need (core skill, "Large page data"). An execution result over 16 KiB comes
 back as a digest (`kind: "result_digest"`): its size, its shape with every array's length, its
 first items and its error fields whole, and the `path` of the file holding the whole result.
 Read that file in ranges with `read_source`, or search it with `rg -n` in an offline command,
@@ -289,8 +292,9 @@ whose answers come back to you while this attempt continues, when:
    the first `act` step when you can. A review that offers refusal as an alternative fix is not
    the owner's choice. A field, input or output the request itself names is never such a
    capability: support it, or end with `report_blocked` saying why the site cannot; never offer
-   to leave it out, except one output the site does not offer, after a verified write, where
-   the writes skill's ask whether to publish without it comes first.
+   to leave it out, except one output the site does not offer, or one input the request marks
+   optional, the input the write session ran leaves unset, and the site has no field for, after
+   a verified write, where the writes skill's ask whether to publish without it comes first.
 
 When the owner decides only whether to go on as asked or stop, prefer a `confirm` question whose
 no stops the build over a stop option in a `choice` question, so you can end it as
@@ -570,6 +574,17 @@ finally-style block, so the revert runs on every path, errors and timeouts inclu
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+A read's example record from the caller that the site can't serve, such as a link that moved or
+lost its ID, a record the site says it doesn't have, or a value it refuses, doesn't block the
+build. Have the tool refuse it with `InvalidInput` naming the field, in the site's words
+(caller-input skill), and run the example on it once: that refusal is the tool's error case for
+that input. Then prove the tool on another record of the same kind: one the site lists, passed
+as `exampleInput` on the example, or, only when you find none on the site, one the caller gives
+through `request_input`. Keep a live test case on the caller's input that expects
+`invalid_input`, and publish against the example that passed. When neither the site nor the
+caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
+and the site's answer. A write runs the caller's input as it is.
+
 If you changed something on the site by mistake, put it back to its earlier value before going
 on. When the owner asks you to undo a change you made, do it.
 
@@ -623,8 +638,9 @@ never with final text, which the host treats as unfinished work:
   requested field, use it; when they do not, ask the user one focused question with
   `request_input`. Report absence only when the evidence shows the site lacks it, and never
   invent a value or substitute a different field. After a verified write, when the site does
-  not offer one output the request asks for, the writes skill's ask whether to publish without
-  it comes first.
+  not offer one output the request asks for, or has no field for one input the request marks
+  optional and the input the write session ran leaves unset, the writes skill's ask whether to
+  publish without it comes first.
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
   such as an applicant it will not quote. Name the reason the site gave in `explanation`.
 - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
@@ -694,8 +710,9 @@ never with final text, which the host treats as unfinished work:
 Before ending blocked because a value the request gave is unavailable or invalid on the site,
 such as a time slot the site does not offer that day, a date outside its calendar or a name it
 does not list, ask the owner with `request_input` to revise it or stop, as the key rules say.
-End blocked only when they stop or their answer cannot be met either. In maintenance, follow
-the intake screen instead.
+End blocked only when they stop or their answer cannot be met either. A read whose bad value is
+its example's record proves the tool on another record first ("Reads, writes and examples"). In
+maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
 in your own words: Guardian reviews it first. When it passes on a website's instructions, links or

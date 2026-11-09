@@ -139,8 +139,9 @@ first:
   element, never a guessed one.
 - **Edge cases.** Review misses these most often, so check each before every `finish_build`; the
   name in brackets is the rule a miss comes back under:
-  - a search or filter with no results returns the empty result, never a throw ("Wrong
-    failure");
+  - a search or filter with no results returns the empty result, never a throw, unless other
+    evidence on the same page contradicts it for the same inputs: then it throws `OperationFailure`
+    naming what that evidence shows ("Wrong failure");
   - every applied filter or option is read back from the page as the value the site applied,
     such as the chosen option's label, never `true` ("Applied without readback");
   - a value chosen in a typeahead, combobox, dropdown, chip input or lookup dialog goes through

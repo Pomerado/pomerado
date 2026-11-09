@@ -47,8 +47,11 @@ type IdleCompactionEvent =
   | {
       readonly state: "started";
       readonly inputTokens: number;
-      /** `limit`: the next request would have neared the long-context boundary; it waited. */
-      readonly trigger: "watermark" | "limit";
+      /**
+       * `limit`: the next request would have neared the long-context boundary; it waited.
+       * `overflow`: the provider refused the next request as over the model's context; it waited.
+       */
+      readonly trigger: "watermark" | "limit" | "overflow";
     }
   | { readonly state: "ready" }
   | { readonly state: "failed"; readonly reason: "no_compaction_item" | "provider_failed" }
@@ -129,7 +132,10 @@ export const makeIdleCompaction = (options: {
     request: ModelRequest,
     sent: ModelRequest,
     compact: Compact,
-    event: { readonly inputTokens: number; readonly trigger: "watermark" | "limit" },
+    event: {
+      readonly inputTokens: number;
+      readonly trigger: "watermark" | "limit" | "overflow";
+    },
   ) => {
     if (typeof request.input === "string" || !Array.isArray(sent.input)) return;
     const original = [...request.input];
@@ -218,14 +224,38 @@ export const makeIdleCompaction = (options: {
     if (tokens < limit) return;
     if (running === undefined)
       start(last.request, last.sent, last.compact, { inputTokens: tokens, trigger: "limit" });
-    const compacting = running;
+    await waitFor(running, signal);
+  };
+
+  /** Waits for `compacting`; the attempt's abort ends the wait, and the call then fails. */
+  const waitFor = async (compacting: Promise<void> | undefined, signal?: AbortSignal) => {
     if (compacting === undefined) return;
-    // The attempt's abort ends the wait; the call then fails as aborted.
     await new Promise<void>((done) => {
       if (signal?.aborted) return done();
       signal?.addEventListener("abort", () => done(), { once: true });
       void compacting.finally(done);
     });
+  };
+
+  /**
+   * After the provider refused a request as over the model's context: compacts the last request,
+   * unless a window already covers it, or waits for the running compaction. True when a window
+   * that no request has sent is ready, so the refused request can go again compacted; false when
+   * a compaction cannot shrink it further, such as when its new items, which a compaction keeps
+   * as they are, are what is too long.
+   */
+  const compactNow = async (signal?: AbortSignal) => {
+    if (disabled || controller.signal.aborted || last === undefined) return false;
+    if (running === undefined) {
+      // A window that landed while the refused request was out has not gone yet: send it.
+      if (ready !== undefined && ready.length >= last.length) return unapplied;
+      start(last.request, last.sent, last.compact, {
+        inputTokens: last.tokens,
+        trigger: "overflow",
+      });
+    }
+    await waitFor(running, signal);
+    return ready !== undefined && unapplied;
   };
 
   /** Ends a compaction still running when the attempt ends; waits for it and its reports. */
@@ -235,5 +265,5 @@ export const makeIdleCompaction = (options: {
     await Promise.all(reports);
   };
 
-  return { view, afterTurn, beforeSend, close };
+  return { view, afterTurn, beforeSend, compactNow, close };
 };

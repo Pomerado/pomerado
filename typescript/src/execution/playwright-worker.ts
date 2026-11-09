@@ -400,7 +400,13 @@ const credential = (
       return yield* keyboard.insertText(
         request.target,
         request.text,
-        { phone: request.phone, keys: request.keys, trustedKeys: request.trustedKeys },
+        {
+          phone: request.phone,
+          keys: request.keys,
+          trustedKeys: request.trustedKeys,
+          held: request.held,
+          across: request.across,
+        },
       );
     }).pipe(
       Effect.ensuring(

@@ -14,20 +14,30 @@ const declaresCommitMarks = (commits: readonly unknown[] | undefined) =>
 
 /**
  * The marks `commitsUnproven` may excuse from having been entered: distinct marks of `commits`
- * after the last one the session entered. A session that entered none has nothing to follow, so
- * it may excuse none, unless its outcome stands without a save (`fromStart`): it ended in the
- * site's own refusal, or its read-back showed the request's end state, and then it may excuse all.
- * Undefined when the declaration lists anything else.
+ * after the last one the session entered, and those of `skippable` it never entered, wherever they
+ * sit. A session that entered none has nothing to follow, so it may excuse none, unless its outcome
+ * stands without a save (`fromStart`): it ended in the site's own refusal, or its read-back showed
+ * the request's end state, and then it may excuse all. Undefined when the declaration lists
+ * anything else.
  */
 const unprovenMarks = (
   commits: readonly unknown[],
   unproven: readonly unknown[] | undefined,
   entered: ReadonlySet<string>,
   fromStart: boolean,
+  skippable: ReadonlySet<string>,
 ): ReadonlySet<unknown> | undefined => {
   if (unproven === undefined) return new Set();
   const last = commits.findLastIndex((name) => typeof name === "string" && entered.has(name));
-  const later = new Set(last === -1 && !fromStart ? [] : commits.slice(last + 1));
+  const later = new Set(
+    last === -1 && !fromStart
+      ? []
+      : commits.filter(
+          (name, index) =>
+            index > last ||
+            (typeof name === "string" && skippable.has(name) && !entered.has(name)),
+        ),
+  );
   return Array.isArray(unproven) &&
     new Set(unproven).size === unproven.length &&
     unproven.every((name) => later.has(name))
@@ -42,7 +52,9 @@ const unprovenMarks = (
  * the caller's own input, declares one the named step did not record, or declares
  * `unverifiable` although a step of the session did confirm the write. A commit step after the
  * last one the session entered may stay unentered when `commitsUnproven` names it: the session
- * stopped before it, as when the caller's facts ran out, and publication reports it unproven.
+ * stopped before it, as when the caller's facts ran out, and publication reports it unproven. So
+ * may one of `skippable`, which the host names, wherever it sits, as a step the session's input
+ * skipped.
  * A session that ended in the site's own refusal (`refused`, which only a host that publishes on
  * one passes) proved that refusal, not a confirmation: every commit step after the last one it
  * entered, all of them when it entered none, may be unproven, and no confirmation is matched.
@@ -67,6 +79,7 @@ export const writeContractRefusal = (
     readonly refused?: boolean;
     readonly readBack?: boolean;
     readonly stopsBeforeSave?: boolean;
+    readonly skippable?: ReadonlySet<string>;
   },
 ) => {
   if (declared === undefined) return "confirmation_undeclared" as const;
@@ -82,6 +95,7 @@ export const writeContractRefusal = (
     declared.commitsUnproven,
     session.enteredMarks,
     refused || session.readBack === true,
+    session.skippable ?? new Set(),
   );
   if (
     excused === undefined ||
