@@ -158,6 +158,114 @@ it("ends a build the site declined for the example's own facts as site_declined"
   });
 });
 
+// A site that declines the request only for now, such as a store closed until it opens, keeps its
+// decline temporary and the time the site gave, so a host can tell its caller when to try again.
+it("ends a build the site declined for now as a temporary site_declined with its time", async () => {
+  const explanation = "Pickup ordering is closed now; the store says it opens at 9 AM.";
+  const availableAt = "2099-11-06T09:00:00-05:00";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "site_declined", explanation, temporary: true, availableAt })][
+        index
+      ] ?? prose("Stopping."),
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true, availableAt },
+    stopReason: "site_declined",
+  });
+});
+
+// The site's time reaches the caller only beside an explanation Guardian allowed, since Guardian
+// reviews the two together: a review that never allowed it keeps the decline temporary, with no time.
+it("keeps a temporary decline's time only when Guardian allowed its explanation", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", {
+          reason: "site_declined",
+          explanation: "Pickup ordering is closed now; the store says it opens at 9 AM.",
+          temporary: true,
+          availableAt: "2099-11-06T09:00:00-05:00",
+        }),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.fail(new MintFailure({ code: "ReviewUnavailable", modelOutage: "quota_exhausted" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", blocked: { reason: "site_declined", temporary: true } });
+  expect(outcome).not.toHaveProperty("blocked.explanation");
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
+// Guardian reviews the site's time with the explanation, so a time the evidence doesn't show the
+// site stating is reworded before it reaches the caller, and the build goes on.
+it("shows Guardian a temporary decline's time beside its explanation", async () => {
+  const explanation = "Pickup ordering is closed now.";
+  const availableAt = "2099-11-06T09:00:00-05:00";
+  const reviewed: string[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true, availableAt }, "first"),
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true }, "second"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: (candidate) =>
+        Effect.sync(() => {
+          const text = JSON.stringify(candidate);
+          reviewed.push(text);
+          return text.includes(availableAt)
+            ? { outcome: "reword" as const, rationale: "The page states no opening time." }
+            : { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(reviewed[0]).toContain(availableAt);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true },
+  });
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
+it.each([
+  {
+    name: "a temporary time on another reason",
+    report: { reason: "site_lacks_capability", availableAt: "2099-11-06T09:00:00-05:00" },
+    refusal: "temporary_not_declined",
+  },
+  {
+    name: "a temporary decline on another reason",
+    report: { reason: "site_lacks_capability", temporary: true },
+    refusal: "temporary_not_declined",
+  },
+  {
+    name: "a time already past",
+    report: { reason: "site_declined", temporary: true, availableAt: "2001-01-01T09:00:00Z" },
+    refusal: "available_at_past",
+  },
+])("refuses $name, then ends with the corrected report", async ({ report, refusal }) => {
+  const explanation = "Ordering is paused for now.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { ...report, explanation }, "first"),
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(JSON.stringify(f.requests[1]?.input)).toContain(refusal);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true },
+  });
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
 // A site that is temporarily down for the failing input ends under its own reason, so a host can
 // tell its caller to try again later instead of reading it as a site that lacks the capability.
 it("ends a build whose site is temporarily down as site_unavailable", async () => {
