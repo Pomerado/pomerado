@@ -989,6 +989,7 @@ it.each([
       alsoRefused: [
         secretHandle,
         new MintFailure({ code: "PublicationUnavailable", reason: "file_readback" }),
+        noMatchUntested,
       ],
     }),
     variantsUnsupported,
@@ -1027,6 +1028,8 @@ it.each([
       reason: "file_readback",
       instruction: expect.stringContaining("outside the host's file service"),
     }),
+    // A host's own reason core has no text for says what to do in its rationale.
+    { code: "PublicationUnavailable", reason: "no_match_case_untested", instruction: noMatchRationale },
   ]);
   expect(resultOf(f.requests[3], "finish_1")).not.toHaveProperty("alsoRefused");
 });

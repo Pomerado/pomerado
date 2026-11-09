@@ -6785,15 +6785,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               if (publication._tag === "Left") {
                 const error = publication.left;
                 // Every other refusal the host found in this submission goes back with this one,
-                // so one revision fixes them all.
-                alsoRefusedReplies = (error.alsoRefused ?? []).map(
-                  (other) =>
-                    fixableRefusal(other, (code, reason, details, instruction) => ({
+                // so one revision fixes them all. A host's own reason core has no text for says
+                // what to do in its review rationale, screened like any other.
+                alsoRefusedReplies = yield* Effect.forEach(
+                  error.alsoRefused ?? [],
+                  (other): Effect.Effect<object> => {
+                    const known = fixableRefusal(other, (code, reason, details, instruction) => ({
                       code,
                       reason,
                       ...details,
                       instruction,
-                    })) ?? { code: other.code, reason: other.reason },
+                    }));
+                    if (known !== undefined) return Effect.succeed(known);
+                    const rationale = other.review?.rationale;
+                    return rationale === undefined
+                      ? Effect.succeed({ code: other.code, reason: other.reason })
+                      : screenRationale(rationale).pipe(
+                          Effect.map((instruction) => ({
+                            code: other.code,
+                            reason: other.reason,
+                            instruction: capped(instruction.trim(), ledgerBounds.instructionChars),
+                          })),
+                        );
+                  },
                 );
                 const outputUnavailable =
                   error.code === "PublicationUnavailable" &&
