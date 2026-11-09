@@ -540,6 +540,33 @@ describe("a write build's write path", () => {
     ).toContain("in the same order: save-coverage.");
   });
 
+  // A setup step claims state the site makes by itself as the session starts, so it can only lead
+  // the path: a step after a real write, or the step that reaches the outcome, is never one.
+  it("takes setup steps only before the path's first other step, never as its last", () => {
+    const marked = (...steps: readonly (readonly [string, boolean])[]): WritePath => ({
+      steps: steps.map(([commit, setup]) => ({
+        commit,
+        does: `Sends ${commit}`,
+        ...(setup ? { setup: true as const } : {}),
+      })),
+      ends: "The placed order",
+    });
+    const leading = marked(["open-cart", true], ["add-items", false], ["place-order", false]);
+    expect(writePathRefusal(act(leading), session(false))).toBeUndefined();
+    expect(writePathRefusal(act(leading), session(true, quote))).toBeUndefined();
+    for (const [writePath, marks] of [
+      [marked(["add-items", false], ["pay", true], ["place-order", false]), "pay"],
+      [marked(["open-cart", true], ["place-order", true]), "place-order"],
+      [marked(["place-order", true]), "place-order"],
+    ] as const) {
+      const refusal = writePathRefusal(act(writePath), session(false));
+      expect(refusal).toContain(`setup: ${marks}.`);
+      expect(refusal).toContain("Nothing was executed.");
+      // A revision is held to the same rule.
+      expect(writePathRefusal(act(writePath), session(true, quote))).toBe(refusal);
+    }
+  });
+
   it("names each mark once, and decodes on the execute request", () => {
     const decode = Schema.decodeUnknownEither(ExecutionRequest);
     const request = {
@@ -614,6 +641,51 @@ describe("a write build's write path", () => {
       );
       expect(reason(result)).toBe("write_path_undeclared");
       expect(marksOf(result)).toEqual(["save-coverage"]);
+    });
+
+    // A cart or session the site creates once per visit, such as on opening its menu, may already
+    // exist when the session starts, so its step never runs; the session's confirmed write stands.
+    it("publishes a confirmed session that never entered a setup step of its path", () => {
+      const setupPath: WritePath = {
+        steps: [
+          { commit: "open-cart", does: "starts the site's empty cart", setup: true },
+          { commit: "add-items", does: "adds the requested items" },
+        ],
+        ends: "The cart's priced items",
+      };
+      const added: WriteSessionMarks = { enteredMarks: ["add-items"], confirmation: "readback" };
+      const adding = contract({ confirmation: "readback", commits: ["add-items"] });
+      expect(run([added], adding, setupPath).result).toEqual(
+        Exit.succeed({ extracted: adding, declared: "readback" }),
+      );
+      expect(writePathRemaining(setupPath, new Set())).toEqual(["add-items"]);
+    });
+
+    // Setup only excuses state the site makes as the session starts, so a path marked setup
+    // elsewhere, as a host that skipped the act step check may have recorded, still owes its marks.
+    it("still owes a setup mark after the path's first other step, and the path's last mark", () => {
+      const step = (commit: string, setup?: true) => ({
+        commit,
+        does: `Sends ${commit}`,
+        ...(setup === undefined ? {} : { setup }),
+      });
+      const allSetup: WritePath = {
+        steps: [step("open-cart", true), step("place-order", true)],
+        ends: "The placed order",
+      };
+      const opened: WriteSessionMarks = { enteredMarks: ["open-cart"], confirmation: "message" };
+      const { result } = run(
+        [opened],
+        contract({ confirmation: "message", commits: ["open-cart"] }),
+        allSetup,
+      );
+      expect(reason(result)).toBe("write_path_unfinished");
+      expect(marksOf(result)).toEqual(["place-order"]);
+      const lateSetup: WritePath = {
+        steps: [step("add-items"), step("pay", true), step("place-order")],
+        ends: "The placed order",
+      };
+      expect(writePathRemaining(lateSetup, new Set(["add-items"]))).toEqual(["pay", "place-order"]);
     });
 
     it("publishes the whole path, and a session with no recorded path as before", () => {
