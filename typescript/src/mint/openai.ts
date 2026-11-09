@@ -384,7 +384,7 @@ const untrimmedHistory = (
   ...state._generatedItems.flatMap((item) =>
     item.type === "tool_approval_item" || item.rawItem === undefined
       ? []
-      : [item.rawItem as AgentInputItem],
+      : [item.rawItem],
   ),
 ];
 
@@ -769,7 +769,7 @@ const openAIMinter = (
               if (!readTools.has(entry.name))
                 return {
                   ...entry,
-                  needsApproval: needsApproval as T["needsApproval"],
+                  needsApproval,
                   invoke: inOrder(entry.invoke),
                 };
               readers.set(entry.name, entry.invoke);
@@ -804,7 +804,7 @@ const openAIMinter = (
               };
               return {
                 ...entry,
-                needsApproval: needsApproval as T["needsApproval"],
+                needsApproval,
                 invoke: inOrder(invoke),
               };
             };

@@ -27,6 +27,7 @@ export const observedForms = (value: string): readonly string[] => {
  * `\xNN`.
  */
 const yamlValueEscaped = (form: string) =>
+  // oxlint-disable-next-line eslint/no-control-regex -- it matches control characters on purpose
   form.replace(/[\\"\x00-\x1f\x7f-\x9f]/gu, (character) => {
     switch (character) {
       case "\\":

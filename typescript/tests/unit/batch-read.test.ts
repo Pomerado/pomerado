@@ -326,6 +326,7 @@ describe("batchRead", () => {
 /** Runs `batchFetchCode` as a Kernel call body would, with a page whose evaluate runs here. */
 const runBatchFetch = async (requests: readonly unknown[], options: unknown = {}) => {
   const page = { evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => fn(arg) };
+  // oxlint-disable-next-line typescript/no-implied-eval -- evaluates the page-side source under test
   const body = new Function(
     "page",
     "requests",

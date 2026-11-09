@@ -406,7 +406,7 @@ lines.close();
     const results = children.map(
       ({ output }) => JSON.parse(output.join("")) as { id: string; rejoined: boolean },
     );
-    expect(results.map((result) => result.rejoined).sort()).toEqual([false, true]);
+    expect(results.map((result) => result.rejoined).sort((a, b) => Number(a) - Number(b))).toEqual([false, true]);
     expect(new Set(results.map((result) => result.id)).size).toBe(1);
     expect((await records(folder)).length).toBe(1);
   });

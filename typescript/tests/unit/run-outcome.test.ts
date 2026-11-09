@@ -761,6 +761,7 @@ describe("a refusal a write declares in its output", () => {
     {
       // Valid without the `u` flag, which a host's schema check uses, and invalid with it.
       case: "another branch whose status pattern is invalid",
+      // oxlint-disable-next-line eslint/no-useless-escape -- the escape is what the case tests
       schema: schemaOf(Schema.Union(rated(patterned(/^(?!refused$)\-?.+$/)), notEligible)),
     },
     {

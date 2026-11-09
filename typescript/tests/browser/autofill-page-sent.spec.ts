@@ -683,6 +683,8 @@ const beforeFind = (page: Page, selector: string, hook: () => Promise<void>) => 
   if (typeof count !== "function") throw new Error("Locator count missing");
   const undo = () => Reflect.set(locators, "count", count);
   Reflect.set(locators, "count", async function (this: object) {
+    // A locator's string form is its selector expression.
+    // oxlint-disable-next-line typescript/no-base-to-string -- Playwright locators stringify to their selector
     if (String(this) === `locator('${selector}')`) {
       undo();
       await hook();

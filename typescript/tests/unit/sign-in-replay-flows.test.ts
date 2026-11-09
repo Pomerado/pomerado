@@ -270,7 +270,7 @@ const methodStep = {
 };
 const recipe = (...steps: SignInRecipe["steps"][number][]): SignInRecipe => ({
   version: 2,
-  steps: steps as SignInRecipe["steps"],
+  steps: steps,
   signedIn: { selector: "#account" },
 });
 
@@ -622,7 +622,7 @@ const lateCodeStep = {
 };
 const lateCodeRecipe = (...steps: SignInRecipe["steps"][number][]): SignInRecipe => ({
   version: 5,
-  steps: steps as SignInRecipe["steps"],
+  steps: steps,
   signedIn: { selector: "#account" },
 });
 const lateCodeSite = (codeScreen: readonly string[] = ["#password", "#code", "#sign-in"]) =>

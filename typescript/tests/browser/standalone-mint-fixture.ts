@@ -13,10 +13,10 @@ import {
   message,
   probe,
   quietReviewer,
-  recordingGuardian,
+  type recordingGuardian,
   scripted,
   startSite,
-  writePath,
+  type writePath,
   type RecordedReview,
 } from "./guardian-context-fixture.js";
 

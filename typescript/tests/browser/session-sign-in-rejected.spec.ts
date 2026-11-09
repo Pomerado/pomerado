@@ -120,7 +120,7 @@ await primary.locator("#account").waitFor({ timeout: 10000 });`);
           const answers: unknown[] = [];
           const posts: number[] = [];
           const codePosts: number[] = [];
-          for (const _ of [1, 2]) {
+          for (let attempt = 0; attempt < 2; attempt += 1) {
             const postsBefore = shop.state.loginPosts;
             const codesBefore = shop.state.codePosts;
             yield* page(`await primary.goto(${JSON.stringify(`${shop.origin}/orders`)});`);

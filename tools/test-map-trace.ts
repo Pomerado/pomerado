@@ -196,7 +196,7 @@ if (out !== undefined && out !== "" && root !== undefined && root !== "") {
         ...options,
         ...(execArgv === undefined ? {} : { execArgv: [...execArgv, ...preload.split(" ")] }),
         ...(typeof env === "object" && env !== null && env !== (workerThreads.SHARE_ENV as unknown)
-          ? { env: { TEST_MAP_OUT: out, TEST_MAP_ROOT: root, ...(env as object) } }
+          ? { env: { TEST_MAP_OUT: out, TEST_MAP_ROOT: root, ...env } }
           : {}),
       });
     }

@@ -1068,7 +1068,9 @@ describe("browser calls while the host signs in", () => {
     const script = defineOperation(
       { input: Schema.Struct({}), output: Schema.Boolean },
       async ({ kernel: client, sessionId, ensureSignedIn }) => {
+        // oxlint-disable-next-line typescript/no-floating-promises -- the script deliberately leaves its calls unawaited
         void ensureSignedIn();
+        // oxlint-disable-next-line typescript/no-floating-promises -- the script deliberately leaves its calls unawaited
         void client.browsers.playwright.execute(sessionId, {
           code: 'await page.click("#refresh");',
           timeout_sec: 10,

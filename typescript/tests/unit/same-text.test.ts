@@ -446,6 +446,7 @@ it("keeps text of punctuation alone as it is, never blank", () => {
 });
 
 it("embeds as self-contained source, so page code can use it", () => {
+  // oxlint-disable-next-line typescript/no-implied-eval -- evaluates the page-side source under test
   const embedded = new Function(`return ${String(sameText)};`)() as typeof sameText;
   expect(embedded("St-Jean", "Saint Jean")).toBe(true);
   expect(embedded("Saint Jean", "St-Jean")).toBe(false);

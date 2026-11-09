@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
+import type * as Playwright from "playwright";
 import type { Browser, BrowserServer } from "playwright";
 import { Cause, Effect, Exit, Fiber, Schema, type Scope } from "effect";
 import {
@@ -9,10 +10,10 @@ import {
 import { BrowserExecuteResponse, type BrowserExecute } from "../runtime/browser-execution.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 import {
-  NativeWorkerOptions,
   NativeWorkerReply,
-  NativeWorkerRequest,
   PlaywrightLibrary,
+  type NativeWorkerOptions,
+  type NativeWorkerRequest,
 } from "./playwright-protocol.js";
 
 type WithoutId<A> = A extends { readonly id: string } ? Omit<A, "id"> : never;
@@ -92,7 +93,7 @@ const asError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("Native Playwright transport failed", { cause });
 const promise = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: asError });
 const loadChromium = (library: PlaywrightLibrary) =>
-  promise(async () => ((await import(library)) as typeof import("playwright")).chromium);
+  promise(async () => ((await import(library)) as typeof Playwright).chromium);
 const duration = (value: number, name: string) => {
   if (!Number.isFinite(value) || value <= 0 || value > 300_000)
     throw new Error(`${name} must be positive and at most 300000 ms`);

@@ -29,11 +29,11 @@ const host = (credentials?: WebsiteCredentials) =>
   ({
     reportCorrelation: undefined,
     heldLogin: { current: credentials === undefined ? undefined : { credentials } },
-    answeredLoginFields: { current: {} as AnsweredLoginFields },
+    answeredLoginFields: { current: {} },
     autofillPrimaryIdentifierKind: { current: undefined },
     autofillSignIn: { current: undefined },
     managedAuthenticationComplete: { current: false },
-    autofillSentValues: { current: {} as Partial<Record<CredentialRejectedField, string>> },
+    autofillSentValues: { current: {} },
     autofillSecretsFilled: { current: [] },
     autofillSecretsRefilled: { current: [] },
     autofillRejectedValues: { current: {} },

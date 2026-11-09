@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parentPort, workerData } from "node:worker_threads";
 import { compileFunction } from "node:vm";
 import { format } from "node:util";
+import type * as Playwright from "playwright";
 import type { Browser, BrowserContext, CDPSession, Frame, Page } from "playwright";
 import { Cause, Effect, Exit, Schema } from "effect";
 import type { BrowserExecuteResponse } from "../runtime/browser-execution.js";
@@ -428,7 +429,7 @@ await Effect.runPromise(
     );
     const resultLimit = options.resultLimitBytes ?? outputLimit;
     const chromium = yield* promise(
-      async () => ((await import(options.library)) as typeof import("playwright")).chromium,
+      async () => ((await import(options.library)) as typeof Playwright).chromium,
     );
     const attached = options.cdp;
     const browser = yield* promise(() =>

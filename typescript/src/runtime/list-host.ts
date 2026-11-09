@@ -34,6 +34,6 @@ export const withListHost = <Input>(input: Input, host: ListHost): Input => {
 export const listHostOf = (input: unknown): ListHost | undefined => {
   if (typeof input !== "object" || input === null) return undefined;
   const host: unknown = Reflect.get(input, listHostKey);
-  return typeof host === "object" && host !== null ? (host as ListHost) : undefined;
+  return typeof host === "object" && host !== null ? host : undefined;
 };
 

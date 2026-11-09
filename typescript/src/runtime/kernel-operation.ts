@@ -3,11 +3,12 @@ import { Effect, Either, Schema } from "effect";
 import type { Context } from "effect";
 import { DialogChoice, DialogFailure, DialogType } from "./dialogs.js";
 import { ChallengeFailure, challengeSolverWaitMs } from "./challenge.js";
-import { ScriptInput, ScriptInputFailure } from "./script-input.js";
+import { ScriptInputFailure } from "./script-input.js";
 import type {
   AskSpecOf,
   ScriptAnswer,
   ScriptAnswerOf,
+  ScriptInput,
   ScriptQuestionDeclarations,
 } from "./script-input.js";
 import type { EffectJournal, NotCommittedOptions, WriteConfirmation } from "./context.js";

@@ -10,7 +10,6 @@ import type { SignInRecipe } from "../../src/destinations/sign-in-recipe.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import {
-  type InputAnswers,
   type InputRequest,
   InputRequestFailure,
   type Question,
@@ -337,7 +336,7 @@ const owner = (answers: { readonly logins?: Login[]; readonly codes?: string[]; 
         return privateAnswers.shift() ?? answer;
       };
       return Effect.succeed(
-        Object.fromEntries(request.questions.map((question) => [question.id, reply(question)])) as InputAnswers,
+        Object.fromEntries(request.questions.map((question) => [question.id, reply(question)])),
       );
     }),
   );
@@ -456,7 +455,7 @@ it("asks for a correction before it types when an earlier sign-in of the run had
       const login = answers.shift();
       return login === undefined
         ? Effect.fail(new InputRequestFailure({ code: "NoResponse" }))
-        : Effect.succeed({ login: { ...login, saveLogin: false } } as InputAnswers);
+        : Effect.succeed({ login: { ...login, saveLogin: false } });
     }),
   );
   const secrets = makeRunSecrets();

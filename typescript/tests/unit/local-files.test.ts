@@ -15,7 +15,7 @@ it("reads a caller's file only at the size it had when opened, refusing one that
     expect(new TextDecoder().decode(await Effect.runPromise(same.read))).toBe("Receipt 1042\n");
     const grown = await Effect.runPromise(openLocalFile(pathToFileURL(path).href));
     await appendFile(path, "x".repeat(1 << 20));
-    await expect(Effect.runPromise(grown.read)).rejects.toThrow();
+    await expect(Effect.runPromise(grown.read)).rejects.toThrow("The file changed while it was read");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

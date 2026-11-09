@@ -313,12 +313,12 @@ it("keeps a publication's permit wait separate from the mint review holding the 
       };
     }),
   );
-  const details = (name: string, reviewId: string) =>
-    (
-      records.find((record) => record.name === name && record.reviewId === reviewId)?.details as {
-        details: { timing: Record<string, number> };
-      }
-    ).details.timing;
+  const details = (name: string, reviewId: string) => {
+    const found = records.find((record) => record.name === name && record.reviewId === reviewId)
+      ?.details as { details: { timing: Record<string, number> } } | undefined;
+    expect(found).toBeDefined();
+    return found?.details.timing;
+  };
   expect(results.mint.reviewId).not.toBe(results.publication.reviewId);
   expect(details("guardian.started", results.publication.reviewId)).toMatchObject({
     attempt: 1,

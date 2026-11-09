@@ -359,7 +359,7 @@ export const makeOutcomeReviewer = (options: {
     /** Assessments are numbered one at a time, so two calls never share a version. */
     const assessing = yield* Effect.makeSemaphore(1);
     for (const write of unseen)
-      events.push({ kind: "write", write, seq: lastSeq() + 1 } as OutcomeReviewEvent);
+      events.push({ kind: "write", write, seq: lastSeq() + 1 });
 
     const snapshot = (): OutcomeReviewSnapshot => ({
       version: 1,
@@ -399,7 +399,7 @@ export const makeOutcomeReviewer = (options: {
     const notify = (event: OutcomeReviewEventInput) =>
       Effect.gen(function* () {
         // Each event kind's fields are its own; the sequence number is the host's.
-        events.push({ ...event, seq: lastSeq() + 1 } as OutcomeReviewEvent);
+        events.push({ ...event, seq: lastSeq() + 1 });
         yield* save;
         yield* Queue.offer(wake, undefined);
       });

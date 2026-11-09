@@ -271,6 +271,7 @@ it("leaves the rest of the files unread once a call's results reach the size lim
 
 it("stops a several-file call's reads once the call is cancelled", async () => {
   const controller = new AbortController();
+  // oxlint-disable-next-line eslint/prefer-const -- the settle helper reads the run that is started after it is defined
   let running: Promise<unknown> | undefined;
   const settled = () =>
     Promise.race([

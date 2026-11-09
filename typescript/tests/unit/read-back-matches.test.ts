@@ -135,6 +135,7 @@ it("refuses a saved value with the caller's numbers in another order, or with on
 });
 
 it("embeds as self-contained source, so page code can use it", () => {
+  // oxlint-disable-next-line typescript/no-implied-eval -- evaluates the page-side source under test
   const embedded = new Function(`return ${String(rankByWords)};`)() as typeof rankByWords;
   expect(embedded("Exemple Bay", ["Exemple Bay Marina", "Hillcrest"])).toEqual(
     rankByWords("Exemple Bay", ["Exemple Bay Marina", "Hillcrest"]),

@@ -101,9 +101,9 @@ const rules: readonly Rule[] = [
     patterns: [
       // A hash and digits standing alone: at a line start or after a space, bracket or comma.
       // A hash inside a URL, an HTML entity or a quoted CSS colour has another character ahead.
-      /(?<![^\s(\[{,;])#\d{1,6}(?![\w-])/gu,
+      /(?<![^\s([{,;])#\d{1,6}(?![\w-])/gu,
       // Cross-repository shorthand, owner/name then a hash and digits.
-      /(?<![\w.\/-])[\w.-]+\/[\w.-]+#\d+(?![\w-])/gu,
+      /(?<![\w./-])[\w.-]+\/[\w.-]+#\d+(?![\w-])/gu,
       // Issue and pull request links into this organization's other, private, repositories.
       /\bgithub\.com\/pomerado\/(?!pomerado(?![\w.-]))[\w.-]+\/(?:issues|pull|discussions)\/\d+/giu,
       // Numbered pull requests, issues and tickets in prose.

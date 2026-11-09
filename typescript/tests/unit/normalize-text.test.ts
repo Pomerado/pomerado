@@ -26,6 +26,7 @@ it("keeps the zero-width non-joiner and joiner, which spell words and join emoji
 });
 
 it("embeds as self-contained source, as the page code uses it", () => {
+  // oxlint-disable-next-line typescript/no-implied-eval -- evaluates the page-side source under test
   const embedded = new Function(`return ${String(normalizeText)};`)() as typeof normalizeText;
   expect(embedded(" a\u200B\u00A0b \n c ", { lines: true })).toBe("a b\nc");
 });

@@ -97,7 +97,7 @@ it("runs the work once for two calls with the same key sent in parallel", async 
   );
   expect(result.runs).toBe(1);
   expect(result.views[1].job_id).toBe(result.views[0].job_id);
-  expect(result.views.map((view) => view.rejoined === true).sort()).toEqual([false, true]);
+  expect(result.views.map((view) => view.rejoined === true).sort((a, b) => Number(a) - Number(b))).toEqual([false, true]);
 });
 
 it("rejoins a running job by its key while the server is busy, and refuses a new key as busy", async () => {

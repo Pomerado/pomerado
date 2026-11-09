@@ -58,7 +58,9 @@ export const describeJobStoreContract = <Submission, Job>(
           const results = yield* Effect.all([submit(submission), submit(submission)], {
             concurrency: "unbounded",
           });
-          expect(results.map((result) => result.rejoined).sort()).toEqual([false, true]);
+          expect(
+            results.map((result) => result.rejoined).sort((a, b) => Number(a) - Number(b)),
+          ).toEqual([false, true]);
           expect(new Set(ids(results)).size).toBe(1);
         }),
       ));
@@ -75,7 +77,9 @@ export const describeJobStoreContract = <Submission, Job>(
           const results = yield* Effect.all([first(submission), second(submission)], {
             concurrency: "unbounded",
           });
-          expect(results.map((result) => result.rejoined).sort()).toEqual([false, true]);
+          expect(
+            results.map((result) => result.rejoined).sort((a, b) => Number(a) - Number(b)),
+          ).toEqual([false, true]);
           expect(new Set(ids(results)).size).toBe(1);
         }),
       ));

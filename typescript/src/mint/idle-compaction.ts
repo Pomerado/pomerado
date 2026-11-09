@@ -120,7 +120,7 @@ export const makeIdleCompaction = (options: {
     if (input.length < ready.length || key(input.slice(0, ready.length)) !== ready.key) {
       ready = undefined;
       unapplied = false;
-      void report({ state: "superseded" });
+      report({ state: "superseded" }).catch(() => undefined);
       return input;
     }
     unapplied = false;
@@ -141,7 +141,7 @@ export const makeIdleCompaction = (options: {
     const original = [...request.input];
     const compacted = { length: original.length, key: key(original) };
     const note = options.note?.();
-    void report({ state: "started", ...event });
+    report({ state: "started", ...event }).catch(() => undefined);
     running = compact({
       ...sent,
       input: [...sent.input, compactionTrigger],
@@ -233,7 +233,7 @@ export const makeIdleCompaction = (options: {
     await new Promise<void>((done) => {
       if (signal?.aborted) return done();
       signal?.addEventListener("abort", () => done(), { once: true });
-      void compacting.finally(done);
+      compacting.then(() => done(), () => done());
     });
   };
 
