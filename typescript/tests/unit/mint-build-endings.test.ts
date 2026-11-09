@@ -524,7 +524,7 @@ const hostCheckRefused = new MintFailure({
   code: "PublicationUnavailable",
   reason: "autofill_recipe_not_verified",
 });
-const guardianCorrection = new MintFailure({
+const guardianDenialArgs = {
   code: "ReviewDenied",
   review: {
     outcome: "deny",
@@ -533,7 +533,8 @@ const guardianCorrection = new MintFailure({
     rationale: "Read the price from the result row.",
     findings: [],
   },
-});
+} as const;
+const guardianCorrection = new MintFailure(guardianDenialArgs);
 const publicationOutage = new MintFailure({
   code: "PublicationUnavailable",
   reason: "registry_unavailable",
@@ -962,6 +963,74 @@ it("refuses host_refused once a later finish_build got past the host's refusal t
   });
 });
 
+/** A secret handle in published source, which the minter replaces with a run-time question. */
+const secretHandle = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "secret_handle",
+  screening: { category: "authored_source", path: "src/tool.ts", replacements: 0 },
+});
+
+// A host that runs every check on a submission before it answers returns every refusal it found
+// at once: the minter reads each one's reason and instruction in that one finish_build result, so
+// it fixes them all in one round. A later result names only its own refusals.
+it.each([
+  {
+    basis: "beside another host refusal",
+    refusal: { code: "PublicationUnavailable", reason: "variants_unsupported" } as const,
+  },
+  {
+    basis: "beside Guardian's denial",
+    refusal: guardianDenialArgs,
+  },
+])("returns every refusal the host found in one submission $basis", async ({ refusal }) => {
+  const refusals = [
+    new MintFailure({
+      ...refusal,
+      alsoRefused: [
+        secretHandle,
+        new MintFailure({ code: "PublicationUnavailable", reason: "file_readback" }),
+      ],
+    }),
+    variantsUnsupported,
+  ];
+  let published = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [call("execute", pureExample), finishAs(0), finishAs(1), finishAs(2)][index] ??
+      prose("Stopping."),
+    {
+      publish: () => {
+        const next = refusals[published++];
+        return next === undefined
+          ? Effect.succeed({ publicationRef: "published_revision", diagnostics: [] })
+          : Effect.fail(next);
+      },
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  const first = resultOf(f.requests[2], "finish_0") as Record<string, unknown>;
+  expect(first).toMatchObject({
+    status: "not_published",
+    code: refusal.code,
+    instruction: expect.stringContaining("alsoRefused"),
+  });
+  expect(first.alsoRefused).toEqual([
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "secret_handle",
+      path: "src/tool.ts",
+      instruction: expect.stringContaining("src/tool.ts holds a {{secret.…}} handle"),
+    }),
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "file_readback",
+      instruction: expect.stringContaining("outside the host's file service"),
+    }),
+  ]);
+  expect(resultOf(f.requests[3], "finish_1")).not.toHaveProperty("alsoRefused");
+});
+
 /** A host check's refusal that carries a review of its own, as a host may attach to one. */
 const reviewedHostRefusal = new MintFailure({
   code: "PublicationUnavailable",
@@ -979,6 +1048,10 @@ it.each([
     publish: [variantsUnsupported, guardianCorrection, hostCheckRefused],
   },
   { basis: "with a review of its own", publish: [reviewedHostRefusal] },
+  {
+    basis: "beside Guardian's denial of the same submission",
+    publish: [new MintFailure({ ...guardianDenialArgs, alsoRefused: [hostCheckRefused] })],
+  },
   {
     basis: "with a review of its own after a finish_build got past the first",
     publish: [variantsUnsupported, guardianCorrection, reviewedHostRefusal],

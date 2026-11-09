@@ -346,6 +346,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    * already showed the request's end state publishes. Absent otherwise.
    */
   readonly publishesOnReadBack?: true;
+  /**
+   * On a publication refusal, the other refusals the host found in the same submission, each one
+   * the minter fixes in its source or metadata. A host that runs every check before answering
+   * lists them here, so the minter fixes them in one round instead of meeting one per round.
+   */
+  readonly alsoRefused?: readonly MintFailure[];
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
   /**
