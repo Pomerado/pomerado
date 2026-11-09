@@ -67,7 +67,9 @@ the source files, never captures.
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input and returns a
   key the schema lacks as an `example_input` input feedback. An optional input plus a declared
-  question is only for a value the request leaves open.
+  question is only for a value the request leaves open. A read's example also passes it in place
+  of the caller's own input once the tool refused that input with `InvalidInput` ("Reads, writes
+  and examples").
 - `live_tests` runs a read's live tests when the host offers it: the combined cases you
   design in `test/cases.json` from what you saw on the site, and every result, run in batches on
   reset pages, on `src/tool.mjs` and on `src/tool-http.mjs`, each version keeping its own
@@ -218,7 +220,8 @@ read also checks the page's stable identity (.agents/core/SKILL.md). Building or
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
 probe, return only the slice you need, such as the relevant container, the matching rows and
 their count, never a whole page's text or every control on it. A filter panel's or option
-group's controls, once you open it, are such a slice. An execution result over 16 KiB comes
+group's controls, once you open it, are such a slice. For a page's large embedded data, return its
+`outline` first, then the few matches you need (core skill, "Large page data"). An execution result over 16 KiB comes
 back as a digest (`kind: "result_digest"`): its size, its shape with every array's length, its
 first items and its error fields whole, and the `path` of the file holding the whole result.
 Read that file in ranges with `read_source`, or search it with `rg -n` in an offline command,
@@ -264,8 +267,9 @@ whose answers come back to you while this attempt continues, when:
 2. a decision needs something only the user knows, such as which account, plan or item, and a
    wrong guess matters (a write or a sign-in), or a location a tool's results, prices or
    availability depend on, which the caller may skip (.agents/core/SKILL.md, the input schema);
-3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
-   usually find X?") before giving up;
+3. you are stuck navigating after a few distinct attempts: work out the way yourself first,
+   from the site's menus, links, search and other pages, and ask for directions ("Where do you
+   usually find X?") or confirmation only when it seems impossible or something looks wrong;
 4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
    channel to use when there is no password (.agents/auth/SKILL.md), that the request and
    business input do not name or clearly imply: never guess it or take the site's preselected
@@ -395,8 +399,8 @@ read-back can confirm follows the writes skill's rule for an unverifiable write.
 **Change the task with `mint_update`.** An answer changes nothing by itself. When the caller
 confirms a change to the task, call `mint_update` with it: changed input values, dates or
 options; a requirement, constraint or prerequisite added, dropped or revised (a check before
-the action the site does not offer); the purpose; a read becoming a write; the target site; or
-the login. Ask with `request_input` first unless the request already settles the change, then
+the action the site does not offer); the purpose; a read becoming a write, or a write build that has
+sent no write becoming a read; the target site; or the login. Ask with `request_input` first unless the request already settles the change, then
 name the answered questions in `confirmedBy`. The caller's pick of an option you wrote confirms
 what that option says, and so do their own words. Guardian reviews the update and the host
 applies it; after `updated`, every later step and the published tool follow the effective
@@ -571,6 +575,17 @@ finally-style block, so the revert runs on every path, errors and timeouts inclu
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+A read's example record from the caller that the site can't serve, such as a link that moved or
+lost its ID, a record the site says it doesn't have, or a value it refuses, doesn't block the
+build. Have the tool refuse it with `InvalidInput` naming the field, in the site's words
+(caller-input skill), and run the example on it once: that refusal is the tool's error case for
+that input. Then prove the tool on another record of the same kind: one the site lists, passed
+as `exampleInput` on the example, or, only when you find none on the site, one the caller gives
+through `request_input`. Keep a live test case on the caller's input that expects
+`invalid_input`, and publish against the example that passed. When neither the site nor the
+caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
+and the site's answer. A write runs the caller's input as it is.
+
 If you changed something on the site by mistake, put it back to its earlier value before going
 on. When the owner asks you to undo a change you made, do it.
 
@@ -626,9 +641,17 @@ never with final text, which the host treats as unfinished work:
   invent a value or substitute a different field. After a verified write, when the site does
   not offer one output the request asks for, or has no field for one input the request marks
   optional and the input the write session ran leaves unset, the writes skill's ask whether to
-  publish without it comes first.
+  publish without it comes first. When the site offers a clear alternative for the same goal,
+  such as ordering for later instead of now or delivery instead of pickup, ask the user with
+  `request_input` whether to use it before you report this. An app-download or location prompt
+  in the way is no such evidence (core skill, "Cookie banners").
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
-  such as an applicant it will not quote. Name the reason the site gave in `explanation`.
+  such as an applicant it will not quote. Name the reason the site gave in `explanation`. A
+  decline can be temporary: the site turns the request away now but would take it later, such as
+  a store that is closed or a menu offered only as a preorder. When the site offers an
+  alternative that works now, such as a preorder or a later time, you can use it, asking the
+  caller first when it changes what they asked for. Otherwise set `temporary`, and `availableAt`
+  when the site says when it takes the request again.
 - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
@@ -696,11 +719,14 @@ never with final text, which the host treats as unfinished work:
 Before ending blocked because a value the request gave is unavailable or invalid on the site,
 such as a time slot the site does not offer that day, a date outside its calendar or a name it
 does not list, ask the owner with `request_input` to revise it or stop, as the key rules say.
-End blocked only when they stop or their answer cannot be met either. In maintenance, follow
-the intake screen instead.
+End blocked only when they stop or their answer cannot be met either. A read whose bad value is
+its example's record proves the tool on another record first ("Reads, writes and examples"). In
+maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
-in your own words: Guardian reviews it first. When it passes on a website's instructions, links or
+in your own words: what happened and why in this build, such as the reason the site gave or when
+it says it takes the request again. The caller reads it after the host's standard message for
+the ending. Guardian reviews it first. When it passes on a website's instructions, links or
 phone numbers, Guardian returns it with a rationale and the build goes on: revise it and report
 again, or withdraw it and continue.
 Never end blocked for anything you can still work on or ask about: a failed execution, review

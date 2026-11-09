@@ -22,7 +22,9 @@ belong to the host; never request a password, cookie or TOTP seed in model-visib
 
 Asking the caller follows `AGENTS.md` ("Try hard, then ask"). When neither the request nor an
 answer says whether the tool looks things up or changes something, prefer asking the
-read-or-write choice before your first execution.
+read-or-write choice before your first execution. When the request and its example disagree on
+read or write, ask the caller which they mean before your first execution, and when the answer
+changes the build's effect, apply it with `mint_update`.
 
 Write ordinary TypeScript or JavaScript files. Export a default Kernel script, as
 described below. Import the actual canonical SDK entrypoint given in the workspace
@@ -702,6 +704,16 @@ after an in-page change, such as a filter that reloads the list without a naviga
 change's data response or the rendered rows, never the initial JSON. Read the rendered page for
 a value that exists only after client-side rendering, or that the page computes where you see
 it, such as a total.
+Large page data: a call's code runs in a script runner whose memory is small next to the
+page's, and a page's embedded data can run to hundreds of megabytes. Read it where it is: paste
+`pageDataCode` from `pomerado/runtime` and call `readPageData`, which reads a script element's
+JSON or a page global inside the page and returns only the fields you select, and no more items
+than the call returns (`limit`). Never bring the whole data into the call, with `textContent`,
+`innerText`, `page.content()` or an `evaluate` that returns it. Parse a large data response's
+text with `selectJson`, which `pageDataCode` also declares, never with `response.json()`. Never
+parse page data in a wait's `check`, which runs again on every poll, and keep nothing large on
+`globalThis` between calls: return the ids and cursors the next call needs. While building, find
+where the values are with a selection's `outline`, then read a few matches, never the whole.
 Budgets: navigation 30 s for the document to commit; a click, fill or other action 5 s, taken
 only on an element a wait has shown ready. After a navigation commits or an action returns, the
 page gets 8 s without progress to show one of the answers you named, and up to 30 s while it
@@ -989,7 +1001,7 @@ declines what is not essential in one click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
 otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or
-terms the site asks you to accept, other than the notice below that every visitor accepts.
+terms the site asks you to accept, other than the notices below.
 
 A notice the site shows every visitor before it lets them use the page, such as a demo or
 test-environment warning, an age gate or a region notice, is page setup on a read. Prefer accepting
@@ -997,6 +1009,12 @@ it with its own control the way you dismiss a cookie banner, waiting until the p
 usable, with no commit mark and without making the tool a write for it, even when accepting it
 sends a request. Prefer its close control when it has one. When the request is about that notice
 itself, accepting it is the write.
+
+An app-download, open-in-app or location-permission prompt is an obstacle, not a reason to stop.
+Dismiss it with its skip, close, "not now", "continue on the web" or "type address instead"
+control, in the tool's code only when it shows. When a path ends at an app-only wall, try the
+page's other routes, such as a web or delivery storefront on the site's own linked domain, before
+you decide the site has no web data.
 
 ## Safety defaults
 
@@ -1073,9 +1091,11 @@ belongs to the `authenticate` step (auth skill). A code the site sends later, to
 declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
 `caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
-current page state within the existing deadline. When a few distinct attempts have
-not found the way, ask the caller for directions with `request_input` before
-reporting a blocked or unknown state whose cause cannot be established. Completing a
+current page state within the existing deadline. Work out the way yourself first, from the
+site's menus, links, search and other pages. When a few distinct attempts have not found it and
+it seems impossible, or something looks wrong, ask the caller for directions or confirmation
+with `request_input` before reporting a blocked or unknown state whose cause cannot be
+established. Completing a
 challenge does not prove login.
 
 For a native dialog, the call that raises it keeps it on `globalThis.dialog` from a

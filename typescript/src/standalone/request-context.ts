@@ -352,9 +352,9 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
             ? {}
             : {
                 writePath: {
-                  steps: step.writePath.steps.map(({ commit, does }) => ({
-                    commit,
-                    does: secrets.redact(does),
+                  steps: step.writePath.steps.map((pathStep) => ({
+                    ...pathStep,
+                    does: secrets.redact(pathStep.does),
                   })),
                   ends: secrets.redact(step.writePath.ends),
                 },
@@ -609,7 +609,8 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       });
     /**
      * Applies an update Guardian allowed, all or nothing. The local host has no intake screen,
-     * duplicate check, saved logins or checkpoint store: it rebinds the site, input and effect,
+     * duplicate check, saved logins or checkpoint store: it rebinds the site, input and effect
+     * (either way, since the harness lowers a write only before it sent anything),
      * and a sign-in on a new site asks the caller as any sign-in does. `rebind` binds the build's
      * browser pieces to a new site; only once it succeeds does anything switch, and the earlier
      * site's sign-in origins, sign-ins, codes and observed page are left behind.
@@ -638,6 +639,12 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
         if (next.effect === "write" && buildEffect !== "write") {
           buildEffect = "write";
           // A read example's claim was the read's; the write session takes its own.
+          claimed = false;
+        }
+        // A write build lowers only before its write session started; the read's example takes
+        // its own claim.
+        if (next.effect === "read" && buildEffect === "write") {
+          buildEffect = "read";
           claimed = false;
         }
         taskUpdates.push({
