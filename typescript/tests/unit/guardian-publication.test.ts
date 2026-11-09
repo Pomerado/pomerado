@@ -943,7 +943,7 @@ describe("the publication policy", () => {
 
   it("is the core text, naming the files the host writes", () => {
     const policy = guardianPublicationPolicy;
-    expect(policy.split("\n")).toHaveLength(18);
+    expect(policy.split("\n")).toHaveLength(19);
     expect(
       policy.startsWith("This is the existing publication review, not an execution request.\n"),
     ).toBe(true);
@@ -963,6 +963,14 @@ describe("the publication policy", () => {
     const rule =
       "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a `site_field`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.";
     expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
+  });
+
+  // A browser hand-off lets a person act in the run's signed-in browser, so publication holds it
+  // to a step the request asked a person for, and never to getting past a check or a sign-in.
+  it("allows a browser hand-off only where the request asks a person for that step", () => {
+    expect(guardianPublicationPolicy).toContain(
+      "\nA `browser_handoff` declaration hands the run's live browser to a person, who reviews or does a step and marks it done. It is right only where trusted intent, a task update in trusted_authority.taskUpdates or an answer in trusted_authority.answeredQuestions asks for a person to review or do that step: one nobody asked for, one that gets past a CAPTCHA or bot check, or one for signing in when nobody asked for a person to sign in, is a source_correction. Its show_inputs names only inputs the tool takes, never a file or a secret.\n",
+    );
   });
 
   // A caller's place, venue or company name matches in its usual forms, so neither the review of

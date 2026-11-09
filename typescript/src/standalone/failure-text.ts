@@ -87,6 +87,14 @@ const sentences: {
       ),
     };
   },
+  handoff_state_changed: (outcome) => ({
+    message:
+      "The page changed while a person had the browser, so the tool stopped without acting further.",
+    remediation: then(
+      outcome,
+      "Run the tool again, and leave the page on the step it handed over when you finish.",
+    ),
+  }),
   login_identity_conflict: (outcome) => ({
     message: "The website signed in to a different account than the one this run expects.",
     remediation: then(outcome, "Sign in with the expected account and run the tool again."),

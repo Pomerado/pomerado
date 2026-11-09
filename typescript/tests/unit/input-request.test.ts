@@ -1,6 +1,15 @@
 import { Either, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { InputRequest, noticeRequest, validateAnswer } from "../../src/runtime/input-request.js";
+import {
+  browserHandoffWaitMs,
+  handsOff,
+  InputRequest,
+  inputWaitMs,
+  isProtectedQuestion,
+  maximumInputWaitMs,
+  noticeRequest,
+  validateAnswer,
+} from "../../src/runtime/input-request.js";
 
 const request = Schema.decodeUnknownSync(InputRequest)({
   id: "3f0c2a4e-7c1e-4a55-9d3b-1f2e3d4c5b6a",
@@ -353,5 +362,78 @@ describe("validateAnswer", () => {
       "unexpected_answer",
       "login",
     ]);
+  });
+});
+
+describe("a browser hand-off", () => {
+  const handOff = {
+    id: "review_claim",
+    type: "browser_handoff",
+    prompt: "Check the claim form, then mark this step done.",
+    show_inputs: ["policy_number", "amount"],
+  } as const;
+  const requestOf = (source: string, questions: readonly unknown[] = [handOff]) =>
+    Schema.decodeUnknownEither(InputRequest)({
+      id: "3f0c2a4e-7c1e-4a55-9d3b-1f2e3d4c5b6a",
+      source,
+      questions,
+    });
+
+  it("is the only question of a script's or the host's request", () => {
+    expect(Either.isRight(requestOf("script"))).toBe(true);
+    expect(Either.isRight(requestOf("system"))).toBe(true);
+    expect(Either.isLeft(requestOf("agent"))).toBe(true);
+    expect(Either.isLeft(requestOf("kernel_auth"))).toBe(true);
+    expect(
+      Either.isLeft(
+        requestOf("script", [handOff, { id: "note", type: "text", prompt: "Anything else?" }]),
+      ),
+    ).toBe(true);
+  });
+
+  it("shows at most 20 unique input names", () => {
+    const named = (show_inputs: readonly string[]) => requestOf("script", [{ ...handOff, show_inputs }]);
+    expect(Either.isRight(named([]))).toBe(true);
+    expect(Either.isRight(named(Array.from({ length: 20 }, (_, index) => `field_${index}`)))).toBe(
+      true,
+    );
+    expect(Either.isLeft(named(Array.from({ length: 21 }, (_, index) => `field_${index}`)))).toBe(
+      true,
+    );
+    expect(Either.isLeft(named(["amount", "amount"]))).toBe(true);
+    expect(Either.isLeft(named(["policy number"]))).toBe(true);
+  });
+
+  it("takes only the host's done as its answer", () => {
+    const asked = Either.getOrThrow(requestOf("script"));
+    expect(validateAnswer(asked, { review_claim: { done: true } })).toEqual(
+      Either.right({ review_claim: { type: "browser_handoff", value: { done: true } } }),
+    );
+    for (const answer of [{ done: false }, { done: true, note: "ok" }, true, "done", {}])
+      expect(reason({ review_claim: answer }, asked)).toEqual(["malformed", "review_claim"]);
+  });
+
+  it("waits 30 minutes, while every other request keeps the ten-minute bound", () => {
+    expect(inputWaitMs(Either.getOrThrow(requestOf("script")))).toBe(browserHandoffWaitMs);
+    expect(browserHandoffWaitMs).toBe(30 * 60_000);
+    expect(inputWaitMs(request)).toBe(maximumInputWaitMs);
+    expect(maximumInputWaitMs).toBe(10 * 60_000);
+  });
+
+  it("is answered only on the protected page", () => {
+    expect(isProtectedQuestion(handOff)).toBe(true);
+    expect(isProtectedQuestion({ id: "note", type: "text", prompt: "Anything else?" })).toBe(false);
+  });
+
+  it("tells a host from an artifact's declared questions whether its runs may hand off", () => {
+    expect(handsOff(undefined)).toBe(false);
+    expect(handsOff({ seat: { type: "choice", prompt: "Which seat?" } })).toBe(false);
+    expect(handsOff({ seat: { prompt: "Which seat?" } })).toBe(false);
+    expect(
+      handsOff({
+        seat: { type: "choice", prompt: "Which seat?" },
+        review_claim: { type: "browser_handoff", prompt: "Check the claim form." },
+      }),
+    ).toBe(true);
   });
 });

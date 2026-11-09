@@ -353,6 +353,7 @@ const response = await kernel.browsers.playwright.execute(sessionId, {
   - Any other failure after a browser step ran reports `may_have_applied`, because that step may have changed the website.
   - A call that can't sign in again, because its sign-ins are spent or the sign-in failed, reports `website_sign_in_unavailable` with the retry class `same_key`. That holds for a read, and for a write that sent nothing (`not_attempted`) or entered none of its declared commit steps (`not_applied`). A call whose journal shows a commit step entered, or commit marks it can't read, never reports it. Any other write keeps the outcome its journal shows, `outcome_unknown` while it may have applied.
   - A valid value the caller supplied that the page did not apply, such as a location, store, filter, sort or date it ignored or reset, reports `input_not_applied` with the retry class `same_key` only for a read or a site left untouched. A write after a browser step ran keeps `outcome_unknown`, since setting a store signed in can change the account, and a confirmed write keeps `execution_failed`. A record an earlier release kept as `location_not_applied` reports the same.
+  - A run whose script stops after a browser hand-off because the page is neither the step it handed over nor a result it can read reports `handoff_state_changed` with the retry class `new_key`. A write reports it with `possible_commit` true unless the script put back every commit step, since the person may have submitted it.
   - A read never reports a possible website change.
   - A write that recorded its confirmation is a result: whatever failed after it, the run reports `applied` with the retry class `never`, and its code says what failed. A script that threw or returned output that failed its schema reports `execution_failed` or `invalid_output`, and one that then failed on an unanswered question, a refused input or a rejected login keeps that code, with `possible_commit` true because the website did change. A browser call after `verified()` reopens the write, so a failure after it reports `may_have_applied`.
   - Only `possible_commit: true` tells the caller to read the site back before any retry.
@@ -388,6 +389,16 @@ await Effect.runPromise(
 ```
 
 - `makeInputAsker` adapts your own chat callback. The callback receives an `InputRequest` and returns raw answers keyed by question ID.
+
+### Browser hand-off
+
+A tool's run can hand its live browser to a person at a step its build's request named, such as checking a form before it is submitted, and go on once they mark the step done.
+
+- The script declares a `browser_handoff` question with the person's task as its `prompt` and the inputs that help them as `show_inputs`, and calls `handOff(id)`. The request holds that one question, from a script or the host, and its answer is `{ done: true }`, which the host writes.
+- It waits up to `browserHandoffWaitMs`, 30 minutes. Every other request keeps `maximumInputWaitMs`, ten minutes. `inputWaitMs(request)` gives a request's bound, and the run's deadline pauses meanwhile.
+- In a write, every declared commit step not yet confirmed reads sent from just before the hand-off, since the person may submit. The script then reads the site's confirmation and calls `verified()`, or finds the same form still waiting, calls `notCommitted(name)` and submits it itself. Otherwise it throws `errors.HandoffStateChanged`. A run that fails after a hand-off without proving anything reports a possible commit.
+- A host decides how to show the browser. The local host asks through its asker and tells the person to use the browser window, with the run's plain text, number and yes/no values for the shown inputs; never a file. A host that can't show the browser to a person, such as the local host with a headless browser (start it with `--headed` to hand off), fails the request with `Unavailable` and never answers it itself. `handsOff(artifact.questions)` in `pomerado/core/runtime/input-request` says before a run starts whether its tool may hand off, so a hosted host can start a browser with a visible window.
+- The hand-off is answered only on the owner's protected page (`isProtectedQuestion`), Guardian reviews its prompt like any other script question, and its answer is never reused for a later ask.
 - `makePomeradoMcp` and `makeIntegrationMcp` expose the two local MCP modes as library functions. Their Effect scopes own cleanup.
 - `minterProvider`, `guardianProvider` and `outcomeReviewerProvider` take Agents SDK `ModelProvider` implementations in place of the default OpenAI provider.
 - Importing a core module starts no browser, MCP listener or workspace.

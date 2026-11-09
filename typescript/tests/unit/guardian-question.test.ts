@@ -1024,3 +1024,39 @@ it("gives a review the owner's confirm answer beside a notice", async () => {
     { id: "approve", question: "Do you approve the site's terms?", answer: { confirmed: true } },
   ]);
 });
+
+it("reviews a browser hand-off's screened prompt with its shown inputs, and never its answer", async () => {
+  const handOff: InputRequest = {
+    id: "7f3b8d0a-4c5e-4a91-9d2c-3e4f5a6b7c8d",
+    source: "script",
+    questions: [
+      {
+        id: "review_claim",
+        type: "browser_handoff",
+        prompt: "Check the claim for P-100, then mark this step done.",
+        show_inputs: ["policy_number"],
+      },
+    ],
+  };
+  const screen = (text: string) => Effect.succeed(text.replaceAll("P-100", "[policy]"));
+  const reviewed = await Effect.runPromise(
+    questionForReview(handOff, { credentialsAvailable: false, scriptAsk: true }, screen),
+  );
+  expect(reviewed.questions).toEqual([
+    {
+      id: "review_claim",
+      type: "browser_handoff",
+      prompt: "Check the claim for [policy], then mark this step done.",
+      show_inputs: ["policy_number"],
+    },
+  ]);
+  expect(
+    await Effect.runPromise(
+      answersForReview(
+        handOff,
+        { review_claim: { type: "browser_handoff", value: { done: true } } },
+        screen,
+      ),
+    ),
+  ).toEqual([]);
+});

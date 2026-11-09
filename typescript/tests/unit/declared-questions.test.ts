@@ -332,3 +332,83 @@ describe("a site-field question", () => {
     expect(draftQuestionDeclarationFailure("src/tool.mjs", source)).toBeUndefined();
   });
 });
+
+describe("a declared browser hand-off", () => {
+  const review = {
+    type: "browser_handoff",
+    prompt: "Check the claim form, then mark this step done.",
+    show_inputs: ["policy_number", "amount"],
+  } as const;
+  const declared: ScriptQuestionDeclarations = { review_claim: review };
+
+  it("is asked alone with its declared prompt and shown inputs, which the host checks", () => {
+    const asked = requestFor(declared, "review_claim");
+    expect(asked.questions).toEqual([{ id: "review_claim", ...review }]);
+    expect(asksAsDeclared(asked, declared)).toBe(true);
+    expect(asksAsDeclared(asked, { review_claim: { ...review, show_inputs: ["amount"] } })).toBe(
+      false,
+    );
+    expect(asksAsDeclared(asked, { review_claim: { ...review, prompt: "Check it." } })).toBe(false);
+    expect(asksAsDeclared(asked, { review_claim: { type: "confirm", prompt: review.prompt } })).toBe(
+      false,
+    );
+  });
+
+  it("shows no inputs when its declaration lists none", () => {
+    const bare = { review_claim: { type: "browser_handoff", prompt: review.prompt } } as const;
+    const asked = requestFor(bare, "review_claim");
+    expect(asked.questions).toEqual([
+      { id: "review_claim", type: "browser_handoff", prompt: review.prompt, show_inputs: [] },
+    ]);
+    expect(asksAsDeclared(asked, bare)).toBe(true);
+  });
+
+  it("refuses options, and another question in the same ask, before anyone is asked", () => {
+    const both = { ...declared, note };
+    const refused = (asked: Parameters<ReturnType<typeof makeScriptInput>["ask"]>[0]) => {
+      let sent = false;
+      const result = Effect.runSync(
+        Effect.either(
+          makeScriptInput(both, () =>
+            Effect.sync(() => {
+              sent = true;
+              return {};
+            }),
+          ).ask(asked),
+        ),
+      );
+      return { sent, code: Either.isLeft(result) ? result.left.code : undefined };
+    };
+    expect(refused(["review_claim", "note"])).toEqual({ sent: false, code: "InvalidOptions" });
+    expect(refused({ review_claim: { options: [{ value: "a", label: "A" }] } })).toEqual({
+      sent: false,
+      code: "InvalidOptions",
+    });
+  });
+
+  it("returns the person's done to the script", () => {
+    const answer = Effect.runSync(
+      makeScriptInput(declared, () => Effect.succeed({ review_claim: { done: true } })).ask(
+        "review_claim",
+      ),
+    );
+    expect(answer).toEqual({ done: true });
+  });
+
+  it("is a declaration a draft may make, and one with an invalid shown input is refused", () => {
+    const source = operation(
+      `{name:"submit_claim",input:Schema.Unknown,output:Schema.Unknown,questions:{review_claim:{type:"browser_handoff",prompt:"Check it.",show_inputs:["amount"]}}}`,
+    );
+    expect(draftQuestionDeclarations("src/tool.mjs", source)).toEqual({
+      review_claim: { type: "browser_handoff", prompt: "Check it.", show_inputs: ["amount"] },
+    });
+    expect(
+      draftQuestionDeclarationFailure(
+        "src/tool.mjs",
+        operation(
+          `{name:"a",input:Schema.Unknown,output:Schema.Unknown,questions:{review_claim:{type:"browser_handoff",prompt:"Check it.",show_inputs:["amount","amount"]}}}`,
+        ),
+      ),
+    ).toContain("Invalid script questions");
+  });
+});
