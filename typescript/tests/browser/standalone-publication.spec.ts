@@ -147,7 +147,7 @@ test("a read whose caller's example the tool refuses publishes on a substitute e
       output: { heading: "Open store" },
     });
     // The review hears the caller's input stays a case the tool must refuse.
-    expect(observationsOf(publication)).toContain("substitute");
+    expect(observationsOf(publication)).toContain("The example ran a substitute input");
   } finally {
     await site.close();
   }
