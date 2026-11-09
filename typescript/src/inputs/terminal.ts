@@ -91,8 +91,12 @@ const line = (prompt: string, masked = false) =>
 
 const answerChoices = (question: Extract<Question, { readonly type: "choice" | "multi_choice" }>) =>
   Effect.gen(function* () {
+    const recommended: readonly string[] =
+      typeof question.recommended === "string" ? [question.recommended] : (question.recommended ?? []);
     for (const [index, option] of question.options.entries())
-      process.stderr.write(`${index + 1}. ${publicOptionLabel(option)}\n`);
+      process.stderr.write(
+        `${index + 1}. ${publicOptionLabel(option)}${recommended.includes(option.id) ? " (recommended)" : ""}\n`,
+      );
     const reply = (yield* line(
       question.type === "multi_choice" ? "Numbers separated by commas: " : "> ",
     )).trim();
@@ -133,6 +137,8 @@ const answerQuestion = (question: Question): Effect.Effect<unknown, InputRequest
     process.stderr.write(`\n${question.prompt}\n`);
     switch (question.type) {
       case "text":
+        if (question.recommended !== undefined)
+          process.stderr.write(`Recommended: ${question.recommended}\n`);
         return yield* line("> ");
       case "secret":
         return yield* line("> ", true);

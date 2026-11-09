@@ -5429,6 +5429,109 @@ it("hands a signed-in read repair's unanswered question back when its host allow
   }
 });
 
+/** A request_input call with one choice question the minter recommends an answer to. */
+const fieldQuestion = (asksConsent?: boolean) => ({
+  ...(asksConsent === undefined ? {} : { asksConsent }),
+  questions: [
+    {
+      id: "phone_field",
+      type: "choice" as const,
+      prompt: "Which field holds the phone number?",
+      options: [
+        { id: "contact", label: "Contact number" },
+        { id: "mobile", label: "Mobile" },
+      ],
+      recommended: "contact",
+    },
+  ],
+});
+
+// A write repair's question that asks no consent, such as which field holds a value, goes back as
+// no answer when its host allows it, signed in too, with the answer the minter recommended. A
+// question that asks consent, or carries no mark, still ends the repair: no answer is never consent.
+it("hands a write repair's unanswered question that asks no consent back with its recommendation", async () => {
+  const signedIn = {
+    websiteCredentialsAvailable: true,
+    handBackWriteRepairQuestions: true,
+  } as const;
+  const writeRepair = { ...request, mode: "maintenance", effect: "write" };
+  const shown: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(JSON.parse(yield* turn.actions.requestInput(fieldQuestion(false)))).toEqual({
+          status: "no_answer",
+          recommended: { phone_field: "contact" },
+          userInputRequired: false,
+          instruction: expect.any(String),
+        });
+        expect(turn.isComplete()).toBe(false);
+      }),
+    {
+      ...signedIn,
+      askInput: (asked) =>
+        Effect.sync(() => {
+          shown.push(asked);
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+    },
+  );
+  expect(await f.run(writeRepair)).not.toHaveProperty("noResponse");
+  // The caller sees the recommendation, never the consent mark.
+  expect(shown).toEqual([
+    expect.objectContaining({
+      questions: [expect.objectContaining({ id: "phone_field", recommended: "contact" })],
+    }),
+  ]);
+  expect(shown[0]).not.toHaveProperty("asksConsent");
+  const consent = {
+    asksConsent: false,
+    questions: [{ id: "place", type: "confirm" as const, prompt: "May it place the order again?" }],
+  };
+  for (const [asked, host] of [
+    [fieldQuestion(true), signedIn],
+    [fieldQuestion(), signedIn],
+    [consent, signedIn],
+    [fieldQuestion(false), { websiteCredentialsAvailable: true }],
+  ] as const) {
+    const ended = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(JSON.parse(yield* turn.actions.requestInput(asked))).toMatchObject({
+            status: "no_response",
+          });
+        }),
+      host,
+    );
+    expect(await ended.run(writeRepair)).toMatchObject({ build: "incomplete", noResponse: {} });
+  }
+});
+
+it("refuses a recommended answer its question does not offer, and asks nobody", async () => {
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const unoffered = fieldQuestion(false);
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput({
+              ...unoffered,
+              questions: [{ ...unoffered.questions[0], recommended: "fax" }],
+            }),
+          ),
+        ).toMatchObject({ status: "question_invalid" });
+      }),
+    {
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+    },
+  );
+  await f.run();
+  expect(asked).toBe(0);
+});
+
 it("ends a signed-in build as no_response when its example's script question goes unanswered", async () => {
   const f = await fixture(
     (turn) =>

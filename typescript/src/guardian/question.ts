@@ -116,6 +116,8 @@ interface ReviewedOption {
   readonly label: string;
   readonly accountSpecific?: true;
   readonly maskedLabel?: string;
+  /** The asker recommends this option, which the caller sees. */
+  readonly recommended?: true;
 }
 
 /**
@@ -136,6 +138,8 @@ interface ReviewedQuestion {
   readonly followUp?: { readonly prompt: string; readonly defaultText?: string };
   readonly secretKind?: SecretKind;
   readonly fields?: "username_password" | "password";
+  /** A text question's recommended answer, which the caller sees. */
+  readonly recommended?: string;
 }
 
 /** One proposed input request, reviewed as a whole. Its questions are shown together. */
@@ -197,15 +201,18 @@ export interface ConfirmedStepQuestion {
 const reviewedOption = <E>(
   option: InputOption,
   screen: (text: string) => Effect.Effect<string, E>,
+  recommended: boolean,
 ): Effect.Effect<ReviewedOption, E> =>
   Effect.gen(function* () {
     const label = yield* screen(option.label);
-    if (option.accountSpecific !== true) return { label };
+    const mark = recommended ? { recommended: true as const } : {};
+    if (option.accountSpecific !== true) return { label, ...mark };
     const masked = option.maskedLabel === undefined ? undefined : yield* screen(option.maskedLabel);
     return {
       label,
       accountSpecific: true,
       ...(masked === undefined ? {} : { maskedLabel: masked }),
+      ...mark,
     };
   });
 
@@ -239,7 +246,7 @@ export const questionForReview = <E>(
             return {
               ...base,
               options: yield* Effect.forEach(question.options, (option) =>
-                reviewedOption(option, screen),
+                reviewedOption(option, screen, question.recommended === option.id),
               ),
             };
           case "multi_choice":
@@ -247,7 +254,7 @@ export const questionForReview = <E>(
             return {
               ...base,
               options: yield* Effect.forEach(question.options, (option) =>
-                reviewedOption(option, screen),
+                reviewedOption(option, screen, question.recommended?.includes(option.id) === true),
               ),
               minSelections: question.minSelections,
               maxSelections: question.maxSelections,
@@ -271,7 +278,9 @@ export const questionForReview = <E>(
           case "credential":
             return { ...base, fields: question.fields };
           case "text":
-            return base;
+            return question.recommended === undefined
+              ? base
+              : { ...base, recommended: yield* screen(question.recommended) };
         }
       }),
     );

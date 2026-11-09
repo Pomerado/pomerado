@@ -336,8 +336,26 @@ const callerVisibleQuestion = (
       },
     };
   }
+  if (question.type === "text" && question.recommended !== undefined)
+    return { ...question, prompt, recommended: redact(question.recommended) };
   return { ...question, prompt };
 };
+/**
+ * Whether the agent's request asks the caller's consent to act on the site: unless the agent
+ * marked it `asksConsent: false`, and always for a confirm or a secret question.
+ */
+const asksConsent = (request: typeof AgentRequest.Type) =>
+  request.asksConsent !== false ||
+  request.questions.some((question) => question.type === "confirm" || question.type === "secret");
+/** The answers the agent recommends in its request, by question id. */
+const recommendedAnswers = (request: typeof AgentRequest.Type): Readonly<Record<string, unknown>> =>
+  Object.fromEntries(
+    request.questions.flatMap((question) =>
+      "recommended" in question && question.recommended !== undefined
+        ? [[question.id, question.recommended]]
+        : [],
+    ),
+  );
 /** The agent's request as its caller reads it: its notice and every question. */
 const callerVisibleRequest = <R extends typeof AgentRequest.Type>(
   request: R,
@@ -2657,17 +2675,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * question decides what the build may do: the read-or-write and capability questions, any
        * question in a write repair, which could gate its write, and any asked while the build is
        * signed in or holds a login, which acts as the account's owner, unless it is a read repair
-       * whose host sets `handBackSignedInReadRepair`. Nor once the build handed back
-       * `noAnswerHandBackLimit` questions.
+       * whose host sets `handBackSignedInReadRepair`. A write repair whose host sets
+       * `handBackWriteRepairQuestions` hands back, signed in or not, a question that asks no
+       * consent (`asksConsent`); a script's question counts as asking it. Nor once the build
+       * handed back `noAnswerHandBackLimit` questions.
        */
-      const handsBackNoAnswer = () =>
+      const handsBackNoAnswer = (asksConsent = true) =>
         request.effect !== "ask" &&
         dependencies.capabilityQuestion === undefined &&
-        !(request.mode === "maintenance" && buildEffect === "write") &&
-        (!signedInOrHoldsLogin() ||
-          (dependencies.handBackSignedInReadRepair === true &&
-            request.mode === "maintenance" &&
-            buildEffect === "read")) &&
+        (request.mode === "maintenance" && buildEffect === "write"
+          ? dependencies.handBackWriteRepairQuestions === true && !asksConsent
+          : !signedInOrHoldsLogin() ||
+            (dependencies.handBackSignedInReadRepair === true &&
+              request.mode === "maintenance" &&
+              buildEffect === "read")) &&
         noAnswerHandBacks < noAnswerHandBackLimit;
       /**
        * The minter's latest question handed back as no answer, while no other question was asked
@@ -2700,11 +2721,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * The minter's question went unanswered and the build goes on. It stays unanswered: no
        * `mint_update` can cite it, and no review reads an answer from it.
        */
-      const noAnswer = (requestId: string | undefined) =>
+      const noAnswer = (requestId: string | undefined, recommended: Readonly<Record<string, unknown>>) =>
         questionHandedBack(requestId).pipe(
           Effect.as(
             JSON.stringify({
               status: "no_answer",
+              ...(Object.keys(recommended).length === 0 ? {} : { recommended }),
               userInputRequired: false,
               instruction: noAnswerInstruction,
             }),
@@ -2767,6 +2789,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       /** The id of the question the minter is asking, while it waits for the answer. */
       let askingId: string | undefined;
+      /** Whether that question asks consent (`asksConsent`), and the answers it recommends. */
+      let askingConsent = true;
+      let askingRecommended: Readonly<Record<string, unknown>> = {};
       /**
        * Whether that question asks whether to end the build (`endsBuild`). Its later answer could
        * not keep that mark through a rejoined report, so such a question is never offered to
@@ -2808,9 +2833,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error: MintFailure,
         requestId: string | undefined,
         endsBuild: boolean,
+        asked: { readonly consent: boolean; readonly recommended: Readonly<Record<string, unknown>> },
       ) =>
-        error.ownerCancelled !== true && handsBackNoAnswer()
-          ? noAnswer(endsBuild ? undefined : requestId)
+        error.ownerCancelled !== true && handsBackNoAnswer(asked.consent)
+          ? noAnswer(endsBuild ? undefined : requestId, asked.recommended)
           : unanswered(error, "asking a question", {
               step: "question",
               ...(requestId === undefined ? {} : { requestId }),
@@ -6999,7 +7025,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   instruction:
                     "finding names the id of a finding in Guardian's latest publication denial, and answerable lists them. Set it to one of those, or leave it out, and ask again.",
                 });
-              const { finding: _finding, ...unmarked } = decoded;
+              const { finding: _finding, asksConsent: _consent, ...unmarked } = decoded;
               const proposed = callerVisibleRequest(
                 {
                   ...unmarked,
@@ -7172,6 +7198,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               for (const { questionId, reviewId } of confirms) confirmAsks.set(questionId, reviewId);
               askingId = requestId;
               askingEndsBuild = endsBuild.size > 0;
+              askingConsent = asksConsent(decoded);
+              askingRecommended = recommendedAnswers(decoded);
               handedBackQuestion = undefined;
               const answers = yield* dependencies.askInput(submitted, {
                 requestId,
@@ -7181,12 +7209,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             }).pipe(
               Effect.catchIf(
                 (error) => error.noResponse !== undefined,
-                (error) => questionUnanswered(error, askingId, askingEndsBuild),
+                (error) =>
+                  questionUnanswered(error, askingId, askingEndsBuild, {
+                    consent: askingConsent,
+                    recommended: askingRecommended,
+                  }),
               ),
               Effect.ensuring(
                 Effect.sync(() => {
                   askingId = undefined;
                   askingEndsBuild = false;
+                  askingConsent = true;
+                  askingRecommended = {};
                 }),
               ),
               // error-reporting-allow: typed-recovery an invalid request is the model's to correct, told as its result
@@ -8065,7 +8099,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                                 return yield* Effect.fail(error);
                               // A rejoined question that went unanswered, such as one that expired
                               // before the takeover, goes on as the live question would have.
-                              return { result: yield* questionUnanswered(error, undefined, false) };
+                              const started = decodeAgentRequestJson(call.arguments);
+                              return {
+                                result: yield* questionUnanswered(error, undefined, false, {
+                                  consent: started._tag === "Left" || asksConsent(started.right),
+                                  recommended:
+                                    started._tag === "Left" ? {} : recommendedAnswers(started.right),
+                                }),
+                              };
                             }
                             const recoveredTool = rejoined.right;
                             if (recoveredTool === undefined) return undefined;
