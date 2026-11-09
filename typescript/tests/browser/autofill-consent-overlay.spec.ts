@@ -110,7 +110,8 @@ test("a notice over the submit catches the host's click: blocked, by the notice,
       { slot: "password", status: "filled" },
     ],
     submit: "blocked",
-    blockedBy: { tag: "div", role: "dialog" },
+    // The notice's own control, by role and accessible name, for the minter to send as dismiss.
+    blockedBy: { tag: "div", role: "dialog", controls: [{ role: "button", name: "Accept" }] },
   });
   expect(received).toEqual([]);
 

@@ -1,5 +1,5 @@
-import { Effect, Option, Schema } from "effect";
-import { typingPauses } from "../runtime/typing-pace.js";
+import { Effect, Either, Option, Schema } from "effect";
+import { keyHolds, typingPauses } from "../runtime/typing-pace.js";
 import { holdsFocusCode } from "./field-focus-code.js";
 
 /**
@@ -36,7 +36,10 @@ export const InsertionRefusal = Schema.Literal(
   "origin_changed",
   /** The bound field no longer holds its document's focus: another element, or none, does. */
   "focus_moved",
-  /** The document itself does not hold the browser's focus. */
+  /**
+   * No longer given: a field that holds its document's focus takes the value even when the browser
+   * reports the window unfocused, as some headless browsers do. Kept for hosts that map each refusal.
+   */
   "document_unfocused",
   /** A private answer's observed question no longer reads as it did when the host inspected it. */
   "question_changed",
@@ -81,6 +84,19 @@ export interface InsertionOptions {
    * presses Enter or Tab.
    */
   readonly trustedKeys?: true | undefined;
+  /**
+   * With `trustedKeys`, hold each key down for a person's press, 60 to 150 ms (`keyHolds`), before
+   * its key up, and space key downs about 120 ms apart, as a person types a one-time code.
+   */
+  readonly held?: true | undefined;
+  /**
+   * With `trustedKeys`, the fields the second key on goes into, one key each in turn, as a row of
+   * one-character boxes takes a code typed into its first box while its page moves the focus box
+   * to box: each key's own field's guard holds before it, so a field that does not hold the focus
+   * by then ends the typing with `focus_moved`. Every binding is found in one read of each
+   * session's document. The fields are left as typed, with no look for dropped keys.
+   */
+  readonly across?: readonly CredentialTarget[] | undefined;
 }
 
 /**
@@ -187,18 +203,21 @@ const nativeDescendants = (node: typeof NativeNode.Type, frameId: string | undef
   return descendants;
 };
 
-/** Ephemeral, bounded native traversal: exactly one opaque marker, never a selector fallback. */
-const findMarkedNode = (
-  value: unknown,
-  key: string,
-): { backendNodeId: number; frameId: string | undefined } | "binding_ambiguous" | undefined => {
+/**
+ * Ephemeral, bounded native traversal: each key's one opaque marker, never a selector fallback.
+ * A key two nodes carry is `binding_ambiguous`.
+ */
+const findMarkedNodes = (value: unknown, keys: ReadonlySet<string>) => {
   const document = Schema.decodeUnknownOption(NativeDocument)(value);
   if (document._tag === "None") throw new Error("Credential target document unavailable");
   const { root } = document.value;
   const pending: { value: unknown; frameId: string | undefined }[] = [
     { value: root, frameId: undefined },
   ];
-  let found: { backendNodeId: number; frameId: string | undefined } | undefined;
+  const found = new Map<
+    string,
+    { backendNodeId: number; frameId: string | undefined } | "binding_ambiguous"
+  >();
   let visited = 0;
   while (pending.length > 0) {
     if (++visited > 50_000) throw new Error("Credential target document too large");
@@ -209,9 +228,14 @@ const findMarkedNode = (
     const node = decoded.value;
     const attributes = node.attributes ?? [];
     for (let index = 0; index < attributes.length; index += 2) {
-      if (attributes[index] !== key) continue;
-      if (found !== undefined) return "binding_ambiguous";
-      found = { backendNodeId: node.backendNodeId, frameId: next.frameId };
+      const key = attributes[index];
+      if (key === undefined || !keys.has(key)) continue;
+      found.set(
+        key,
+        found.has(key)
+          ? "binding_ambiguous"
+          : { backendNodeId: node.backendNodeId, frameId: next.frameId },
+      );
     }
     pending.push(...nativeDescendants(node, next.frameId));
   }
@@ -236,7 +260,6 @@ const bindingGuard = `(field, key, origin) => {
     if (document.defaultView !== frame || frame.document !== document) return "frame_changed";
     if (frame.origin !== origin) return "origin_changed";
     if (!holdsFocus(field)) return "focus_moved";
-    if (!document.hasFocus()) return "document_unfocused";
     if (binding.questionRequired &&
         (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return "question_changed";
   };
@@ -362,59 +385,93 @@ const resultOf = (value: unknown) => {
   return decoded.value.result;
 };
 
+type Bound = { readonly sessionId: string; readonly objectId: string };
+/** A target's field, resolved in its world (`findBindings`). */
+type BoundField = Bound & { readonly target: CredentialTarget };
+
+const releaseObject = (cdp: PrivateCredentialCdp, bound: Bound) =>
+  command(cdp, bound.sessionId, "Runtime.releaseObject", { objectId: bound.objectId });
+
 /**
- * The one field the target's binding marks, resolved in its world, or why not, sending no value.
- * A session whose document the browser refuses to read, or the host cannot walk, such as a large
- * third-party frame's, is skipped: when it held the field, the binding is not found, and a marker
- * copied elsewhere holds no binding in the private world. A binding world that fails and a node
- * the browser refuses to resolve leave the binding unresolved. So nothing before the insertion
- * fails.
+ * The fields the targets' bindings mark, each resolved in its world, in the targets' order, or why
+ * not, sending no value; one read of each session's document finds them all. A session whose
+ * document the browser refuses to read, or the host cannot walk, such as a large third-party
+ * frame's, is skipped: when it held the field, the binding is not found, and a marker copied
+ * elsewhere holds no binding in the private world. A binding world that fails and a node the
+ * browser refuses to resolve leave the binding unresolved. So nothing before the insertion fails.
+ * The first target that is not resolved answers for all, and the fields resolved before it are
+ * released.
  */
-const findBinding = (
+const findBindings = (
   cdp: PrivateCredentialCdp,
-  target: CredentialTarget,
+  [first, ...rest]: readonly [CredentialTarget, ...CredentialTarget[]],
   bindingWorld: CredentialBindingWorld | undefined,
+  release: (effect: Effect.Effect<unknown, Error>) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
-    let found:
-      { sessionId: string; backendNodeId: number; frameId: string | undefined } | undefined;
-    for (const sessionId of cdp.sessions(target.targetId)) {
+    const keys = new Set([first, ...rest].map((target) => target.bindingKey));
+    const found = new Map<
+      string,
+      { sessionId: string; backendNodeId: number; frameId: string | undefined } | "binding_ambiguous"
+    >();
+    for (const sessionId of cdp.sessions(first.targetId)) {
       const read = yield* Effect.either(
         command(cdp, sessionId, "DOM.getDocument", { depth: -1, pierce: true }),
       );
       if (read._tag === "Left") continue;
-      const walked = yield* Effect.either(
-        Effect.try(() => findMarkedNode(read.right, target.bindingKey)),
-      );
+      const walked = yield* Effect.either(Effect.try(() => findMarkedNodes(read.right, keys)));
       if (walked._tag === "Left") continue;
-      const node = walked.right;
-      if (node === undefined) continue;
-      if (node === "binding_ambiguous" || found !== undefined) return "binding_ambiguous" as const;
-      found = { sessionId, ...node };
+      for (const [key, node] of walked.right)
+        found.set(
+          key,
+          node === "binding_ambiguous" || found.has(key) ? "binding_ambiguous" : { sessionId, ...node },
+        );
     }
-    if (found === undefined) return "binding_not_found" as const;
-    let executionContextId: number | undefined;
-    if (bindingWorld !== undefined) {
-      const world = yield* Effect.either(
-        bindingWorld(cdp, { sessionId: found.sessionId, frameId: found.frameId }),
-      );
-      if (world._tag === "Left") return "binding_unresolved" as const;
-      executionContextId = world.right;
+    const worlds = new Map<string, Either.Either<number, Error>>();
+    const resolve = (target: CredentialTarget) =>
+      Effect.gen(function* () {
+        const node = found.get(target.bindingKey);
+        if (node === undefined) return "binding_not_found" as const;
+        if (node === "binding_ambiguous") return node;
+        let executionContextId: number | undefined;
+        if (bindingWorld !== undefined) {
+          const at = `${node.sessionId} ${node.frameId ?? ""}`;
+          const world =
+            worlds.get(at) ??
+            (yield* Effect.either(
+              bindingWorld(cdp, { sessionId: node.sessionId, frameId: node.frameId }),
+            ));
+          worlds.set(at, world);
+          if (world._tag === "Left") return "binding_unresolved" as const;
+          executionContextId = world.right;
+        }
+        const resolved = yield* Effect.either(
+          command(cdp, node.sessionId, "DOM.resolveNode", {
+            backendNodeId: node.backendNodeId,
+            ...(executionContextId === undefined ? {} : { executionContextId }),
+          }),
+        );
+        const objectId =
+          resolved._tag === "Left"
+            ? undefined
+            : Option.getOrUndefined(Schema.decodeUnknownOption(ResolvedNode)(resolved.right))
+                ?.object.objectId;
+        return objectId === undefined
+          ? ("binding_unresolved" as const)
+          : { sessionId: node.sessionId, objectId, target };
+      });
+    const firstBound = yield* resolve(first);
+    if (typeof firstBound === "string") return firstBound;
+    const bound: [BoundField, ...BoundField[]] = [firstBound];
+    for (const target of rest) {
+      const next = yield* resolve(target);
+      if (typeof next === "string") {
+        for (const each of bound) yield* release(releaseObject(cdp, each));
+        return next;
+      }
+      bound.push(next);
     }
-    const resolved = yield* Effect.either(
-      command(cdp, found.sessionId, "DOM.resolveNode", {
-        backendNodeId: found.backendNodeId,
-        ...(executionContextId === undefined ? {} : { executionContextId }),
-      }),
-    );
-    const objectId =
-      resolved._tag === "Left"
-        ? undefined
-        : Option.getOrUndefined(Schema.decodeUnknownOption(ResolvedNode)(resolved.right))?.object
-            .objectId;
-    return objectId === undefined
-      ? ("binding_unresolved" as const)
-      : { sessionId: found.sessionId, objectId };
+    return bound;
   });
 
 /**
@@ -464,8 +521,6 @@ const answerOf = <A extends string>(reply: unknown, answers: Schema.Schema<A>) =
 /** The guard's answer before a key: the field may take it, or why not. */
 const GuardAnswer = Schema.Union(Schema.Literal("ready"), InsertionRefusal);
 
-type Bound = { readonly sessionId: string; readonly objectId: string };
-
 /** Guards and inserts the whole text in one call (`atomicInsert`). */
 const insertAtOnce = (
   cdp: PrivateCredentialCdp,
@@ -487,54 +542,77 @@ const insertAtOnce = (
   }).pipe(Effect.flatMap((reply) => answerOf(reply, CredentialInsertion)));
 
 /**
- * Types the text by trusted keys (`InsertionOptions.trustedKeys`): takes the binding's guard, then
- * for each character runs it and, while the field may take the key, presses the key on the
- * field's own session. A person's pause (`typingPauses`) runs from one key's guard to the next.
- * A field that dropped keys then takes the text at once (`replaceDropped`). The guard's remote
- * function is released however the typing ends.
+ * Types the text by trusted keys (`InsertionOptions.trustedKeys`): takes each binding's guard, then
+ * for each character runs its field's guard and, while the field may take the key, presses the key
+ * on the field's own session. Each key goes into the field at its place (`across`), the last taking
+ * any keys left, so with one field every key goes into it. A person's pause (`typingPauses`) runs
+ * from one key's guard to the next; `held` holds each key down for a person's press (`keyHolds`)
+ * and spaces the pauses about 120 ms. A single field that dropped keys then takes the text at once
+ * (`replaceDropped`). Every guard's remote function is released however the typing ends.
  */
 const pressKeys = (
   cdp: PrivateCredentialCdp,
-  bound: Bound,
-  target: CredentialTarget,
+  [first, ...rest]: readonly [BoundField, ...BoundField[]],
   text: string,
+  held: boolean,
   release: (effect: Effect.Effect<unknown, Error>) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
-    const claimed = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
-      objectId: bound.objectId,
-      functionDeclaration: claimForKeys,
-      arguments: [{ value: target.bindingKey }, { value: target.documentOrigin }],
-      returnByValue: false,
-    });
-    const guard = yield* Effect.try({
-      try: () => resultOf(claimed).objectId,
-      catch: (error) =>
-        error instanceof Error ? error : new Error("Credential insertion unavailable"),
-    });
-    if (guard === undefined) return yield* answerOf(claimed, CredentialInsertion);
+    const claimed: Bound[] = [];
+    const claim = (field: BoundField) =>
+      Effect.gen(function* () {
+        const reply = yield* command(cdp, field.sessionId, "Runtime.callFunctionOn", {
+          objectId: field.objectId,
+          functionDeclaration: claimForKeys,
+          arguments: [{ value: field.target.bindingKey }, { value: field.target.documentOrigin }],
+          returnByValue: false,
+        });
+        const objectId = yield* Effect.try({
+          try: () => resultOf(reply).objectId,
+          catch: (error) =>
+            error instanceof Error ? error : new Error("Credential insertion unavailable"),
+        });
+        if (objectId === undefined) return yield* answerOf(reply, CredentialInsertion);
+        const guard = { sessionId: field.sessionId, objectId };
+        claimed.push(guard);
+        return guard;
+      });
     const typing = Effect.gen(function* () {
-      const pauses = typingPauses(text);
+      const firstGuard = yield* claim(first);
+      if (typeof firstGuard === "string") return firstGuard;
+      const guards: [Bound, ...Bound[]] = [firstGuard];
+      for (const field of rest) {
+        const guard = yield* claim(field);
+        if (typeof guard === "string") return guard;
+        guards.push(guard);
+      }
+      const characters = Array.from(text);
+      const pauses = typingPauses(text, undefined, held ? 120 : undefined);
+      const holds = held ? keyHolds(characters.length) : [];
       let keyAt = Date.now();
-      for (const [index, character] of Array.from(text).entries()) {
+      for (const [index, character] of characters.entries()) {
         if (index > 0)
           yield* Effect.sleep(Math.max(0, (pauses[index - 1] ?? 0) - (Date.now() - keyAt)));
         keyAt = Date.now();
-        const checked = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
-          objectId: guard,
+        const guard = guards[Math.min(index, guards.length - 1)] ?? firstGuard;
+        const checked = yield* command(cdp, guard.sessionId, "Runtime.callFunctionOn", {
+          objectId: guard.objectId,
           functionDeclaration: guardCheck,
           arguments: [],
           returnByValue: true,
         });
         const answer = yield* answerOf(checked, GuardAnswer);
         if (answer !== "ready") return answer;
-        for (const event of keyEvents(character))
-          yield* command(cdp, bound.sessionId, "Input.dispatchKeyEvent", event);
+        for (const [at, event] of keyEvents(character).entries()) {
+          if (at > 0 && held) yield* Effect.sleep(holds[index] ?? 0);
+          yield* command(cdp, guard.sessionId, "Input.dispatchKeyEvent", event);
+        }
       }
-      return yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
-        objectId: bound.objectId,
+      if (rest.length > 0) return "inserted" as const;
+      return yield* command(cdp, first.sessionId, "Runtime.callFunctionOn", {
+        objectId: first.objectId,
         functionDeclaration: replaceDropped,
-        arguments: [{ objectId: guard }, { value: text }],
+        arguments: [{ objectId: firstGuard.objectId }, { value: text }],
         returnByValue: true,
       }).pipe(
         Effect.flatMap((landed) => answerOf(landed, CredentialInsertion)),
@@ -544,7 +622,7 @@ const pressKeys = (
     });
     return yield* typing.pipe(
       Effect.ensuring(
-        release(command(cdp, bound.sessionId, "Runtime.releaseObject", { objectId: guard })),
+        Effect.forEach(claimed, (guard) => release(releaseObject(cdp, guard)), { discard: true }),
       ),
     );
   });
@@ -565,22 +643,24 @@ export const makeCredentialKeyboard = (
 ): CredentialKeyboard => ({
   insertText: (target, text, options) =>
     Effect.gen(function* () {
-      const bound = yield* findBinding(cdp, target, bindingWorld);
+      const keyed = options?.trustedKeys === true && !/\p{Cc}/u.test(text);
+      const targets: readonly [CredentialTarget, ...CredentialTarget[]] = [
+        target,
+        ...(keyed ? (options.across ?? []) : []),
+      ];
+      const bound = yield* findBindings(cdp, targets, bindingWorld, release);
       if (typeof bound === "string") return bound;
-      const typing =
-        options?.trustedKeys === true && !/\p{Cc}/u.test(text)
-          ? pressKeys(cdp, bound, target, text, release)
-          : insertAtOnce(cdp, bound, target, text, options?.keys === true);
+      const typing = keyed
+        ? pressKeys(cdp, bound, text, options.held === true, release)
+        : insertAtOnce(cdp, bound[0], target, text, options?.keys === true);
       return yield* typing.pipe(
         Effect.flatMap((inserted) =>
           inserted === "inserted" && options?.phone === true
-            ? readBackPhone(cdp, bound, text)
+            ? readBackPhone(cdp, bound[0], text)
             : Effect.succeed(inserted),
         ),
         Effect.ensuring(
-          release(
-            command(cdp, bound.sessionId, "Runtime.releaseObject", { objectId: bound.objectId }),
-          ),
+          Effect.forEach(bound, (field) => release(releaseObject(cdp, field)), { discard: true }),
         ),
       );
     }),

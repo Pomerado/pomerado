@@ -411,6 +411,58 @@ describe("the example output's digest", () => {
     expect(offers?.fields.price?.withValue).toBe(5);
   });
 
+  it("gives a small list's string lengths and list sizes as their range", () => {
+    const digest = outputDigest({
+      results: [
+        { name: "Alpha", tags: ["a", "b"], price: 1 },
+        { name: "Be", tags: [], price: 2 },
+        { name: "Gamma ray", tags: ["c"], price: null },
+      ],
+    });
+    const { note } = JSON.parse(digest ?? "{}") as { readonly note: string };
+    expect(digest).toBe(
+      JSON.stringify(
+        {
+          note,
+          lists: [
+            {
+              path: "results",
+              records: 3,
+              fields: {
+                name: {
+                  withValue: 3,
+                  distinct: 3,
+                  length: [2, 9],
+                  samples: ["Alpha", "Be", "Gamma ray"],
+                },
+                tags: { withValue: 2, distinct: 2, length: [1, 2], samples: [["a", "b"], ["c"]] },
+                price: { withValue: 2, distinct: 2, samples: [1, 2] },
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+  });
+
+  it("gives the length range across a list of 200,000 records", () => {
+    const records = Array.from({ length: 200_000 }, (_, index) => ({
+      id: index,
+      name: "n".repeat(1 + (index % 40)),
+    }));
+    const digest = JSON.parse(outputDigest({ results: records }) ?? "{}") as {
+      readonly lists: readonly {
+        readonly records: number;
+        readonly fields: Readonly<Record<string, { readonly length?: readonly number[] }>>;
+      }[];
+    };
+    expect(digest.lists[0]?.records).toBe(200_000);
+    expect(digest.lists[0]?.fields.name?.length).toEqual([1, 40]);
+    expect(digest.lists[0]?.fields.id?.length).toBeUndefined();
+  });
+
   it("has none for an output without a list of records", () => {
     expect(outputDigest({ heading: "Public", tags: ["a", "b"] })).toBeUndefined();
   });
