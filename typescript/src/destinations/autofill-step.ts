@@ -321,17 +321,28 @@ const coveringRoles = [
 /**
  * The element that sat over a submit and caught the host's click, by its tag and ARIA role, each
  * one of a fixed list: never its text, id, label or class names, which page code may write from
- * what the host typed. `controls`, when it has any, are its own buttons and links a person sees, in
- * page order, each by role and accessible name as the page has it (`accessibleNames`, which keeps
- * typed values out as far as page code can tell), so the minter can name a notice's own control as
- * `dismiss`. A name is page text: the host screens it for typed values, as it screens every step
- * result, before the minter reads it. A host on an older core reports none.
+ * what the host typed. A modal dialog a person sees, that element or one in it, else the page's only
+ * one beside it that doesn't hold the submit, makes the role `dialog` (`alertdialog` for that
+ * role). `controls`, when it has any, are its own buttons and links a person sees, or that dialog's,
+ * in page order, each by role and accessible name as the page has it (`accessibleNames`, which
+ * keeps typed values out as far as page code can tell), so the minter can name a notice's own
+ * control as `dismiss`. A control with no name, such as a close button that shows only an image,
+ * comes with an empty name as `iconOnly`, and over `coveringControlsLimit` those and controls named
+ * close, dismiss, reject, decline or accept are kept first. A name is page text: the host screens
+ * it for typed values, as it screens every step result, before the minter reads it. A host on an
+ * older core reports no controls, and no `iconOnly` one.
  */
 export const CoveringElement = Schema.Struct({
   tag: Schema.Literal(...coveringTags, "other"),
   role: Schema.NullOr(Schema.Literal(...coveringRoles)),
   controls: Schema.optional(
-    Schema.Array(Schema.Struct({ role: Schema.Literal("button", "link"), name: Schema.String })),
+    Schema.Array(
+      Schema.Struct({
+        role: Schema.Literal("button", "link"),
+        name: Schema.String,
+        iconOnly: Schema.optional(Schema.Literal(true)),
+      }),
+    ),
   ),
 });
 /**
@@ -341,14 +352,19 @@ export const CoveringElement = Schema.Struct({
 export const ReadCoveringElement = Schema.Struct({
   tag: Schema.String,
   role: Text,
-  controls: Schema.optional(Schema.Array(Schema.Struct({ role: Text, name: Text }))),
+  controls: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ role: Text, name: Text, iconOnly: Schema.optional(Schema.Literal(true)) }),
+    ),
+  ),
 });
 const isCoveringTag = Schema.is(Schema.Literal(...coveringTags));
 const isCoveringRole = Schema.is(Schema.Literal(...coveringRoles));
 /**
  * A covering element as the host reports it: a tag or role off its list is none of the page's. A
  * control is a link or else a button, kept only with a name of at most `coveringControlNameLimit`
- * characters, never cut, and at most `coveringControlsLimit` of them.
+ * characters, never cut, or as `iconOnly` with an empty name, and at most `coveringControlsLimit`
+ * of them.
  */
 export const coveringElement = (
   read: typeof ReadCoveringElement.Type,
@@ -356,11 +372,12 @@ export const coveringElement = (
   const tag = read.tag.toLowerCase();
   const role = read.role?.trim().toLowerCase();
   const controls = (read.controls ?? [])
-    .flatMap(({ role: controlRole, name }) =>
-      name === null || name.trim() === "" || name.length > coveringControlNameLimit
-        ? []
-        : [{ role: controlRole === "link" ? ("link" as const) : ("button" as const), name }],
-    )
+    .flatMap(({ role: controlRole, name, iconOnly }) => {
+      const kind = controlRole === "link" ? ("link" as const) : ("button" as const);
+      if (name === null || name.length > coveringControlNameLimit) return [];
+      if (name.trim() !== "") return [{ role: kind, name }];
+      return iconOnly === true ? [{ role: kind, name: "", iconOnly }] : [];
+    })
     .slice(0, coveringControlsLimit);
   return {
     tag: isCoveringTag(tag) ? tag : "other",
