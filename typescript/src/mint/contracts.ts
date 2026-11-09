@@ -1165,7 +1165,7 @@ export type LiveTestBatchResult =
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
  * `caseSeconds` asks for a longer limit on each case of the batch, which the harness cuts to the
- * host's `LiveTestHost.maxCaseTimeoutMs`; absent, the host's own limit.
+ * host's `LiveTestHost.maxCaseTimeoutMs`; null or absent, the host's own limit.
  */
 export const LiveTestsRequest = Schema.Struct({
   action: Schema.Literal("plan", "run"),
@@ -1176,7 +1176,9 @@ export const LiveTestsRequest = Schema.Struct({
     ),
   ),
   maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
-  caseSeconds: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.between(1, 600))),
+  caseSeconds: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 600))),
+  ),
 });
 export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 

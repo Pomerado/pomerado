@@ -1398,7 +1398,7 @@ it("refuses a batch as no_time when less than the host's case limit is left, and
 // the host's maximum; the minter reads the limit each case ran with.
 it("runs a batch's cases at the longer limit it asks for, cut to the host's maximum", async () => {
   const attempt = async (
-    caseSeconds: number | null,
+    caseSeconds: number | null | undefined,
     maxCaseTimeoutMs?: number,
     batchMs = 28 * 60_000,
   ) => {
@@ -1406,7 +1406,7 @@ it("runs a batch's cases at the longer limit it asks for, cut to the host's maxi
     const f = await fixture(
       (_request, index) =>
         [
-          call("live_tests", { ...runAll, caseSeconds }, "run"),
+          call("live_tests", caseSeconds === undefined ? runAll : { ...runAll, caseSeconds }, "run"),
           call("execute", example, "example"),
           call("finish_build", finish, "finish"),
         ][index] ?? prose(),
@@ -1426,17 +1426,20 @@ it("runs a batch's cases at the longer limit it asks for, cut to the host's maxi
     const root = (f.workspace as unknown as { root: string }).root;
     await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
     await f.run();
-    return {
-      batchMs: batches[0]?.caseTimeoutMs,
-      reported: resultOf(f.requests[1], "run")["caseSeconds"],
-    };
+    const result = resultOf(f.requests[1], "run");
+    // Every attempt runs its batch; only the limit differs.
+    expect({ status: result["status"], batches: batches.length }).toEqual({ status: "ran", batches: 1 });
+    return { batchMs: batches[0]?.caseTimeoutMs, reported: result["caseSeconds"] };
   };
   expect(await attempt(160, 180_000)).toEqual({ batchMs: 160_000, reported: 160 });
   expect(await attempt(240, 180_000)).toEqual({ batchMs: 180_000, reported: 180 });
   // No longer than the host's own limit, or a host that takes no longer one: the host's own.
   expect(await attempt(90, 180_000)).toEqual({ batchMs: undefined, reported: 120 });
   expect(await attempt(160)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160, 100_000)).toEqual({ batchMs: undefined, reported: 120 });
+  // No request: the host's own limit, reported as no limit asked for.
   expect(await attempt(null, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  expect(await attempt(undefined, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
   // Too little left for the longer limit: the host's own, so its shorter cases still run.
   expect(await attempt(160, 180_000, 150_000)).toEqual({ batchMs: undefined, reported: 120 });
 });
