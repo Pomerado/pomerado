@@ -1394,6 +1394,46 @@ it("refuses a batch as no_time when less than the host's case limit is left, and
   expect(await attempt(150_000)).toEqual({ batches: 1, status: "ran" });
 });
 
+// A slow site's case can need longer than the host's own limit, so a batch may ask for more, up to
+// the host's maximum; the minter reads the limit each case ran with.
+it("runs a batch's cases at the longer limit it asks for, cut to the host's maximum", async () => {
+  const attempt = async (caseSeconds: number | null, maxCaseTimeoutMs?: number) => {
+    const { host, batches } = liveTestHost({});
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("live_tests", { ...runAll, caseSeconds }, "run"),
+          call("execute", example, "example"),
+          call("finish_build", finish, "finish"),
+        ][index] ?? prose(),
+      {
+        liveTests: {
+          ...host,
+          caseTimeoutMs: 120_000,
+          ...(maxCaseTimeoutMs === undefined ? {} : { maxCaseTimeoutMs }),
+        },
+        deadline: Deadline.after(30 * 60_000),
+        reviewAndExecute: completedExample,
+        publish: publications().publish,
+      },
+      read,
+    );
+    const root = (f.workspace as unknown as { root: string }).root;
+    await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+    await f.run();
+    return {
+      batchMs: batches[0]?.caseTimeoutMs,
+      reported: resultOf(f.requests[1], "run")["caseSeconds"],
+    };
+  };
+  expect(await attempt(160, 180_000)).toEqual({ batchMs: 160_000, reported: 160 });
+  expect(await attempt(240, 180_000)).toEqual({ batchMs: 180_000, reported: 180 });
+  // No longer than the host's own limit, or a host that takes no longer one: the host's own.
+  expect(await attempt(90, 180_000)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(null, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+});
+
 it("says time ran out only when the attempt's end, not the batch's own cap, stopped a case", async () => {
   const stopped = { status: "inconclusive" as const, reason: "deadline" as const };
   const record = async (attemptMs: number) => {
