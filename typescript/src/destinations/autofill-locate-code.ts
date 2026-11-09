@@ -247,9 +247,9 @@ const controlReadCode = `(element) => {
       ? element.formMethod
       : formProperty("method")
     : null;
-  // Disabled, which a page may undo once the fields hold input, and inert, which takes no
-  // interaction at all, as an inactive or background form does. Page code can redefine what
-  // these read, so the submit call reads whether the submit is disabled again through Playwright.
+  // Disabled or inert, which a page may undo once the fields hold input; an inert field, as in an
+  // inactive or background form, takes no typing. Page code can redefine what these read, so the
+  // submit call reads whether the submit is disabled again through Playwright.
   const disabled = element.matches(":disabled") || element.closest('[aria-disabled="true"]') !== null;
   const inert = element.closest("[inert]") !== null;
   const editable =

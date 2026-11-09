@@ -255,8 +255,8 @@ export class ReviewFailure extends Data.TaggedError("ReviewFailure")<{
     | "ModelCallStalled"
     /**
      * The model provider refused the review's request as over the model's input limit, its context
-     * window. That is no outage, and the same request fails the same way, so it is never retried as
-     * one.
+     * window, or because it could not decrypt an encrypted item the request sent back. That is no
+     * outage, and the same request fails the same way, so it is never retried as one.
      */
     | "InputTooLarge"
     /**
@@ -715,9 +715,10 @@ export interface ReviewRetry {
 
 /**
  * Production retry for Guardian outages: provider errors and a required source read that failed.
- * A review that ran out of turns, whose model call stalled or whose request is over the model's
- * context window is not an outage, and is not started again. A decision that did not decode is
- * reviewed once more only when its review got no correction.
+ * A review that ran out of turns, whose model call stalled, or whose request is over the model's
+ * context window or carries an encrypted item the provider could not decrypt is not an outage, and
+ * is not started again. A decision that did not decode is reviewed once more only when its review
+ * got no correction.
  */
 export const guardianOutageRetry: ReviewRetry = {
   delays: ["2 seconds", "5 seconds", "15 seconds", "30 seconds", "60 seconds"],

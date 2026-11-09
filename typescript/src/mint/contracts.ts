@@ -503,7 +503,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "commit_marks_undeclared"
     /**
      * The composed script declares a commit step no act step of the session ever entered, and
-     * `write.commitsUnproven` does not name it as one after the last mark the session entered.
+     * `write.commitsUnproven` does not name it as one after the last mark the session entered, or
+     * as one the host lets it skip (`skippableCommits`).
      */
     | "commit_marks_unentered"
     /**
@@ -1132,8 +1133,9 @@ export type LiveTestBatchResult =
   | { readonly status: "review_denied"; readonly reviewId?: string; readonly rationale: string };
 
 /**
- * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result
- * (with full outputs for the cases named in `cases`); `run` runs the named cases, or every case when `cases` is null, as one batch
+ * The live_tests tool: `plan` shows the cases in `test/cases.json` and each case's latest result,
+ * with the output of each case named in `cases`, a large one as a digest naming the workspace file
+ * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
  */
@@ -1524,8 +1526,9 @@ export const BuildBlocked = Schema.Struct({
  * block: nothing about the task is impossible, so the caller never reads it as one. Once sign-in
  * is unavailable in the build, any report, `policy` included, ends the build with the sign-in's
  * own result instead of the reason it names. So does any ending the report's checks accept but
- * `owner_declined`, `question_unanswered` or `owner_ended` while the build's latest sign-in never
- * confirmed and no failed one is pending: the site never got as far as judging the task.
+ * `owner_declined`, `question_unanswered`, `owner_ended` or `caller_input` while the build's latest
+ * sign-in never confirmed and no failed one is pending: the site never got as far as judging the
+ * task.
  */
 export const BlockedReport = Schema.Struct({
   reason: Schema.Literal(
@@ -1827,9 +1830,11 @@ export type MintOutcome = {
    */
   readonly stopReason?: MintStopReason;
   /**
-   * The minter's last answer when it stopped without a tool call (`final_text_without_tool`),
-   * screened for credentials and host-private values and kept only when Guardian's question
-   * review allowed its caller to read it, as a blocked explanation is.
+   * The minter's last answer when it stopped without a tool call (`final_text_without_tool`), or
+   * its blocked report's explanation when the harness ended that report as sign-in unavailable
+   * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`). Either is screened
+   * for credentials and host-private values and kept only when Guardian's question review allowed
+   * its caller to read it, as a blocked explanation is.
    */
   readonly stopExplanation?: string;
   /** Host-only references: preserve first execution independently of build success. */
@@ -2015,6 +2020,11 @@ export interface MintTurn {
    * note.
    */
   readonly compactionSkillsNote?: (skills: readonly string[]) => string;
+  /**
+   * `MintDependencies.saveResult`: saves a tool result too long for a model request whole, as the
+   * workspace file the request then names in its place.
+   */
+  readonly saveResult?: (path: string, text: string) => Effect.Effect<void, MintFailure>;
   readonly screen: (value: unknown) => Effect.Effect<string, MintFailure>;
   readonly isComplete: () => boolean;
   readonly reportDiagnostic: (value: unknown) => Effect.Effect<void, MintFailure>;
@@ -3011,8 +3021,9 @@ export interface MintDependencies {
   /**
    * Saves an execution result too large to return whole (`resultDigestThresholdBytes`) as the
    * read-only workspace file `path`, under `captures/results/`, which `read_source` and offline
-   * commands read; the agent then receives the result's digest naming it. The text is already
-   * screened for the model. A host without it returns every result whole.
+   * commands read; the agent then receives the result's digest naming it. The minter saves the
+   * same way a live test's output a plan names and any tool result too long for a model request.
+   * The text is already screened for the model. A host without it returns every result whole.
    */
   readonly saveResult?: (path: string, text: string) => Effect.Effect<void, MintFailure>;
   /** Host-selected original attempt evidence. Content is fetched only for a requested indexed path. */

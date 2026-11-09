@@ -451,6 +451,8 @@ export const makePlaywrightExecutor = (
             ...(options?.phone === true ? { phone: true } : {}),
             ...(options?.keys === true ? { keys: true } : {}),
             ...(options?.trustedKeys === true ? { trustedKeys: true } : {}),
+            ...(options?.held === true ? { held: true } : {}),
+            ...(options?.across === undefined ? {} : { across: options.across }),
           },
           // Typed by trusted keys, each character takes a person's pause: a second each bounds it.
           options?.trustedKeys === true ? 15 + Array.from(text).length : 15,

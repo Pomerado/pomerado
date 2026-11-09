@@ -125,7 +125,13 @@ import {
   minterHistory,
 } from "./outcome-review.js";
 import { readImportClosure } from "./operation-source.js";
-import { boundedResult, digestResult, resultDigestPath } from "./result-digest.js";
+import {
+  boundedResult,
+  byteLength,
+  digestResult,
+  resultDigestPath,
+  resultDigestThresholdBytes,
+} from "./result-digest.js";
 import { contentDigest } from "./step-checks.js";
 import { writePathNotice } from "./write-session.js";
 import {
@@ -3136,8 +3142,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * backoff; the agent may resubmit while reviews have been unavailable for less than the
        * outage budget, and any completed review starts the budget again. A review whose evidence
        * could not be retained is such an outage too. Past the budget, `exhausted` ends the attempt,
-       * as it does at once for a request over Guardian's model input limit (`InputTooLarge`), which
-       * fails the same way when resubmitted.
+       * as it does at once for a request the provider refused as over Guardian's model input limit,
+       * or for an encrypted item it could not decrypt (`InputTooLarge`), which fails the same way
+       * when resubmitted.
        */
       const reviewUnavailableRetry =
         (
@@ -3188,13 +3195,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           "Nothing changed. Submit the same mint_update again for a fresh review; the task stays as it was until an update applies.",
       };
       const reviewUnavailableFeedback = (error: MintFailure) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           terminal = {
             build: "incomplete",
             hostFailure: "review_unavailable",
             summary:
               "Guardian review could not complete. No review approval was obtained; recorded effects and claimed examples remain preserved.",
           };
+          // The outcome names why: the review's failure code, and the model provider's own code and
+          // HTTP status when it refused the review's request.
+          const context = error.failureDetail?.context;
+          yield* diagnose({
+            phase: "review",
+            reason: "review_unavailable",
+            code: error.reviewFailure,
+            providerCode: context?.["providerCode"],
+            httpStatus: context?.["httpStatus"],
+          });
           return reviewUnavailableAnswer(
             error,
             "Review did not complete; this is not a Guardian deny or escalation decision. End this attempt without publication. Do not change site code to repair review infrastructure or automatically retry execution. Preserve prior effects and claimed examples; reconcile possibly executed operations before any further effect. Missing user authority or credentials has not been established.",
@@ -4115,8 +4132,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           rationale:
                             "Guardian returned no decision a question review allows, so it neither allowed nor reworded the explanation. Make it plain and consistent with the evidence.",
                         };
-                  // A spent quota, a request over the model's input limit or an outage past its
-                  // budget still ends blocked: the caller reads the reason alone.
+                  // A spent quota, a request the provider refused for good (`InputTooLarge`) or an
+                  // outage past its budget still ends blocked: the caller reads the reason alone.
                   if (
                     error.code !== "ReviewUnavailable" ||
                     error.modelOutage === "quota_exhausted" ||
@@ -4833,6 +4850,89 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const emptyCases: LiveTestCasesFile = { cases: [] };
       /** What a signed-in read designs, in place of a read signed out's suite. */
       const signedInPlanInstruction = `This read signed in, so it runs live tests on at most ${signedInTestInputLimit} distinct inputs beyond its example, as the testing skill says: one combined case in ${liveTestCasesPath} that sets every optional input and filter the example left unset, with values the site shows (a picker's options, or values in the example's own rows, never a person's or record's name, number or email). Choose each value so at least one example row fails it while some rows still pass every filter, since a value every example row already satisfies passes even when the tool ignores it, and name in purpose the row each value excludes. Set next_page true when the tool pages. Add a second case only for inputs that cannot be set with the others, and one no-match case, a made-up key for an input that takes a record's own id, key or URL, else a query or filter the site has no results for (testing skill). Then run it with live_tests action run and check that every row it returns satisfies each input it set, that the excluded rows are gone, and that page two holds new rows. Running it again after a fix, or on src/tool-http.mjs, is free.`;
+      /**
+       * The outputs one plan shows for the cases it names, as a host returns an execution's
+       * result: each whole while it fits `resultDigestThresholdBytes`, else saved whole through
+       * `saveResult` as a workspace file and shown as its digest. Together they take at most
+       * `planOutputBytes`; a case past that shows only where its output is saved. A host without
+       * `saveResult`, or a save that fails, shows the output's first part when it fits.
+       */
+      const planOutputBytes = 32 * 1024;
+      const planOutputs = (entrypoint: string, ids: readonly string[]) =>
+        Effect.gen(function* () {
+          const shown = new Map<string, Readonly<Record<string, unknown>>>();
+          let room = planOutputBytes;
+          const fits = (text: string) => byteLength(text) <= room;
+          for (const id of ids) {
+            const key = outputKey(entrypoint, id);
+            if (shown.has(id) || !liveTestOutputs.has(key)) continue;
+            const output = liveTestOutputs.get(key);
+            const text = JSON.stringify(output) ?? "null";
+            const totalBytes = byteLength(text);
+            // The path keeps only some characters of the id, so a hash of the whole id keeps two
+            // ids that differ elsewhere, such as "a.b" and "a_b", in files of their own.
+            const idHash = createHash("sha256").update(id, "utf8").digest("hex").slice(0, 12);
+            const path = resultDigestPath(
+              `live-test-${liveTestVersion(entrypoint)}-${id.slice(0, 64)}-${idHash}`,
+            );
+            let saveFailed = false;
+            const save = (file: string) =>
+              Effect.gen(function* () {
+                const saveResult = dependencies.saveResult;
+                if (saveResult === undefined || saveFailed) return false;
+                const saved = yield* Effect.either(
+                  Effect.suspend(() => saveResult(path, file)).pipe(
+                    Effect.catchAllDefect(() => Effect.fail(new MintFailure({ code: "Unavailable" }))),
+                  ),
+                );
+                saveFailed = Either.isLeft(saved);
+                return Either.isRight(saved);
+              });
+            let view: Readonly<Record<string, unknown>> | undefined;
+            if (totalBytes <= resultDigestThresholdBytes) {
+              if (fits(text)) view = { output };
+            } else {
+              const digest = Either.getOrUndefined(
+                Either.try(() => digestResult(text, { path, failed: false })),
+              );
+              if (
+                digest !== undefined &&
+                "file" in digest &&
+                fits(digest.text) &&
+                (yield* save(digest.file))
+              )
+                view = { outputDigest: JSON.parse(digest.text) as unknown };
+            }
+            if (view === undefined) {
+              if (yield* save(`${JSON.stringify(output, null, 2)}\n`))
+                view = {
+                  outputDigest: {
+                    kind: "result_saved",
+                    totalBytes,
+                    path,
+                    instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show, so it is saved whole in ${path}: read it with read_source (offset and limit) or search it with rg in exec_command, or name fewer cases.`,
+                  },
+                };
+              else {
+                const bounded = boundedResult(text);
+                view = !fits(bounded)
+                  ? {
+                      outputDigest: {
+                        kind: "result_omitted",
+                        totalBytes,
+                        instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show. Name fewer cases to see its first part.`,
+                      },
+                    }
+                  : bounded === text
+                    ? { output }
+                    : { outputDigest: JSON.parse(bounded) as unknown };
+              }
+            }
+            room -= byteLength(JSON.stringify(view));
+            shown.set(id, view);
+          }
+          return shown;
+        });
       /** What the agent reads about its tests: its cases and their results. */
       const liveTestPlanView = (
         entrypoint: string,
@@ -4842,12 +4942,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const read = yield* readCasesFile;
           const file = Either.isRight(read) ? read.right : emptyCases;
           const digest = yield* stepDigest(entrypoint);
+          const outputs = yield* planOutputs(
+            entrypoint,
+            file.cases
+              .map((testCase) => testCase.id)
+              .filter((id) => options.show?.includes(id) === true),
+          );
           const cases = file.cases.map((testCase) => ({
             ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest),
-            ...(options.show?.includes(testCase.id) &&
-            liveTestOutputs.has(outputKey(entrypoint, testCase.id))
-              ? { output: liveTestOutputs.get(outputKey(entrypoint, testCase.id)) }
-              : {}),
+            ...outputs.get(testCase.id),
           }));
           const shown =
             options.ran === undefined
@@ -7262,8 +7365,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // unavailable, worded by what the host saw, and its caller is never told to
                     // change the request. The owner's own no, a question they left unanswered and
                     // their choice to end the build keep their endings, a policy report renamed to
-                    // one included. A host refusal a later finish_build got past is still a
-                    // refusal on record.
+                    // one included, and so does a stop the caller's own request set, which a
+                    // caller_input report cites: such a stop may fall on the sign-in itself. A
+                    // host refusal a later finish_build got past is still a refusal on record.
                     // A host_refused report keeps its reason when a host check stopped the build
                     // apart from the sign-in (`hostRefusalApartFromSignIn`), such as a sign-in
                     // screen refused at its destination after the login went out. One that stands
@@ -7275,6 +7379,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ending.reason !== "owner_declined" &&
                       ending.reason !== "question_unanswered" &&
                       ending.reason !== "owner_ended" &&
+                      ending.reason !== "caller_input" &&
                       !("apartFromSignIn" in ending && ending.apartFromSignIn === true) &&
                       (signInUnconfirmed ||
                         (signInRefusalOnly && !hostRefused && !hostRefusalPassed)) &&
@@ -7283,9 +7388,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       !signInAbandoned
                     ) {
                       const sessionLoss = dependencies.signInSessionLoss?.();
+                      // The minter's explanation still says why, kept only as a last answer is:
+                      // once Guardian's review of a blocked outcome allows its caller to read it.
+                      const stopExplanation =
+                        terminal === undefined
+                          ? yield* reviewedStopExplanation(explanation)
+                          : undefined;
                       terminal ??= {
                         build: "incomplete",
                         recoveryReason: "sign_in_unavailable",
+                        ...(stopExplanation === undefined ? {} : { stopExplanation }),
                         summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
                       };
                       yield* diagnose({
@@ -7294,6 +7406,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         reported: report.reason,
                         ...(hostRefusals === undefined ? {} : { hostRefusals }),
                         ...(sessionLoss === undefined ? {} : { sessionLoss }),
+                        explanationShown: stopExplanation !== undefined,
                       });
                       return endedForSignIn;
                     }
@@ -8113,6 +8226,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...(dependencies.compactionSkillsNote === undefined
             ? {}
             : { compactionSkillsNote: dependencies.compactionSkillsNote }),
+          ...(dependencies.saveResult === undefined
+            ? {}
+            : { saveResult: dependencies.saveResult }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
               ? (({ retainCapture: _capture, ...available }) => available)(reviewedActions)

@@ -1006,9 +1006,10 @@ describe("the publication policy", () => {
   // publication policy get it with publicationCartPolicy.
   it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
     const rule =
-      "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, as a tool that fills a cart and returns its quote before checkout may, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is an unsupported_claim finding with reason evidence at the description.";
+      "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, as a tool that fills a cart and returns its quote before checkout may, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is a cart_sign_in finding with reason evidence at the description.";
     expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(publicationFindingCategories).toContain("cart_sign_in");
   });
 
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
@@ -1067,6 +1068,19 @@ describe("the publication policy", () => {
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule} `);
   });
 
+  // A screen that only asks whether to remember or trust this browser has no default to leave it
+  // at. Declining it saves nothing, so neither review holds the host's sign-in step that declines
+  // it, and the publication review reads the same step in the saved sign-in.
+  it("prefers allowing the host's sign-in step that declines a remember or trust screen in both reviews", () => {
+    const rule =
+      "Prefer allowing the host's own sign-in step that declines a screen asking only whether to remember or trust this browser or device, whatever its wording: declining saves nothing and needs no owner answer, so neither escalate nor deny that step over it.";
+    expect(publicationSafetyDefaultPolicy.endsWith(` ${rule}`)).toBe(true);
+    expect(guardianPublicationPolicy).toContain(publicationSafetyDefaultPolicy);
+    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
+      ` names that box. An agent's own step that changes such a box still follows the sign-in screen rule above. ${rule}\n`,
+    );
+  });
+
   // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,
   // and the box is never an input of the tool.
   it("keeps a safety default the source sets, and never asks for it as an input", () => {
@@ -1099,7 +1113,7 @@ describe("the publication policy", () => {
   it("accepts a write confirmed from its own commit request, and refuses a loose check", () => {
     const policy = guardianPublicationPolicy;
     expect(policy).toContain(
-      "perform and return the confirmation or read-back it declares, and never resubmit or commit twice. A second click on a marked step is not a resubmission when the marked call returned `blockingRequiredFields`' fields and the script called `notCommitted` for that step once, after `blockingRequiredFields` returned them and before entering it again, and entered it again once they were answered; a `notCommitted` without that, or a second one for the same step, is a confirmation finding. A `notCommitted` for a step right after the marked call of the step's first click got `unaskable` from `blockingRequiredFields`, followed by `InvalidInput` and no further click, is no finding. Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click. A script that confirms from its commit request is confirming, not missing a read-back: in the same call as the final commit click it waits for the site's response on the route the session's commit used, requires a 2xx or 3xx status and no error in a body it can read, checks the page for an error or validation message (a 201 whose Location names the new record needs no page check), and only then calls verified(). It is a confirmation finding when the script accepts any request or any status, takes a 200 from an endpoint that can report errors in its body without checking that body, or skips the page's error check.",
+      "perform and return the confirmation or read-back it declares, and never resubmit or commit twice. A second click on a marked step is not a resubmission when the marked call returned `blockingRequiredFields`' fields and the script called `notCommitted` for that step once, after `blockingRequiredFields` returned them and before entering it again, and entered it again once they were answered; a `notCommitted` without that, or a second one for the same step, is a confirmation finding. A `notCommitted` for a step right after the marked call of the step's first click got `unaskable` from `blockingRequiredFields`, followed by `InvalidInput` and no further click, is no finding. Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click. Nor is one after the site answered the click with an error that is not a server error and a fresh read of the same view the script read before the mark showed each field whose sent value differs from that read unchanged, followed by a refusal, or an `OperationFailure`, with the site's words, and no further click. A `notCommitted` resting on a timeout, silence or a missing element is a confirmation finding. A script that confirms from its commit request is confirming, not missing a read-back: in the same call as the final commit click it waits for the site's response on the route the session's commit used, requires a 2xx or 3xx status and no error in a body it can read, checks the page for an error or validation message (a 201 whose Location names the new record needs no page check), and only then calls verified(). It is a confirmation finding when the script accepts any request or any status, takes a 200 from an endpoint that can report errors in its body without checking that body, or skips the page's error check.",
     );
     expect(policy).toContain(
       "'unverifiable' is valid only if the session evidence shows the site offered no commit response the script can check, no confirmation and no read-back.",
@@ -1149,6 +1163,20 @@ describe("the publication policy", () => {
     );
     expect(wrongFailure).toContain(
       "So is a read's InvalidInput thrown because a caller's number limit lies beyond a stepped scale's end or between its steps: prefer setting the scale's end, or the nearest step inside the caller's bound, and returning the applied value.",
+    );
+  });
+
+  // A site that quietly stops answering a data call can still show its no-results message while
+  // another part of the same page shows results for the same inputs. Returning that as an honest
+  // empty list hides the site's failure. The rule sits in the output rules, which the review and
+  // the minter's publication-review reference both read.
+  it("finds an empty result that other evidence on the same page contradicts", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is an empty result that other evidence on the same page contradicts for the same inputs, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
     );
   });
 });
@@ -1592,6 +1620,7 @@ describe("the OpenAI publication reviewer", () => {
     { reason: "input_feedback", category: "account_specific_enum" },
     { reason: "source_correction", category: "example_value" },
     { reason: "privacy", category: "safety_default" },
+    { reason: "evidence", category: "cart_sign_in" },
   ])(
     "accepts a $reason decision with a $category finding through the reviewer output schema",
     async ({ reason, category }) => {

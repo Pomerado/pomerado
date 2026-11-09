@@ -167,7 +167,7 @@ export interface PendingQuestion {
   readonly scriptAsk?: true;
   /**
    * Host fact: the build's effect, once decided, so the review knows a write build does the task
-   * once, for real, before it publishes. Its allowedEffects stays empty on purpose.
+   * once, for real, before it publishes. Its allowedEffects authorizes nothing.
    */
   readonly buildEffect?: "read" | "write";
   /**
