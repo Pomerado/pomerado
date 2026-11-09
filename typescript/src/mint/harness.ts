@@ -1050,14 +1050,14 @@ const loginRequestInstruction = (login: "held" | "supplied" | "inspect" | "unava
       ? "This asks for a website login, which only the host requests, and this build cannot be given one. Do not ask for it again; continue without it or end the attempt and say why."
       : "This asks for a website login, which only the host requests. The host now holds a login for this site: call execute purpose authenticate with target liveBrowser. Never ask for passwords, usernames or logins yourself.";
 
+/** Added to a refusal whose submission the host refused for other reasons too. */
+const alsoRefusedInstruction =
+  " alsoRefused lists the other problems the host found in this same submission, each with its reason and instruction. Fix all of them, and this one, before you call finish_build again.";
 /**
  * What a minter hears, on a host that publishes on the site's own no (`publishOnRefusal`), when
  * its write session has not yet shown a write: that no to the example's valid inputs is the
  * example's answer, and how to publish on it.
  */
-/** Added to a refusal whose submission the host refused for other reasons too. */
-const alsoRefusedInstruction =
-  " alsoRefused lists the other problems the host found in this same submission, each with its reason and instruction. Fix all of them, and this one, before you call finish_build again.";
 const siteRefusalPublication =
   "If the site said in its own words that it declines the example's valid inputs before any save (not a field error on your fill, a failed page or a challenge), such as a product it does not offer for these facts, that no is the example's answer: the act step returns it right after reading it, before entering any commit mark, as a refusal its output schema declares (`status` `\"refused\"`, a listed `reason` and `site_message`). Compose the whole path the request asks for, with that refusal in its output schema, list every save step in write.commits and again in write.commitsUnproven each one the session never reached, and call finish_build naming that act step. Keep the caller's facts as given.";
 
@@ -3300,7 +3300,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           instruction:
             availabilityInstruction() +
             instruction +
-            (alsoRefusedReplies.length === 0 ? "" : alsoRefusedInstruction),
+            // A refusal that ends the attempt asks for no further finish_build.
+            (alsoRefusedReplies.length === 0 || terminal !== undefined
+              ? ""
+              : alsoRefusedInstruction),
         });
       /**
        * The reply to a host refusal the minter fixes in its source or metadata, by reason, or
@@ -6789,25 +6792,40 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // what to do in its review rationale, screened like any other.
                 alsoRefusedReplies = yield* Effect.forEach(
                   error.alsoRefused ?? [],
-                  (other): Effect.Effect<object> => {
-                    const known = fixableRefusal(other, (code, reason, details, instruction) => ({
-                      code,
-                      reason,
-                      ...details,
-                      instruction,
-                    }));
-                    if (known !== undefined) return Effect.succeed(known);
-                    const rationale = other.review?.rationale;
-                    return rationale === undefined
-                      ? Effect.succeed({ code: other.code, reason: other.reason })
-                      : screenRationale(rationale).pipe(
-                          Effect.map((instruction) => ({
-                            code: other.code,
-                            reason: other.reason,
-                            instruction: capped(instruction.trim(), ledgerBounds.instructionChars),
-                          })),
-                        );
-                  },
+                  (other): Effect.Effect<object> =>
+                    Effect.gen(function* () {
+                      const known = fixableRefusal(
+                        other,
+                        (code, reason, details, instruction) => ({
+                          reply: { code, reason, ...details, instruction },
+                          instruction,
+                        }),
+                      );
+                      // A listed refusal that names its fix keeps that fix on record as the
+                      // refusal it answers with does, for a host_refused report on it.
+                      if (known !== undefined) {
+                        if (other.reason !== undefined && namedStepReasons.has(other.reason)) {
+                          const told = yield* screenMintText(dependencies, known.instruction).pipe(
+                            Effect.map((screened) =>
+                              capped(screened.trim(), ledgerBounds.instructionChars),
+                            ),
+                            Effect.orElseSucceed(() => ""),
+                          );
+                          if (told === "") namedStepInstructions.delete(other.reason);
+                          else namedStepInstructions.set(other.reason, told);
+                        }
+                        return known.reply;
+                      }
+                      if (other.review?.rationale === undefined)
+                        return { code: other.code, reason: other.reason };
+                      const instruction = capped(
+                        (yield* screenRationale(other.review.rationale)).trim(),
+                        ledgerBounds.instructionChars,
+                      );
+                      if (other.reason !== undefined && rationaleStepReasons.has(other.reason))
+                        namedStepRationales.set(other.reason, instruction);
+                      return { code: other.code, reason: other.reason, instruction };
+                    }),
                 );
                 const outputUnavailable =
                   error.code === "PublicationUnavailable" &&

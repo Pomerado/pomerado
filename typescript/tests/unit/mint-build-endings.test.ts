@@ -1106,6 +1106,7 @@ const noMatchUntested = new MintFailure({
 it.each([
   {
     refusal: variantsUnsupported,
+    reason: "variants_unsupported",
     step: {
       refusalInstruction: expect.stringContaining(
         "Either remove supportedVariants from the tool's metadata",
@@ -1115,12 +1116,30 @@ it.each([
   },
   {
     refusal: noMatchUntested,
+    reason: "no_match_case_untested",
+    step: { refusalRationale: noMatchRationale },
+    absent: "refusalInstruction",
+  },
+  // A host refusal listed beside Guardian's denial of the same submission names its fix too.
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
+    reason: "variants_unsupported",
+    step: {
+      refusalInstruction: expect.stringContaining(
+        "Either remove supportedVariants from the tool's metadata",
+      ),
+    },
+    absent: "refusalRationale",
+  },
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [noMatchUntested] }),
+    reason: "no_match_case_untested",
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
 ])(
-  "refuses the first host_refused after $refusal.reason, which names its fix, and accepts a second",
-  async ({ refusal, step, absent }) => {
+  "refuses the first host_refused after a $refusal.code naming $reason, which names its fix, and accepts a second",
+  async ({ refusal, reason, step, absent }) => {
     const explanation = "A Pomerado check refused publication, so no tool was published.";
     const f = await fixture(
       (_request, index) =>
@@ -1137,7 +1156,7 @@ it.each([
     expect(first).toEqual({
       status: "blocked_refused",
       reason: "host_refusal_names_step",
-      refusedReason: refusal.reason,
+      refusedReason: reason,
       ...step,
       userInputRequired: false,
       instruction: hostRefusalNamesStep,
@@ -1149,7 +1168,7 @@ it.each([
       stopReason: "host_refused",
     });
     expect(blockedRecord(outcome)).toMatchObject({
-      hostRefusals: [{ source: "publication", reason: refusal.reason }],
+      hostRefusals: [{ source: "publication", reason }],
     });
   },
 );
