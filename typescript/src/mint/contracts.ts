@@ -933,6 +933,10 @@ export const WritePath = Schema.Struct({
       does: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)).annotations({
         description: "What the step saves or submits, in a few words, such as 'saves the applicant page'",
       }),
+      setup: Schema.optional(Schema.Literal(true)).annotations({
+        description:
+          "true when the step only makes state the site creates by itself as the session starts, such as an empty cart, and saves none of the caller's values: no run need enter its mark, since the site may already have made it. Only steps before the path's first other step may be setup, and never its last",
+      }),
     }),
   ).pipe(
     Schema.minItems(1),
@@ -1459,7 +1463,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  * How the minter ends a build its task makes impossible as asked:
  * - `site_lacks_capability`: the site does not offer what the task needs.
  * - `site_declined`: the site offers what the task needs but declines this example's own facts,
- *   such as an applicant it will not quote; the explanation names the reason the site gave.
+ *   such as an applicant it will not quote; the explanation names the reason the site gave. A
+ *   decline the site states only for now, such as a store closed until it opens, is `temporary`, with
+ *   `availableAt` when the site says when it takes the request again, so a host can tell its
+ *   caller to try again then rather than change the request.
  * - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
  *   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
  *   code and the caller's input are unchanged, never a 5xx answer only to the request the tool
@@ -1500,6 +1507,19 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  * target on another registrable domain is never a reason by itself: Guardian reviews such work.
  */
 export const blockedExplanationLimit = 500;
+/**
+ * When a temporary `site_declined` ending's site says it takes the request again: an ISO 8601
+ * date-time with seconds optional and its UTC offset, such as `2026-11-06T09:00:00-05:00`, which
+ * keeps the site's own time zone for the caller.
+ */
+export const AvailableAt = Schema.String.pipe(
+  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/),
+  Schema.filter((value) => !Number.isNaN(Date.parse(value)), {
+    message: () => "availableAt must be a real date and time",
+    // Adds nothing to the pattern's JSON Schema, so a description on it reaches the model.
+    jsonSchema: {},
+  }),
+);
 export const BuildBlocked = Schema.Struct({
   reason: Schema.Literal(
     "site_lacks_capability",
@@ -1546,17 +1566,34 @@ export const BlockedReport = Schema.Struct({
    * cite the caller's request. Carried in the report, so a host that wraps the action keeps it.
    */
   intent: Schema.optional(Schema.String),
+  /** A `site_declined` report only: the site declines the request only for now. */
+  temporary: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "site_declined only: true when the site declines only for now, such as a store closed until it opens",
+    }),
+  ),
+  /** A temporary `site_declined` report only: when the site says it takes the request again. */
+  availableAt: Schema.optional(
+    AvailableAt.annotations({
+      description:
+        "site_declined only: when the site says it takes the request again, as an ISO 8601 date-time with its UTC offset; omit it when the site states no time",
+    }),
+  ),
 });
 /**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
  * Guardian's question review allowed the caller to read it. `new_mint_recommended` is the ending of
  * a `mint_update` whose change belongs in a new build: the reviewed summary of the change and the
- * request the caller could submit for that build.
+ * request the caller could submit for that build. A temporary `site_declined` ending keeps
+ * `temporary` and, when the site said when, `availableAt`.
  */
 const BuildBlockedOutcome = Schema.Union(
   Schema.Struct({
     reason: BuildBlocked.fields.reason,
     explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
+    temporary: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+    availableAt: Schema.optionalWith(AvailableAt, { exact: true }),
   }),
   Schema.Struct({
     reason: Schema.Literal("new_mint_recommended"),
@@ -2971,6 +3008,14 @@ export interface MintDependencies {
    */
   readonly signedOutNarrows?: true;
   /**
+   * The host applies an `effect` change to `read`: a write build that has sent no write becomes a
+   * read build, and every later review and the published tool read it as one. The harness refuses
+   * such a change before review once the build may have sent a write (`write_sent`). Absent, the
+   * harness refuses every change to `read` as `effect_lowering_unsupported`, as a host that only
+   * ever raises the effect needs.
+   */
+  readonly lowersEffect?: true;
+  /**
    * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
    * `owner` when the person the repair's questions reach may manage the tool, `owner_request`
    * when, in addition, the maintenance is that owner's own request to change the tool, otherwise
@@ -2995,7 +3040,11 @@ export interface MintDependencies {
    */
   readonly stopExplanationReviewMs?: number;
   readonly exampleClaimed?: boolean;
-  /** Host-bound accepted/registered read authority; source still requires Guardian approval. */
+  /**
+   * Host-bound accepted/registered read authority; source still requires Guardian approval. The
+   * harness reads it only while the build reads, so a host that sets `lowersEffect` gives the read
+   * authority a write build takes on once lowered.
+   */
   readonly repeatableRead?: boolean;
   /**
    * Whether the host's own guidance names this `policy` ending, so it needs no refusal on record,

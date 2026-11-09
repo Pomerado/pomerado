@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { test, expect } from "@playwright/test";
 import {
   call,
+  currentOf,
   execution,
   executionIdOf,
   html,
@@ -18,7 +19,14 @@ import {
   toolResult,
   type RecordedReview,
 } from "./guardian-context-fixture.js";
-import { act, mint, noteSite, readNote, saveNote } from "./standalone-mint-fixture.js";
+import {
+  act,
+  executions,
+  mint,
+  noteSite,
+  readNote,
+  saveNote,
+} from "./standalone-mint-fixture.js";
 
 /** The note site's write path: its one save, as a write build's first act step declares it. */
 const savePath = {
@@ -72,6 +80,115 @@ async ({kernel,sessionId}) => {
   if(!response.success) throw new Error(String(response.error));
   return {heading:String(response.result).trim()};
 });`;
+
+/** A read of one store's page, which refuses a store the site says it has no page for. */
+const storeTool = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_store",input:Schema.Struct({store:Schema.String}),output:Schema.Struct({heading:Schema.String})},
+async ({kernel,sessionId,input,errors}) => {
+  const code = "await page.goto(new URL('/store/' + encodeURIComponent(" + JSON.stringify(input.store) + "), page.url()).href); return await page.locator('h1').textContent();";
+  const response = await kernel.browsers.playwright.execute(sessionId,{code,timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  const heading = String(response.result).trim();
+  if(heading === "Store not found") throw new errors.InvalidInput("Caller input error: the site says this store was not found.",{field:"store"});
+  return {heading};
+});`;
+
+test("a read whose caller's example the tool refuses publishes on a substitute example from the same site", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((request, response) => {
+    if (request.url === "/store/open") return html(response, "<title>Open</title><h1>Open store</h1>");
+    response.statusCode = request.url?.startsWith("/store/") === true ? 404 : 200;
+    html(response, request.url?.startsWith("/store/") === true ? "<h1>Store not found</h1>" : "<h1>Stores</h1><a href='/store/open'>Open store</a>");
+  });
+  const guardian = recordingGuardian();
+  const substitute = (callId: string) =>
+    call("execute", execution("example", "src/tool.mjs", { exampleInput: '{"store":"open"}' }), callId);
+  try {
+    const { built, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Read a store's page heading",
+      input: { store: "moved" },
+      turns: [
+        () => patch({ "src/tool.mjs": storeTool }),
+        // Before the caller's own input ran, the example runs only that input.
+        () => [substitute("too_early")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "caller_example")],
+        () => [substitute("substitute")],
+        (request) => [
+          call(
+            "finish_build",
+            {
+              intent: "Read a store's page heading",
+              entrypoint: "src/tool.mjs",
+              executionId: executionIdOf(request, "substitute"),
+              metadata: { name: "read_store", description: "Read a store page's heading" },
+              coverage: "The caller's store, refused as not found, and a substitute store that passed",
+            },
+            "finish",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "too_early")).toMatchObject({ status: "unsupported" });
+    expect(toolResult(last, "caller_example")).toMatchObject({ status: "failed" });
+    expect(toolResult(last, "substitute")).toMatchObject({ status: "completed" });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    // Guardian reviewed the caller's own input unmarked, then the substitute as one.
+    const [caller, replaced] = executions(guardian.reviews).filter(
+      (review) => currentOf(review)?.["purpose"] === "example",
+    );
+    expect(currentOf(caller!)).not.toHaveProperty("input");
+    expect(currentOf(replaced!)?.["input"]).toBe("substitute");
+    const [publication] = publications(guardian.reviews);
+    expect(JSON.parse(readOf(publication, "publication/example-output.json") ?? "{}")).toMatchObject({
+      output: { heading: "Open store" },
+    });
+    // The review hears the caller's input stays a case the tool must refuse.
+    expect(observationsOf(publication)).toContain("The example ran a substitute input");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a caller's example the tool's own schema rejects lets no substitute run", async () => {
+  test.setTimeout(60_000);
+  const site = await headingSite();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Read a store's page heading",
+      input: { store: "moved" },
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": storeTool.replace(
+              "input:Schema.Struct({store:Schema.String})",
+              'input:Schema.Struct({store:Schema.Literal("open")})',
+            ),
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "caller_example")],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { exampleInput: '{"store":"open"}' }),
+            "substitute",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "caller_example")).toMatchObject({ status: "failed" });
+    // A schema that refuses the caller's input is the tool's bug, never the site's answer.
+    expect(toolResult(last, "substitute")).toMatchObject({ status: "unsupported" });
+  } finally {
+    await site.close();
+  }
+});
 
 test("a publication review that finds personal data in the source stops the build with its findings", async () => {
   test.setTimeout(60_000);

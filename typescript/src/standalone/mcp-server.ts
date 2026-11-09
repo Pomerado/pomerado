@@ -37,7 +37,7 @@ export interface PomeradoMcpOptions extends ServerOptions {
     request: PomeradoRequest,
     name: string,
   ) => Effect.Effect<
-    (artifact: MintArtifact) => Effect.Effect<unknown, Error, Scope.Scope>,
+    (artifact: MintArtifact, effect?: "read" | "write") => Effect.Effect<unknown, Error, Scope.Scope>,
     Error,
     Scope.Scope
   >;
@@ -219,7 +219,7 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
                       ? {}
                       : { untrustedSignInOrigins: result.untrustedSignInOrigins }),
                   };
-                const integration = yield* publish(result.artifact);
+                const integration = yield* publish(result.artifact, result.effect);
                 return { build: result.build, integration };
               }),
             )

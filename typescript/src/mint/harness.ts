@@ -1239,8 +1239,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         updates: [],
       };
       // The build's effect and read authority. A `mint_update` the caller confirmed may turn a
-      // read build into a write build mid-build, which switches both in place.
-      let buildEffect = taskState.effect === "write" ? ("write" as const) : request.effect;
+      // read build into a write build mid-build, or a write build that sent nothing into a read
+      // build, which switches both in place. A takeover restores either from the effective task.
+      let buildEffect =
+        taskState.effect === "write"
+          ? ("write" as const)
+          : request.effect === "write"
+            ? ("read" as const)
+            : request.effect;
       let repeatableRead = buildEffect !== "write" && dependencies.repeatableRead === true;
       /** The caller's answers this build may cite as confirmation, by question id. */
       const answeredQuestions = new Map<string, AnsweredQuestion>(
@@ -2534,6 +2540,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             .map((update) => update.revision),
         );
       /**
+       * Whether this build may have sent a write: its write session started, the host reports the
+       * build's claim from an earlier attempt, or a step Guardian labelled a write may have reached
+       * the site. An offline example's claim in this attempt sends nothing.
+       */
+      const writeSent = () =>
+        dependencies.exampleClaimed === true ||
+        writeSession !== "none" ||
+        reviewer.tracked().some((write) => write.effect !== "not_sent");
+      /**
        * Why the host refuses a task update before review, as its reason and the agent's next step,
        * or undefined. A recommended new build is never refused here: it changes nothing.
        */
@@ -2573,7 +2588,43 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction: `Removing ${unexplained.field} takes away a value the tool's callers receive, so it needs a reason, and nothing changed. If the site still shows the value, keep the field and fix the extraction instead. Otherwise add reason to that change: why the field must go, from what the site shows now and where you looked, which Guardian checks against the captures. Then call mint_update again.`,
           };
         if (submitted.recommend === "new_mint") return undefined;
-        if (settings.has("effect")) {
+        const effects = new Set(
+          submitted.changes.flatMap((change) =>
+            change.setting === "effect" ? [change.effect] : [],
+          ),
+        );
+        if (effects.size > 1)
+          return {
+            reason: "effect_conflict",
+            instruction:
+              "This update changes the effect both ways, so nothing changed. Name one effect change, then call mint_update again.",
+          };
+        if (effects.has("read")) {
+          if (buildEffect !== "write")
+            return {
+              reason: "already_read",
+              instruction: "This build is already a read build. Nothing changed.",
+            };
+          if (dependencies.lowersEffect !== true)
+            return {
+              reason: "effect_lowering_unsupported",
+              instruction:
+                "This host can't turn a write build into a read build, so nothing changed. Go on with the write, or call mint_update with recommend new_mint and a suggestedRequest for a read build.",
+            };
+          if (writeSent())
+            return {
+              reason: "write_sent",
+              instruction:
+                "This build already started its write on the site, so it stays a write build and nothing changed. Tell the caller with request_input that changes may already have been made on the site, so the build can't become a read now, and list what it did so far. Ask, in a confirm question with endsBuild set, whether to end this build so they can start a read build; a no means finishing the write.",
+            };
+          // Publication needs a live read example, so the build must still be able to run one.
+          if (executionClosed)
+            return {
+              reason: "no_live_example_left",
+              instruction:
+                "This build can no longer run a live example, so a read could not be proven, and nothing changed. Go on with the write, or call mint_update with recommend new_mint and a suggestedRequest for a read build.",
+            };
+        } else if (settings.has("effect")) {
           if (buildEffect === "write")
             return {
               reason: "already_write",
@@ -4247,7 +4298,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 `The task now runs signed out: never call execute purpose authenticate again. ${buildEffect === "write" ? signedOutWrite : "Explore, run the example and live tests, and publish without signing in, from the part of the request the site shows signed out"}.`,
               ]
             : []),
-          ...(settings.has("effect")
+          ...(settings.has("effect") && buildEffect !== "write"
+            ? [
+                "This build is now a read build: it sends no write, and it proves its tool with a live example and live tests as a read does, from the page as it stands.",
+              ]
+            : []),
+          ...(settings.has("effect") && buildEffect === "write"
             ? [
                 "This build is now a write build, and every later execution is reviewed under write authority. Read .agents/writes/SKILL.md, and .agents/forms/SKILL.md for a form, before the next step. The write is the whole task the request asks for, done once through purpose act steps; it may take several steps, and drafts, autosaves and step saves along the way are part of it. Before the first act step, ask with request_input for any value the task needs that the input does not settle. The first act step starts with navigation to the site origin (keeping the browser's cookies and site storage), so it must navigate to any deeper task page it needs; what you observed so far stays valid evidence. From now on a live example or live test is refused, and so is a live explore once the session starts.",
               ]
@@ -4461,7 +4517,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 "The host cannot apply this update to this build, so nothing changed. Continue under the current task, or call mint_update with recommend new_mint if the caller's change needs a new build.",
             });
           }
-          const effectChanged = next.effect === "write" && buildEffect !== "write";
+          const effectChanged = next.effect !== (buildEffect === "write" ? "write" : "read");
           const siteChanged = next.siteOrigin !== taskState.siteOrigin;
           taskState = next;
           // The caller's confirmed update applied, so the host waits for no confirmation now.
@@ -4487,13 +4543,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           yield* reviewer.taskUpdated(
             `The caller confirmed a task update (revision ${next.revision}): ${accepted.summary}`,
           );
-          if (effectChanged) {
+          if (effectChanged && next.effect === "write") {
             buildEffect = "write";
             repeatableRead = false;
             // A read example's claim was the read's, and a read ran no write session: the write
             // session takes its own claim.
             exampleClaimed = false;
             writeSession = "none";
+          } else if (effectChanged) {
+            // A write build lowers only before its write session started, so any claim it holds
+            // is an offline example's: the read's live example takes its own claim.
+            buildEffect = "read";
+            repeatableRead = dependencies.repeatableRead === true;
+            exampleClaimed = false;
           }
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.task_updated", {
@@ -6035,8 +6097,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     : ranAt < latestRevisionChanging("effect")
                       ? ({
                           reason: "example_before_effect_change",
-                          instruction:
-                            "This execution ran while the build was a read, so it is not the write the task now asks for. Perform the write through purpose act steps, then call finish_build with the step that confirmed it.",
+                          instruction: write
+                            ? "This execution ran while the build was a read, so it is not the write the task now asks for. Perform the write through purpose act steps, then call finish_build with the step that confirmed it."
+                            : "This execution ran before the build's effect last changed, so it does not prove the read the task now asks for. Run a fresh live example, then call finish_build with that new executionId.",
                         } as const)
                       : undefined;
               if (stale !== undefined) {
@@ -6887,7 +6950,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           : error.reason === "confirmation_unrecorded"
                             ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
                             : error.reason === "contract_input_mismatch"
-                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
+                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty or in place of one the tool refused (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
                               : request.mode === "maintenance" && buildEffect !== "write"
                                 ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
                                 : request.mode === "maintenance"
@@ -7311,6 +7374,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       yield* diagnose({ phase: "blocked", reason: "sign_in_unavailable" });
                       return endedForSignIn;
                     }
+                    // A temporary decline is the site's own refusal for now, so only
+                    // `site_declined` takes it, and the time it names is still ahead.
+                    const temporary = report.temporary === true || report.availableAt !== undefined;
+                    if (temporary && report.reason !== "site_declined")
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "temporary_not_declined",
+                        userInputRequired: false,
+                        instruction:
+                          "temporary and availableAt apply only to site_declined. Remove them, or use site_declined if the site itself turned the request away for now.",
+                      });
+                    if (
+                      report.availableAt !== undefined &&
+                      Date.parse(report.availableAt) <= (yield* Clock.currentTimeMillis)
+                    )
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "available_at_past",
+                        userInputRequired: false,
+                        instruction:
+                          "availableAt is not in the future. Give the next time the site says it takes the request, with its UTC offset, or leave availableAt out.",
+                      });
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, report.explanation),
                     );
@@ -7382,7 +7467,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       return endedForSignIn;
                     }
                     const submitted = { ...report, reason: ending.reason };
-                    const review = yield* reviewBlockedExplanation(explanation);
+                    const availableAt =
+                      submitted.reason === "site_declined" ? report.availableAt : undefined;
+                    // Guardian reviews the time beside the words, as the caller reads both.
+                    const review = yield* reviewBlockedExplanation(
+                      availableAt === undefined
+                        ? explanation
+                        : `${explanation}\nAvailable again at: ${availableAt}`,
+                    );
                     yield* active("publication");
                     if (review.outcome === "retry")
                       return reviewUnavailableAnswer(
@@ -7425,6 +7517,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const blocked = {
                       reason: submitted.reason,
                       ...(shown ? { explanation } : {}),
+                      ...(temporary && submitted.reason === "site_declined"
+                        ? { temporary: true as const }
+                        : {}),
+                      // Guardian reviewed the time with the words, so it shows only beside them.
+                      ...(shown && availableAt !== undefined ? { availableAt } : {}),
                     };
                     // A report that stood on refused live tests names them and the standing
                     // denial; the outcome keeps the denial's reason and category.
@@ -7530,7 +7627,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           ? [{ setting: "site", origin: change.origin }]
                           : change.setting === "login" && !narrows(change)
                             ? [{ setting: "login", change: change.change }]
-                            : change.setting === "effect"
+                            : change.setting === "effect" && change.effect === "write"
                               ? [{ setting: "effect", effect: change.effect }]
                               : [],
                     );
@@ -8021,8 +8118,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }),
         diagnostics: [...diagnostics],
         ...(example === undefined ? {} : { exampleId: example.executionId }),
-        // A build becoming a write leaves its read example's claim behind.
-        ...(task.effect === "write" && buildEffect !== "write"
+        // A build whose effect changes leaves the earlier effect's example claim behind.
+        ...((task.effect === "write") !== (buildEffect === "write")
           ? { exampleClaimed: false, writeSession: "none" as const }
           : { exampleClaimed, writeSession }),
         unavailableOutputRefusals,
