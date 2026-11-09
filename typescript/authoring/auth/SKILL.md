@@ -28,7 +28,7 @@ and ask the caller with request_input when you can't tell. (1) The steps are sep
 as a search that works signed out and an add to cart that needs the account; signed-out reads stay
 their own tool so they can run in parallel. Build the one the request names and suggest the other
 as a new build. (2) The whole task needs the account: sign in first and run it from its start
-signed in. (3) Rarely, one write needs a signed-out part and then a signed-in part: go on signed
+signed in; once a write went out signed out, suggest that as a new build instead. (3) Rarely, one write needs a signed-out part and then a signed-in part: go on signed
 in after it, and follow the host's notice for where its runs sign in. A write already sent signed
 out never runs again.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
