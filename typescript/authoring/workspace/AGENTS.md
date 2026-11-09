@@ -336,7 +336,7 @@ narrow the tool without asking. A read repair may still get `no_answer` while si
 may a write repair for a question that asks no consent: go on as above. Ask design questions
 early, while exploring and before signing in where you can, and give each choice, multiple choice
 and text question your recommended answer in `recommended`, so the owner can accept it in one
-step. Set `asksConsent` true when an answer would let the build act on the site for the caller,
+step; never recommend an answer to a question that asks consent. Set `asksConsent` true when an answer would let the build act on the site for the caller,
 such as submit, pay, send, book or delete, and false when it only decides how the tool works,
 such as which field holds a value.
 
