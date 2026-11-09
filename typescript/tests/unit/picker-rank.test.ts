@@ -382,6 +382,36 @@ describe("rankChoices word stems", () => {
   });
 });
 
+describe("rankChoices extra words", () => {
+  const extraRank = (choices: readonly PickerChoice[], ...wanted: string[]) =>
+    rankChoices(choices, wanted, foldChoiceText, { extraWords: true });
+
+  test("with extraWords, a name holding every word of the value in any order, plurals included, matches last", () => {
+    const results = [choice("Red Seedless Grapes"), choice("Green Seedless Grapes")];
+    // Without the option, a name with a word the value lacks between its words matches nothing.
+    expect(rank(results, "green grapes")).toEqual({ status: "missing" });
+    expect(stemRank(results, "green grapes")).toEqual({ status: "missing" });
+    expect(extraRank(results, "green grapes")).toEqual({ status: "picked", index: 1, rank: "extraWords" });
+    expect(extraRank([choice("Grapes, Green Seedless")], "green grape")).toEqual({ status: "picked", index: 0, rank: "extraWords" });
+    expect(extraRank([...results, choice("Organic Seedless Green Grape")], "green grapes")).toEqual({
+      status: "ambiguous",
+      indexes: [1, 2],
+      rank: "extraWords",
+    });
+    // A stronger rank still wins, and the pick decodes with its rank.
+    expect(extraRank([...results, choice("Green Grapes")], "green grapes")).toEqual({ status: "picked", index: 2, rank: "normalized" });
+    const pick = { picked: true, kind: "typeahead", label: "Green Seedless Grapes", value: "", rank: "extraWords", refills: 0 };
+    expect(Schema.decodeUnknownSync(PickOutcome)(pick)).toEqual(pick);
+  });
+
+  test("with extraWords, words pair only as written or singular and plural, and a value with a number gets no such match", () => {
+    expect(extraRank([choice("Simply Lemonade")], "lemon")).toEqual({ status: "missing" });
+    expect(extraRank([choice("Large Brown Eggs")], "brown egg")).toEqual({ status: "picked", index: 0, rank: "extraWords" });
+    expect(extraRank([choice("Organic Strawberries")], "strawberry")).toEqual({ status: "picked", index: 0, rank: "extraWords" });
+    expect(extraRank([choice("Green Seedless Grapes 1.5 lb")], "1 lb green grapes")).toEqual({ status: "missing" });
+  });
+});
+
 describe("pickRefusal", () => {
   test("a missing value names the field and lists what the picker offered", () => {
     const refusal = pickRefusal(

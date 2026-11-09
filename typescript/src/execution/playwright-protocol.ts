@@ -1,5 +1,12 @@
 import { Schema } from "effect";
 
+/** A field's one-use binding, as the keyboard's `CredentialTarget` names it. */
+const CredentialTarget = Schema.Struct({
+  targetId: Schema.optional(Schema.String),
+  bindingKey: Schema.String,
+  documentOrigin: Schema.String,
+});
+
 /** The messages between the native executor and its worker thread. Internal to the executor. */
 export const NativeWorkerRequest = Schema.Union(
   Schema.Struct({
@@ -15,16 +22,17 @@ export const NativeWorkerRequest = Schema.Union(
   Schema.Struct({
     id: Schema.String,
     kind: Schema.Literal("credential"),
-    target: Schema.Struct({
-      targetId: Schema.optional(Schema.String),
-      bindingKey: Schema.String,
-      documentOrigin: Schema.String,
-    }),
+    target: CredentialTarget,
     text: Schema.String,
-    /** The keyboard's `InsertionOptions`: read a phone number back, type by keys or by trusted keys. */
+    /**
+     * The keyboard's `InsertionOptions`: read a phone number back, type by keys or by trusted keys,
+     * hold each trusted key as a person's press, and the fields the second key on goes into.
+     */
     phone: Schema.optional(Schema.Literal(true)),
     keys: Schema.optional(Schema.Literal(true)),
     trustedKeys: Schema.optional(Schema.Literal(true)),
+    held: Schema.optional(Schema.Literal(true)),
+    across: Schema.optional(Schema.Array(CredentialTarget)),
   }),
 );
 export const NativeWorkerReply = Schema.Union(

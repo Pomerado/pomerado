@@ -771,6 +771,119 @@ it("ends the build as the host's failure when a review denies only a bundle file
   expect(f.requests.length).toBeLessThanOrEqual(3);
 });
 
+// The publication review refuses a cart tool under its cart sign-in rule with its own finding
+// category, so the host's result names that rule rather than an ordinary missing-evidence claim.
+// It stays review feedback the minter fixes, by signing in or by describing a one-run guest cart.
+const cartSignInGuardian = () => {
+  const bundle = new Map([["src/tool.ts", "export default { cart: 'add' };"]]);
+  const sources = new Map<string, string>(
+    [...bundle].map(([path, text]) => [`operation/${path}`, text]),
+  );
+  const reviewed: PendingExecution = {
+    invocationId: "invocation_cart",
+    attemptId: "attempt_cart",
+    entrypoint: "operation/src/tool.ts",
+    screenedIntent: "Add an item to the cart",
+    screenedInput: "{}",
+    screenedObservations: "Prior example completed signed out.",
+    accountScope: "account_a",
+    allowedOrigins: [],
+    allowedEffects: ["Publish current package only"],
+    publication: publicationScope(bundle, new Map()),
+  };
+  let reviews = 0;
+  const guardian = makeGuardian({
+    run: () =>
+      Effect.succeed(
+        ++reviews === 1
+          ? {
+              outcome: "deny",
+              reason: "evidence",
+              rationale: "A cart tool with no verified sign-in.",
+              findings: [
+                {
+                  path: "operation/src/tool.ts",
+                  quote: "cart: 'add'",
+                  category: "cart_sign_in",
+                  explanation: "Sign in, or say the tool uses its own guest cart for one run.",
+                },
+              ],
+            }
+          : { outcome: "allow", reason: "approved", rationale: "Signed in.", findings: [] },
+      ),
+  });
+  const readSource = makeSourceInspector(
+    (path) =>
+      Effect.suspend(() => {
+        const text = sources.get(path);
+        return text === undefined
+          ? Effect.fail(new ReviewFailure({ code: "SourceUnavailable" }))
+          : Effect.succeed(new TextEncoder().encode(text));
+      }),
+    (_path, bytes) => Effect.succeed(new TextDecoder().decode(bytes)),
+  );
+  // Publishes as a host does: Guardian reviews the bundle, and a refusal is the build's denial.
+  const publish = () =>
+    Effect.gen(function* () {
+      const { reviewId, decision } = yield* guardian
+        .review(reviewed, readSource)
+        .pipe(Effect.mapError(() => new MintFailure({ code: "PublicationUnavailable" })));
+      if (decision.outcome === "allow")
+        return { publicationRef: "corrected_revision", diagnostics: [] };
+      return yield* reviewDenied(reviewId, { ...decision, outcome: decision.outcome });
+    });
+  return { publish, reviews: () => reviews };
+};
+
+it("names the cart sign-in rule on the denial a build ends with", async () => {
+  const review = cartSignInGuardian();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call("finish_build", publication),
+        call("report_blocked", {
+          reason: "policy",
+          explanation: "Guardian refused to publish this tool.",
+        }),
+      ][index] ?? prose("Stopping."),
+    { publish: review.publish },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    publicationDenial: { reason: "evidence", category: "cart_sign_in" },
+  });
+  expect(outcome.blocked).toBeUndefined();
+  expect(JSON.stringify(f.requests[3]?.input)).toContain("policy_not_refused");
+  expect(review.reviews()).toBe(1);
+});
+
+it("publishes the minter's fix after a cart sign-in denial", async () => {
+  const review = cartSignInGuardian();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call("finish_build", publication, "denied_publication"),
+        patch(
+          {
+            type: "update_file",
+            path: "src/tool.ts",
+            diff: "@@\n-export default {};\n+export default { signedIn: true };",
+          },
+          "correction",
+        ),
+        call("finish_build", publication, "corrected_publication"),
+      ][index] ?? prose(),
+    { publish: review.publish },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "corrected_revision" });
+  expect(JSON.stringify(f.requests[2]?.input)).toContain("cart_sign_in");
+  expect(review.reviews()).toBe(2);
+});
+
 // Guardian denies the same submission again, so the host refuses it before review; a fix is
 // reviewed as usual and publishes.
 it("refuses a finish_build that changed nothing since its denial without reviewing it again", async () => {

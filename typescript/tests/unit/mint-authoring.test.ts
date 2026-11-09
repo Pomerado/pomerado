@@ -268,6 +268,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "Spread `listInputFields` into the input schema's fields and `listOutputFields` into the output schema's",
   ],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write in order to page."],
+  // A request for the whole list in one result still gets one page per call, so a call never
+  // reads every page of a long list at once.
+  [
+    "pagination",
+    "returns one page per call and a cursor for the next, even when the request asks for the whole list in one result.",
+  ],
   ["writes", "A write build changes something real on the caller's account"],
   ["writes", "Prefer confirming the write from its commit request."],
   ["writes", "- When a read-back is needed, the first one that matches confirms the write; stop there."],
@@ -441,6 +447,22 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   [
     "workspace/AGENTS.md",
     "When the owner decides only whether to go on as asked or stop, prefer a `confirm` question whose no stops the build over a stop option in a `choice` question, so you can end it as `owner_declined` on their no.",
+  ],
+  // A site can quietly stop answering the data request its results come from while its page shows
+  // its no-results message and another part of the page still shows results for the same inputs.
+  // The skills say what the publication review's "Wrong failure" rule finds, so the minter writes
+  // the failure Guardian expects rather than the empty list it denies.
+  [
+    "search",
+    "got the site's no-results message returns an empty list, never an error, unless other evidence on the same page contradicts it.",
+  ],
+  [
+    "search",
+    "that answer stands. An empty answer that other evidence on the same page contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that evidence shows.",
+  ],
+  [
+    "publication",
+    'a search or filter with no results returns the empty result, never a throw, unless other evidence on the same page contradicts it for the same inputs: then it throws `OperationFailure` naming what that evidence shows ("Wrong failure");',
   ],
 ];
 
@@ -934,20 +956,22 @@ it("has a write confirm from its first matching read-back, never from state befo
  * requested output required and blocked as the only ending for one the site lacks, the build
  * ended with no tool although its one real write was done. After a verified write, it asks the
  * caller once whether to publish with that output null and a reason, and never fills it in.
+ * Another write saved a record whose request listed an optional input the site's form has no
+ * field for, and ended the same way; the same ask covers one such input, after the read-back.
  */
-it("has a write ask once to publish without an output the site does not offer, after its verified write", async () => {
+it("has a write ask once to publish without an output or optional input the site does not offer, after its verified write", async () => {
   const texts = await renderedTexts("typescript/authoring");
   expect((texts.get("writes") ?? "").replace(/\s+/g, " ")).toContain(
-    "In a write build, after a verified write, if the site does not offer one output the request asks for, prefer asking the caller once with `request_input` whether to publish the tool with that output null and a reason field, rather than ending blocked; never invent the value.",
+    "In a write build, after a verified write, if the site does not offer one output the request asks for, or has no field for one input the request marks optional and the input the write session ran leaves unset, and lacks nothing else the request names, prefer asking the caller once with `request_input` whether to publish the tool with that output null and a reason field, or without that input and with the tool's description saying the site has no field for it, rather than ending blocked; never invent the value, and prefer finishing the write's read-back before you ask, so Guardian sees the verified write when it reviews the question.",
   );
   // The blocked ending for a capability the site lacks points to that ask first.
   const guide = (texts.get("workspace/AGENTS.md") ?? "").replace(/\s+/g, " ");
   expect(guide).toContain(
-    "never invent a value or substitute a different field. After a verified write, when the site does not offer one output the request asks for, the writes skill's ask whether to publish without it comes first.",
+    "never invent a value or substitute a different field. After a verified write, when the site does not offer one output the request asks for, or has no field for one input the request marks optional and the input the write session ran leaves unset, the writes skill's ask whether to publish without it comes first.",
   );
-  // So does the rule that never offers to leave out an output the request names.
+  // So does the rule that never offers to leave out an input or output the request names.
   expect(guide).toContain(
-    "A field, input or output the request itself names is never such a capability: support it, or end with `report_blocked` saying why the site cannot; never offer to leave it out, except one output the site does not offer, after a verified write, where the writes skill's ask whether to publish without it comes first.",
+    "A field, input or output the request itself names is never such a capability: support it, or end with `report_blocked` saying why the site cannot; never offer to leave it out, except one output the site does not offer, or one input the request marks optional, the input the write session ran leaves unset, and the site has no field for, after a verified write, where the writes skill's ask whether to publish without it comes first.",
   );
 });
 
@@ -992,13 +1016,15 @@ it("has a write mark only the steps that send and wait for every answer the site
  * A write saved over several pages refused the site's own code for an option on a later page,
  * which showed only labels, after earlier pages had saved, so a value problem became an outcome
  * the caller could not know. The site's option values and labels could be read before the first
- * save, from the form definitions an earlier page loaded.
+ * save, from the form definitions an earlier page loaded. A cart write likewise saved a delivery
+ * address, then refused as ambiguous an item the page listed in two places, so it looks up every
+ * named item first and counts matches by the site's own item id.
  */
 it("has a write check caller values against the site's own option lists before its first save", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them and checking every caller value for those fields against them before the first commit mark, in the session and on every run of the composed script. Match each value by the site's option value as well as its label (forms skill), and refuse with `InvalidInput` and `available` before anything is saved when a value matches neither. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
+    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
   );
   // A check that can only run after an earlier save keeps its honest possible change.
   expect(text("writes")).toContain(
@@ -1007,7 +1033,7 @@ it("has a write check caller values against the site's own option lists before i
   // It sits after the refusal rule and its exceptions, so that rule's "those checks" still names
   // the checks before it.
   expect(text("writes")).toContain(
-    "then throw `InvalidInput` that names the field by its label, and don't click again. - On a write saved across several pages,",
+    "then throw `InvalidInput` that names the field by its label, and don't click again. - Before the first commit mark, prefer looking up every existing entry the caller names,",
   );
   expect(text("forms")).toContain(
     "Choose the option that matches the input value, by the option's value or its observed label pattern, and read back that the field took it. When the control shows only labels, prefer matching against the site's own table of option values and labels, such as the form definitions or option data the page or an earlier page loads, over the visible words alone, so an input holding the site's code for an option picks that option.",
@@ -1171,6 +1197,22 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   );
 });
 
+// A commit the page itself refused, or one the site answered with an error other than a server error
+// whose record then reads back as the script read it before the mark, goes back unsent with the
+// site's proof, so the run reports the write not applied. A read-back counts only for fields the
+// write sends a different value for, and only toward a refusal, never another click. Guardian counts
+// a put-back that rests on a timeout, silence or a missing element as a finding.
+it("has a write put a step back only on the site's own refusal or an unchanged read-back", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "When the page shows the site's own refusal of that write, or the site answered the commit with an error that is not a server error and a fresh read of the same view you read before the mark shows each field whose sent value differs from that read unchanged, prefer the same put-back and ending as above; never on silence or a missing element.",
+  );
+  expect(guardianPublicationPolicy).toContain(
+    "Nor is one after the site answered the click with an error that is not a server error and a fresh read of the same view the script read before the mark showed each field whose sent value differs from that read unchanged, followed by a refusal, or an `OperationFailure`, with the site's words, and no further click. A `notCommitted` resting on a timeout, silence or a missing element is a confirmation finding.",
+  );
+});
+
 // A write still refuses an option the page does not offer, unless the caller's own task asks for
 // whatever the site ends up with: then it follows the site's preselected substitute and returns it.
 it("has a write follow the site's substitute only when the caller's task asks for what it ends up with", async () => {
@@ -1299,17 +1341,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["ed4002e3abf62e9d33f4b7fe89a037ecf6d69ec366f3d3ea70c059dceb245fe1", "core"],
-    ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
+    ["2c56fe1cd69f0178126429542a8996a81141d3885a3f455ccebb2360915c00f3", "core"],
+    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
-    ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
+    ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["1a915d0e49ee6fbcd1c99796adc0c12d44874b5df82f452794bcd59bba2c4359", "writes"],
-    ["8e42776229364b5eebc9899c429f7716a5cc801497fbef09084bb1e8f4841e77", "cart"],
+    ["1df721ca0c488b7f13b7f84e78f5a1ce29b91ab81e30f80e08ff14c77df44178", "writes"],
+    ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
-    ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
-    ["34ea9283866001cc4fca79128638f970cc0fdea87950eafd593091cc6d707d61", "workspace/AGENTS.md"],
+    ["7416fcc1004dd8d2d7a71c995c1c63b40b3786e8b47b9343ccbf3715eb1664d5", "publication"],
+    ["ebd119ab5b58bcb260019920a0be4756bd991de88171f5181a5d263cdb5a54b6", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1429,8 +1471,8 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
-    ["3aa501213d21aec07d8af5729895521446b26e458c6cc0fc76f19a3f1580a5c9", "workspace/AGENTS.md"],
+    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
+    ["9125b3220bdc907627ab2ff29e0411b1269251b2114c6c81e83f5b0c07d9787a", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

@@ -1,7 +1,8 @@
 // Failure modes covered: a rejection marker read sends a selector that chains into other content,
-// reads a screen off the site and its sign-in origins, reads a frame of another origin or a tab
-// that left the screen's origin, checks unbounded matches, or reads a missing popup it never
-// recorded, or an answer that is not one, as no marker.
+// reads a screen off the site and its sign-in origins, reads a frame off the site and its sign-in
+// origins or a tab that left the screen's origin, misses a marker in the sign-in's own frame on
+// another host of the site, checks unbounded matches, or reads a missing popup it never recorded,
+// or an answer that is not one, as no marker.
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { autofillMarkerVisible } from "../../src/destinations/autofill-marker.js";
@@ -138,6 +139,36 @@ describe("autofillMarkerVisible", () => {
     });
     // A primary tab that left the screen's origin has no marker of that screen.
     expect((await runOnFrames(code, "https://elsewhere.example/", frames)).located).toEqual([]);
+  });
+
+  it("finds a marker in the sign-in's own frame on another host of the site", async () => {
+    const { page, calls } = recordingPage(true);
+    await read({ page, authenticationOrigins: [] });
+    const signIn = "https://id.shop.example/frame/login";
+    expect(
+      await runOnFrames(calls[0]?.code ?? "", `${site}/login`, [
+        { url: `${site}/login`, visible: [] },
+        { url: signIn, visible: [false, true] },
+      ]),
+    ).toEqual({ visible: true, located: [`${site}/login #error`, `${signIn} #error`] });
+  });
+
+  it("still ignores a marker in a frame off the site", async () => {
+    const { page, calls } = recordingPage(true);
+    await read({ page, authenticationOrigins: [] });
+    const thirdParty = [
+      "https://captcha.vendor.example/challenge",
+      "https://shop.example.chat.example/widget",
+      "http://id.shop.example/frame",
+    ];
+    const frames: Frame[] = [
+      { url: `${site}/login`, visible: [false] },
+      ...thirdParty.map((url) => ({ url, visible: [true] })),
+    ];
+    expect(await runOnFrames(calls[0]?.code ?? "", `${site}/login`, frames)).toEqual({
+      visible: false,
+      located: [`${site}/login #error`],
+    });
   });
 
   it("checks at most 100 matches of a frame", async () => {

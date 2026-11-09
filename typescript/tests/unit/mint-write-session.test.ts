@@ -152,6 +152,7 @@ describe("a write session's publication check", () => {
     steps: readonly WriteSessionMarks[],
     extracted: ReturnType<typeof contract>,
     named: WriteSessionMarks = steps.at(-1) ?? { enteredMarks: [] },
+    skippable?: readonly string[],
   ) => {
     let extractions = 0;
     const result = Effect.runSyncExit(
@@ -162,6 +163,7 @@ describe("a write session's publication check", () => {
           extractions++;
           return extracted;
         }),
+        ...(skippable === undefined ? {} : { skippableCommits: () => skippable }),
       }),
     );
     return { result, extractions };
@@ -238,6 +240,31 @@ describe("a write session's publication check", () => {
           declared: "readback",
           commitsUnproven: ["save_insured", "rate_quote"],
         }),
+      );
+    });
+
+    it("publishes an earlier mark the session skipped only when the host lets it be skipped", () => {
+      // The session saved the product; the cart it saved into was already open, so it never
+      // entered the earlier save step that opens one.
+      const skipped = unproven(["open_cart"], ["open_cart", "save_product"]);
+      expect(reason(check([saved], skipped).result)).toBe("commit_marks_unentered");
+      expect(check([saved], skipped, saved, ["open_cart"]).result).toEqual(
+        Exit.succeed({ extracted: skipped, declared: "readback", commitsUnproven: ["open_cart"] }),
+      );
+      // The host lets only the steps it names be skipped, and never one the session entered.
+      expect(reason(check([saved], skipped, saved, ["save_insured"]).result)).toBe(
+        "commit_marks_unentered",
+      );
+      expect(
+        reason(
+          check([saved], unproven(["save_product"], ["save_product"]), saved, ["save_product"])
+            .result,
+        ),
+      ).toBe("commit_marks_unentered");
+      // Nor any step once the session entered none.
+      const unsaved: WriteSessionMarks = { enteredMarks: [], confirmation: "readback" };
+      expect(reason(check([unsaved], skipped, unsaved, ["open_cart", "save_product"]).result)).toBe(
+        "commit_marks_unentered",
       );
     });
   });

@@ -503,7 +503,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "commit_marks_undeclared"
     /**
      * The composed script declares a commit step no act step of the session ever entered, and
-     * `write.commitsUnproven` does not name it as one after the last mark the session entered.
+     * `write.commitsUnproven` does not name it as one after the last mark the session entered, or
+     * as one the host lets it skip (`skippableCommits`).
      */
     | "commit_marks_unentered"
     /**
@@ -1521,8 +1522,9 @@ export const BuildBlocked = Schema.Struct({
  * block: nothing about the task is impossible, so the caller never reads it as one. Once sign-in
  * is unavailable in the build, any report, `policy` included, ends the build with the sign-in's
  * own result instead of the reason it names. So does any ending the report's checks accept but
- * `owner_declined`, `question_unanswered` or `owner_ended` while the build's latest sign-in never
- * confirmed and no failed one is pending: the site never got as far as judging the task.
+ * `owner_declined`, `question_unanswered`, `owner_ended` or `caller_input` while the build's latest
+ * sign-in never confirmed and no failed one is pending: the site never got as far as judging the
+ * task.
  */
 export const BlockedReport = Schema.Struct({
   reason: Schema.Literal(
@@ -1824,9 +1826,11 @@ export type MintOutcome = {
    */
   readonly stopReason?: MintStopReason;
   /**
-   * The minter's last answer when it stopped without a tool call (`final_text_without_tool`),
-   * screened for credentials and host-private values and kept only when Guardian's question
-   * review allowed its caller to read it, as a blocked explanation is.
+   * The minter's last answer when it stopped without a tool call (`final_text_without_tool`), or
+   * its blocked report's explanation when the harness ended that report as sign-in unavailable
+   * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`). Either is screened
+   * for credentials and host-private values and kept only when Guardian's question review allowed
+   * its caller to read it, as a blocked explanation is.
    */
   readonly stopExplanation?: string;
   /** Host-only references: preserve first execution independently of build success. */

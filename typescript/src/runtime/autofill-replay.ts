@@ -21,7 +21,12 @@ import {
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import { endsAtCodeScreen, lastScreenGone } from "./autofill-replay-code-screen.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
-import { approvalNumber, approvalScreen, withApprovalNumber } from "./autofill-replay-approval.js";
+import {
+  approvalNumber,
+  approvalScreen,
+  openPastedLink,
+  withApprovalNumber,
+} from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
 import {
   codeBoxRow,
@@ -283,6 +288,20 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       );
       if (approval === "signed_in") return approval;
       if (approval === "screen_changed") return replay.outcome(approval);
+      // A site whose emailed link signs in only the browser that opens it: the owner pastes the
+      // link, and the replay opens it itself (`openPastedLink`).
+      if (recorded.approval === "email_link" && recorded.delivery === "paste") {
+        const opened = yield* openPastedLink(input, inspection);
+        if (opened !== "opened") return replay.outcome(opened);
+        replay.state.steps.push({
+          page: inspection.page,
+          fields: [],
+          approval: recorded.approval,
+          delivery: recorded.delivery,
+          ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
+        });
+        return "continue" as const;
+      }
       // A device approval may have the owner pick the number its screen shows (`matchSelector`).
       const number =
         recorded.approval === "device"

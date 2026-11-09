@@ -449,11 +449,23 @@ interface FillInput extends CallInput {
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
    * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
-   * `pastedSlots`: a one-time code too, one key into each box of a code split across boxes. A
-   * step's one code field that hands the focus on once a key went in gets the code at once instead
-   * (`codeAtOnce`).
+   * `pastedSlots`: a one-time code too, each key held as a person's press (`held`), the code of a
+   * row of one-character boxes typed through its first box (`fillRow`). A step's one code field
+   * that hands the focus on once a key went in gets the code at once instead (`codeAtOnce`).
    */
   readonly typing?: CredentialTypingMode;
+  /**
+   * Whether the page itself already sent the code the fill typed, in flight or answered: the
+   * host's own reading of the tab's requests that went out at or after `since` (epoch ms, when the
+   * fill began), matched against `code`, the step's code fields' values joined in field order, in
+   * the host alone and never in a page call. Asked on a step whose every field takes a code, with
+   * each look before the click that finds the screen as typed and again before each click; true
+   * reports the screen sent by the page (`page`) and clicks nothing. One that fails says no.
+   */
+  readonly codeSent?: (typed: {
+    readonly since: number;
+    readonly code: string;
+  }) => Effect.Effect<boolean, Error>;
 }
 
 /**
@@ -753,7 +765,9 @@ const submitCall = (
  * screen still shows, so on a step whose every field takes a code (`codeOnly`) the host first only
  * looks (`lookFirst`), for up to `pageSendMs` from the last field's fill: a look that finds the
  * screen as typed, or is lost, looks again, and any other answer is taken as the submit call's
- * would be. Only then does the submit call click. A click again of a blocked screen skips that
+ * would be. Only then does the submit call click. On such a step each look that finds the screen
+ * as typed, and each click, first asks the host whether the page sent the code itself (`sent`,
+ * `codeSent`), and a yes is the page's own send. A click again of a blocked screen skips that
  * first look, and none of its later looks takes every box locked or emptied as the page's own send
  * (`codeLook`): its dismiss may have emptied every box itself.
  */
@@ -762,6 +776,7 @@ const submitWhenEnabled = (
   progress: FillProgress,
   call: AutofillFillCall,
   lookFirst: boolean,
+  sent: Effect.Effect<boolean>,
 ) =>
   Effect.gen(function* () {
     const started = Date.now();
@@ -775,10 +790,18 @@ const submitWhenEnabled = (
     let lost: Either.Either<CallAnswer, Error> | undefined;
     let lastLost = false;
     const changes = { count: 0 };
+    let url = "";
     for (;;) {
       const looking = look !== undefined && Date.now() - started < sendMs;
+      // The page may have sent the code itself while its screen stays as typed (`codeSent`).
+      if (look !== undefined && !looking && (yield* sent))
+        return Either.right<CallAnswer>({ pageSent: true, url });
       const answered = yield* fillCall(input, progress, changes)(looking ? look : call);
       if (looking && (Either.isLeft(answered) || unclicked(answered, "none"))) {
+        if (Either.isRight(answered) && "submit" in answered.right) {
+          url = answered.right.url;
+          if (yield* sent) return Either.right<CallAnswer>({ pageSent: true, url });
+        }
         yield* Effect.sleep(submitPollMs);
         continue;
       }
@@ -952,6 +975,126 @@ const codeAtOnce = (
   });
 
 /**
+ * Typing into `fields` whose answer was lost (`error`): uncertain, since what was typed may have
+ * gone out. When the last of them is a code step's last field (`codeSentBySite`), the page may
+ * have sent the code on its last digit, so the host looks for it as after a submit call that raced
+ * its page (`awaitNewDocument`): the page sent it (`page`), or closed the screen in place, which
+ * the sign-in's own check decides (`closedInPlace`), with every one of `fields` filled.
+ */
+const lostTyping = (
+  input: FillInput,
+  progress: FillProgress,
+  error: Error,
+  document: number | undefined,
+  fields: readonly number[],
+) =>
+  Effect.gen(function* () {
+    const lost = failedCall(progress, error, { held: input.values, mayMutate: true, typing: true });
+    if ((fields.at(-1) ?? 0) < input.step.fields.length - 1 || !codeSentBySite(input.step))
+      return lost;
+    progress.typedIn = document;
+    const looked = yield* awaitNewDocument(
+      input,
+      progress,
+      submitCall(input, progress, []),
+      Either.left(error),
+      sendWindow(input),
+      { count: 0 },
+    );
+    if (Either.isLeft(looked)) return lost;
+    const found = looked.right;
+    if (!("pageSent" in found) && !("closed" in found)) return lost;
+    progress.typed = true;
+    for (const _field of fields) progress.statuses.push("filled");
+    return "pageSent" in found
+      ? filledReport(input.step, progress, "page", found.url)
+      : stopped(input.step, progress, found, "submit");
+  });
+
+/**
+ * The step's code boxes the host types through the first (`fillRow`): a code split across two or
+ * more one-character boxes (`codeBoxes`) that follow one another in the step, typed by keys.
+ * Otherwise none.
+ */
+const rowBoxes = (input: FillInput, boxes: readonly number[]) =>
+  input.typing === "keyboard" && boxes.every((box, at) => box === (boxes[0] ?? 0) + at)
+    ? boxes
+    : [];
+
+/**
+ * A code split across a row of one-character boxes (`rowBoxes`), typed as a person types it: the
+ * row's focus call clicks its first box with the pointer and binds every box (`row`), then the
+ * host types the whole code by trusted keys, each held as a person's press and each into the box
+ * the page moved the focus to (`InsertionOptions.across`), guarded box by box. Undefined once
+ * every key went in. A first box that did not take the focus, or a box that did not hold it when
+ * its key was due, as on a page that never moves the focus on, leaves the row to the host's own
+ * box by box typing (`untyped`), whose first focus call empties every box. Otherwise what the
+ * call found, or the typing's lost answer (`lostTyping`).
+ */
+const fillRow = (
+  input: FillInput,
+  progress: FillProgress,
+  boxes: readonly [number, ...number[]],
+): Effect.Effect<AutofillStepReport | undefined | "untyped"> =>
+  Effect.gen(function* () {
+    const [first, ...rest] = boxes;
+    const bindingKey = `__pomerado_autofill_${randomUUID()}`;
+    const row = rest.map((index) => ({ index, bindingKey: `__pomerado_autofill_${randomUUID()}` }));
+    const answered = yield* fillCall(input, progress)({
+      kind: "focus",
+      index: first,
+      bindingKey,
+      emptyBoxes: boxes,
+      row,
+    });
+    if (answered._tag === "Left") return failedCall(progress, answered.left, { mayMutate: false });
+    const answer = answered.right;
+    if ("refusal" in answer || "checked" in answer)
+      return stopped(input.step, progress, answer, "field");
+    if (!("focused" in answer) || !answer.focused) return "untyped";
+    progress.check = [];
+    progress.keyed = true;
+    const target = (key: string, index: number) => ({
+      targetId: input.inspection.popupTargetId,
+      bindingKey: key,
+      documentOrigin: progress.judged.fields[index]?.documentOrigin ?? "",
+    });
+    const typing = yield* Effect.either(
+      input.keyboard.insertText(
+        target(bindingKey, first),
+        boxes.map((index) => input.values[index] ?? "").join(""),
+        { trustedKeys: true, held: true, across: row.map((box) => target(box.bindingKey, box.index)) },
+      ),
+    );
+    if (typing._tag === "Left")
+      return yield* lostTyping(input, progress, typing.left, answer.document, boxes);
+    if (typing.right !== "inserted") return "untyped";
+    progress.typed = true;
+    progress.typedIn = answer.document;
+    for (const _box of boxes) progress.statuses.push("filled");
+    progress.check = [boxes.at(-1) ?? first];
+    return undefined;
+  });
+
+/**
+ * The host's own answer whether the page already sent the step's code (`codeSent`), typed from
+ * `since`, asked afresh each time it runs: no without the hook or a code field the host submits,
+ * or when the answer fails or the hook throws.
+ */
+const sentByPage = (input: FillInput, since: number): Effect.Effect<boolean> => {
+  const code = input.step.fields
+    .flatMap((field, index) => (field.slot === "code" ? [input.values[index] ?? ""] : []))
+    .join("");
+  const hook = input.codeSent;
+  return hook === undefined || code === "" || !codeSentBySite(input.step)
+    ? Effect.succeed(false)
+    : Effect.flatten(Effect.try(() => hook({ since, code }))).pipe(
+        // error-reporting-allow: typed-recovery a host that can't tell whether the page sent the code leaves the click to the looks before it, as without the hook
+        Effect.orElseSucceed(() => false),
+      );
+};
+
+/**
  * What a field's own call found: a date filled, a box kept as an earlier screen typed it, or a
  * focused field the host now types. A typed identifier joins the sign-in's record under `mark`.
  * `atOnce` inserts the value at once whatever the typing (`codeAtOnce`).
@@ -1000,38 +1143,13 @@ const afterFieldCall = (
           {
             ...(slot === "phone" ? { phone: true } : {}),
             ...(input.typing === "keyboard" && !pastedSlots.has(slot) && !atOnce
-              ? { trustedKeys: true }
+              ? { trustedKeys: true, ...(slot === "code" ? { held: true as const } : {}) }
               : {}),
           },
         ),
       );
-      if (typing._tag === "Left") {
-        const lost = failedCall(progress, typing.left, {
-          held: input.values,
-          mayMutate: true,
-          typing: true,
-        });
-        if (index < input.step.fields.length - 1 || !codeSentBySite(input.step)) return lost;
-        // The page may have sent the code on this last digit (`codeSentBySite`).
-        progress.typedIn = answer.document;
-        const looked = yield* awaitNewDocument(
-          input,
-          progress,
-          submitCall(input, progress, []),
-          Either.left(typing.left),
-          sendWindow(input),
-          { count: 0 },
-        );
-        if (Either.isLeft(looked)) return lost;
-        const found = looked.right;
-        if (!("pageSent" in found) && !("closed" in found)) return lost;
-        progress.typed = true;
-        progress.statuses.push("filled");
-        // A code screen closed in place is the sign-in's own check to decide (`closedInPlace`).
-        return "pageSent" in found
-          ? filledReport(input.step, progress, "page", found.url)
-          : stopped(input.step, progress, found, "submit");
-      }
+      if (typing._tag === "Left")
+        return yield* lostTyping(input, progress, typing.left, answer.document, [index]);
       if (typing.right === "inserted") {
         progress.typed = true;
         progress.typedIn = answer.document;
@@ -1066,15 +1184,17 @@ const afterFieldCall = (
  * focus and bind each field and click; the host inserts each value atomically into that original
  * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
  * trusted key per character into it there for each slot but the `pastedSlots`, a one-time code
- * included, one key per box of a code split across boxes, and inserts at once a code whose one
+ * included, each of its keys held, a code split across a row of boxes typed through the first box
+ * the host clicked, each key into the box the page moved the focus to (`fillRow`), else one key per
+ * box, and inserts at once a code whose one
  * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
  * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
  * the submit. That click ran, though, so the report says so (`clicked`): the page's own handlers
- * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
- * clicked: the host waits for the page to enable it once the fields are filled. When it stays
+ * ran on it, and what the step filled may have gone out. A submit the page keeps disabled or inert
+ * is never clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
  * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
  * enables it only on key presses, and waits once more.
@@ -1143,9 +1263,15 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
     const boxes = codeBoxes(step, input.values);
+    const sent = sentByPage(input, Date.now());
+    const [first, ...rest] = rowBoxes(input, boxes);
     for (let index = 0; index < step.fields.length; index++) {
-      const ended = yield* fillField(input, progress, index, boxes);
-      if (ended !== undefined) return ended;
+      const row = index === first ? yield* fillRow(input, progress, [first, ...rest]) : "untyped";
+      if (row === "untyped") {
+        const ended = yield* fillField(input, progress, index, boxes);
+        if (ended !== undefined) return ended;
+      } else if (row !== undefined) return row;
+      else index += rest.length;
     }
     if (input.beforeSubmit !== undefined && step.submit !== undefined) {
       const held = yield* Effect.either(input.beforeSubmit({ document: progress.typedIn }));
@@ -1163,7 +1289,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         }
         return yield* submitStep(fill, progress, boxes, typed);
       });
-    const report = yield* submitStep(input, progress, boxes, typed);
+    const report = yield* submitStep(input, progress, boxes, typed, false, sent);
     // The page may enable its submit only on key presses: the host types every field again by keys.
     if (
       report.outcome === "filled" &&
@@ -1351,6 +1477,7 @@ const submitStep = (
   boxes: readonly number[],
   typed: readonly string[] | undefined,
   clickAgain = false,
+  sent: Effect.Effect<boolean> = Effect.succeed(false),
 ) =>
   Effect.gen(function* () {
     const { step } = input;
@@ -1359,6 +1486,7 @@ const submitStep = (
       progress,
       submitCall(input, progress, boxes, clickAgain),
       !clickAgain,
+      sent,
     );
     if (clicked._tag === "Left")
       return failedCall(progress, clicked.left, { mayMutate: hostSubmits(step) });
