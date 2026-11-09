@@ -449,9 +449,9 @@ export const coveringControlNameLimit = 120;
  * are kept first, still in page order. Null when the submit has no box or nothing else sits over it.
  *
  * A modal dialog a person sees (`dialog[open]`, the `dialog` or `alertdialog` role, or
- * `aria-modal="true"`) that is that element or sits in it, else the page's only one that doesn't
- * hold the submit, as a page lays an empty overlay beside its dialog, makes the role `dialog`, or
- * `alertdialog` for that role, and its own controls the ones read.
+ * `aria-modal="true"`) that is that element or sits in it, as beside an empty overlay in the same
+ * portal, makes the role `dialog`, or `alertdialog` for that role, and its own controls the ones
+ * read.
  */
 const coveringCode = `(element) => {
   const box = element.getBoundingClientRect();
@@ -475,8 +475,7 @@ const coveringCode = `(element) => {
     return area.width > 0 && area.height > 0 && node.checkVisibility({ visibilityProperty: true });
   };
   const modals = 'dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]';
-  const beside = [...element.ownerDocument.querySelectorAll(modals)].filter((node) => !node.contains(element) && shown(node));
-  const modal = [cover, ...cover.querySelectorAll(modals)].find((node) => node.matches(modals) && shown(node)) ?? (beside.length === 1 ? beside[0] : null);
+  const modal = [cover, ...cover.querySelectorAll(modals)].find((node) => node.matches(modals) && shown(node)) ?? null;
   const name = (${String(accessibleNames)})();
   const found = [];
   const roots = [modal ?? cover];

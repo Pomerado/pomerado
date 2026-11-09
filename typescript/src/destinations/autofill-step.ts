@@ -321,16 +321,16 @@ const coveringRoles = [
 /**
  * The element that sat over a submit and caught the host's click, by its tag and ARIA role, each
  * one of a fixed list: never its text, id, label or class names, which page code may write from
- * what the host typed. A modal dialog a person sees, that element or one in it, else the page's only
- * one beside it that doesn't hold the submit, makes the role `dialog` (`alertdialog` for that
- * role). `controls`, when it has any, are its own buttons and links a person sees, or that dialog's,
- * in page order, each by role and accessible name as the page has it (`accessibleNames`, which
- * keeps typed values out as far as page code can tell), so the minter can name a notice's own
- * control as `dismiss`. A control with no name, such as a close button that shows only an image,
- * comes with an empty name as `iconOnly`, and over `coveringControlsLimit` those and controls named
- * close, dismiss, reject, decline or accept are kept first. A name is page text: the host screens
- * it for typed values, as it screens every step result, before the minter reads it. A host on an
- * older core reports no controls, and no `iconOnly` one.
+ * what the host typed. A modal dialog a person sees, that element or one in it, makes the role
+ * `dialog` (`alertdialog` for that role). `controls`, when it has any, are its own buttons and
+ * links a person sees, or that dialog's, in page order, each by role and accessible name as the
+ * page has it (`accessibleNames`, which keeps typed values out as far as page code can tell), so
+ * the minter can name a notice's own control as `dismiss`. A control with no name, such as a close
+ * button that shows only an image, comes with an empty name as `iconOnly`, and over
+ * `coveringControlsLimit` those and controls named close, dismiss, reject, decline or accept are
+ * kept first. A name is page text: the host screens it for typed values, as it screens every step
+ * result, before the minter reads it. A host on an older core reports no controls, and no
+ * `iconOnly` one.
  */
 export const CoveringElement = Schema.Struct({
   tag: Schema.Literal(...coveringTags, "other"),
