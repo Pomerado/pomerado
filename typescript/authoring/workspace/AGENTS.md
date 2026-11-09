@@ -663,7 +663,13 @@ never with final text, which the host treats as unfinished work:
   network address this way, so a host may give the build a new browser on another address and ask
   you to try the failing step once more before it ends the build; on a signed-in build that
   browser starts signed out. Try the step again within your usual rules, and report
-  `site_unavailable` again if the page stays. A page for the example's own record that says the
+  `site_unavailable` again if the page stays. A page that looks blank or broken right after you
+  closed an overlay, popup or dialog is not an outage: read the data the page already holds,
+  reload it, or reach the same data through the site's other route before you report the site
+  down. A site that fails only under this build's own request volume, such as requests it refuses
+  as too many, or larger pages failing where smaller ones pass, on a fresh network address too, is
+  limiting the build, not down: set `rateLimited` on the `site_unavailable` report. A page for the
+  example's own record that says the
   site can't offer it right now, or comes back blank, while the site serves its other records, is
   the site's answer for that record, not an outage: prefer having the tool return it as an
   explicit state with the site's words and no items over a complete empty list, prove the tool on
