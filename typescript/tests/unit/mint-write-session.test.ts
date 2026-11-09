@@ -581,7 +581,7 @@ describe("a write build's write path", () => {
     expect(decode({ ...request, writePath: quote })._tag).toBe("Right");
     expect(decode({ ...request, writePath: path("save-draft", "save-draft") })._tag).toBe("Left");
     expect(decode({ ...request, writePath: path("save draft") })._tag).toBe("Left");
-    expect(decode({ ...request, writePath: { steps: [], ends: "The quote" } })._tag).toBe("Left");
+    expect(decode({ ...request, writePath: { steps: [], ends: "The quote" } })._tag).toBe("Right");
   });
 
   describe("at publication", () => {
@@ -686,6 +686,138 @@ describe("a write build's write path", () => {
         ends: "The placed order",
       };
       expect(writePathRemaining(lateSetup, new Set(["add-items"]))).toEqual(["pay", "place-order"]);
+    });
+
+    // On a host that publishes on a read-back, a request that ends before any save, and one whose
+    // change the site already shows, publish as writes on the named step's read-back of that state.
+    it("publishes a path with no step, or a step no session step reached, on a read-back", () => {
+      const readBack: WriteSessionMarks = { enteredMarks: [], confirmation: "readback" };
+      const publish = (
+        writePath: WritePath,
+        write: Parameters<typeof contract>[0] & { readonly commitsUnproven?: readonly string[] },
+        publishOnReadBack?: true,
+        steps: readonly WriteSessionMarks[] = [readBack],
+      ) => {
+        const extracted = { contract: { write }, inputDecodes: true };
+        const result = Effect.runSyncExit(
+          checkWriteSession({
+            session: { steps },
+            step: steps.at(-1) ?? readBack,
+            extract: Effect.succeed(extracted),
+            writePath,
+            ...(publishOnReadBack === undefined ? {} : { publishOnReadBack }),
+          }),
+        );
+        return { extracted, result };
+      };
+      const failure = (exit: Exit.Exit<unknown, unknown>) =>
+        Exit.isFailure(exit) && exit.cause._tag === "Fail" ? exit.cause.error : undefined;
+      // A form filled and read back, never submitted.
+      const filled: WritePath = { steps: [], ends: "The filled form, unsubmitted" };
+      expect(writePathRefusal(act(filled), session(false))).toContain("writePath names no step");
+      expect(
+        writePathRefusal(act(filled), session(false), { publishOnReadBack: true }),
+      ).toBeUndefined();
+      const stops = publish(filled, { confirmation: "readback", commits: [] }, true);
+      expect(stops.result).toEqual(
+        Exit.succeed({ extracted: stops.extracted, declared: "readback", stopsBeforeSave: true }),
+      );
+      expect(reason(publish(filled, { confirmation: "readback", commits: [] }).result)).toBe(
+        "commit_marks_undeclared",
+      );
+      // A listing the site already shows archived.
+      const archive = path("archive-listing");
+      const kept = publish(
+        archive,
+        {
+          confirmation: "readback",
+          commits: ["archive-listing"],
+          commitsUnproven: ["archive-listing"],
+        },
+        true,
+      );
+      expect(kept.result).toEqual(
+        Exit.succeed({
+          extracted: kept.extracted,
+          declared: "readback",
+          commitsUnproven: ["archive-listing"],
+        }),
+      );
+      expect(
+        failure(publish(archive, { confirmation: "readback", commits: ["archive-listing"] }, true).result),
+      ).toMatchObject({
+        reason: "write_path_unfinished",
+        writePathUnreached: ["archive-listing"],
+        publishesOnReadBack: true,
+      });
+      const before = failure(
+        publish(archive, {
+          confirmation: "readback",
+          commits: ["archive-listing"],
+          commitsUnproven: ["archive-listing"],
+        }).result,
+      );
+      expect(before).toMatchObject({
+        reason: "write_path_unfinished",
+        writePathUnreached: ["archive-listing"],
+      });
+      expect(before).not.toHaveProperty("publishesOnReadBack");
+      // Only a read-back stands for the save: a step named for publication that read a message does not.
+      const message: WriteSessionMarks = { enteredMarks: [], confirmation: "message" };
+      expect(
+        reason(publish(filled, { confirmation: "message", commits: [] }, true, [message]).result),
+      ).toBe("commit_marks_undeclared");
+      expect(
+        reason(
+          publish(
+            archive,
+            {
+              confirmation: "message",
+              commits: ["archive-listing"],
+              commitsUnproven: ["archive-listing"],
+            },
+            true,
+            [message],
+          ).result,
+        ),
+      ).toBe("write_path_unfinished");
+      // A step the site skipped before an entered one is no escape: the path is revised instead.
+      const skipped = failure(
+        publish(
+          path("page-one", "page-two", "submit"),
+          {
+            confirmation: "readback",
+            commits: ["page-one", "page-two", "submit"],
+            commitsUnproven: ["page-two"],
+          },
+          true,
+          [{ enteredMarks: ["page-one"] }, { enteredMarks: ["submit"] }, readBack],
+        ).result,
+      );
+      expect(skipped).toMatchObject({
+        reason: "write_path_unfinished",
+        writePathUnreached: ["page-two"],
+      });
+      expect(skipped).not.toHaveProperty("publishesOnReadBack");
+      // A path with no step stops before any save only while no step entered a mark, and leaves
+      // no other save step unproven.
+      expect(
+        reason(
+          publish(filled, { confirmation: "readback", commits: [] }, true, [
+            { enteredMarks: ["submit"] },
+            readBack,
+          ]).result,
+        ),
+      ).toBe("commit_marks_undeclared");
+      expect(
+        reason(
+          publish(
+            filled,
+            { confirmation: "readback", commits: ["submit"], commitsUnproven: ["submit"] },
+            true,
+          ).result,
+        ),
+      ).toBe("commit_marks_unentered");
     });
 
     it("publishes the whole path, and a session with no recorded path as before", () => {
