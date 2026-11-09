@@ -60,8 +60,8 @@ export const screenedWritePath = (
   path: WritePath,
 ): Effect.Effect<WritePath, MintFailure> =>
   Effect.gen(function* () {
-    const steps = yield* Effect.forEach(path.steps, ({ commit, does }) =>
-      projection.text(does, "review").pipe(Effect.map((screened) => ({ commit, does: screened }))),
+    const steps = yield* Effect.forEach(path.steps, (step) =>
+      projection.text(step.does, "review").pipe(Effect.map((screened) => ({ ...step, does: screened }))),
     );
     return { steps, ends: yield* projection.text(path.ends, "review") };
   });

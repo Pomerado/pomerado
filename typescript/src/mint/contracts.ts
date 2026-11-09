@@ -933,6 +933,10 @@ export const WritePath = Schema.Struct({
       does: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)).annotations({
         description: "What the step saves or submits, in a few words, such as 'saves the applicant page'",
       }),
+      setup: Schema.optional(Schema.Literal(true)).annotations({
+        description:
+          "true when the step only makes state the site creates by itself as the session starts, such as an empty cart, and saves none of the caller's values: no run need enter its mark, since the site may already have made it. Only steps before the path's first other step may be setup, and never its last",
+      }),
     }),
   ).pipe(
     Schema.minItems(1),
@@ -2985,6 +2989,14 @@ export interface MintDependencies {
    */
   readonly signedOutNarrows?: true;
   /**
+   * The host applies an `effect` change to `read`: a write build that has sent no write becomes a
+   * read build, and every later review and the published tool read it as one. The harness refuses
+   * such a change before review once the build may have sent a write (`write_sent`). Absent, the
+   * harness refuses every change to `read` as `effect_lowering_unsupported`, as a host that only
+   * ever raises the effect needs.
+   */
+  readonly lowersEffect?: true;
+  /**
    * In maintenance, who can confirm a `mint_update` to the published tool's registered contract:
    * `owner` when the person the repair's questions reach may manage the tool, `owner_request`
    * when, in addition, the maintenance is that owner's own request to change the tool, otherwise
@@ -3009,7 +3021,11 @@ export interface MintDependencies {
    */
   readonly stopExplanationReviewMs?: number;
   readonly exampleClaimed?: boolean;
-  /** Host-bound accepted/registered read authority; source still requires Guardian approval. */
+  /**
+   * Host-bound accepted/registered read authority; source still requires Guardian approval. The
+   * harness reads it only while the build reads, so a host that sets `lowersEffect` gives the read
+   * authority a write build takes on once lowered.
+   */
   readonly repeatableRead?: boolean;
   /**
    * Whether the host's own guidance names this `policy` ending, so it needs no refusal on record,

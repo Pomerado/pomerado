@@ -54,6 +54,8 @@ export interface PomeradoRequest {
  */
 export type LocalMintOutcome = MintOutcome & {
   readonly untrustedSignInOrigins?: readonly string[];
+  /** The build's effect when it ended, which a confirmed task update may have changed. */
+  readonly effect?: "read" | "write";
 };
 
 export interface Pomerado {

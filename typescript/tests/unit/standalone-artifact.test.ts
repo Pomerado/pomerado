@@ -220,6 +220,34 @@ it("refuses a sign-in origin that is not an https origin", () =>
     expect(await readdir(directory)).toEqual([]);
   }));
 
+// A build's confirmed task update can lower a write to a read, or raise a read to a write, so the
+// integration must serve the effect the build published with, not the one it was asked for.
+it("writes the effect the build published with into deployment.json", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
+  try {
+    const deployed = (name: string, requested: "read" | "write", built?: "read" | "write") =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const publish = yield* prepareIntegration({
+              root,
+              name,
+              request: { url: "https://example.test", intent: "Read page", effect: requested },
+            });
+            yield* publish(source, built);
+          }),
+        ),
+      ).then(async () =>
+        JSON.parse(await readFile(join(await realpath(root), name, "deployment.json"), "utf8")),
+      );
+    expect((await deployed("lowered_reader", "write", "read")).request.effect).toBe("read");
+    expect((await deployed("raised_writer", "read", "write")).request.effect).toBe("write");
+    expect((await deployed("plain_writer", "write")).request.effect).toBe("write");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("merges a sign-in's origins into deployment.json after the request's own", async () => {
   const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
   try {

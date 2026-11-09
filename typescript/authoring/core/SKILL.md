@@ -22,7 +22,9 @@ belong to the host; never request a password, cookie or TOTP seed in model-visib
 
 Asking the caller follows `AGENTS.md` ("Try hard, then ask"). When neither the request nor an
 answer says whether the tool looks things up or changes something, prefer asking the
-read-or-write choice before your first execution.
+read-or-write choice before your first execution. When the request and its example disagree on
+read or write, ask the caller which they mean before your first execution, and when the answer
+changes the build's effect, apply it with `mint_update`.
 
 Write ordinary TypeScript or JavaScript files. Export a default Kernel script, as
 described below. Import the actual canonical SDK entrypoint given in the workspace
