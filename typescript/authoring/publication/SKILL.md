@@ -50,20 +50,9 @@ pomerado:section publication.metadata-readers:end -->:
   page, date range, the site's default location, what it doesn't cover) and, for a write,
   exactly what changes on the site and whether it can be undone. Don't repeat the inputs; their field descriptions cover them.<!-- pomerado:section publication.site-naming -->
 
-## Check before `finish_build`
+## What publication refuses
 
-Before your first `finish_build`, prefer checking the tool against each rule the request states
-for its inputs, outputs and refusals.
-
-Before each `finish_build`, the first and every later one, prefer one pass over your own source
-with four questions: for each output field, which line fills it and whether its description says
-where that value comes from; for each branch that returns, whether it returns every required field
-with values read on this run; for each value the caller gave or answered through `ask`, whether the
-output labels it as caller input; and whether any live test case still ends failed or flaky on the
-source you publish. Fix what this finds before you call.
-
-Guardian reports what it finds in rounds, and each round costs minutes, so settle all of these
-first:
+Publication refuses a tool for any of these:
 
 - **Schemas.** The input schema accepts exactly what the code accepts, every input and output
   field has its own description, every output field is typed and each constraint has a JSON
@@ -255,8 +244,11 @@ pomerado:section publication.declared-refusal:end -->
 ## Reading a rejection
 
 A `not_published` result says why in `reason` and, for most reasons, what to do in
-`instruction`: follow it. A Guardian denial comes back as `code` `ReviewDenied` with no top-level
-`reason`; its `diagnostic` holds `review.reason` and `review.findings`. The common cases:
+`instruction`: follow it. One result holds every refusal found in that submission: Guardian's
+findings, and in `alsoRefused` each other host refusal with its own `reason` and `instruction`.
+Fix all of them before you call `finish_build` again; each one left unfixed costs another round.
+A Guardian denial comes back as `code` `ReviewDenied` with no top-level `reason`; its
+`diagnostic` holds `review.reason` and `review.findings`. The common cases:
 
 | Where                      | Value                                                                                                                                  | What it means                                                                      | What to do                                                                                                                                                                                                                                                                                   |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
