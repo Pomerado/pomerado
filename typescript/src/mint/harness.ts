@@ -624,7 +624,7 @@ const reportContradictedAnswer = (reported: string, rationale: string | undefine
     ...(rationale === undefined ? {} : { rationale }),
     userInputRequired: false,
     instruction:
-      "Guardian found that this build's own evidence contradicts the report, so the build has not ended and its caller is not told the site is at fault. Keep building from what the rationale names: the data may already be on the page. A page that looks blank or broken right after an overlay, popup or dialog closed is not an outage: read the data the page already holds, reload the page, or reach the same data through the site's other route. Report again only once a new step shows the site is at fault; a report before any new step is refused the same way.",
+      "Guardian found that this build's own evidence contradicts the report, so the build has not ended. Keep building from what the rationale names: what the report says is missing or down may already be on the page. For example, a page that looks blank or broken right after an overlay, popup or dialog closed is not an outage: read the data the page already holds, reload the page, or reach the same data through the site's other route. Report again only once a new step shows the site is at fault; a report before any new step is refused the same way.",
   });
 /** A task update refusal's reason as a closed code: one core names, else `other`. */
 const taskUpdateRefusalCode = (
