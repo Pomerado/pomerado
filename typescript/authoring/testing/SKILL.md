@@ -101,6 +101,8 @@ little time. Root some cases in the inputs and some in your own code, as below. 
   remembers nothing about, with no location, store or filter left from your exploration;
 - when the example runs in place of a caller's input the tool refused, that input, expecting
   `invalid_input`;
+- each of the caller's `otherExampleInputs`, expecting what the site gives it, or
+  `invalid_input` for one the site can't serve. A signed-in read's distinct inputs take them first;
 - one query or filter with no results (`empty`, never a throw). Run it once and see what the
   site shows before you write its expectation: some sites answer it with a fallback grid or a
   "no exact matches" view rather than an empty list. When the tool takes a free-text input, one
@@ -187,7 +189,7 @@ case, use real values the site offers, which you saw while
 exploring: listed options, places, dates, counts, records and retailers the site lists. Never use
 a person's or account's name, number or code, or a private record's, such as an order number,
 and never the caller's own values beyond
-the caller's input and the example's. List under `notTested` anything the tool claims that you chose not to test,
+the caller's inputs and the example's. List under `notTested` anything the tool claims that you chose not to test,
 with why. A choice the request, the caller or the owner declined is not part of the tool (core
 skill), so it is never tested.
 
