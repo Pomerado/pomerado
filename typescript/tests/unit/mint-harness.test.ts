@@ -5449,10 +5449,19 @@ const fieldQuestion = (asksConsent?: boolean) => ({
 // A write repair's question that asks no consent, such as which field holds a value, goes back as
 // no answer when its host allows it, signed in too, with the answer the minter recommended. A
 // question that asks consent, or carries no mark, still ends the repair: no answer is never consent.
+/** Guardian's question review with the rule it names. */
+const reviewedAs = (label: "ambiguous_request" | "owner_confirmation") => () =>
+  Effect.succeed({
+    outcome: "allow_business" as const,
+    rationale: "Synthetic question review.",
+    label,
+  });
+
 it("hands a write repair's unanswered question that asks no consent back with its recommendation", async () => {
   const signedIn = {
     websiteCredentialsAvailable: true,
     handBackWriteRepairQuestions: true,
+    reviewQuestion: reviewedAs("ambiguous_request"),
   } as const;
   const writeRepair = { ...request, mode: "maintenance", effect: "write" };
   const shown: unknown[] = [];
@@ -5491,6 +5500,8 @@ it("hands a write repair's unanswered question that asks no consent back with it
     [fieldQuestion(true), signedIn],
     [fieldQuestion(), signedIn],
     [consent, signedIn],
+    // Guardian reads it as asking the owner's confirmation, whatever the minter marked.
+    [fieldQuestion(false), { ...signedIn, reviewQuestion: reviewedAs("owner_confirmation") }],
     [fieldQuestion(false), { websiteCredentialsAvailable: true }],
   ] as const) {
     const ended = await fixture(

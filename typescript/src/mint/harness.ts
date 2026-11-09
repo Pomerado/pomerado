@@ -68,6 +68,7 @@ import {
   type AnsweredQuestion,
   type HostConfirmation,
   type HostConfirmationChange,
+  noConsentQuestionLabels,
   questionNotNeededLabels,
   type QuestionFinding,
 } from "../guardian/question.js";
@@ -7124,6 +7125,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // request the agent writes, the effect question included, is reviewed before the
               // caller sees it: the caller may answer any of its choices in their own words.
               let reviewId: string | undefined;
+              // Guardian's own reading of the question: one it allows only as deciding how the
+              // tool works asks no consent, whatever the minter marked.
+              let reviewedNoConsent = false;
               // One id from proposal on: its review, the request the caller sees and its end.
               const requestId = randomUUID();
               if (dependencies.capabilityQuestion === undefined) {
@@ -7142,6 +7146,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 });
                 yield* reviewCompleted;
                 reviewId = review.reviewId;
+                reviewedNoConsent =
+                  review.outcome === "allow_business" &&
+                  review.label !== undefined &&
+                  noConsentQuestionLabels.includes(review.label);
                 // When the question came relative to the work before it, without reading the
                 // model's reasoning: how much ran first and whether sign-in was tried.
                 const priorPurposes = [...purposes.values()];
@@ -7261,7 +7269,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               for (const { questionId, reviewId } of confirms) confirmAsks.set(questionId, reviewId);
               askingId = requestId;
               askingEndsBuild = endsBuild.size > 0;
-              askingConsent = asksConsent(decoded);
+              askingConsent = asksConsent(decoded) || !reviewedNoConsent;
               askingRecommended = recommendedAnswers(decoded);
               handedBackQuestion = undefined;
               const answers = yield* dependencies.askInput(submitted, {

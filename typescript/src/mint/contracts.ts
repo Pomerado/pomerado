@@ -2830,8 +2830,9 @@ export interface MintDependencies {
   readonly handBackSignedInReadRepair?: true;
   /**
    * A write repair hands an unanswered request back to the minter as no answer, signed in or
-   * not, when the minter marked it `asksConsent: false` and it holds no confirm or secret
-   * question. A request that asks consent, or carries no mark, still ends the repair as before:
+   * not, when the minter marked it `asksConsent: false`, it holds no confirm or secret question,
+   * and Guardian's question review allowed it under a rule that asks no consent
+   * (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the repair as before:
    * no answer is never consent. Every other rule for an unanswered question stands. A core
    * without it ignores it.
    */

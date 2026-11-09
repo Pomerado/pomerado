@@ -56,6 +56,19 @@ export const questionNotNeededLabels: readonly QuestionReviewLabel[] = [
   "unsafe",
 ];
 
+/**
+ * The allow labels of a question that asks no one's consent to act: it only decides how the tool
+ * works or what it reads. Any other label, or none, may ask for consent.
+ */
+export const noConsentQuestionLabels: readonly QuestionReviewLabel[] = [
+  "ambiguous_request",
+  "owner_information",
+  "changes_output",
+  "unavailable_value",
+  "navigation_help",
+  "finding_choice",
+];
+
 const isQuestionReviewLabel = (value: string): value is QuestionReviewLabel =>
   (questionReviewLabels as readonly string[]).includes(value);
 
