@@ -127,7 +127,7 @@ const helperTools = (
     "provide_input",
     {
       description:
-        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
+        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). A browser_handoff hands the open browser window to the user: show them its prompt and any notice, and answer {"done": true} only after they say they finished the step there. Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
       inputSchema: standard(ProvideInput),
       annotations: writeHints,
     },

@@ -6,7 +6,10 @@ import {
   type ValidAnswers,
 } from "../runtime/input-request.js";
 
-/** The question types whose answers a later step may reuse: never a code, a secret or a login. */
+/**
+ * The question types whose answers a later step may reuse: never a code, a secret, a login or a
+ * browser hand-off, which a person does anew each time.
+ */
 const ReusableType = Schema.Literal("choice", "multi_choice", "text", "confirm");
 const reusable = Schema.is(ReusableType);
 
@@ -60,7 +63,7 @@ export const validateKeptAnswers = (
 
 /**
  * Each question's match key, its texts screened as the owner saw them, or undefined for a question
- * no later step may reuse: a code, a secret or a login.
+ * no later step may reuse: a code, a secret, a login or a browser hand-off.
  */
 export const scriptQuestionKeys = <E>(
   asked: InputRequest,

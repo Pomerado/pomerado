@@ -9,6 +9,7 @@ import {
   QuestionId,
   questionIdPattern,
   SecretQuestion,
+  ShownInputs,
   TextQuestion,
   validateAnswer,
   type InputAnswers,
@@ -54,6 +55,16 @@ export const ScriptQuestionDeclaration = Schema.Union(
     prompt: Prompt,
     secretKind: SecretQuestion.fields.secretKind,
     maxLength: SecretQuestion.fields.maxLength,
+  }),
+  /**
+   * Hands the live browser to a person, who does the task `prompt` describes, such as reviewing
+   * the filled form before it is submitted, and marks it done. `show_inputs` names the operation
+   * inputs the host may show beside the browser, never a secret or a file. It is asked alone.
+   */
+  Schema.Struct({
+    type: Schema.Literal("browser_handoff"),
+    prompt: Prompt,
+    show_inputs: Schema.optional(ShownInputs),
   }),
   /**
    * A required field the site's form adds that no input covers. It has no prompt of its own: each
@@ -116,24 +127,32 @@ interface AskSpec {
   readonly label?: string;
 }
 
+/** What `ask` returns for a browser hand-off, once the person marked the step done. */
+export interface HandoffDone {
+  readonly done: true;
+}
+
 /** What `ask` returns for one question, by its declaration. */
 export type ScriptAnswerOf<Declaration> = Declaration extends { readonly type: "multi_choice" }
   ? readonly string[]
-  : Declaration extends { readonly type: "confirm" }
-    ? { readonly confirmed: boolean; readonly text?: string }
-    : Declaration extends { readonly type: "text" | "secret" }
-      ? string
-      : "allowOther" extends keyof Declaration
-        ? Declaration extends { readonly allowOther: false }
-          ? string
-          : string | { readonly other: string }
-        : string;
+  : Declaration extends { readonly type: "browser_handoff" }
+    ? HandoffDone
+    : Declaration extends { readonly type: "confirm" }
+      ? { readonly confirmed: boolean; readonly text?: string }
+      : Declaration extends { readonly type: "text" | "secret" }
+        ? string
+        : "allowOther" extends keyof Declaration
+          ? Declaration extends { readonly allowOther: false }
+            ? string
+            : string | { readonly other: string }
+          : string;
 /** Any answer `ask` returns, before its declaration narrows it. */
 export type ScriptAnswer =
   | string
   | { readonly other: string }
   | readonly string[]
-  | { readonly confirmed: boolean; readonly text?: string };
+  | { readonly confirmed: boolean; readonly text?: string }
+  | HandoffDone;
 
 /**
  * What each asked question needs at ask time: the page's options for a choice, a site field's
@@ -142,7 +161,7 @@ export type ScriptAnswer =
 export type AskSpecOf<Declaration> = Declaration extends { readonly type: "site_field" }
   ? { readonly label: string; readonly options?: ReadonlyArray<ScriptOption> }
   : Declaration extends {
-        readonly type: "text" | "secret" | "confirm";
+        readonly type: "text" | "secret" | "confirm" | "browser_handoff";
       }
     ? { readonly options?: never }
     : { readonly options: ReadonlyArray<ScriptOption> };
@@ -163,10 +182,22 @@ export class ScriptInputFailure extends Data.TaggedError("ScriptInputFailure")<{
   readonly message?: string;
 }> {}
 
-/** The runner's way to the host: the request out, the caller's raw answers back. */
+/**
+ * The runner's way to the host: the request out, the caller's raw answers back. The handler calls
+ * `opened` once the host shows the request to its caller, before the caller can act on it: a
+ * browser hand-off marks a write's commit steps sent then, since the person may submit. A host
+ * that refuses the request before showing it never calls it. Calling it again does nothing.
+ */
 export type ScriptQuestionHandler = (
   request: InputRequest,
+  opened: () => void,
 ) => Effect.Effect<InputAnswers, ScriptInputFailure>;
+
+/** What a caller of `ask` learns while its request waits. */
+export interface ScriptAskHooks {
+  /** Told once the host shows the request to its caller (`ScriptQuestionHandler`). */
+  readonly opened?: () => void;
+}
 
 /** The sandbox's own side of one asked question: the option value behind each host id. */
 interface Asked {
@@ -316,6 +347,13 @@ const askedQuestion = (
         secretKind: declaration.secretKind,
         ...(declaration.maxLength === undefined ? {} : { maxLength: declaration.maxLength }),
       });
+    case "browser_handoff":
+      return plain({
+        id,
+        type: "browser_handoff",
+        prompt: declaration.prompt,
+        show_inputs: declaration.show_inputs ?? [],
+      });
     case "multi_choice":
       return Either.flatMap(offeredOptions(id, given), ({ values, offered }) => {
         const minSelections = declaration.minSelections ?? 1;
@@ -390,6 +428,8 @@ const scriptValue = (asked: Asked, answer: ValidAnswer): ScriptAnswer | undefine
     case "text":
     case "secret":
       return answer.value;
+    case "browser_handoff":
+      return { done: true };
     case "credential":
       return undefined;
   }
@@ -410,7 +450,7 @@ export const makeScriptInput = (
   handle: ScriptQuestionHandler | undefined,
   deadline?: Deadline,
 ) => {
-  const askAll = (asked: Readonly<Record<string, GivenSpec>>) =>
+  const askAll = (asked: Readonly<Record<string, GivenSpec>>, hooks: ScriptAskHooks = {}) =>
     Effect.gen(function* () {
       const questions: Asked[] = [];
       for (const [id, spec] of Object.entries(asked)) {
@@ -427,7 +467,14 @@ export const makeScriptInput = (
       if (handle === undefined) return yield* new ScriptInputFailure({ code: "Unavailable" });
       const answers = yield* Effect.acquireUseRelease(
         Effect.sync(() => deadline?.suspend()),
-        () => handle(request),
+        () => {
+          let told = false;
+          return handle(request, () => {
+            if (told) return;
+            told = true;
+            hooks.opened?.();
+          });
+        },
         (resume) => Effect.sync(() => resume?.()),
       );
       // A card answer reaches the script as the run's handle, never the card, so only the host
@@ -455,9 +502,10 @@ export const makeScriptInput = (
     });
   const ask = (
     input: AskInput,
+    hooks: ScriptAskHooks = {},
   ): Effect.Effect<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>, ScriptInputFailure> => {
     if (typeof input === "string")
-      return askAll({ [input]: {} }).pipe(
+      return askAll({ [input]: {} }, hooks).pipe(
         Effect.flatMap((values) => {
           const value = values[input];
           return value === undefined
@@ -465,8 +513,8 @@ export const makeScriptInput = (
             : Effect.succeed(value);
         }),
       );
-    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])));
-    return askAll(input);
+    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])), hooks);
+    return askAll(input, hooks);
   };
   return { ask };
 };

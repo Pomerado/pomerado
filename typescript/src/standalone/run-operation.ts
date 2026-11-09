@@ -23,6 +23,7 @@ import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PomeradoRequest } from "./contracts.js";
 import { makeRunSignIn } from "./session-sign-in.js";
 import { sessionCardFill } from "./card-fill.js";
+import { localHandOffAsker, visibleBrowser } from "./hand-off.js";
 import { admitArtifactCursor, sealArtifactOutput } from "./list-cursors.js";
 import type { StandaloneSession } from "./session.js";
 import { requestSite } from "./request-context.js";
@@ -144,7 +145,12 @@ export const runOperation = (
       timeoutMs: options.timeoutMs ?? 1_200_000,
       // A write's output that failed its schema was produced after the write, so it comes back.
       keepDriftedOutput: request.effect !== "read",
-      ask,
+      // A hand-off asks the person to use the local browser window, which a headless run lacks.
+      ask: localHandOffAsker(ask, {
+        visible: visibleBrowser(options.browser),
+        input: request.input ?? {},
+        inputSchema: artifact.inputSchema,
+      }),
       // Only the questions publication reviewed; an artifact saved before builds recorded them
       // asks only what its entrypoint declares as a plain literal.
       declaredQuestions:
