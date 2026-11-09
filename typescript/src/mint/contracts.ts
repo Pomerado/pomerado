@@ -328,12 +328,24 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   /** The commit marks of the recorded write path a `write_path_*` refusal names, in path order. */
   readonly writePathMarks?: readonly string[];
   /**
+   * On a `write_path_unfinished` refusal from `checkWriteSession`: the marks of `writePathMarks` no
+   * step of the session entered or streamed, which no read-back can settle. Absent when a step that
+   * lost its result may have entered every one, and from a refusal a host made itself.
+   */
+  readonly writePathUnreached?: readonly string[];
+  /**
    * Set on a `write_not_submitted` or `commit_marks_unentered` refusal when the host passed
    * `checkWriteSession` its `publishOnRefusal` and the step named for publication entered no commit
    * mark and recorded no confirmation, so the minter hears how to publish on the site's own no to
    * the example. Absent otherwise, and the minter hears what it always has.
    */
   readonly publishesOnRefusal?: true;
+  /**
+   * Set on a `write_path_unfinished` or `commit_marks_unentered` refusal when the host passed
+   * `checkWriteSession` its `publishOnReadBack`, so the minter hears how a session whose page
+   * already showed the request's end state publishes. Absent otherwise.
+   */
+  readonly publishesOnReadBack?: true;
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
   /**
@@ -510,7 +522,7 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /**
      * The session has not settled every commit mark of its recorded write path;
      * `writePathMarks` names the ones not yet settled (a step that lost its result may have
-     * entered them).
+     * entered them), and `writePathUnreached` those no step entered or streamed.
      */
     | "write_path_unfinished"
     /**
@@ -918,10 +930,11 @@ export const writePathStepLimit = 32;
 /**
  * A write build's whole path, which its first `act` step declares before anything is sent: each
  * step that saves or submits on the site, by the commit mark its helper enters, in order, and what
- * the last one leaves the caller with. Guardian reviews it against the request by the rule the
- * publication review judges the finished tool by, the host keeps the path its review allowed, and
- * the session runs until every mark on it is entered. A later `act` step may revise it, keeping
- * each mark the session already entered.
+ * the last one leaves the caller with. It names no step when the request ends before any save,
+ * which only a host that publishes on a read-back takes (`writePathRefusal`). Guardian reviews it
+ * against the request by the rule the publication review judges the finished tool by, the host
+ * keeps the path its review allowed, and the session runs until every mark on it is entered. A
+ * later `act` step may revise it, keeping each mark the session already entered.
  */
 export const WritePath = Schema.Struct({
   steps: Schema.Array(
@@ -939,7 +952,6 @@ export const WritePath = Schema.Struct({
       }),
     }),
   ).pipe(
-    Schema.minItems(1),
     Schema.maxItems(writePathStepLimit),
     Schema.filter((steps) => new Set(steps.map((step) => step.commit)).size === steps.length, {
       message: () => "name each commit mark once",
@@ -1005,7 +1017,7 @@ export const ExecutionRequest = Schema.Struct({
   writePath: Schema.optional(
     WritePath.annotations({
       description:
-        "Required on a write build's first act step, before anything is sent: the whole path its one write session and the published tool take, through to the outcome the request asks for. steps lists, in order, each step that saves or submits on the site, by the commit mark its helper enters; ends says what the last step leaves the caller with. Guardian reviews it as publication will review the tool, and the session runs until every mark on it is entered. On a later act step, only to revise the path when the page shows it must change; keep every mark already entered.",
+        "Required on a write build's first act step, before anything is sent: the whole path its one write session and the published tool take, through to the outcome the request asks for. steps lists, in order, each step that saves or submits on the site, by the commit mark its helper enters, and is empty when the request ends before any save; ends says what the last step leaves the caller with. Guardian reviews it as publication will review the tool, and the session runs until every mark on it is entered. On a later act step, only to revise the path when the page shows it must change; keep every mark already entered.",
     }),
   ),
 });

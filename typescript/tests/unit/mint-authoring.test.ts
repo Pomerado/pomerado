@@ -505,7 +505,7 @@ it("never tells the minter to run a write path's step that may have committed ag
     .find((line) => line.includes("`write_path_unfinished`"))
     ?.replace(/\s+/g, " ");
   expect(row).toContain(
-    "Read back first where a receipt says so; run only steps that never ran, or declare a revised path when the site skips one; never redo one that finished or may have.",
+    "Read back first where a receipt says so, which settles only marks a lost step entered; run only steps that never ran, or declare a revised path when the site skips a step or a step saves nothing; never redo one that finished or may have.",
   );
   expect(row).not.toMatch(/Run the steps `writePathMarks` names/);
 });
@@ -1347,10 +1347,10 @@ it("renders the pinned standalone authoring", async () => {
     ["1e8b90e0cbf09ad4808cca0d726ef2f2c2943e22ed83fbce9488e6fdbf563bb1", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["00665d244ef97dedc3c646648cc6c734d08219dd6ec2ab54db84a713eaef55dd", "forms"],
-    ["36fc2fdb44a032178aabfb5dc1b1c8cd4efb8538a63ca4a17cce08550ffbfeb3", "writes"],
+    ["9556196163ca35c2145a0c021b83aa6fb06209ab5281ba7d2d33e35cd519fee4", "writes"],
     ["1e8d18459b80eb0d3040fad7814908f7396fcc6f6cbf0ea0cf448c0ce1c99d3f", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
-    ["7416fcc1004dd8d2d7a71c995c1c63b40b3786e8b47b9343ccbf3715eb1664d5", "publication"],
+    ["581331269ba679226d4a34b9966103fe47ccf3386f77f4c6f0ee8376cbc3d2c5", "publication"],
     ["932b661b68c45dcd2c2e849ecffbb1a6b4cea85545bea3ba64f15d871a7395c5", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

@@ -143,6 +143,73 @@ it("ends a failed fill whose screen still shows as before", async () => {
   expect(events).not.toContainEqual({ stage: "retried", reason: "screen_gone" });
 });
 
+/**
+ * A login form whose submit the page takes away once a field was typed, sending nothing, as a site
+ * that turns its Continue into its single sign-on control once it knows the login does. Enter in
+ * the last field sends the form and signs the session in; `pressed` holds each step that took it.
+ */
+const submitGoneOnTyping = () => {
+  let typed = false;
+  let signedIn = false;
+  const pressed: AutofillStep[] = [];
+  const here = (): AutofillSignedInCheck =>
+    signedIn
+      ? { signedIn: true, url: `${origin}/home` }
+      : { signedIn: false, failed: "indicator_not_visible", url: login };
+  const hooks: AutofillHooks<TestFailure> = {
+    open: () => Effect.void,
+    check: () => Effect.sync(here),
+    confirm: () => Effect.sync(here),
+    inspect: (step) =>
+      Effect.sync(() =>
+        signedIn || (typed && step.submit !== undefined)
+          ? ({ outcome: "refused", reason: "not_found", target: "submit" } as const)
+          : shownAt(login, step),
+      ),
+    fill: ({ step }) =>
+      Effect.sync(() => {
+        typed = true;
+        if (step.submitKey !== undefined) {
+          pressed.push(step);
+          signedIn = true;
+        }
+        return {
+          outcome: "filled" as const,
+          fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+          submit: step.submitKey === undefined ? ("refused" as const) : ("clicked" as const),
+          url: login,
+        };
+      }),
+  };
+  return { hooks, pressed };
+};
+
+it("presses Enter once in an identifier field whose submit went once it was typed, with nothing sent", async () => {
+  const { hooks, pressed } = submitGoneOnTyping();
+  const { outcome, events } = await replay(
+    {
+      version: 2,
+      steps: [
+        { page: login, fields: [{ selector: "#email", accepts: ["username"] }], submit: "#continue" },
+      ],
+      signedIn: { selector: "#identity" },
+    },
+    hooks,
+  );
+  expect(outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(pressed).toHaveLength(1);
+  expect(pressed[0]).toMatchObject({ fields: [{ selector: "#email" }], submitKey: "Enter" });
+  expect(pressed[0]).not.toHaveProperty("submit");
+  expect(events).toContainEqual({ stage: "retried", reason: "submit_gone_after_typing" });
+});
+
+it("never presses Enter in a password field whose submit went once it was typed", async () => {
+  const { hooks, pressed } = submitGoneOnTyping();
+  const { outcome } = await replay(recipe, hooks);
+  expect(outcome).toMatchObject({ outcome: "unsent", reason: "not_found" });
+  expect(pressed).toEqual([]);
+});
+
 it("signs in on an account picker that can't tell in place of a code screen, once the code screen's wait ran out", async () => {
   let page: "login" | "picker" = "login";
   const confirmed: unknown[] = [];
