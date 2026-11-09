@@ -1075,9 +1075,9 @@ export interface LiveTestHost {
   readonly caseTimeoutMs?: number;
   /**
    * The longest a batch may ask each of its cases to run (`LiveTestsRequest.caseSeconds`), in
-   * milliseconds. The harness passes a longer request as the batch's `caseTimeoutMs`, cut to this
-   * and to the time left before the batch's deadline; a request no longer than `caseTimeoutMs`
-   * passes none. Absent, every batch runs at `caseTimeoutMs`, whatever it asks for.
+   * milliseconds. The harness passes a longer request as the batch's `caseTimeoutMs`, cut to this;
+   * it passes none for a request no longer than `caseTimeoutMs`, or when less than that limit is
+   * left before the batch's deadline. Absent, every batch runs at `caseTimeoutMs`, whatever it asks for.
    */
   readonly maxCaseTimeoutMs?: number;
   /**
@@ -1118,8 +1118,8 @@ export interface LiveTestBatch {
   readonly deadlineAt: number;
   /**
    * How long each case of this batch may run, in milliseconds, when the minter asked for longer
-   * than the host's `caseTimeoutMs`: at most its `maxCaseTimeoutMs`, and no later than
-   * `deadlineAt`. Absent, the host's own `caseTimeoutMs`. A host still runs no case past its own
+   * than the host's `caseTimeoutMs`: at most its `maxCaseTimeoutMs`, and only while that much is
+   * left before `deadlineAt`. Absent, the host's own `caseTimeoutMs`. A host still runs no case past its own
    * maximum, whatever this says.
    */
   readonly caseTimeoutMs?: number;

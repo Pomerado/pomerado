@@ -1397,7 +1397,11 @@ it("refuses a batch as no_time when less than the host's case limit is left, and
 // A slow site's case can need longer than the host's own limit, so a batch may ask for more, up to
 // the host's maximum; the minter reads the limit each case ran with.
 it("runs a batch's cases at the longer limit it asks for, cut to the host's maximum", async () => {
-  const attempt = async (caseSeconds: number | null, maxCaseTimeoutMs?: number) => {
+  const attempt = async (
+    caseSeconds: number | null,
+    maxCaseTimeoutMs?: number,
+    batchMs = 28 * 60_000,
+  ) => {
     const { host, batches } = liveTestHost({});
     const f = await fixture(
       (_request, index) =>
@@ -1412,7 +1416,8 @@ it("runs a batch's cases at the longer limit it asks for, cut to the host's maxi
           caseTimeoutMs: 120_000,
           ...(maxCaseTimeoutMs === undefined ? {} : { maxCaseTimeoutMs }),
         },
-        deadline: Deadline.after(30 * 60_000),
+        // The attempt keeps two minutes after the batch; `batchMs` is what the batch may use.
+        deadline: Deadline.after(2 * 60_000 + batchMs),
         reviewAndExecute: completedExample,
         publish: publications().publish,
       },
@@ -1432,6 +1437,8 @@ it("runs a batch's cases at the longer limit it asks for, cut to the host's maxi
   expect(await attempt(90, 180_000)).toEqual({ batchMs: undefined, reported: 120 });
   expect(await attempt(160)).toEqual({ batchMs: undefined, reported: 120 });
   expect(await attempt(null, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  // Too little left for the longer limit: the host's own, so its shorter cases still run.
+  expect(await attempt(160, 180_000, 150_000)).toEqual({ batchMs: undefined, reported: 120 });
 });
 
 it("says time ran out only when the attempt's end, not the batch's own cap, stopped a case", async () => {

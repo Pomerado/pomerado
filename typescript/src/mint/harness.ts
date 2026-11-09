@@ -4950,16 +4950,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /**
        * How long each case of a batch ending at `deadlineAt` may run on `host` when the request
        * asks for `caseSeconds` (`LiveTestHost.maxCaseTimeoutMs`): the request cut to the host's
-       * maximum and to the time left, in whole seconds; undefined when that is no longer than the
-       * host's own limit, or the host takes no longer one.
+       * maximum, in whole seconds; undefined when that is no longer than the host's own limit, the
+       * host takes no longer one, or less than that is left before the deadline, since a host
+       * starts no case that cannot end in time and its own limit still lets the shorter cases run.
        */
       const batchCaseMs = (host: LiveTestHost, deadlineAt: number, caseSeconds?: number) =>
         Effect.map(Clock.currentTimeMillis, (now) => {
           const most = host.maxCaseTimeoutMs;
           if (caseSeconds === undefined || most === undefined) return undefined;
-          const ms =
-            Math.floor(Math.min(caseSeconds * 1_000, most, deadlineAt - now) / 1_000) * 1_000;
-          return ms > ownCaseMs(host) ? ms : undefined;
+          const ms = Math.floor(Math.min(caseSeconds * 1_000, most) / 1_000) * 1_000;
+          return ms > ownCaseMs(host) && ms <= deadlineAt - now ? ms : undefined;
         });
       /**
        * The cases a batch on the host's reserve may run once no batch fits
