@@ -34,6 +34,7 @@ export { ChallengeFailure } from "../runtime/challenge.js";
 export { ScriptInput, ScriptInputFailure, makeScriptInput } from "../runtime/script-input.js";
 export type {
   HandoffDone,
+  ScriptAskHooks,
   ScriptAnswer,
   ScriptOption,
   ScriptQuestionDeclaration,

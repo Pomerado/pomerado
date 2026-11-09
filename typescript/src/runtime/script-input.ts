@@ -182,10 +182,22 @@ export class ScriptInputFailure extends Data.TaggedError("ScriptInputFailure")<{
   readonly message?: string;
 }> {}
 
-/** The runner's way to the host: the request out, the caller's raw answers back. */
+/**
+ * The runner's way to the host: the request out, the caller's raw answers back. The handler calls
+ * `opened` once the host shows the request to its caller, before the caller can act on it: a
+ * browser hand-off marks a write's commit steps sent then, since the person may submit. A host
+ * that refuses the request before showing it never calls it. Calling it again does nothing.
+ */
 export type ScriptQuestionHandler = (
   request: InputRequest,
+  opened: () => void,
 ) => Effect.Effect<InputAnswers, ScriptInputFailure>;
+
+/** What a caller of `ask` learns while its request waits. */
+export interface ScriptAskHooks {
+  /** Told once the host shows the request to its caller (`ScriptQuestionHandler`). */
+  readonly opened?: () => void;
+}
 
 /** The sandbox's own side of one asked question: the option value behind each host id. */
 interface Asked {
@@ -438,7 +450,7 @@ export const makeScriptInput = (
   handle: ScriptQuestionHandler | undefined,
   deadline?: Deadline,
 ) => {
-  const askAll = (asked: Readonly<Record<string, GivenSpec>>) =>
+  const askAll = (asked: Readonly<Record<string, GivenSpec>>, hooks: ScriptAskHooks = {}) =>
     Effect.gen(function* () {
       const questions: Asked[] = [];
       for (const [id, spec] of Object.entries(asked)) {
@@ -455,7 +467,14 @@ export const makeScriptInput = (
       if (handle === undefined) return yield* new ScriptInputFailure({ code: "Unavailable" });
       const answers = yield* Effect.acquireUseRelease(
         Effect.sync(() => deadline?.suspend()),
-        () => handle(request),
+        () => {
+          let told = false;
+          return handle(request, () => {
+            if (told) return;
+            told = true;
+            hooks.opened?.();
+          });
+        },
         (resume) => Effect.sync(() => resume?.()),
       );
       // A card answer reaches the script as the run's handle, never the card, so only the host
@@ -483,9 +502,10 @@ export const makeScriptInput = (
     });
   const ask = (
     input: AskInput,
+    hooks: ScriptAskHooks = {},
   ): Effect.Effect<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>, ScriptInputFailure> => {
     if (typeof input === "string")
-      return askAll({ [input]: {} }).pipe(
+      return askAll({ [input]: {} }, hooks).pipe(
         Effect.flatMap((values) => {
           const value = values[input];
           return value === undefined
@@ -493,8 +513,8 @@ export const makeScriptInput = (
             : Effect.succeed(value);
         }),
       );
-    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])));
-    return askAll(input);
+    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])), hooks);
+    return askAll(input, hooks);
   };
   return { ask };
 };

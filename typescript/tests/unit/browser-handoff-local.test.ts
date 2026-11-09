@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import { Effect, Either } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeTerminalAsker } from "../../src/inputs/terminal.js";
 import type { InputAsker, InputRequest } from "../../src/runtime/input-request.js";
 import { localHandOffAsker, visibleBrowser } from "../../src/standalone/hand-off.js";
@@ -73,6 +74,63 @@ describe("the local host's browser hand-off", () => {
     expect(shown).not.toContain("upload-1");
     expect(shown).not.toContain("Example Person");
     expect(shown).not.toContain("missing");
+  });
+
+  it("follows local references, and hides write-only and password values", async () => {
+    const asked: InputRequest[] = [];
+    const referenced: InputRequest = {
+      ...handOff,
+      questions: [
+        {
+          id: "review_claim",
+          type: "browser_handoff",
+          prompt: "Check the claim form, then mark this step done.",
+          show_inputs: ["policy_number", "amount", "attachment", "pin", "member"],
+        },
+      ],
+    };
+    await Effect.runPromise(
+      localHandOffAsker(keeping(asked), {
+        visible: true,
+        input: { ...input, pin: "4321", member: "M-7" },
+        inputSchema: {
+          type: "object",
+          $defs: {
+            Upload: { type: "string", format: "file" },
+            Member: { type: "string" },
+          },
+          properties: {
+            policy_number: { type: "string" },
+            amount: { type: "number" },
+            attachment: { anyOf: [{ $ref: "#/$defs/Upload" }, { type: "null" }] },
+            pin: { type: "string", writeOnly: true },
+            member: { $ref: "#/$defs/Member" },
+          },
+        },
+      })(referenced),
+    );
+    expect(asked[0]?.notice).toBe(
+      "This run's inputs:\npolicy_number: P-100\namount: 120.5\nmember: M-7",
+    );
+  });
+
+  it("tells the asker the hand-off opened, with its 30-minute bound", async () => {
+    const opened: string[] = [];
+    const started = Date.now();
+    await Effect.runPromise(
+      makeInputAsker(() =>
+        Effect.succeed({ review_claim: { done: true } }),
+      )(handOff, {
+        opened: ({ expiresAt }) =>
+          Effect.sync(() => {
+            opened.push(expiresAt);
+          }),
+      }),
+    );
+    expect(opened).toHaveLength(1);
+    const waits = Date.parse(opened[0] ?? "") - started;
+    expect(waits).toBeGreaterThan(29 * 60_000);
+    expect(waits).toBeLessThanOrEqual(30 * 60_000 + 2_000);
   });
 
   it("refuses a hand-off as Unavailable when the browser has no window, asking nobody", async () => {

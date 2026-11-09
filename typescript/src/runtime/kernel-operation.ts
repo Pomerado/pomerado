@@ -173,9 +173,10 @@ export interface KernelOperationContext<
    * `Unavailable`. The person may change anything on the page, so read it again before acting:
    * the same step still waiting, a result such as the site's confirmation, or neither, which is
    * `errors.HandoffStateChanged`. In a write, every declared commit step not yet confirmed reads
-   * sent from just before the hand-off opens, since the person may submit it: read the
-   * confirmation and call `verified()`, or, when the same form still waits unsubmitted, call
-   * `notCommitted(name)` for each step the person did not send, then enter it as usual.
+   * sent once the host opens the hand-off, since the person may submit it; a hand-off the host
+   * refused before showing it marks nothing. Afterwards read the confirmation and call
+   * `verified()`, or, when the same form still waits unsubmitted, call `notCommitted(name)` for
+   * each step the person did not send, then enter it as usual.
    */
   readonly handOff: ScriptHandOff<Questions>;
   /**
@@ -323,10 +324,11 @@ const handOffAsked = (
 };
 
 /**
- * Before a write hands its browser to a person, who may submit it: every declared commit step
+ * Once a write's browser is handed to a person, who may submit it: every declared commit step
  * still unsent reads sent, entered from unsent, so the script may put back with `notCommitted`
  * one the person left unsubmitted. A confirmed step stays confirmed, and a step maintenance
- * settled stays as it is. A write that declares no steps marks a possible dispatch.
+ * settled stays as it is. A write that declares no steps marks a possible dispatch, unless it
+ * already recorded its confirmation, which then stands as a confirmed step does.
  */
 const markHandOff = (journal: EffectJournal | undefined, write: WriteDeclaration | undefined) => {
   if (journal === undefined || write === undefined) return;
@@ -335,7 +337,8 @@ const markHandOff = (journal: EffectJournal | undefined, write: WriteDeclaration
     ? declared.filter((name): name is string => typeof name === "string")
     : [];
   if (names.length === 0) {
-    Effect.runSync(journal.enteringDispatch);
+    if (Effect.runSync(journal.confirmation) === undefined)
+      Effect.runSync(journal.enteringDispatch);
     return;
   }
   const marks = Effect.runSync(journal.commits);
@@ -345,9 +348,18 @@ const markHandOff = (journal: EffectJournal | undefined, write: WriteDeclaration
 };
 
 /**
+ * Failures after which a hand-off may have been shown to the person: it went unanswered, or the
+ * caller's access ended while it waited. Any other failure means the host could not show it, or
+ * says so by calling `opened` first.
+ */
+const shownBefore: ReadonlySet<string> = new Set(["NoResponse", "Unauthorized"]);
+
+/**
  * The context's `ask` over the runner's script input. The runtime checks every id and option
  * against the contract's declarations; the declared types only guide the script's author. A
- * browser hand-off marks a write's commit steps sent just before it is asked (`markHandOff`).
+ * browser hand-off marks a write's commit steps sent (`markHandOff`) once the host opens it, and,
+ * for a host that never says so, once the person answers or the request ends unanswered. A
+ * hand-off the host refused before showing it marks nothing.
  */
 const scriptAsk = (
   scriptInput: Context.Tag.Service<ScriptInput> | undefined,
@@ -369,9 +381,24 @@ const scriptAsk = (
   ): Promise<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>> {
     if (scriptInput === undefined)
       return settle(Effect.fail(new ScriptInputFailure({ code: "Unavailable" })));
-    if (handOffAsked(handingOff.questions, input) !== undefined)
+    if (handOffAsked(handingOff.questions, input) === undefined)
+      return settle(scriptInput.ask(input));
+    let marked = false;
+    const mark = () => {
+      if (marked) return;
+      marked = true;
       markHandOff(handingOff.journal, handingOff.write);
-    return settle(scriptInput.ask(input));
+    };
+    return settle(scriptInput.ask(input, { opened: mark })).then(
+      (answer) => {
+        mark();
+        return answer;
+      },
+      (error: unknown) => {
+        if (error instanceof ScriptInputFailure && shownBefore.has(error.code)) mark();
+        throw error;
+      },
+    );
   }
   return ask;
 };

@@ -286,12 +286,14 @@ the step themselves, submitting included.
   person marks the step done, and asks nothing else in the same request. The deadline pauses
   meanwhile, up to 30 minutes.
 - In a write, the person may submit, so every declared commit step not yet confirmed reads
-  sent from just before the hand-off. After it, read the page again and handle both outcomes:
+  sent once the hand-off opens. After it, read the page again and handle both outcomes:
   - The person submitted: read the site's confirmation, call `verified()` and return the
     result.
   - The form still waits: check it is the same form, such as by its id, with no confirmation.
     Call `notCommitted(name)` for the step, then enter it with `enteringCommit` and submit, as
-    usual. The form keeps the person's corrections.
+    usual. The form keeps the person's corrections. `notCommitted` works once per step in a
+    run, so a step you already put back before the hand-off can't go back again: a second call
+    throws `CommitAlreadySent`. Hand off before the step's first click.
   - Anything else, neither the same form nor a result you can read: throw
     `new errors.HandoffStateChanged()`. The run stops without acting further and reports
     `handoff_state_changed`, with a possible change to the site for a write.

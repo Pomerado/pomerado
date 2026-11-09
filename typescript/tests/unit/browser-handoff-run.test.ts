@@ -8,6 +8,7 @@ import {
   type InputRequest,
 } from "../../src/runtime/input-request.js";
 import type { ScriptQuestionDeclarations } from "../../src/runtime/script-input.js";
+import { localHandOffAsker } from "../../src/standalone/hand-off.js";
 import {
   returnedRun,
   runOutcomeFailure,
@@ -177,6 +178,61 @@ describe("a run that hands its browser to a person", { timeout: 30_000 }, () => 
       possibleCommit: false,
       writeStatus: null,
     });
+  });
+
+  it("reports a write whose hand-off the host refused before showing the browser as not applied", async () => {
+    const failure = failureOf(
+      await run({
+        effect: "write",
+        page: { state: "waiting" },
+        // The local host refuses a hand-off when its browser has no window, asking nobody.
+        ask: localHandOffAsker(personMarksDone([]), { visible: false }),
+      }),
+    );
+    expect(failure.outcome).toMatchObject({ writeStatus: "not_applied", possibleCommit: false });
+    expect(failure.journal?.commits).toEqual([{ name: "submit-claim", state: "not_sent" }]);
+  });
+
+  it("reports a hand-off that opened and then went unanswered as possibly committed", async () => {
+    const failure = failureOf(
+      await run({
+        effect: "write",
+        page: { state: "waiting" },
+        ask: (request, bounds) =>
+          (bounds?.opened?.({
+            requestId: request.id,
+            expiresAt: new Date(Date.now() + 1_000).toISOString(),
+            rejoined: false,
+          }) ?? Effect.void).pipe(
+            Effect.zipRight(Effect.fail(new InputRequestFailure({ code: "NoResponse" }))),
+          ),
+      }),
+    );
+    expect(failure.outcome).toMatchObject({
+      code: "no_response",
+      writeStatus: "may_have_applied",
+      possibleCommit: true,
+    });
+    expect(failure.journal?.commits).toEqual([{ name: "submit-claim", state: "sent" }]);
+  });
+
+  it("reports a hand-off the host opened and then could not read as possibly committed", async () => {
+    const failure = failureOf(
+      await run({
+        effect: "write",
+        page: { state: "waiting" },
+        ask: (request, bounds) =>
+          (bounds?.opened?.({
+            requestId: request.id,
+            expiresAt: new Date(Date.now() + 1_000).toISOString(),
+            rejoined: false,
+          }) ?? Effect.void).pipe(
+            Effect.zipRight(Effect.fail(new InputRequestFailure({ code: "Unavailable" }))),
+          ),
+      }),
+    );
+    expect(failure.outcome).toMatchObject({ writeStatus: "may_have_applied", possibleCommit: true });
+    expect(failure.journal?.commits).toEqual([{ name: "submit-claim", state: "sent" }]);
   });
 
   it("fails as no_response when the person never marks the step done", async () => {

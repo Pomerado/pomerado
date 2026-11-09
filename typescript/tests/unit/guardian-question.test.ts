@@ -1060,3 +1060,19 @@ it("reviews a browser hand-off's screened prompt with its shown inputs, and neve
     ),
   ).toEqual([]);
 });
+
+// A script's hand-off gives the user the run's live browser, so the question review holds its
+// prompt to a step someone asked a person to do, and never to a CAPTCHA, a bot check or a sign-in.
+it("tells the question review when a browser hand-off is allowed", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "\n- a browser_handoff question, which a script asks to hand the run's live browser to the user, who does the step its prompt describes and marks it done: allow it when trusted intent or an answer asks for a person to review or do that step and the prompt describes that step; reword one whose step nobody asked a person to do, one that asks the user to solve a CAPTCHA or bot check, and one that asks the user to sign in when nobody asked for a person to sign in.\nReturn reword when the question:",
+  );
+});

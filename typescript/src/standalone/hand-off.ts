@@ -13,16 +13,49 @@ const shownValueLength = 200;
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Whether the input schema's top-level property `name` holds a file anywhere in its schema. */
-const holdsFile = (inputSchema: unknown, name: string) => {
-  const properties = isRecord(inputSchema) ? inputSchema["properties"] : undefined;
-  const property = isRecord(properties) ? properties[name] : undefined;
-  return JSON.stringify(property ?? {}).includes(`"format":${JSON.stringify(fileFormat)}`);
+/** The schema a local `$ref`, such as `#/$defs/Policy`, names in `root`; else undefined. */
+const resolved = (root: unknown, reference: string): unknown => {
+  if (!reference.startsWith("#/")) return undefined;
+  let node: unknown = root;
+  for (const part of reference.slice(2).split("/")) {
+    const key = decodeURIComponent(part).replaceAll("~1", "/").replaceAll("~0", "~");
+    node = isRecord(node) && Object.hasOwn(node, key) ? node[key] : undefined;
+  }
+  return node;
+};
+
+/**
+ * Whether the input schema's top-level property `name` may hold a value the host never shows: a
+ * file, a password-format or write-only value, anywhere in its schema with local references
+ * followed, or a property the schema does not describe as a plain one.
+ */
+const hiddenInput = (inputSchema: unknown, name: string) => {
+  const root = isRecord(inputSchema) ? inputSchema : {};
+  const properties = isRecord(root["properties"]) ? root["properties"] : undefined;
+  const property =
+    properties !== undefined && Object.hasOwn(properties, name) ? properties[name] : undefined;
+  if (property === undefined) return true;
+  const seen = new Set<unknown>();
+  const hides = (node: unknown): boolean => {
+    if (Array.isArray(node)) return node.some(hides);
+    if (!isRecord(node) || seen.has(node)) return false;
+    seen.add(node);
+    const reference = node["$ref"];
+    if (typeof reference === "string") {
+      const target = resolved(root, reference);
+      // A reference the host can't follow may hide anything.
+      if (target === undefined || hides(target)) return true;
+    }
+    if (node["format"] === fileFormat || node["format"] === "password") return true;
+    if (node["writeOnly"] === true) return true;
+    return Object.values(node).some(hides);
+  };
+  return hides(property);
 };
 
 /**
  * The inputs a hand-off names, as the local host shows them: each plain text, number or yes/no
- * value the run's input holds, never a file and never a list or an object.
+ * value the run's input holds, never a file, a password or write-only value, a list or an object.
  */
 const shownLines = (
   names: readonly string[],
@@ -31,7 +64,7 @@ const shownLines = (
 ): readonly string[] =>
   names.flatMap((name) => {
     const value = isRecord(input) && Object.hasOwn(input, name) ? input[name] : undefined;
-    if (inputSchema === undefined || holdsFile(inputSchema, name)) return [];
+    if (inputSchema === undefined || hiddenInput(inputSchema, name)) return [];
     if (typeof value === "boolean") return [`${name}: ${value ? "yes" : "no"}`];
     if (typeof value !== "string" && (typeof value !== "number" || !Number.isFinite(value)))
       return [];

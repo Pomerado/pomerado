@@ -12,7 +12,11 @@ import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js"
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { commitReportOf } from "../../src/runtime/run-outcome.js";
 import { defineOperation } from "../../src/runtime/operation.js";
-import { makeScriptInput, ScriptInput } from "../../src/runtime/script-input.js";
+import {
+  makeScriptInput,
+  ScriptInput,
+  ScriptInputFailure,
+} from "../../src/runtime/script-input.js";
 import { offlineKernel } from "../support/offline-kernel.js";
 
 /** A browser that answers every call with success, without provider HTTP. */
@@ -343,6 +347,83 @@ describe("a script's browser hand-off", () => {
       { name: "save-address", state: "confirmed" },
       { name: "place-order", state: "sent" },
     ]);
+  });
+
+  it("marks the steps once the host opens the hand-off, before the person answers", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const atOpen: unknown[] = [];
+    const scriptInput = makeScriptInput(review, (_request, opened) =>
+      Effect.gen(function* () {
+        atOpen.push(yield* journal.commits);
+        opened();
+        atOpen.push(yield* journal.commits);
+        return { review: { done: true } };
+      }),
+    );
+    await run(
+      executeKernelOperation(write("review"), {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(atOpen).toEqual([
+      [
+        { name: "save-address", state: "confirmed" },
+        { name: "place-order", state: "not_sent" },
+      ],
+      [
+        { name: "save-address", state: "confirmed" },
+        { name: "place-order", state: "sent" },
+      ],
+    ]);
+  });
+
+  it("marks nothing when the host refuses the hand-off before it opens", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const scriptInput = makeScriptInput(review, () =>
+      Effect.fail(new ScriptInputFailure({ code: "Unavailable" })),
+    );
+    const refused = await run(
+      executeKernelOperation(write("review"), {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(failureOf(refused.exit)).toEqual(
+      Option.some(expect.objectContaining({ _tag: "ScriptInputFailure", code: "Unavailable" })),
+    );
+    expect(await Effect.runPromise(journal.commits)).toContainEqual({
+      name: "place-order",
+      state: "not_sent",
+    });
+  });
+
+  it("keeps a write with no declared steps confirmed when it hands off after confirming", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const operation = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions: review,
+        write: { confirmation: "readback" },
+      },
+      async ({ handOff, verified }) => {
+        verified();
+        await handOff("review");
+        return "done";
+      },
+    );
+    const handed = await run(
+      executeKernelOperation(operation, {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(
+          ScriptInput,
+          makeScriptInput(review, () => Effect.succeed({ review: { done: true } })),
+        ),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(handed.websiteEffect).toBe("verified");
+    expect(await Effect.runPromise(journal.confirmation)).toBe("readback");
   });
 
   it("leaves a step maintenance settled as it is", async () => {

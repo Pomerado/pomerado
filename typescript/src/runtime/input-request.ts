@@ -589,7 +589,12 @@ export const isProtectedQuestion = (question: Question) =>
  */
 export const maximumInputWaitMs = 10 * 60_000;
 
-/** The longest a browser hand-off waits for the person to finish the step. */
+/**
+ * The longest a browser hand-off waits for the person to finish the step. It may outlast the
+ * provider's ten-minute wait for one step's input because the host, not the provider, holds the
+ * browser while the person works: a host keeps the browser session alive for the whole wait, with
+ * any idle timeout longer than this bound.
+ */
 export const browserHandoffWaitMs = 30 * 60_000;
 
 /** Whether a request hands the browser to a person. */
