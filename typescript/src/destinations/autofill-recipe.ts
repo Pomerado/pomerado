@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect";
 import {
   AutofillApproval,
+  AutofillApprovalDelivery,
   AutofillPopup,
   DateControl,
   DateOfBirthFormat,
@@ -136,15 +137,18 @@ export const LegacyAutofillRecipe = Schema.Struct({
 /**
  * A version 2 step may also name `matchSelector` on a device approval: the element its screen shows
  * a number in for the owner to pick on their device, which a replay reads again and shows the owner
- * when it is 1 to 3 digits. It rides in every version from 2 without one of its own. A host that
- * predates it ignores it in a version 2 recipe and refuses a version 4 to 8 recipe that has it, as
- * a host that predates `refills` refuses one with that.
+ * when it is 1 to 3 digits. It may say `delivery: "paste"` on an email-link approval whose link
+ * signs in only the browser that opens it: a replay asks the owner to paste the link and opens it
+ * itself. Each rides in every version from 2 without one of its own. A host that predates one
+ * ignores it in a version 2 recipe, asking for the approval as before, and refuses a recipe of
+ * version 4 or later that has it, as a host that predates `refills` refuses one with that.
  */
 const PopupRecipeStep = Schema.Struct({
   ...RecipeStep.fields,
   popup: Schema.optional(AutofillPopup),
   approval: Schema.optional(AutofillApproval),
   matchSelector: Schema.optional(Selector),
+  delivery: Schema.optional(AutofillApprovalDelivery),
 });
 /** Version 2 keeps a host that does not know it from dropping popup metadata and filling the primary tab. */
 export const PopupAutofillRecipe = Schema.Struct({
@@ -811,6 +815,8 @@ interface RecordedRecipeStep {
   readonly approval?: AutofillRecipeStep["approval"] | undefined;
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string | undefined;
+  /** `paste` for an email-link approval whose link the owner pastes for the host to open. */
+  readonly delivery?: AutofillRecipeStep["delivery"] | undefined;
   readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"] | undefined;
   /** With each identifier field's accepted kinds, never a value. */
   readonly fields: readonly AutofillField[];
@@ -850,6 +856,7 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
   ...((step.anySegments ?? []).length === 0 ? {} : { anySegments: step.anySegments }),
   ...(step.approval === undefined ? {} : { approval: step.approval }),
   ...(step.matchSelector === undefined ? {} : { matchSelector: step.matchSelector }),
+  ...(step.delivery === undefined ? {} : { delivery: step.delivery }),
   ...(step.popup === undefined ? {} : { popup: step.popup }),
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
   fields: step.fields.map((field) =>

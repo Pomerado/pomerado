@@ -1,7 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { MintRecoveryFactory } from "./recovery-contracts.js";
 import { failureDetail, failureRootCause } from "../runtime/failure-detail.js";
-import { modelCauseMetadata, modelFailureMetadata } from "../models/model-failure.js";
+import {
+  modelCauseMetadata,
+  modelFailureMetadata,
+  overContextWindow,
+} from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
 import {
   effectiveReasoningContext,
@@ -22,6 +26,7 @@ import {
   mintCompactionLimitTokens,
   mintIdleCompactionTokens,
 } from "./idle-compaction.js";
+import { makeToolResultBounds, overflowToolResultMaxChars } from "./request-bounds.js";
 import { solModel } from "../models/models.js";
 import { providerQuotaExhausted } from "../models/provider-quota.js";
 import { transientTransportFailure } from "../models/transport-failure.js";
@@ -1189,7 +1194,7 @@ const openAIMinter = (
             const liveTests = tool({
                     ...hostTool(
                       "live_tests",
-                      `A read's live tests (read the testing skill); a write runs none. You design your cases in ${"test/cases.json"} from what you saw on the site, each with its purpose. A read signed out runs a wide, varied first batch of about 10 to 20: one case that sets together every input the example left unset, each to a value the site shows that at least one example row fails while some rows pass, so its rows show each was applied, the example's input once more, no results, the next page, then each kind of query the tool names, a single result, a closed or sold-out record when the site readily offers one, boundary values, a second store or region, other layouts and records of other kinds, and a case for each branch of your own code no other case runs. A signed-in read runs at most four distinct inputs, on its own signed-in browser; running one again is free. Start as soon as you know the page and the inputs, and refine them once the example passes. Action plan returns your cases and each case's latest status, result and failure with its source line; name cases to see their full outputs. Action run runs the named cases, or all when cases is null, as one batch after one Guardian review: each case starts on a fresh page like the example, keeping its browser's site data, on separate browsers at once where the host has them, and you get every result, each marked warm or cold: cold ran first on a new browser with an empty profile. entrypoint is src/tool.mjs or src/tool-http.mjs: run the same cases on both versions, each as its own batch, and each version keeps its own results, so one never replaces or stales the other's. Results count only for the version, the source and the case as they ran; publication review reads the host's record of them and judges it against what the tool claims. intent states what these cases should establish.`,
+                      `A read's live tests (read the testing skill); a write runs none. You design your cases in ${"test/cases.json"} from what you saw on the site, each with its purpose. A read signed out runs a wide, varied first batch of about 10 to 20: one case that sets together every input the example left unset, each to a value the site shows that at least one example row fails while some rows pass, so its rows show each was applied, the example's input once more, no results, the next page, then each kind of query the tool names, a single result, a closed or sold-out record when the site readily offers one, boundary values, a second store or region, other layouts and records of other kinds, and a case for each branch of your own code no other case runs. A signed-in read runs at most four distinct inputs, on its own signed-in browser; running one again is free. Start as soon as you know the page and the inputs, and refine them once the example passes. Action plan returns your cases and each case's latest status, result and failure with its source line; name cases to see their outputs, a large one as a digest naming the file that holds it. Action run runs the named cases, or all when cases is null, as one batch after one Guardian review: each case starts on a fresh page like the example, keeping its browser's site data, on separate browsers at once where the host has them, and you get every result, each marked warm or cold: cold ran first on a new browser with an empty profile. entrypoint is src/tool.mjs or src/tool-http.mjs: run the same cases on both versions, each as its own batch, and each version keeps its own results, so one never replaces or stales the other's. Results count only for the version, the source and the case as they ran; publication review reads the host's record of them and judges it against what the tool claims. intent states what these cases should establish.`,
                       "The live tests did not run. Inspect the finite failure; fix the cases file or the source, then plan or run again.",
                       (request) => runLiveTests?.(request) ?? notOfferedAction(),
                     ),
@@ -1413,6 +1418,23 @@ const openAIMinter = (
             };
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
+            /**
+             * The tool results requests carry: one too long goes out as its first part and the
+             * workspace file the host saved it whole in, through `MintTurn.saveResult`.
+             */
+            const saveResult = turn.saveResult;
+            const resultBounds = makeToolResultBounds(
+              saveResult === undefined
+                ? undefined
+                : (path, text) =>
+                    // A host whose save throws, as well as one whose save fails, saved nothing.
+                    Promise.resolve()
+                      .then(() => turn.runTool(saveResult(path, text)))
+                      .then(
+                        () => true,
+                        () => false,
+                      ),
+            );
             const sdkProvider = cacheFallback(runner.config.modelProvider);
             const cacheLayout: ModelProvider = {
               getModel: async (name) => {
@@ -1429,7 +1451,14 @@ const openAIMinter = (
                 const model = await provider.getModel(name);
                 return {
                   ...model,
-                  getResponse: async (request) => {
+                  getResponse: async (sdkRequest) => {
+                    // No tool result goes out longer than the model can read, whatever produced
+                    // it, nor longer than the limit a refused request set for it.
+                    const bounded = async () => {
+                      const input = await resultBounds.apply(sdkRequest.input);
+                      return input === sdkRequest.input ? sdkRequest : { ...sdkRequest, input };
+                    };
+                    let request = await bounded();
                     // The SDK model opens its span in the runner's AsyncLocalStorage trace
                     // context and throws without one. An Effect fiber resumes in the async
                     // context of whatever woke it (a recovery save completed by another fiber),
@@ -1439,12 +1468,43 @@ const openAIMinter = (
                     await idle?.beforeSend(request.input, signal);
                     // A compaction that ran while the tools ran replaces the prefix it covers, and
                     // its window holds its own note. Otherwise a provider compaction gets one.
-                    const viewed = idle?.view(request.input) ?? request.input;
-                    const input =
-                      viewed === request.input ? afterProviderCompaction(request.input) : viewed;
-                    const sent = input === request.input ? request : { ...request, input };
+                    const viewOf = (current: ModelRequest) => {
+                      const viewed = idle?.view(current.input) ?? current.input;
+                      const input =
+                        viewed === current.input ? afterProviderCompaction(current.input) : viewed;
+                      return {
+                        windowed: viewed !== current.input,
+                        sent: input === current.input ? current : { ...current, input },
+                      };
+                    };
+                    let { windowed, sent } = viewOf(request);
                     // The SDK's client has already retried; an outage it could not get past is
                     // retried here with the same request, within the attempt's deadline.
+                    /** Whether recovery from a refusal as over the context compacted already. */
+                    let overflowCompacted = false;
+                    /**
+                     * The next step that may bring a request the provider refused as over the
+                     * model's context within it: a compaction first, then each tool result over
+                     * 64 KiB, then over 16 KiB, sent as its first part and the file holding it
+                     * whole. None when every step was taken.
+                     */
+                    const overflowStep = async (refused: ModelRequest) => {
+                      if (!overflowCompacted && idle !== undefined) {
+                        overflowCompacted = true;
+                        if (await idle.compactNow(signal))
+                          return { reason: "context_compacted" } as const;
+                      }
+                      for (const limit of overflowToolResultMaxChars) {
+                        const lowered = resultBounds.lower(refused.input, limit);
+                        if (lowered > 0)
+                          return {
+                            reason: "tool_results_cut",
+                            cutResults: lowered,
+                            limitChars: limit,
+                          } as const;
+                      }
+                      return undefined;
+                    };
                     const respond = Effect.gen(function* () {
                       const call = modelCalls;
                       let firstFailureAt: number | undefined;
@@ -1457,7 +1517,7 @@ const openAIMinter = (
                         );
                         if (Either.isRight(outcome)) {
                           const response = outcome.right;
-                          yield* reportUsage(response, call, "turn", viewed !== request.input);
+                          yield* reportUsage(response, call, "turn", windowed);
                           if (response.responseId !== undefined) lastResponseId = response.responseId;
                           // The provider compacted this request: its note names the skills read
                           // before it, not those this response's calls read next.
@@ -1478,6 +1538,25 @@ const openAIMinter = (
                           return { ...response, usage: flatUsage(response.usage) };
                         }
                         const error = outcome.left;
+                        // Refused as over the model's context: the run recovers while a step
+                        // remains (`overflowStep`) and the request goes again at once. Only once
+                        // every step was taken does it fail as before.
+                        const step =
+                          overContextWindow(failureMetadata(error)) && !signal.aborted
+                            ? yield* Effect.promise(() => overflowStep(sent))
+                            : undefined;
+                        if (step !== undefined && !signal.aborted) {
+                          yield* turn.reportTrace?.({
+                            phase: "model_retry",
+                            retry: retries + 1,
+                            waitMs: 0,
+                            ...step,
+                            failure: failureMetadata(error),
+                          }) ?? Effect.void;
+                          request = yield* Effect.promise(bounded);
+                          ({ windowed, sent } = viewOf(request));
+                          continue;
+                        }
                         const now = yield* Clock.currentTimeMillis;
                         firstFailureAt ??= now;
                         const waitMs =

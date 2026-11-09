@@ -1,6 +1,7 @@
 import { Effect, Either, Option, Schema } from "effect";
 import type {
   AutofillApproval,
+  AutofillApprovalDelivery,
   AutofillPopup,
   RejectedMarker,
   SignInChoice,
@@ -119,6 +120,8 @@ export interface RecordedSignInStep {
   readonly approval?: AutofillApproval | undefined;
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string | undefined;
+  /** `paste` for an email-link approval whose link the owner pastes for the host to open. */
+  readonly delivery?: AutofillApprovalDelivery | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   /** With each identifier field's accepted kinds, never a value. */
   readonly fields: readonly AutofillField[];
@@ -171,6 +174,7 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
   ...(step.anySegments === undefined ? {} : { anySegments: step.anySegments }),
   ...(step.approval === undefined ? {} : { approval: step.approval }),
   ...(step.matchSelector === undefined ? {} : { matchSelector: step.matchSelector }),
+  ...(step.delivery === undefined ? {} : { delivery: step.delivery }),
   ...(step.popup === undefined ? {} : { popup: step.popup }),
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
   fields: step.fields.map((field) =>

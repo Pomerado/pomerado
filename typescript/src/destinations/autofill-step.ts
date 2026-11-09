@@ -8,6 +8,8 @@ import {
   autofillSignedInCode,
   autofillStepCode,
   type ControlIdentity,
+  coveringControlNameLimit,
+  coveringControlsLimit,
   SignedInPage,
 } from "./autofill-page-code.js";
 import { openAutofillLogin } from "./autofill-page.js";
@@ -319,25 +321,51 @@ const coveringRoles = [
 /**
  * The element that sat over a submit and caught the host's click, by its tag and ARIA role, each
  * one of a fixed list: never its text, id, label or class names, which page code may write from
- * what the host typed.
+ * what the host typed. `controls`, when it has any, are its own buttons and links a person sees, in
+ * page order, each by role and accessible name as the page has it (`accessibleNames`, which keeps
+ * typed values out as far as page code can tell), so the minter can name a notice's own control as
+ * `dismiss`. A name is page text: the host screens it for typed values, as it screens every step
+ * result, before the minter reads it. A host on an older core reports none.
  */
 export const CoveringElement = Schema.Struct({
   tag: Schema.Literal(...coveringTags, "other"),
   role: Schema.NullOr(Schema.Literal(...coveringRoles)),
+  controls: Schema.optional(
+    Schema.Array(Schema.Struct({ role: Schema.Literal("button", "link"), name: Schema.String })),
+  ),
 });
-/** What page code read of a covering element: its tag and role attribute, as the page has them. */
-export const ReadCoveringElement = Schema.Struct({ tag: Schema.String, role: Text });
+/**
+ * What page code read of a covering element: its tag and role attribute, and its own controls'
+ * roles and names, as the page has them.
+ */
+export const ReadCoveringElement = Schema.Struct({
+  tag: Schema.String,
+  role: Text,
+  controls: Schema.optional(Schema.Array(Schema.Struct({ role: Text, name: Text }))),
+});
 const isCoveringTag = Schema.is(Schema.Literal(...coveringTags));
 const isCoveringRole = Schema.is(Schema.Literal(...coveringRoles));
-/** A covering element as the host reports it: a tag or role off its list is none of the page's. */
+/**
+ * A covering element as the host reports it: a tag or role off its list is none of the page's. A
+ * control is a link or else a button, kept only with a name of at most `coveringControlNameLimit`
+ * characters, never cut, and at most `coveringControlsLimit` of them.
+ */
 export const coveringElement = (
   read: typeof ReadCoveringElement.Type,
 ): typeof CoveringElement.Type => {
   const tag = read.tag.toLowerCase();
   const role = read.role?.trim().toLowerCase();
+  const controls = (read.controls ?? [])
+    .flatMap(({ role: controlRole, name }) =>
+      name === null || name.trim() === "" || name.length > coveringControlNameLimit
+        ? []
+        : [{ role: controlRole === "link" ? ("link" as const) : ("button" as const), name }],
+    )
+    .slice(0, coveringControlsLimit);
   return {
     tag: isCoveringTag(tag) ? tag : "other",
     role: role !== undefined && isCoveringRole(role) ? role : null,
+    ...(controls.length === 0 ? {} : { controls }),
   };
 };
 /** A control as Guardian judges it: its markup's own words, never a value. */
@@ -390,7 +418,7 @@ export const LocatedError = Schema.Struct({
   /** A fill call's: when the primary page's document began loading (`performance.timeOrigin`). */
   document: Schema.optional(Schema.Number),
   searched: Schema.optional(Searched),
-  /** An inert submit: where it was found. */
+  /** A submit that lists no option the step names: where it was found. */
   located: Schema.optional(FoundIn),
 });
 const Located = Schema.Union(
@@ -605,7 +633,7 @@ export type AutofillStepReport =
        * otherwise (`runReplayStep`).
        */
       readonly closedInPlace?: true;
-      /** What caught a `blocked` click, by its markup's own names, never its text or a value. */
+      /** What caught a `blocked` click: tag, role and `controls`, whose names the host screens. */
       readonly blockedBy?: typeof CoveringElement.Type;
       /** The primary page after the submit settled, byte-exact like every URL. */
       readonly url: string;

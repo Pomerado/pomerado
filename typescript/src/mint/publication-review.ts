@@ -159,7 +159,15 @@ const fieldDigest = (values: readonly unknown[]) => {
   return {
     withValue: present.length,
     distinct: distinct.size,
-    ...(lengths.length === 0 ? {} : { length: [Math.min(...lengths), Math.max(...lengths)] }),
+    // Never spread into Math.min or Math.max: a list of many records overflows the call stack.
+    ...(lengths.length === 0
+      ? {}
+      : {
+          length: [
+            lengths.reduce((least, length) => Math.min(least, length)),
+            lengths.reduce((most, length) => Math.max(most, length)),
+          ],
+        }),
     samples: [...distinct.values()].slice(0, sampleLimit).map(sampleOf),
   };
 };
