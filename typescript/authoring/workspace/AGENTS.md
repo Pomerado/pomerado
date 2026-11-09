@@ -67,7 +67,9 @@ the source files, never captures.
   fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
   input, required where the request needs it, and publication decodes that input and returns a
   key the schema lacks as an `example_input` input feedback. An optional input plus a declared
-  question is only for a value the request leaves open.
+  question is only for a value the request leaves open. A read's example also passes it in place
+  of the caller's own input once the tool refused that input with `InvalidInput` ("Reads, writes
+  and examples").
 - `live_tests` runs a read's live tests when the host offers it: the combined cases you
   design in `test/cases.json` from what you saw on the site, and every result, run in batches on
   reset pages, on `src/tool.mjs` and on `src/tool-http.mjs`, each version keeping its own
@@ -572,6 +574,17 @@ finally-style block, so the revert runs on every path, errors and timeouts inclu
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+A read's example record from the caller that the site can't serve, such as a link that moved or
+lost its ID, a record the site says it doesn't have, or a value it refuses, doesn't block the
+build. Have the tool refuse it with `InvalidInput` naming the field, in the site's words
+(caller-input skill), and run the example on it once: that refusal is the tool's error case for
+that input. Then prove the tool on another record of the same kind: one the site lists, passed
+as `exampleInput` on the example, or, only when you find none on the site, one the caller gives
+through `request_input`. Keep a live test case on the caller's input that expects
+`invalid_input`, and publish against the example that passed. When neither the site nor the
+caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
+and the site's answer. A write runs the caller's input as it is.
+
 If you changed something on the site by mistake, put it back to its earlier value before going
 on. When the owner asks you to undo a change you made, do it.
 
@@ -697,8 +710,9 @@ never with final text, which the host treats as unfinished work:
 Before ending blocked because a value the request gave is unavailable or invalid on the site,
 such as a time slot the site does not offer that day, a date outside its calendar or a name it
 does not list, ask the owner with `request_input` to revise it or stop, as the key rules say.
-End blocked only when they stop or their answer cannot be met either. In maintenance, follow
-the intake screen instead.
+End blocked only when they stop or their answer cannot be met either. A read whose bad value is
+its example's record proves the tool on another record first ("Reads, writes and examples"). In
+maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
 in your own words: Guardian reviews it first. When it passes on a website's instructions, links or

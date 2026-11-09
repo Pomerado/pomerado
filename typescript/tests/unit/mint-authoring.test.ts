@@ -378,7 +378,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
     "workspace/AGENTS.md",
-    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
   // Only what the caller asked for decides whether a tool books or refuses, every listed option
   // gets read, a repair fixes a broken input but keeps a caller's documented design decision, a
@@ -1344,14 +1344,14 @@ it("renders the pinned standalone authoring", async () => {
     ["a5a53deb086cc9342c59b62ab462a824c9e72977eb73448d7423d369631bfa17", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
-    ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
+    ["1e8b90e0cbf09ad4808cca0d726ef2f2c2943e22ed83fbce9488e6fdbf563bb1", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
     ["36fc2fdb44a032178aabfb5dc1b1c8cd4efb8538a63ca4a17cce08550ffbfeb3", "writes"],
     ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["7416fcc1004dd8d2d7a71c995c1c63b40b3786e8b47b9343ccbf3715eb1664d5", "publication"],
-    ["6905b854105952e4f24fc521028984b01a5ecde241709ecaf93e80a7bcdf4b0d", "workspace/AGENTS.md"],
+    ["cb34f909704683c5d3a67bba4e74518a675830298b04d1247acd2ccde34e5246", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1472,7 +1472,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["73a8ad794b15cc6b4e7e9e2327db6e741e22d4444a1e4533c1c1057db6abcef0", "workspace/AGENTS.md"],
+    ["75c8773343967015c26aba8819f1d6a19d6a1fcfc5b9a759972053c9ac2d40dd", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

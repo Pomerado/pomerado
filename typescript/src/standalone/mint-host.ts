@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import { questionForReview } from "../guardian/question.js";
 import {
@@ -168,6 +169,9 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
             buildEffect,
             callerInput: context.input,
             writeSession: state.writeSession,
+            callerExampleRefused: state.refusedCallerExamples.some((refused) =>
+              isDeepStrictEqual(refused, context.input),
+            ),
           });
         if (refusal !== undefined) return refusal;
         const boundary =
