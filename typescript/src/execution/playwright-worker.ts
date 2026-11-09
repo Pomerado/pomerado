@@ -31,7 +31,8 @@ if (import.meta.url.endsWith(".ts"))
         : nextLoad(url, context),
   });
 const { makeCredentialKeyboard } = await import("../destinations/credential-keyboard.js");
-const { NativeWorkerOptions, NativeWorkerRequest } = await import("./playwright-protocol.js");
+const { NativeWorkerAttach, NativeWorkerOptions, NativeWorkerRequest, NativeWorkerWarm } =
+  await import("./playwright-protocol.js");
 
 const asError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("Native browser worker failed", { cause });
@@ -54,26 +55,45 @@ const identify = (context: BrowserContext, page: Page) =>
     );
   });
 
-/**
- * The page of a CDP-attached browser's own context the worker drives: the one `targetId` names, or
- * with none the context's first page, opened when it has none. Playwright lists other clients'
- * contexts' pages under the default context too, so a page whose context the browser reports as
- * a created one (`Target.getBrowserContexts` lists every context but the default) is never taken:
- * its cookies and storage are not the ones `context` reads.
- */
-const adoptPage = (browser: Browser, context: BrowserContext, targetId: string | undefined) =>
+/** The contexts the browser reports as created: every one but its default context. */
+const createdContexts = (browser: Browser) =>
   Effect.gen(function* () {
     const session = yield* promise(() => browser.newBrowserCDPSession());
-    const created = yield* promise(() => session.send("Target.getBrowserContexts")).pipe(
+    return yield* promise(() => session.send("Target.getBrowserContexts")).pipe(
       Effect.map(({ browserContextIds }) => new Set(browserContextIds)),
       Effect.ensuring(promise(() => session.detach()).pipe(Effect.orDie)),
     );
-    for (const candidate of context.pages()) {
-      const target = yield* identify(context, candidate);
-      if (created.has(target.browserContextId)) continue;
-      if (targetId === undefined || target.targetId === targetId) return candidate;
+  });
+
+/**
+ * The page of a CDP-attached browser's own context the worker drives, with its target: the one
+ * `targetId` names, or with none the context's first page, opened when it has none. Playwright
+ * lists other clients' contexts' pages under the default context too, so a page whose context the
+ * browser reports as a created one (`Target.getBrowserContexts` lists every context but the
+ * default) is never taken: its cookies and storage are not the ones `context` reads. The created
+ * contexts and the pages' targets are read together, each a few round trips to a remote browser.
+ */
+const adoptPage = (browser: Browser, context: BrowserContext, targetId: string | undefined) =>
+  Effect.gen(function* () {
+    const [created, candidates] = yield* Effect.all(
+      [
+        createdContexts(browser),
+        Effect.forEach(
+          context.pages(),
+          (page) => identify(context, page).pipe(Effect.map((target) => ({ page, target }))),
+          { concurrency: "unbounded" },
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
+    for (const candidate of candidates) {
+      if (created.has(candidate.target.browserContextId)) continue;
+      if (targetId === undefined || candidate.target.targetId === targetId) return candidate;
     }
-    if (targetId === undefined) return yield* promise(() => context.newPage());
+    if (targetId === undefined) {
+      const page = yield* promise(() => context.newPage());
+      return { page, target: yield* identify(context, page) };
+    }
     return yield* Effect.fail(new Error("CDP target not found in the browser's own context"));
   });
 
@@ -423,13 +443,31 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const port = parentPort;
     if (port === null) return yield* Effect.fail(new Error("Native worker requires parent IPC"));
-    const options = yield* Schema.decodeUnknown(NativeWorkerOptions)(workerData).pipe(
-      Effect.mapError(asError),
-    );
+    const loadChromium = (library: string) =>
+      promise(async () => ((await import(library)) as typeof import("playwright")).chromium);
+    // A warm worker loads its library before its executor knows the browser, then takes its
+    // options from the one attach message, the only message sent before it answers ready.
+    const warm = Schema.decodeUnknownOption(NativeWorkerWarm)(workerData);
+    const preloaded =
+      warm._tag === "Some" ? yield* loadChromium(warm.value.warm.library) : undefined;
+    const options =
+      warm._tag === "Some"
+        ? yield* Effect.async<unknown>((resume) => {
+            port.once("message", (message: unknown) => resume(Effect.succeed(message)));
+          }).pipe(
+            Effect.flatMap(Schema.decodeUnknown(NativeWorkerAttach)),
+            Effect.map((attach) => attach.options),
+            Effect.filterOrFail(
+              (attached) => attached.library === warm.value.warm.library,
+              () => new Error("Warm worker attached with another library"),
+            ),
+            Effect.mapError(asError),
+          )
+        : yield* Schema.decodeUnknown(NativeWorkerOptions)(workerData).pipe(
+            Effect.mapError(asError),
+          );
     const resultLimit = options.resultLimitBytes ?? outputLimit;
-    const chromium = yield* promise(
-      async () => ((await import(options.library)) as typeof import("playwright")).chromium,
-    );
+    const chromium = preloaded ?? (yield* loadChromium(options.library));
     const attached = options.cdp;
     const browser = yield* promise(() =>
       attached === undefined
@@ -441,11 +479,16 @@ await Effect.runPromise(
       attached === undefined ? yield* promise(() => browser.newContext()) : browser.contexts()[0];
     if (context === undefined)
       return yield* Effect.fail(new Error("CDP browser has no default context"));
-    const page =
+    const { page, target } =
       attached === undefined
-        ? yield* promise(() => context.newPage())
+        ? yield* promise(() => context.newPage()).pipe(
+            Effect.flatMap((opened) =>
+              identify(context, opened).pipe(
+                Effect.map((found) => ({ page: opened, target: found })),
+              ),
+            ),
+          )
         : yield* adoptPage(browser, context, attached.targetId);
-    const target = yield* identify(context, page);
     if (attached !== undefined)
       browser.on("disconnected", () => port.postMessage({ kind: "disconnected" }));
     port.postMessage({

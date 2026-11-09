@@ -100,6 +100,28 @@ test("CDP attach drives the page its target id names", async () => {
   }
 });
 
+test("a warm spare worker attaches the next executor to that executor's own browser", async () => {
+  const first = await devtoolsBrowser();
+  const second = await devtoolsBrowser();
+  try {
+    await first.page.setContent("<title>First browser</title>");
+    await second.page.setContent("<title>Second browser</title>");
+    const otherPage = await second.context.newPage();
+    await otherPage.setContent("<title>Second browser, its other page</title>");
+    const targetId = await targetIdOf(second.context, otherPage);
+    const warm = { library: "patchright", warmSpare: true } as const;
+    // The first open leaves a spare loaded; the next two take one each, with their own options.
+    expect(await native(title, { ...warm, cdp: { url: first.url } })).toBe("First browser");
+    expect(await native(title, { ...warm, cdp: { url: second.url, targetId } })).toBe(
+      "Second browser, its other page",
+    );
+    expect(await native(title, { ...warm, cdp: { url: first.url } })).toBe("First browser");
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});
+
 test("CDP attach refuses a target id the browser doesn't have", async () => {
   const browser = await devtoolsBrowser();
   try {

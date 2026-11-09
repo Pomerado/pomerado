@@ -58,3 +58,14 @@ export const NativeWorkerOptions = Schema.Struct({
   /** Attach over CDP and drive the browser's own context, at this page (its first when absent). */
   cdp: Schema.optional(Schema.Struct({ targetId: Schema.optional(Schema.String) })),
 });
+/**
+ * A worker started before its browser is known (`PlaywrightOptions.warmSpare`): it loads its
+ * library and waits for the one `NativeWorkerAttach` message that names the browser.
+ */
+export const NativeWorkerWarm = Schema.Struct({
+  warm: Schema.Struct({ library: PlaywrightLibrary }),
+});
+export const NativeWorkerAttach = Schema.Struct({
+  kind: Schema.Literal("attach"),
+  options: NativeWorkerOptions,
+});

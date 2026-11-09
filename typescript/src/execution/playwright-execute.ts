@@ -9,8 +9,10 @@ import {
 import { BrowserExecuteResponse, type BrowserExecute } from "../runtime/browser-execution.js";
 import type { HostExecute } from "../runtime/host-execute.js";
 import {
+  NativeWorkerAttach,
   NativeWorkerOptions,
   NativeWorkerReply,
+  NativeWorkerWarm,
   NativeWorkerRequest,
   PlaywrightLibrary,
 } from "./playwright-protocol.js";
@@ -46,6 +48,13 @@ export interface PlaywrightOptions {
    * and names the limit. Console output keeps its own 1 MiB limit.
    */
   readonly resultLimitBytes?: number;
+  /**
+   * Keeps one worker thread started, with its Playwright library loaded, for the next executor
+   * opened with the same library, which then skips that load (most of an open over CDP). The spare
+   * is started as an executor takes the last one, holds no browser, and never keeps the process
+   * running.
+   */
+  readonly warmSpare?: boolean;
 }
 /**
  * An answered script and which watched values its typing calls delivered, by index, each with the
@@ -318,6 +327,61 @@ const dispatchNative = (
     });
   });
 
+const workerUrl = new URL(
+  import.meta.url.endsWith(".ts") ? "./playwright-worker.ts" : "./playwright-worker.js",
+  import.meta.url,
+);
+/** A worker thread for an executor; its options come with it, or later for a warm one. */
+const startWorker = (workerData: unknown) =>
+  new Worker(workerUrl, {
+    // Generated browser code must not inherit host model or provider credentials.
+    env: {},
+    // Parent entrypoint flags such as --input-type do not apply to this file entrypoint.
+    execArgv: [],
+    workerData,
+  });
+
+/** A warm worker waiting for its executor, and whether it ended before one took it. */
+interface SpareWorker {
+  readonly worker: Worker;
+  ended: boolean;
+  readonly onEnd: () => void;
+}
+/** One spare per library, for executors opened with `warmSpare`. */
+const spareWorkers = new Map<PlaywrightLibrary, SpareWorker>();
+
+const startSpare = (library: PlaywrightLibrary) => {
+  const worker = startWorker({ warm: { library } } satisfies typeof NativeWorkerWarm.Encoded);
+  const spare: SpareWorker = {
+    worker,
+    ended: false,
+    onEnd: () => {
+      spare.ended = true;
+      if (spareWorkers.get(library) === spare) spareWorkers.delete(library);
+    },
+  };
+  worker.on("error", spare.onEnd);
+  worker.on("exit", spare.onEnd);
+  worker.unref();
+  spareWorkers.set(library, spare);
+};
+
+/**
+ * The worker for an executor with `options`: the library's spare when one is waiting, sent them as
+ * its attach message, else a new one started with them. With `warm`, a new spare starts beside it.
+ */
+const takeWorker = (options: typeof NativeWorkerOptions.Encoded, warm: boolean) => {
+  const spare = spareWorkers.get(options.library);
+  spareWorkers.delete(options.library);
+  if (warm) startSpare(options.library);
+  if (spare === undefined || spare.ended) return startWorker(options);
+  spare.worker.off("error", spare.onEnd);
+  spare.worker.off("exit", spare.onEnd);
+  spare.worker.ref();
+  spare.worker.postMessage({ kind: "attach", options } satisfies typeof NativeWorkerAttach.Encoded);
+  return spare.worker;
+};
+
 /**
  * Owns one native connection and context. A failed transport invalidates it without replay. Over
  * CDP it owns only its connection and the contexts its scripts make: it drives the browser's own
@@ -377,29 +441,19 @@ export const makePlaywrightExecutor = (
         : options.cdp.url;
     const worker = yield* Effect.try({
       try: () =>
-        new Worker(
-          new URL(
-            import.meta.url.endsWith(".ts") ? "./playwright-worker.ts" : "./playwright-worker.js",
-            import.meta.url,
-          ),
+        takeWorker(
           {
-            // Generated browser code must not inherit host model or provider credentials.
-            env: {},
-            // Parent entrypoint flags such as --input-type do not apply to this file entrypoint.
-            execArgv: [],
-            workerData: {
-              endpoint,
-              startupTimeoutMs,
-              library,
-              ...(resultLimitBytes === undefined ? {} : { resultLimitBytes }),
-              ...(options.cdp === undefined
-                ? {}
-                : {
-                    cdp:
-                      options.cdp.targetId === undefined ? {} : { targetId: options.cdp.targetId },
-                  }),
-            } satisfies typeof NativeWorkerOptions.Encoded,
+            endpoint,
+            startupTimeoutMs,
+            library,
+            ...(resultLimitBytes === undefined ? {} : { resultLimitBytes }),
+            ...(options.cdp === undefined
+              ? {}
+              : {
+                  cdp: options.cdp.targetId === undefined ? {} : { targetId: options.cdp.targetId },
+                }),
           },
+          options.warmSpare === true,
         ),
       catch: asError,
     });
