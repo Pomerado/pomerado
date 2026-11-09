@@ -256,7 +256,8 @@ const screenGoneUnsent = <E extends YieldableError, V extends string, L extends 
  * nothing sent, as a site that turns its Continue into its single sign-on control once it knows
  * the login does: the step takes Enter in its last field in place of that submit, which sends the
  * field's form, as a step with a submit key does. The host refuses a field in no form, and the
- * screen then waits as one gone (`screenGoneUnsent`). Having no submit, the step takes Enter once.
+ * screen then waits as one gone (`screenGoneUnsent`). Enter spends the replay's one such wait, so
+ * the step takes it at most once, and a press that fails ends the screen with its own failure.
  */
 const submitGoneAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -284,6 +285,7 @@ const submitGoneAfterTyping = <E extends YieldableError, V extends string, L ext
     if ("outcome" in inspection) return undefined;
     if ((yield* admitScreen(input, replay, recorded, inspection.page)) !== undefined)
       return undefined;
+    replay.progress.screenGone = true;
     yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });
     return shownScreen(keyed, inspection);
   });
