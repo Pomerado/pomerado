@@ -218,7 +218,8 @@ read also checks the page's stable identity (.agents/core/SKILL.md). Building or
 the file's `total`. Read a large file in parts with `read_source` offset and limit. From a
 probe, return only the slice you need, such as the relevant container, the matching rows and
 their count, never a whole page's text or every control on it. A filter panel's or option
-group's controls, once you open it, are such a slice. An execution result over 16 KiB comes
+group's controls, once you open it, are such a slice. For a page's large embedded data, return its
+`outline` first, then the few matches you need (core skill, "Large page data"). An execution result over 16 KiB comes
 back as a digest (`kind: "result_digest"`): its size, its shape with every array's length, its
 first items and its error fields whole, and the `path` of the file holding the whole result.
 Read that file in ranges with `read_source`, or search it with `rg -n` in an offline command,

@@ -1341,7 +1341,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["c8098b8f3d08884d0349579ffda2d87dcfb648e6714a4fcf6f738095195caadd", "core"],
+    ["a5a53deb086cc9342c59b62ab462a824c9e72977eb73448d7423d369631bfa17", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
@@ -1351,7 +1351,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["7416fcc1004dd8d2d7a71c995c1c63b40b3786e8b47b9343ccbf3715eb1664d5", "publication"],
-    ["020833e0d4217df0dccb9263cd6c5de01417daec806539813d77737e32b736d4", "workspace/AGENTS.md"],
+    ["6905b854105952e4f24fc521028984b01a5ecde241709ecaf93e80a7bcdf4b0d", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1472,7 +1472,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["3856e83c046d92505eb7dcf8230c34c5ce07045e3ea435e205c528b8b409a7db", "workspace/AGENTS.md"],
+    ["73a8ad794b15cc6b4e7e9e2327db6e741e22d4444a1e4533c1c1057db6abcef0", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
