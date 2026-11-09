@@ -1946,8 +1946,9 @@ export const AgentRequest = Schema.Struct({
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
   /**
    * Whether an answer would let the build act on the site for the caller. The host keeps it from
-   * the caller. A write repair whose host allows it hands back unanswered only a request marked
-   * false with no confirm or secret question (`MintDependencies.handBackWriteRepairQuestions`).
+   * the caller. A write repair whose host allows it hands back unanswered only a request of one
+   * question marked false, no confirm or secret one
+   * (`MintDependencies.handBackWriteRepairQuestions`).
    */
   asksConsent: Schema.optional(
     Schema.Boolean.annotations({
@@ -2844,9 +2845,9 @@ export interface MintDependencies {
   /**
    * A write repair (`mode` `maintenance` with effect write: a failure repair or the owner's
    * requested change) hands an unanswered request back to the minter as no answer, signed in or
-   * not, when the minter marked it `asksConsent: false`, it holds no confirm or secret question,
-   * and Guardian's question review allowed it under a rule that asks no consent
-   * (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
+   * not, when it holds one question, neither confirm nor secret, the minter marked it
+   * `asksConsent: false`, and Guardian's question review allowed it under a rule that asks no
+   * consent (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
    * repair as before: no answer is never consent. Every other rule for an unanswered question
    * stands. A core without it ignores it.
    */

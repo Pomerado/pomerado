@@ -343,10 +343,13 @@ const callerVisibleQuestion = (
 };
 /**
  * Whether the agent's request asks the caller's consent to act on the site: unless the agent
- * marked it `asksConsent: false`, and always for a confirm or a secret question.
+ * marked it `asksConsent: false`, and always for a confirm or a secret question. Guardian's
+ * question review names one rule for the whole request, which vouches for one question only, so a
+ * request of several questions counts as asking it too.
  */
 const asksConsent = (request: typeof AgentRequest.Type) =>
   request.asksConsent !== false ||
+  request.questions.length > 1 ||
   request.questions.some((question) => question.type === "confirm" || question.type === "secret");
 /** The answers the agent recommends in its request, by question id. */
 const recommendedAnswers = (request: typeof AgentRequest.Type): Readonly<Record<string, unknown>> =>

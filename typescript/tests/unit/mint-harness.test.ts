@@ -5501,10 +5501,19 @@ it("hands a write repair's unanswered question that asks no consent back with it
     asksConsent: false,
     questions: [{ id: "place", type: "confirm" as const, prompt: "May it place the order again?" }],
   };
+  // Guardian's review names one rule for the whole request, which vouches for one question only.
+  const twoQuestions = {
+    ...fieldQuestion(false),
+    questions: [
+      ...fieldQuestion(false).questions,
+      { id: "extras", type: "text" as const, prompt: "Which extras should it add?" },
+    ],
+  };
   for (const [asked, host] of [
     [fieldQuestion(true), signedIn],
     [fieldQuestion(), signedIn],
     [consent, signedIn],
+    [twoQuestions, signedIn],
     // Guardian reads it as asking the owner's confirmation, whatever the minter marked.
     [fieldQuestion(false), { ...signedIn, reviewQuestion: reviewedAs("owner_confirmation") }],
     [fieldQuestion(false), { websiteCredentialsAvailable: true }],
