@@ -49,8 +49,11 @@ by this many".
 
 Read the cart's lines before the write, in the session and in the composed script; never
 assume the cart starts empty. Afterwards, confirm from the cart itself that the line reached
-the expected quantity (the earlier quantity plus the input, or the input) and that every other
-line is unchanged, then return the lines as read and call `verified()`. When comparing lines
+the expected quantity (the earlier quantity plus the input, or the input), then call
+`verified()`, compare every other line with the before read and return the lines as read.
+Prefer needing only each line's identity, chosen options and quantity in that read, with every
+other value optional, so a price the page doesn't show clearly can't fail the read before
+`verified()` (writes skill, "Check the read-back"). When comparing lines
 before and after, such as to list other lines that changed, prefer comparing
 `unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
 skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.
@@ -81,7 +84,9 @@ it shows only to some accounts.
 When the site refuses the order as asked, such as an order under its minimum or an empty cart
 at checkout, the tool throws `new errors.InvalidInput(message, { field })` with the site's
 reason, `field` the input the caller would change, before its commit mark whenever the page shows
-the limit first. A checkout that takes a limit of the caller's, such as
+the limit first. When the page shows a per-item limit and the cart already holds that many of the
+item, prefer refusing the same way before the add's commit mark.
+A checkout that takes a limit of the caller's, such as
 a maximum total, reads the final total and compares it before the order's commit mark, and
 refuses with `InvalidInput`, `field` that input and `kind: "over_price_limit"`, giving the total
 and the limit (the caller-input skill). Never add items, raise a quantity or change the

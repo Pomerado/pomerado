@@ -254,9 +254,6 @@ for (const [name, control, reason] of [
     '<a id="continue" href="javascript:send()">Sign in</a>',
     "credential_target_refused",
   ],
-  // An inert control takes no interaction at all: it marks a form in the background, not one the
-  // page enables on input.
-  ["submit inside an inert region", '<div inert><button id="continue">Sign in</button></div>', "not_editable"],
 ] as const)
   test(`the host refuses a ${name} before any password is filled`, async ({ page }) => {
     const received = await serve(page, control);
@@ -264,6 +261,20 @@ for (const [name, control, reason] of [
     expect(await page.locator("#password").inputValue()).toBe("");
     expect(received).toEqual([]);
   });
+
+// An inert field takes no typing, as a form in the background does: only its submit may wait.
+test("the host refuses a password field inside an inert region before anything is typed", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    '<div inert><label>Password<input id="password" name="password" type="password"></label></div><button id="continue">Sign in</button>',
+    false,
+  );
+  expect(await inspect(page)).toMatchObject({ outcome: "refused", reason: "not_editable", target: 0 });
+  expect(await page.locator("#password").inputValue()).toBe("");
+  expect(received).toEqual([]);
+});
 
 // A form's elements leave out an image submit, so its own formaction is read beside them.
 test("the host refuses a sign-in whose image submit posts off the site before any password is filled", async ({
@@ -300,6 +311,21 @@ form.addEventListener('input', () => enable(form.username.value !== '' && form.p
 // Many sign-in forms keep their submit disabled until the fields hold input. The host fills them
 // and clicks the submit once the page enables it, never while it is disabled.
 for (const [name, controls] of [
+  ["a plain button", enabledOnInput('<button id="continue">Sign in</button>', "")],
+  [
+    "an inert button until both fields hold input",
+    enabledOnInput(
+      '<button id="continue" inert>Sign in</button>',
+      "document.getElementById('continue').inert = !both;",
+    ),
+  ],
+  [
+    "an inert link until both fields hold input",
+    enabledOnInput(
+      `<a id="continue" href="#" inert onclick="event.preventDefault(); this.closest('form').requestSubmit()">Sign in</a>`,
+      "document.getElementById('continue').inert = !both;",
+    ),
+  ],
   [
     "a disabled button until both fields hold input",
     enabledOnInput(
@@ -364,6 +390,10 @@ for (const [name, controls] of [
   [
     "an aria-disabled ARIA button that never enables",
     `<div id="continue" role="button" tabindex="0" aria-disabled="true" onclick="this.closest('form').requestSubmit()">Sign in</div>`,
+  ],
+  [
+    "a button inside an inert region that stays inert",
+    '<div inert><button id="continue">Sign in</button></div>',
   ],
   [
     "a button the page disables once the password is typed",

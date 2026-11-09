@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { signInMethodChoices } from "../runtime/authentication.js";
+import { trustedUrl } from "../runtime/sign-in-origins.js";
 
 /** A supported two-factor method; a run call may pick one. */
 export const SignInMethod = Schema.Literal("sms", "call", "email", "totp", "push");
@@ -202,6 +203,38 @@ export type SubmitKey = typeof SubmitKey.Type;
 /** An off-page sign-in the owner completes before confirming through the protected input. */
 export const AutofillApproval = Schema.Literal("email_link", "device");
 export type AutofillApproval = typeof AutofillApproval.Type;
+
+/**
+ * How an email-link approval reaches the browser: `paste` for a site whose emailed link signs in
+ * only the browser that opens it. The owner pastes the link into the host's protected question,
+ * and the host opens it in its own browser (`pastedSignInLink`). Without it, the owner opens the
+ * link and confirms.
+ */
+export const AutofillApprovalDelivery = Schema.Literal("paste");
+export type AutofillApprovalDelivery = typeof AutofillApprovalDelivery.Type;
+
+/** The owner's protected question for an emailed sign-in link (`delivery: "paste"`). */
+export const pastedLinkPrompt = (site: string) =>
+  `Paste the newest sign-in link ${site} emailed you, without opening it. Pomerado keeps it private and opens it only in its own browser.`;
+
+/**
+ * The link an owner pasted for an email-link approval, as the host opens it, without the angle
+ * brackets or quotes around it: an https address with no user name or password, on the site or one
+ * of the sign-in origins the approval screen's inspection trusted (`trustedUrl`). Anything else is
+ * undefined, and the host never opens it.
+ */
+export const pastedSignInLink = (
+  pasted: string,
+  trust: { readonly siteOrigin: string; readonly authenticationOrigins: readonly string[] },
+) => {
+  // A link pasted from an email may come inside angle brackets or quotes.
+  const url = URL.parse(pasted.trim().replace(/^[<"']+|[>"']+$/gu, ""));
+  return url !== null &&
+    url.protocol === "https:" &&
+    trustedUrl(trust.siteOrigin, trust.authenticationOrigins, url.href)
+    ? url.href
+    : undefined;
+};
 
 /**
  * The number a device approval's screen shows for the owner to pick on their device, as its

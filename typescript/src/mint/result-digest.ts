@@ -37,7 +37,8 @@ const maxFields = 40;
 const shapeSampleItems = 20;
 
 const encoder = new TextEncoder();
-const byteLength = (text: string) => encoder.encode(text).byteLength;
+/** `text`'s size in UTF-8 bytes. */
+export const byteLength = (text: string) => encoder.encode(text).byteLength;
 
 /** `text` within `bytes` UTF-8 bytes, cut on a character, with a marker when it was cut. */
 const cut = (text: string, bytes: number) => {
@@ -52,18 +53,60 @@ const shortKey = (key: string) =>
   key.length <= maxKeyChars ? key : `${key.slice(0, maxKeyChars)}…`;
 
 /**
- * A result the host could not save or digest: whole within the threshold, else its first
- * `resultDigestThresholdBytes` bytes with its size and a note that the rest was not kept.
+ * `text` within the threshold, else its first `excerptBytes` bytes and size, with `note` saying
+ * why and `path` naming the file that holds it whole, when one does.
  */
-export const boundedResult = (text: string) => {
+const truncated = (
+  text: string,
+  note: (totalBytes: number) => string,
+  excerptBytes = resultDigestThresholdBytes,
+  path?: string,
+) => {
   const totalBytes = byteLength(text);
   if (totalBytes <= resultDigestThresholdBytes) return text;
   return JSON.stringify({
     kind: "result_truncated",
     totalBytes,
-    note: `This result is ${totalBytes} bytes and the full output could not be saved, so only its first ${resultDigestThresholdBytes} bytes are shown. Run again with a narrower read if you need the rest.`,
-    excerpt: cut(text, resultDigestThresholdBytes),
+    ...(path === undefined ? {} : { path }),
+    note: note(totalBytes),
+    excerpt: cut(text, excerptBytes),
   });
+};
+
+/**
+ * A result the host could not save or digest: whole within the threshold, else its first
+ * `resultDigestThresholdBytes` bytes with its size and a note that the rest was not kept.
+ */
+export const boundedResult = (text: string) =>
+  truncated(
+    text,
+    (totalBytes) =>
+      `This result is ${totalBytes} bytes and the full output could not be saved, so only its first ${resultDigestThresholdBytes} bytes are shown. Run again with a narrower read if you need the rest.`,
+  );
+
+/**
+ * A result too long for a model request to carry whole, whatever produced it: whole within the
+ * threshold, else its first `excerptBytes` bytes (`resultDigestThresholdBytes` unless less is
+ * asked) with its size, and the workspace file `path` that holds it whole, when it was saved.
+ */
+export const cutResult = (
+  text: string,
+  options: { readonly excerptBytes?: number; readonly path?: string } = {},
+) => {
+  const excerptBytes = Math.min(
+    options.excerptBytes ?? resultDigestThresholdBytes,
+    resultDigestThresholdBytes,
+  );
+  const { path } = options;
+  return truncated(
+    text,
+    (totalBytes) =>
+      path === undefined
+        ? `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. Ask for a smaller part if you need the rest.`
+        : `This result is ${totalBytes} bytes, too long to send whole, so only its first ${excerptBytes} bytes are shown. The whole result is saved in ${path}: read it with read_source (offset and limit) or search it with rg in exec_command.`,
+    excerptBytes,
+    path,
+  );
 };
 
 /** Where a digested result is saved: one file per execution, so a takeover rewrites the same. */

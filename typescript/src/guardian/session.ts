@@ -16,6 +16,7 @@ import {
   withCacheComparison,
 } from "../models/cached-instructions.js";
 import { leadingPrivateAfter } from "./review-layout.js";
+import { modelFailureMetadata, unreadableEncryptedItem } from "../models/model-failure.js";
 
 /** Private continuation state; complete original exchanges remain in protected model records. */
 export const GuardianSessionSnapshot = Schema.Struct({
@@ -85,18 +86,29 @@ export const guardianContinuityPolicy =
   "and an earlier read does only for a source the host lists in trusted_review.unchangedSources " +
   "as byte-identical to it. An interrupted review grants no approval.";
 
-/** The conversation size, in input tokens, at which Guardian compacts it; the minter's too. */
+/** The conversation size, in input tokens, at which the session compacts it before a request. */
 const guardianCompactionTokens = 240_000;
 
 /**
- * The provider-side compaction at the same threshold, with no additional tools or sandbox. It
- * is the backstop: the session compacts first (see `compactBefore`), since the provider's
- * compaction inside a request reads none of the conversation's cached prefix. The provider does
- * not combine it with a configuration update, so a request whose input holds one goes without it
- * while the session's own compaction covers it (see `backstopped` in `makeGuardianSession`).
+ * The provider-side compaction's threshold. The provider compacts once the context crosses it, also
+ * partway through an answer, while the session checks a request's size only before sending it. So
+ * it sits above the session's threshold by more than one answer's reasoning and output: a request
+ * sent just below the session's threshold ends its answer below this one. Guardian sets no output
+ * limit; its answers rarely pass 10,000 tokens, and the 28,000 between the thresholds is well over
+ * the longest. 268,000 also stays below the model's 272,000-token long-context price boundary, as
+ * the minter's backstop does.
+ */
+const guardianBackstopTokens = 268_000;
+
+/**
+ * The provider-side compaction, with no additional tools or sandbox. It is the backstop: the
+ * session compacts first (see `compactBefore`), since the provider's compaction inside a request
+ * reads none of the conversation's cached prefix. The provider does not combine it with a
+ * configuration update, so a request whose input holds one goes without it while the session's
+ * own compaction covers it (see `backstopped` in `makeGuardianSession`).
  */
 export const guardianCompaction = (): ReturnType<typeof compaction> =>
-  compaction({ policy: new StaticCompactionPolicy(guardianCompactionTokens) });
+  compaction({ policy: new StaticCompactionPolicy(guardianBackstopTokens) });
 
 /** The Responses API compacts the context it is sent when this is the last input item. */
 const compactionTrigger: AgentInputItem = {
@@ -117,6 +129,12 @@ const key = (items: readonly AgentInputItem[]) =>
           Object.entries(value).sort(([left], [right]) => (left < right ? -1 : 1)),
         ),
   );
+
+/** An item by the provider's ID for it where it has one, else by its content. */
+const identity = (item: AgentInputItem) => {
+  const id: unknown = Reflect.get(item, "id");
+  return typeof id === "string" ? `${item.type}:${id}` : key([item]);
+};
 
 type ItemsRequest = Omit<ModelRequest, "input"> & { readonly input: AgentInputItem[] };
 
@@ -153,6 +171,11 @@ interface SessionCompaction {
   readonly backstopped: (request: ModelRequest) => ModelRequest;
   /** Records the request sent and its response, which the next request continues. */
   readonly after: (sent: ModelRequest, response: ModelResponse) => void;
+  /**
+   * The refused request once more without the reasoning items a provider compaction inside an
+   * answer left after its item; see `makeGuardianSession`. Undefined for any other refusal.
+   */
+  readonly withoutUnreadable: (sent: ModelRequest, error: Error) => ModelRequest | undefined;
 }
 
 const reasoningEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -225,19 +248,28 @@ const continuationProvider = ({
                 );
                 signal().throwIfAborted();
                 if (prepared.usage !== undefined) yield* save(state(), true);
-                const returned = yield* Effect.tryPromise({
-                  try: () =>
-                    model.getResponse(
-                      withCacheComparison(
-                        sessionCompaction.backstopped(prepared.sent),
-                        comparison.latest(),
+                const send = (sent: ModelRequest) =>
+                  Effect.tryPromise({
+                    try: () =>
+                      model.getResponse(
+                        withCacheComparison(
+                          sessionCompaction.backstopped(sent),
+                          comparison.latest(),
+                        ),
                       ),
-                    ),
-                  catch: providerError,
-                });
+                    catch: providerError,
+                  }).pipe(Effect.map((response) => ({ sent, response })));
+                const { sent, response: returned } = yield* send(prepared.sent).pipe(
+                  // A refused request may go once more without the reasoning a provider compaction
+                  // inside an answer left after its item; any other refusal stands.
+                  Effect.catchAll((error) => {
+                    const retry = sessionCompaction.withoutUnreadable(prepared.sent, error);
+                    return retry === undefined ? Effect.fail(error) : send(retry);
+                  }),
+                );
                 comparison.set(returned.responseId);
                 signal().throwIfAborted();
-                sessionCompaction.after(prepared.sent, returned);
+                sessionCompaction.after(sent, returned);
                 if (returned.output.some((item) => item.type === "compaction")) compacted();
                 // The review's usage counts the compaction call too.
                 const response =
@@ -320,6 +352,38 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
   let backstopEffort: string | undefined;
   /** The provider's compaction item that ended that effort, which follows it again. */
   let providerCompacted: { readonly key: string; readonly effort: string } | undefined;
+  /**
+   * The latest provider compaction that came inside an answer with reasoning items after its item,
+   * by identity: its item, those reasoning items, and the answer's other items after the first of
+   * them. Once the conversation starts at that compaction, the provider can refuse those reasoning
+   * items as content it cannot decrypt (`invalid_encrypted_content`). Such a refused request goes
+   * once more without them, and without the provider's IDs of the items after them, which tie each
+   * to the reasoning before it (see `withoutUnreadable`). `recovery` is `sent` once that request
+   * went, and `kept` once it succeeded: from then on every request and saved history goes without
+   * them too. Everything else stays, the compaction item, calls and their results included.
+   */
+  let compactedInAnswer:
+    | {
+        readonly compaction: string;
+        readonly reasoning: ReadonlySet<string>;
+        readonly following: ReadonlySet<string>;
+        recovery: "none" | "sent" | "kept";
+      }
+    | undefined;
+  /** The request that went without that reasoning, until its response arrives. */
+  let recovering: ModelRequest | undefined;
+  /** `items` without the reasoning `compactedInAnswer` names, and the IDs after it. */
+  const withoutReasoningAfterCompaction = (
+    items: readonly AgentInputItem[],
+    answer: NonNullable<typeof compactedInAnswer>,
+  ) =>
+    items.flatMap((item): AgentInputItem[] => {
+      const known = identity(item);
+      if (answer.reasoning.has(known)) return [];
+      if (!answer.following.has(known) || !("id" in item)) return [item];
+      const { id: _id, ...withoutId } = item;
+      return [withoutId];
+    });
   /** Keeps the conversation's latest response, which the next request compares with. */
   const setLatestResponse = (id: string | undefined) => {
     const { latestResponseId: _previous, ...rest } = current;
@@ -344,6 +408,10 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
         ),
       );
     toLatestCompaction();
+    // Once a request went without the reasoning a compaction inside an answer left after its item
+    // and succeeded, every later one does, and so does the saved history.
+    const answer = compactedInAnswer;
+    if (answer?.recovery === "kept") kept = withoutReasoningAfterCompaction(kept, answer);
     // The effort a provider's compaction ended follows its item again, before the windows are
     // matched, since a later compaction of this review keyed its window on the items with it.
     const [first, second] = kept;
@@ -515,10 +583,32 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
     before: compactBefore,
     backstopped,
     after: (sent, response) => {
-      const compacted = response.output.findLast((item) => item.type === "compaction");
+      if (sent === recovering && compactedInAnswer !== undefined)
+        compactedInAnswer.recovery = "kept";
+      recovering = undefined;
+      const at = response.output.findLastIndex((item) => item.type === "compaction");
+      const compacted = response.output[at];
       if (compacted !== undefined && backstopEffort !== undefined)
         providerCompacted = { key: key([compacted]), effort: backstopEffort };
       backstopEffort = undefined;
+      const later = response.output.slice(at + 1);
+      const reasoned = later.findIndex((item) => item.type === "reasoning");
+      // A newer compaction starts the conversation anew, and the items an older one names drop out.
+      if (compacted !== undefined)
+        compactedInAnswer =
+          reasoned < 0
+            ? undefined
+            : {
+                compaction: identity(compacted),
+                reasoning: new Set(later.filter((item) => item.type === "reasoning").map(identity)),
+                following: new Set(
+                  later
+                    .slice(reasoned)
+                    .filter((item) => item.type !== "reasoning")
+                    .map(identity),
+                ),
+                recovery: "none",
+              };
       const request = withArrayInput(sent);
       last =
         request === undefined || response.output.some((item) => item.type === "compaction")
@@ -528,6 +618,23 @@ export const makeGuardianSession = (options: GuardianSessionOptions) => {
               outputs: response.output.length,
               tokens: response.usage.inputTokens + response.usage.outputTokens,
             };
+    },
+    withoutUnreadable: (sent, error) => {
+      const answer = compactedInAnswer;
+      const input = withArrayInput(sent)?.input;
+      const [first] = input ?? [];
+      if (
+        answer?.recovery !== "none" ||
+        input === undefined ||
+        first?.type !== "compaction" ||
+        identity(first) !== answer.compaction ||
+        !unreadableEncryptedItem(modelFailureMetadata(error))
+      )
+        return undefined;
+      // Once per compaction: a request refused again without them ends the review.
+      answer.recovery = "sent";
+      recovering = { ...sent, input: withoutReasoningAfterCompaction(input, answer) };
+      return recovering;
     },
   };
   return {
