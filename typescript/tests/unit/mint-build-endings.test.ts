@@ -200,10 +200,47 @@ it("keeps a temporary decline's time only when Guardian allowed its explanation"
   expect(outcome).not.toHaveProperty("blocked.availableAt");
 });
 
+// Guardian reviews the site's time with the explanation, so a time the evidence doesn't show the
+// site stating is reworded before it reaches the caller, and the build goes on.
+it("shows Guardian a temporary decline's time beside its explanation", async () => {
+  const explanation = "Pickup ordering is closed now.";
+  const availableAt = "2099-11-06T09:00:00-05:00";
+  const reviewed: string[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true, availableAt }, "first"),
+        call("report_blocked", { reason: "site_declined", explanation, temporary: true }, "second"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: (candidate) =>
+        Effect.sync(() => {
+          const text = JSON.stringify(candidate);
+          reviewed.push(text);
+          return text.includes(availableAt)
+            ? { outcome: "reword" as const, rationale: "The page states no opening time." }
+            : { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(reviewed[0]).toContain(availableAt);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_declined", explanation, temporary: true },
+  });
+  expect(outcome).not.toHaveProperty("blocked.availableAt");
+});
+
 it.each([
   {
     name: "a temporary time on another reason",
     report: { reason: "site_lacks_capability", availableAt: "2099-11-06T09:00:00-05:00" },
+    refusal: "temporary_not_declined",
+  },
+  {
+    name: "a temporary decline on another reason",
+    report: { reason: "site_lacks_capability", temporary: true },
     refusal: "temporary_not_declined",
   },
   {
