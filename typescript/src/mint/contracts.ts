@@ -1486,7 +1486,11 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   retry later. Such a page that appears only after the site already served its pages, or after
  *   a bot check the build got past, is reported the same way; since sites sometimes throttle a
  *   browser's network address this way, a host may give the build a new browser on another
- *   address and ask it to try the failing step once more before it ends the build.
+ *   address and ask it to try the failing step once more before it ends the build. A site that
+ *   fails only under the build's own request volume is limiting the build, not down: its report
+ *   sets `rateLimited`. A page that looks blank only after the build closed an overlay is no
+ *   outage, and Guardian finding the build's evidence contradicts a report that the site is at
+ *   fault hands it back to the build to keep working, once in the attempt.
  * - `policy`: Guardian refused an execution with refusal `final`, or refused a publication for a
  *   reason no correction gets past (`publicationRefusalUnfixable`), in this attempt, and nothing
  *   within authority gets past it. An execution refusal Guardian marked `correctable` is never one.
@@ -1592,13 +1596,24 @@ export const BlockedReport = Schema.Struct({
         "site_declined only: when the site says it takes the request again, as an ISO 8601 date-time with its UTC offset; omit it when the site states no time",
     }),
   ),
+  /**
+   * A `site_unavailable` report only: the site is limiting how many requests the build sends,
+   * not down. Optional: a host that ignores it reads a site temporarily unavailable.
+   */
+  rateLimited: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "site_unavailable only: true when the site fails only under this build's own request volume, such as requests it refuses as too many or larger pages failing where smaller ones pass, rather than being down",
+    }),
+  ),
 });
 /**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
  * Guardian's question review allowed the caller to read it. `new_mint_recommended` is the ending of
  * a `mint_update` whose change belongs in a new build: the reviewed summary of the change and the
  * request the caller could submit for that build. A temporary `site_declined` ending keeps
- * `temporary` and, when the site said when, `availableAt`.
+ * `temporary` and, when the site said when, `availableAt`; a `site_unavailable` ending the site's
+ * limit on the build's requests caused keeps `rateLimited`.
  */
 const BuildBlockedOutcome = Schema.Union(
   Schema.Struct({
@@ -1606,6 +1621,7 @@ const BuildBlockedOutcome = Schema.Union(
     explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
     temporary: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     availableAt: Schema.optionalWith(AvailableAt, { exact: true }),
+    rateLimited: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   }),
   Schema.Struct({
     reason: Schema.Literal("new_mint_recommended"),

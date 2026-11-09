@@ -602,6 +602,30 @@ const hostSignInRefusalCode = (
     : undefined;
 };
 const hostSignInRefusal = (error: MintFailure) => hostSignInRefusalCode(error) !== undefined;
+/**
+ * The blocked endings that put the fault on the site: Guardian finding the build's own evidence
+ * contradicts one hands it back to the minter to keep building, not only for other words.
+ */
+const siteFaultReasons: ReadonlySet<string> = new Set([
+  "site_unavailable",
+  "site_lacks_capability",
+  "site_declined",
+]);
+/**
+ * What the minter hears when Guardian found the build's own evidence contradicts its site-fault
+ * report: the build goes on, and a report before any new step stands on the same evidence.
+ * `rationale` is Guardian's, screened; absent when the report repeats one already handed back.
+ */
+const reportContradictedAnswer = (reported: string, rationale: string | undefined) =>
+  JSON.stringify({
+    status: "blocked_refused",
+    reason: "report_contradicted",
+    reported,
+    ...(rationale === undefined ? {} : { rationale }),
+    userInputRequired: false,
+    instruction:
+      "Guardian found that this build's own evidence contradicts the report, so the build has not ended and its caller is not told the site is at fault. Keep building from what the rationale names: the data may already be on the page. A page that looks blank or broken right after an overlay, popup or dialog closed is not an outage: read the data the page already holds, reload the page, or reach the same data through the site's other route. Report again only once a new step shows the site is at fault; a report before any new step is refused the same way.",
+  });
 /** A task update refusal's reason as a closed code: one core names, else `other`. */
 const taskUpdateRefusalCode = (
   reason: string,
@@ -1519,6 +1543,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let invalidOutcomes = recovered?.invalidOutcomes ?? 0;
       /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
       let blockedReviewUnavailable = recovered?.blockedReviewUnavailable === true;
+      /**
+       * The site-fault report (`siteFaultReasons`) Guardian found the build's own evidence
+       * contradicts, handed back to the minter to keep building once in the attempt, with how many
+       * executions the build had then: a report before a new one stands on the same evidence.
+       */
+      let contradictedReport: { readonly executions: number } | undefined;
       const reviewCompleted = Effect.sync(() => {
         reviewOutageStartedAt = undefined;
         blockedReviewUnavailable = false;
@@ -7390,6 +7420,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         instruction:
                           "temporary and availableAt apply only to site_declined. Remove them, or use site_declined if the site itself turned the request away for now.",
                       });
+                    // A limit on the build's requests is the site's answer to its volume, which
+                    // only a site_unavailable report names.
+                    if (report.rateLimited === true && report.reason !== "site_unavailable")
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "rate_limited_not_unavailable",
+                        userInputRequired: false,
+                        instruction:
+                          "rateLimited applies only to site_unavailable. Remove it, or use site_unavailable if the site is limiting how many requests this build sends.",
+                      });
                     if (
                       report.availableAt !== undefined &&
                       Date.parse(report.availableAt) <= (yield* Clock.currentTimeMillis)
@@ -7472,6 +7512,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       return endedForSignIn;
                     }
                     const submitted = { ...report, reason: ending.reason };
+                    // A site-fault report handed back as contradicted, sent again before the
+                    // build ran anything new, stands on the evidence that contradicted it.
+                    if (
+                      contradictedReport !== undefined &&
+                      contradictedReport.executions === executions.length &&
+                      siteFaultReasons.has(submitted.reason)
+                    )
+                      return reportContradictedAnswer(submitted.reason, undefined);
                     const availableAt =
                       submitted.reason === "site_declined" ? report.availableAt : undefined;
                     // Guardian reviews the time beside the words, as the caller reads both.
@@ -7487,6 +7535,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         "Guardian could not review the explanation, so the build has not ended and nothing reached the caller. Call report_blocked again for a fresh review. If Guardian stays unavailable long enough, the build ends blocked and the caller reads only the reason's fixed sentence.",
                         { next: { retryable: true } },
                       );
+                    // Guardian found the build's own evidence contradicts a report that the site
+                    // is at fault, such as a page that only looked blank after an overlay closed
+                    // while it held the data: the report goes back to the minter to keep
+                    // building, once in the attempt, rather than for other words alone.
+                    if (
+                      review.outcome === "reword" &&
+                      review.label === "misdescribed" &&
+                      siteFaultReasons.has(submitted.reason) &&
+                      contradictedReport === undefined
+                    ) {
+                      contradictedReport = { executions: executions.length };
+                      yield* diagnose({
+                        phase: "blocked",
+                        reason: submitted.reason,
+                        explanationReview: "contradicted",
+                      });
+                      return reportContradictedAnswer(
+                        submitted.reason,
+                        yield* screenRationale(review.rationale),
+                      );
+                    }
                     // Guardian asked for other words: the agent revises or withdraws its
                     // explanation, and the build goes on. A reword never ends a build.
                     if (review.outcome !== "allow_business" && review.outcome !== "unavailable") {
@@ -7527,6 +7596,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         : {}),
                       // Guardian reviewed the time with the words, so it shows only beside them.
                       ...(shown && availableAt !== undefined ? { availableAt } : {}),
+                      ...(report.rateLimited === true && submitted.reason === "site_unavailable"
+                        ? { rateLimited: true as const }
+                        : {}),
                     };
                     // A report that stood on refused live tests names them and the standing
                     // denial; the outcome keeps the denial's reason and category.
