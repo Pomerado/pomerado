@@ -831,7 +831,7 @@ const scriptQuestionInstruction: Readonly<
 
 /** What the minter reads when its own question expired unanswered. */
 const noAnswerInstruction =
-  "No answer was given before the question expired. Decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
+  "No answer was given before the question expired. Go on with the answer you recommended for each question in recommended, and list it in finish_build assumptions. For a question without one, decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent, and neither is your recommendation: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
 
 /**
  * How many unanswered questions go back to the minter in one build, the minter's own and its
