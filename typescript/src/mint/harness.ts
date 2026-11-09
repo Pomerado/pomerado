@@ -2768,8 +2768,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * signed in or holds a login, which acts as the account's owner, unless it is a read repair
        * whose host sets `handBackSignedInReadRepair`. A write repair whose host sets
        * `handBackWriteRepairQuestions` hands back, signed in or not, a question that asks no
-       * consent (`asksConsent`); a script's question and a takeover's rejoined one count as asking it. Nor once the build
-       * handed back `noAnswerHandBackLimit` questions.
+       * consent (`asksConsent`); a script's question and a takeover's rejoined one count as asking
+       * it. Nor once the build handed back `noAnswerHandBackLimit` questions.
        */
       const handsBackNoAnswer = (asksConsent = true) =>
         request.effect !== "ask" &&

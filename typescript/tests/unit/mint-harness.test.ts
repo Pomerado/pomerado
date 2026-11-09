@@ -5391,27 +5391,32 @@ it("ends a signed-in build as no_response when the minter's question goes unansw
   });
 });
 
-// A read repair can't write, so a host may let it hear no answer while signed in. The flag reaches
-// no write repair and no build.
+// A read repair can't write, so a host may let it hear no answer while signed in, a failure repair
+// or the owner's requested change alike. The flag reaches no write repair and no build.
 it("hands a signed-in read repair's unanswered question back when its host allows it", async () => {
   const signedIn = { websiteCredentialsAvailable: true, handBackSignedInReadRepair: true } as const;
-  const f = await fixture(
-    (turn) =>
-      Effect.gen(function* () {
-        expect(
-          JSON.parse(yield* turn.actions.requestInput(textQuestion("May the email be empty?"))),
-        ).toMatchObject({ status: "no_answer", userInputRequired: false });
-        expect(turn.isComplete()).toBe(false);
-        yield* turn.actions.execute(execution);
-        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
-          status: "published",
-        });
-      }),
+  for (const host of [
     signedIn,
-  );
-  const outcome = await f.run({ ...request, mode: "maintenance", effect: "read" });
-  expect(outcome).toMatchObject({ build: "published" });
-  expect(outcome).not.toHaveProperty("noResponse");
+    { ...signedIn, taskUpdateConfirmer: () => Effect.succeed("owner_request" as const) },
+  ]) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(
+            JSON.parse(yield* turn.actions.requestInput(textQuestion("May the email be empty?"))),
+          ).toMatchObject({ status: "no_answer", userInputRequired: false });
+          expect(turn.isComplete()).toBe(false);
+          yield* turn.actions.execute(execution);
+          expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+            status: "published",
+          });
+        }),
+      host,
+    );
+    const outcome = await f.run({ ...request, mode: "maintenance", effect: "read" });
+    expect(outcome).toMatchObject({ build: "published" });
+    expect(outcome).not.toHaveProperty("noResponse");
+  }
   for (const run of [
     { ...request, mode: "maintenance", effect: "write" },
     { ...request, effect: "read" },

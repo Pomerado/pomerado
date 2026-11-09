@@ -2833,20 +2833,22 @@ export interface MintDependencies {
    */
   readonly websiteLoginPreAuthorized?: true;
   /**
-   * A read repair hands an unanswered question back to the minter as no answer even while it is
-   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * A read repair (`mode` `maintenance` with effect read: a failure repair or the owner's requested
+   * change) hands an unanswered question back to the minter as no answer even while it is signed
+   * in or holds a login. A read repair can't write, and no answer is still never consent.
    * Every other rule for an unanswered question stands. Without it, any question left unanswered
    * while the build is signed in or holds a login ends the build as before. A core without it
    * ignores it.
    */
   readonly handBackSignedInReadRepair?: true;
   /**
-   * A write repair hands an unanswered request back to the minter as no answer, signed in or
+   * A write repair (`mode` `maintenance` with effect write: a failure repair or the owner's
+   * requested change) hands an unanswered request back to the minter as no answer, signed in or
    * not, when the minter marked it `asksConsent: false`, it holds no confirm or secret question,
    * and Guardian's question review allowed it under a rule that asks no consent
-   * (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the repair as before:
-   * no answer is never consent. Every other rule for an unanswered question stands. A core
-   * without it ignores it.
+   * (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
+   * repair as before: no answer is never consent. Every other rule for an unanswered question
+   * stands. A core without it ignores it.
    */
   readonly handBackWriteRepairQuestions?: true;
   /** See `MintTurn.autofillSignIn`. */
