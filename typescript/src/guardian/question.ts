@@ -62,9 +62,7 @@ export const questionNotNeededLabels: readonly QuestionReviewLabel[] = [
  */
 export const noConsentQuestionLabels: readonly QuestionReviewLabel[] = [
   "ambiguous_request",
-  "owner_information",
   "changes_output",
-  "unavailable_value",
   "navigation_help",
   "finding_choice",
 ];

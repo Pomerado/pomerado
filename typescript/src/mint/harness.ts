@@ -2729,7 +2729,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * signed in or holds a login, which acts as the account's owner, unless it is a read repair
        * whose host sets `handBackSignedInReadRepair`. A write repair whose host sets
        * `handBackWriteRepairQuestions` hands back, signed in or not, a question that asks no
-       * consent (`asksConsent`); a script's question counts as asking it. Nor once the build
+       * consent (`asksConsent`); a script's question and a takeover's rejoined one count as asking it. Nor once the build
        * handed back `noAnswerHandBackLimit` questions.
        */
       const handsBackNoAnswer = (asksConsent = true) =>
@@ -8204,10 +8204,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                                 return yield* Effect.fail(error);
                               // A rejoined question that went unanswered, such as one that expired
                               // before the takeover, goes on as the live question would have.
+                              // Guardian's reading of it is not kept, so it counts as asking
+                              // consent, which only a write repair reads.
                               const started = decodeAgentRequestJson(call.arguments);
                               return {
                                 result: yield* questionUnanswered(error, undefined, false, {
-                                  consent: started._tag === "Left" || asksConsent(started.right),
+                                  consent: true,
                                   recommended:
                                     started._tag === "Left" ? {} : recommendedAnswers(started.right),
                                 }),
