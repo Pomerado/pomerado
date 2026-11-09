@@ -1001,7 +1001,7 @@ declines what is not essential in one click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
 otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or
-terms the site asks you to accept, other than the notice below that every visitor accepts.
+terms the site asks you to accept, other than the notices below.
 
 A notice the site shows every visitor before it lets them use the page, such as a demo or
 test-environment warning, an age gate or a region notice, is page setup on a read. Prefer accepting
@@ -1009,6 +1009,12 @@ it with its own control the way you dismiss a cookie banner, waiting until the p
 usable, with no commit mark and without making the tool a write for it, even when accepting it
 sends a request. Prefer its close control when it has one. When the request is about that notice
 itself, accepting it is the write.
+
+An app-download, open-in-app or location-permission prompt is an obstacle, not a reason to stop.
+Dismiss it with its skip, close, "not now", "continue on the web" or "type address instead"
+control, in the tool's code only when it shows. When a path ends at an app-only wall, try the
+page's other routes, such as a web or delivery storefront on the site's own linked domain, before
+you decide the site has no web data.
 
 ## Safety defaults
 
@@ -1085,9 +1091,11 @@ belongs to the `authenticate` step (auth skill). A code the site sends later, to
 declare it as a `secret` question and ask it with `ask`, as the caller-input skill's
 `caller-code.ts` shows. A missing ordinary page
 control alone does not establish a human-verification challenge. Observe the
-current page state within the existing deadline. When a few distinct attempts have
-not found the way, ask the caller for directions with `request_input` before
-reporting a blocked or unknown state whose cause cannot be established. Completing a
+current page state within the existing deadline. Work out the way yourself first, from the
+site's menus, links, search and other pages. When a few distinct attempts have not found it and
+it seems impossible, or something looks wrong, ask the caller for directions or confirmation
+with `request_input` before reporting a blocked or unknown state whose cause cannot be
+established. Completing a
 challenge does not prove login.
 
 For a native dialog, the call that raises it keeps it on `globalThis.dialog` from a

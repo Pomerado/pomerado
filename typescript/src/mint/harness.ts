@@ -7340,6 +7340,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       yield* diagnose({ phase: "blocked", reason: "sign_in_unavailable" });
                       return endedForSignIn;
                     }
+                    // A temporary decline is the site's own refusal for now, so only
+                    // `site_declined` takes it, and the time it names is still ahead.
+                    const temporary = report.temporary === true || report.availableAt !== undefined;
+                    if (temporary && report.reason !== "site_declined")
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "temporary_not_declined",
+                        userInputRequired: false,
+                        instruction:
+                          "temporary and availableAt apply only to site_declined. Remove them, or use site_declined if the site itself turned the request away for now.",
+                      });
+                    if (
+                      report.availableAt !== undefined &&
+                      Date.parse(report.availableAt) <= (yield* Clock.currentTimeMillis)
+                    )
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "available_at_past",
+                        userInputRequired: false,
+                        instruction:
+                          "availableAt is not in the future. Give the next time the site says it takes the request, with its UTC offset, or leave availableAt out.",
+                      });
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, report.explanation),
                     );
@@ -7411,7 +7433,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       return endedForSignIn;
                     }
                     const submitted = { ...report, reason: ending.reason };
-                    const review = yield* reviewBlockedExplanation(explanation);
+                    const availableAt =
+                      submitted.reason === "site_declined" ? report.availableAt : undefined;
+                    // Guardian reviews the time beside the words, as the caller reads both.
+                    const review = yield* reviewBlockedExplanation(
+                      availableAt === undefined
+                        ? explanation
+                        : `${explanation}\nAvailable again at: ${availableAt}`,
+                    );
                     yield* active("publication");
                     if (review.outcome === "retry")
                       return reviewUnavailableAnswer(
@@ -7454,6 +7483,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const blocked = {
                       reason: submitted.reason,
                       ...(shown ? { explanation } : {}),
+                      ...(temporary && submitted.reason === "site_declined"
+                        ? { temporary: true as const }
+                        : {}),
+                      // Guardian reviewed the time with the words, so it shows only beside them.
+                      ...(shown && availableAt !== undefined ? { availableAt } : {}),
                     };
                     // A report that stood on refused live tests names them and the standing
                     // denial; the outcome keeps the denial's reason and category.

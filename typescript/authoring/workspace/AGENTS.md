@@ -267,8 +267,9 @@ whose answers come back to you while this attempt continues, when:
 2. a decision needs something only the user knows, such as which account, plan or item, and a
    wrong guess matters (a write or a sign-in), or a location a tool's results, prices or
    availability depend on, which the caller may skip (.agents/core/SKILL.md, the input schema);
-3. you are stuck navigating after a few distinct attempts: ask for directions ("Where do you
-   usually find X?") before giving up;
+3. you are stuck navigating after a few distinct attempts: work out the way yourself first,
+   from the site's menus, links, search and other pages, and ask for directions ("Where do you
+   usually find X?") or confirmation only when it seems impossible or something looks wrong;
 4. sign-in offers a branch, such as mutually exclusive account or plan types, or which code
    channel to use when there is no password (.agents/auth/SKILL.md), that the request and
    business input do not name or clearly imply: never guess it or take the site's preselected
@@ -640,9 +641,17 @@ never with final text, which the host treats as unfinished work:
   invent a value or substitute a different field. After a verified write, when the site does
   not offer one output the request asks for, or has no field for one input the request marks
   optional and the input the write session ran leaves unset, the writes skill's ask whether to
-  publish without it comes first.
+  publish without it comes first. When the site offers a clear alternative for the same goal,
+  such as ordering for later instead of now or delivery instead of pickup, ask the user with
+  `request_input` whether to use it before you report this. An app-download or location prompt
+  in the way is no such evidence (core skill, "Cookie banners").
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
-  such as an applicant it will not quote. Name the reason the site gave in `explanation`.
+  such as an applicant it will not quote. Name the reason the site gave in `explanation`. A
+  decline can be temporary: the site turns the request away now but would take it later, such as
+  a store that is closed or a menu offered only as a preorder. When the site offers an
+  alternative that works now, such as a preorder or a later time, you can use it, asking the
+  caller first when it changes what they asked for. Otherwise set `temporary`, and `availableAt`
+  when the site says when it takes the request again.
 - `site_unavailable`: the site is temporarily down for the failing input: its own pages show a
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
@@ -715,7 +724,9 @@ its example's record proves the tool on another record first ("Reads, writes and
 maintenance, follow the intake screen instead.
 
 Give the evidence in `intent` and a plain one- or two-sentence `explanation` for the caller,
-in your own words: Guardian reviews it first. When it passes on a website's instructions, links or
+in your own words: what happened and why in this build, such as the reason the site gave or when
+it says it takes the request again. The caller reads it after the host's standard message for
+the ending. Guardian reviews it first. When it passes on a website's instructions, links or
 phone numbers, Guardian returns it with a rationale and the build goes on: revise it and report
 again, or withdraw it and continue.
 Never end blocked for anything you can still work on or ask about: a failed execution, review
