@@ -148,3 +148,122 @@ it("applies nothing when the host refuses, so a takeover restores the task as it
   expect(snapshots[0]?.answeredQuestions).toHaveLength(1);
 });
 
+
+it("restores a write build lowered to a read as a read after a takeover", async () => {
+  const writeFixture = makeMintHarnessFixture(
+    cleanup,
+    { ...request, effect: "write" },
+    portableJobSession,
+  );
+  const toRead = {
+    summary: "Only read the notes; never save one.",
+    changes: [{ setting: "effect", effect: "read" }],
+    confirmedBy: ["effect"],
+    recommend: "update",
+  };
+  const effectQuestion = {
+    questions: [
+      {
+        id: "effect",
+        type: "choice" as const,
+        prompt: "Read the notes, or save one?",
+        options: [
+          { id: "read", label: "Only read the notes" },
+          { id: "write", label: "Save a note" },
+        ],
+      },
+    ],
+  };
+  let stored: unknown;
+  const first = await writeFixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.requestInput(effectQuestion);
+        const updated = JSON.parse(yield* turn.actions.updateTask!(toRead));
+        expect(updated).toMatchObject({ status: "updated", task: { effect: "read" } });
+      }),
+    {
+      askInput: () => Effect.succeed({ effect: { type: "choice", value: "read" } }),
+      reviewTaskUpdate: allowing([]),
+      lowersEffect: true,
+      applyTaskUpdate: (application) =>
+        Effect.sync(() => {
+          stored = JSON.parse(JSON.stringify(application.harness));
+          return { outcome: "applied" as const };
+        }),
+    },
+  );
+  await first.run();
+  const harness = Schema.decodeUnknownSync(MintHarnessSnapshot)(stored);
+  const results: Record<string, unknown>[] = [];
+  const second = await writeFixture(
+    (turn) =>
+      Effect.gen(function* () {
+        results.push(JSON.parse(yield* turn.actions.updateTask!(toRead)));
+      }),
+    {
+      agentRecovery: { initial: { agent, harness }, save: () => Effect.void },
+      reviewTaskUpdate: allowing([]),
+      lowersEffect: true,
+      applyTaskUpdate: () => Effect.succeed({ outcome: "applied" as const }),
+    },
+  );
+  await second.run();
+  expect(results[0]).toMatchObject({ status: "updated", task: { revision: 1, effect: "read" } });
+});
+
+it("keeps a write build a write once live execution closed before a takeover", async () => {
+  const writeFixture = makeMintHarnessFixture(
+    cleanup,
+    { ...request, effect: "write" },
+    portableJobSession,
+  );
+  let stored: unknown;
+  const first = await writeFixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.requestInput(question);
+        yield* turn.actions.updateTask!(toNovemberTwo);
+      }),
+    {
+      askInput: () => Effect.succeed({ day: { type: "text", value: "November 2 instead" } }),
+      reviewTaskUpdate: allowing([]),
+      applyTaskUpdate: (application) =>
+        Effect.sync(() => {
+          stored = JSON.parse(JSON.stringify(application.harness));
+          return { outcome: "applied" as const };
+        }),
+    },
+  );
+  await first.run();
+  const harness = Schema.decodeUnknownSync(MintHarnessSnapshot)({
+    ...(stored as object),
+    executionClosed: true,
+  });
+  const reviews: TaskUpdateCandidate[] = [];
+  const results: Record<string, unknown>[] = [];
+  const second = await writeFixture(
+    (turn) =>
+      Effect.gen(function* () {
+        results.push(
+          JSON.parse(
+            yield* turn.actions.updateTask!({
+              summary: "Only read the notes; never save one.",
+              changes: [{ setting: "effect", effect: "read" }],
+              confirmedBy: ["day"],
+              recommend: "update",
+            }),
+          ),
+        );
+      }),
+    {
+      agentRecovery: { initial: { agent, harness }, save: () => Effect.void },
+      reviewTaskUpdate: allowing(reviews),
+      lowersEffect: true,
+      applyTaskUpdate: () => Effect.succeed({ outcome: "applied" as const }),
+    },
+  );
+  await second.run();
+  expect(results[0]).toMatchObject({ status: "update_refused", reason: "no_live_example_left" });
+  expect(reviews).toEqual([]);
+});

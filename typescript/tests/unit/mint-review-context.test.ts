@@ -125,6 +125,20 @@ describe("allowedEffectsFor", () => {
 });
 
 describe("mintReviewContext", () => {
+  // Guardian judges a setup step by what it sends, so the review must see which step claims it.
+  it("gives Guardian the recorded write path with its setup steps", async () => {
+    const { host } = fakeHost();
+    const path = {
+      steps: [
+        { commit: "open-cart", does: "starts the site's empty cart", setup: true as const },
+        { commit: "add-items", does: "adds the requested items" },
+      ],
+      ends: "The cart's priced items",
+    };
+    const reviewed = await context({ ...host, writePath: () => path }, live("act"));
+    expect(reviewed.writePath).toEqual(path);
+  });
+
   it("gives Guardian the page the host last observed", async () => {
     const { state, host } = fakeHost();
     const pages: unknown[] = [];

@@ -397,8 +397,8 @@ read-back can confirm follows the writes skill's rule for an unverifiable write.
 **Change the task with `mint_update`.** An answer changes nothing by itself. When the caller
 confirms a change to the task, call `mint_update` with it: changed input values, dates or
 options; a requirement, constraint or prerequisite added, dropped or revised (a check before
-the action the site does not offer); the purpose; a read becoming a write; the target site; or
-the login. Ask with `request_input` first unless the request already settles the change, then
+the action the site does not offer); the purpose; a read becoming a write, or a write build that has
+sent no write becoming a read; the target site; or the login. Ask with `request_input` first unless the request already settles the change, then
 name the answered questions in `confirmedBy`. The caller's pick of an option you wrote confirms
 what that option says, and so do their own words. Guardian reviews the update and the host
 applies it; after `updated`, every later step and the published tool follow the effective

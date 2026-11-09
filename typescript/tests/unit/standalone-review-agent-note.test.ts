@@ -99,3 +99,53 @@ it("sends the agent's note on a step to its review with private values redacted"
   expect(note).toMatch(/^Read the account page for .+ to find the plan name\.$/u);
   expect(note).not.toContain("member-7731");
 });
+
+// Guardian judges a setup step by what it sends, so the local host must show which step claims it.
+it("sends a write path's setup steps to the act step's review", async () => {
+  const { requests, provider } = allowing();
+  const secrets = makeRunSecrets();
+  const session = {
+    options: { ask: () => Effect.die("unused"), guardianProvider: provider },
+    policy: "{{ tenant_policy_config }}",
+    secrets,
+    trustedSources: new Map(await Effect.runPromise(localRuntimeAssets)),
+    projection: {
+      text: (value: string) => Effect.sync(() => secrets.redact(value)),
+      json: (value: unknown) => Effect.succeed(value),
+      source: (_path: string, value: string) => Effect.succeed(value),
+    },
+    browser: { execute: () => Effect.void },
+  } as unknown as StandaloneSession;
+  const writePath = {
+    steps: [
+      { commit: "open-cart", does: "starts the site's empty cart", setup: true as const },
+      { commit: "add-items", does: "adds the requested items" },
+    ],
+    ends: "The cart's priced items",
+  };
+  await Effect.runPromise(
+    requestContext(session, {
+      intent: "Put the requested items in the cart and read its prices",
+      url: "https://shop.example.test/",
+      effect: "write",
+    }).pipe(
+      Effect.flatMap((context) =>
+        context.review({
+          entrypoint: "operation/src/tool.mjs",
+          sources: new Map([["operation/src/tool.mjs", "await page.textContent('main');\n"]]),
+          input: {},
+          currentExecution: { purpose: "act", target: "liveBrowser" },
+          writePath,
+        }),
+      ),
+    ),
+  );
+  const input = requests[0]?.input;
+  const items = Array.isArray(input) ? input : [{ role: "user", content: input }];
+  const request = items.flatMap((item) =>
+    "role" in item && item.role === "user" && typeof item.content === "string"
+      ? [JSON.parse(item.content) as { submitted_call: { writePath?: unknown } }]
+      : [],
+  )[0];
+  expect(request?.submitted_call.writePath).toEqual(writePath);
+});
