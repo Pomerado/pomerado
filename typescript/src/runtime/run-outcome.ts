@@ -461,6 +461,7 @@ export const runOutcomeCodes = [
   "credentials_rejected",
   "input_rejected",
   "input_not_applied",
+  "handoff_state_changed",
   "login_identity_conflict",
   "website_sign_in_unavailable",
   "worker_lost",
@@ -476,6 +477,7 @@ export const runOutcomeRetry: { readonly [Code in RunOutcomeCode]: RunRetryClass
   credentials_rejected: "fix_input",
   input_rejected: "fix_input",
   input_not_applied: "same_key",
+  handoff_state_changed: "new_key",
   login_identity_conflict: "fix_input",
   website_sign_in_unavailable: "same_key",
   worker_lost: "same_key",
@@ -593,6 +595,9 @@ export const runError = (view: RunEvidence): RunFailure => {
             }),
       });
     }
+    // The page changed while a person held the browser; a write may have been submitted then.
+    case "handoff_state_changed":
+      return failure("handoff_state_changed", { possible_commit: possibleCommit(view) });
     case "login_identity_conflict":
       return failure("login_identity_conflict", {});
     case "login_check_unavailable":
