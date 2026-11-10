@@ -19,9 +19,11 @@ export {
 } from "../runtime/operation.js";
 export { OperationFailure, operationErrors } from "../runtime/kernel-operation.js";
 export type {
+  HandOffId,
   KernelOperationContext,
   ScriptAsk,
   ScriptAskOne,
+  ScriptHandOff,
 } from "../runtime/kernel-operation.js";
 export type { Operation, WriteDeclaration } from "../runtime/operation.js";
 export { runSupportedVariant, VariantSelectionFailed } from "../runtime/variants.js";
@@ -31,6 +33,8 @@ export type { WebsiteCredentials } from "../runtime/authentication.js";
 export { ChallengeFailure } from "../runtime/challenge.js";
 export { ScriptInput, ScriptInputFailure, makeScriptInput } from "../runtime/script-input.js";
 export type {
+  HandoffDone,
+  ScriptAskHooks,
   ScriptAnswer,
   ScriptOption,
   ScriptQuestionDeclaration,

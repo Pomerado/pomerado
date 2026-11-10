@@ -417,6 +417,11 @@ export interface PendingExecution {
    */
   readonly writeAuthority?: boolean;
   /**
+   * Execution reviews only: the most a card-fill step that names slots may pay, when the host that
+   * fills the caller's payment method has one. Absent, the review checks no limit.
+   */
+  readonly paymentLimit?: { readonly amount: string; readonly currency: string };
+  /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.
    * Protected answers (secrets and logins) and a read-or-write choice are left out.

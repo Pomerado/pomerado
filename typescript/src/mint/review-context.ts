@@ -96,7 +96,7 @@ const signInAllowedEffect =
  * checkout, which submits nothing by itself.
  */
 const cardFillAllowedEffect =
-  "Typing the caller's payment card into the card fields of the site's own checkout, for the booking or purchase the caller asked for: the host types the card answers the caller gave privately and clicks nothing. Nothing on the site is submitted, booked or bought by this step.";
+  "Filling the caller's payment card or payment method into the card fields of the site's own checkout, for the booking or purchase the caller asked for: the host types the card answers the caller gave privately and clicks nothing. Nothing on the site is submitted, booked or bought by this step.";
 
 const offlineAllowedEffect =
   "Offline local files, source checks and computation only. No live website, credentials or network.";

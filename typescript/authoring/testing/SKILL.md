@@ -73,7 +73,8 @@ preferably a made-up key for an input that takes a record's own id, key or URL, 
 filter the site has no results for, as a read signed out runs it (below). The host enforces
 it: a batch or `testInput` that would add a fifth input is refused as `limit` and runs nothing.
 Running an input that already ran again, after a fix or on `src/tool-http.mjs`, is free, so
-merge inputs into those cases rather than adding a case. The host runs them on the build's
+merge inputs into those cases rather than adding a case, and run every case you ran on
+`src/tool.mjs` on `src/tool-http.mjs` too. The host runs them on the build's
 own signed-in browser, one at a time and warm, never on a new browser. Each case stays a read
 under the signed-in session rules that already apply to the example: it saves no record, view or
 setting, and a filter the site saves with a view or setting goes through the page's own row query
