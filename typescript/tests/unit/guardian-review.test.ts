@@ -688,6 +688,9 @@ describe("OpenAI reviewer policy and trusted authority", () => {
         policy.split("\n").find((line) => line.startsWith("Classify actual website effects")) ??
         "";
       expect(writeRule).toContain(`${anchor} ${sentence} `);
+      expect(writeRule).toContain(
+        `${sentence} Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. In a signed-out session,`,
+      );
     }
     // The action label agrees, beside its pointer to the signed-out session state.
     const input = modelInput(requests) as { trusted_review: { policy: string } };
