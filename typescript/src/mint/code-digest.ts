@@ -122,6 +122,17 @@ const codeOf = (node: unknown): unknown => {
   );
 };
 
+/**
+ * A literal's value as JSON can hold it: a BigInt by its digits, a regular expression by its
+ * source and flags, which `JSON.stringify` would throw on or write as `{}`.
+ */
+const literalValue = (_key: string, value: unknown): unknown =>
+  typeof value === "bigint"
+    ? `${value.toString()}n`
+    : value instanceof RegExp
+      ? `/${value.source}/${value.flags}`
+      : value;
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /**
@@ -138,11 +149,11 @@ export const fileCodeDigest = (path: string, source: string): string => {
   });
   if (parsed.errors.length > 0) return `text:${sha256(source)}`;
   try {
-    return `code:${sha256(JSON.stringify(codeOf(parsed.program)))}`;
-  } catch (error) {
-    // A syntax tree too deep for the walk's stack keeps the whole text's digest.
-    if (error instanceof RangeError) return `text:${sha256(source)}`;
-    throw error;
+    return `code:${sha256(JSON.stringify(codeOf(parsed.program), literalValue))}`;
+  } catch {
+    // A syntax tree the walk cannot serialize, such as one too deep for its stack, keeps the
+    // whole text's digest, which still changes with every edit.
+    return `text:${sha256(source)}`;
   }
 };
 
