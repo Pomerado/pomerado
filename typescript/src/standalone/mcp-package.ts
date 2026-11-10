@@ -73,7 +73,11 @@ export const prepareIntegration = (options: {
           ? Effect.void
           : localPromise(() => rm(directory, { recursive: true, force: true })).pipe(Effect.orDie),
     );
-    return (artifact: MintArtifact) =>
+    /**
+     * Writes the integration. `effect` is the effect the build published with, which a confirmed
+     * task update may have changed from the request's; the integration serves that one.
+     */
+    return (artifact: MintArtifact, effect?: "read" | "write") =>
       Effect.gen(function* () {
         yield* Effect.try({
           try: () => {
@@ -94,10 +98,14 @@ export const prepareIntegration = (options: {
             ...(artifact.signIn?.authenticationOrigins ?? []),
           ]),
         ];
-        const deployed =
-          origins.length === 0
-            ? deployment
-            : { ...deployment, request: { ...deployment.request, authenticationOrigins: origins } };
+        const deployed = {
+          ...deployment,
+          request: {
+            ...deployment.request,
+            effect: effect ?? deployment.request.effect,
+            ...(origins.length === 0 ? {} : { authenticationOrigins: origins }),
+          },
+        };
         const workspace = yield* createLocalWorkspace({ root: directory });
         const launcherPath = join(directory, "mcp.mjs");
         const configPath = join(directory, "mcp.json");

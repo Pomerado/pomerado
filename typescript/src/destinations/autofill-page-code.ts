@@ -428,12 +428,30 @@ const allEmptied = async () => {
   return true;
 };`;
 
+/** The most of a covering element's own controls page code reads (`CoveringElement.controls`). */
+export const coveringControlsLimit = 5;
+/**
+ * The longest name of a covering element's control page code reads. A longer name is left out
+ * whole, never cut: a cut could keep the start of a typed value that screening for the whole value
+ * misses.
+ */
+export const coveringControlNameLimit = 120;
+
 /**
  * Page code: the element at the centre of `element`, a submit whose click failed, when it is
  * neither the submit, inside it nor around it: the outermost element over the submit that holds it,
  * as a notice holds its own buttons, by its tag and role attribute, each cut short, never anything
- * else of it (`coveringElement` keeps those on its lists). Null when the submit has no box or
- * nothing else sits over it.
+ * else of it (`coveringElement` keeps those on its lists), and its own buttons and links a person
+ * sees, in page order and then its open shadow roots', at most `coveringControlsLimit`, each by
+ * role and accessible name (`accessibleNames`), as the page has it: a name longer than
+ * `coveringControlNameLimit` is left out, and a control with no name comes with an empty name as
+ * `iconOnly`. Over the limit, those and controls named close, dismiss, reject, decline or accept
+ * are kept first, still in page order. Null when the submit has no box or nothing else sits over it.
+ *
+ * A modal dialog a person sees (`dialog[open]`, the `dialog` or `alertdialog` role, or
+ * `aria-modal="true"`) that is that element or sits in it, as beside an empty overlay in the same
+ * portal, makes the role `dialog`, or `alertdialog` for that role, and its own controls the ones
+ * read.
  */
 const coveringCode = `(element) => {
   const box = element.getBoundingClientRect();
@@ -452,7 +470,34 @@ const coveringCode = `(element) => {
   const page = [element.ownerDocument.body, element.ownerDocument.documentElement];
   while (cover.parentElement !== null && !page.includes(cover.parentElement) && !cover.parentElement.contains(element))
     cover = cover.parentElement;
-  return { tag: String(cover.tagName).slice(0, 40), role: cover.getAttribute("role")?.slice(0, 40) ?? null };
+  const shown = (node) => {
+    const area = node.getBoundingClientRect();
+    return area.width > 0 && area.height > 0 && node.checkVisibility({ visibilityProperty: true });
+  };
+  const modals = 'dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]';
+  const modal = [cover, ...cover.querySelectorAll(modals)].find((node) => node.matches(modals) && shown(node)) ?? null;
+  const name = (${String(accessibleNames)})();
+  const found = [];
+  const roots = [modal ?? cover];
+  for (const scope of roots) {
+    for (const control of scope.querySelectorAll("*")) {
+      if (control.shadowRoot !== null) roots.push(control.shadowRoot);
+      if (!control.matches('button, a[href], input[type="button"], input[type="submit"], [role~="button"], [role~="link"]')) continue;
+      if (!shown(control)) continue;
+      let named = null;
+      try {
+        named = name(control);
+      } catch {}
+      if (typeof named !== "string" || named.length > ${coveringControlNameLimit}) continue;
+      const own = (control.getAttribute("role") ?? "").trim().split(/\\s+/)[0];
+      const kind = own === "link" || (own !== "button" && control.localName === "a") ? "link" : "button";
+      found.push(named.trim() === "" ? { role: kind, name: "", iconOnly: true } : { role: kind, name: named });
+    }
+  }
+  const first = (control) => control.iconOnly === true || /\\b(?:close|dismiss|reject|decline|accept)\\b/i.test(control.name);
+  const kept = new Set([...found.filter(first), ...found.filter((control) => !first(control))].slice(0, ${coveringControlsLimit}));
+  const role = modal === null ? cover.getAttribute("role")?.slice(0, 40) ?? null : modal.matches('[role~="alertdialog"]') ? "alertdialog" : "dialog";
+  return { tag: String(cover.tagName).slice(0, 40), role, controls: found.filter((control) => kept.has(control)) };
 }`;
 
 /**

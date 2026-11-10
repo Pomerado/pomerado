@@ -7,6 +7,7 @@ const runnerErrorCodes = [
   "InputNotApplied",
   // An older runtime's name for the same refusal.
   "LocationNotApplied",
+  "HandoffStateChanged",
   "InvalidOutput",
   "BrowserFailure",
   "DeadlineExceeded",

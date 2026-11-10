@@ -136,6 +136,8 @@ interface ReviewedQuestion {
   readonly followUp?: { readonly prompt: string; readonly defaultText?: string };
   readonly secretKind?: SecretKind;
   readonly fields?: "username_password" | "password";
+  /** A browser hand-off's operation inputs the host may show beside the browser, by name. */
+  readonly show_inputs?: readonly string[];
 }
 
 /** One proposed input request, reviewed as a whole. Its questions are shown together. */
@@ -272,6 +274,9 @@ export const questionForReview = <E>(
             return { ...base, fields: question.fields };
           case "text":
             return base;
+          // Input names are the contract's identifiers, never caller text: nothing to screen.
+          case "browser_handoff":
+            return { ...base, show_inputs: question.show_inputs };
         }
       }),
     );
@@ -342,8 +347,8 @@ export type AnsweredQuestion = typeof AnsweredQuestion.Type;
 /**
  * The answers to one request as Guardian sees them, each under its question's id, screening every
  * string through `screen`; an id is the request's own key, never caller text. Protected answers
- * (`isProtectedQuestion`: secrets and logins) never appear, not even their prompts. Every other
- * answer does, a confirm beside a notice included.
+ * (`isProtectedQuestion`: secrets, logins and browser hand-offs) never appear, not even their
+ * prompts. Every other answer does, a confirm beside a notice included.
  */
 export const answersForReview = <E>(
   request: Pick<InputRequest, "notice" | "questions">,

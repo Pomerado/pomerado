@@ -3,6 +3,7 @@ import {
   InputRequest,
   InputRequestFailure,
   InputSuperseded,
+  inputWaitMs,
   validateAnswer,
 } from "../runtime/input-request.js";
 import type { InputAnswers, InputAsker } from "../runtime/input-request.js";
@@ -17,6 +18,16 @@ export const makeInputAsker =
       const checked = yield* Schema.decodeUnknown(InputRequest)(request).pipe(
         Effect.mapError((cause) => new InputRequestFailure({ code: "Invalid", cause })),
       );
+      // The request opens to its caller here, once the callback has it; a source's end, else the
+      // request's own bound (`inputWaitMs`), is its deadline.
+      if (bounds?.opened !== undefined) {
+        const now = yield* Clock.currentTimeMillis;
+        yield* bounds.opened({
+          requestId: checked.id,
+          expiresAt: new Date(bounds.sourceEndsAt ?? now + inputWaitMs(checked)).toISOString(),
+          rejoined: false,
+        });
+      }
       const collect = answer(checked).pipe(
         Effect.flatMap((value) => {
           const valid = validateAnswer(checked, value);

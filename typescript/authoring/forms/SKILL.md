@@ -170,7 +170,8 @@ skill) to close the banner before the action, and one that opens later.
 
 Decide whether each pop-up, banner or interstitial is conditional or always triggered. A
 conditional one shows only for some accounts, states or visits, such as a cookie banner, a
-one-time promotion or a membership upsell shown only to non-members: name its close control as
+one-time promotion, an app-download or location prompt, or a membership upsell shown only to
+non-members: name its close control as
 `dismiss` of `waitForReady` (core skill), which closes it whenever it opens, rather than checking
 for it at one point. Never wait for it or require it. One the page always opens in answer to an action,
 such as a confirmation dialog a button always opens, may be expected, and the script accepts it

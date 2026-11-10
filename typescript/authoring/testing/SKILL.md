@@ -99,6 +99,8 @@ little time. Root some cases in the inputs and some in your own code, as below. 
 - the example's own input once more, which a host with several browsers runs cold, first on a
   new browser with an empty profile: the proof that the tool works for a caller the site
   remembers nothing about, with no location, store or filter left from your exploration;
+- when the example runs in place of a caller's input the tool refused, that input, expecting
+  `invalid_input`;
 - one query or filter with no results (`empty`, never a throw). Run it once and see what the
   site shows before you write its expectation: some sites answer it with a fallback grid or a
   "no exact matches" view rather than an empty list. When the tool takes a free-text input, one
@@ -185,7 +187,7 @@ case, use real values the site offers, which you saw while
 exploring: listed options, places, dates, counts, records and retailers the site lists. Never use
 a person's or account's name, number or code, or a private record's, such as an order number,
 and never the caller's own values beyond
-the example's input. List under `notTested` anything the tool claims that you chose not to test,
+the caller's input and the example's. List under `notTested` anything the tool claims that you chose not to test,
 with why. A choice the request, the caller or the owner declined is not part of the tool (core
 skill), so it is never tested.
 
@@ -291,8 +293,9 @@ When the host offers no `live_tests`, a read runs its cases one input at a time 
 purpose `test`, target `liveBrowser`, with `testInput`, the tool's input as JSON text; the host
 may limit how many. A signed-in read's inputs there count toward the same four.<!-- pomerado:section testing.http-cases -->
 
-The example uses the caller's input, or your `exampleInput` when that input is empty, and offline
-tests always use the caller's input. If a test shows the schema must widen, widen it in source;
+The example uses the caller's input, or your `exampleInput` when that input is empty or, once the
+tool refused the caller's input with `InvalidInput`, in its place (`AGENTS.md`, "Reads, writes and
+examples"), and offline tests always use the caller's input. If a test shows the schema must widen, widen it in source;
 publication reads the schemas from current source, and only a changed flow needs a fresh example
 (publication skill).<!-- pomerado:section testing.offline-fixtures -->
 

@@ -251,6 +251,45 @@ const screenGoneUnsent = <E extends YieldableError, V extends string, L extends 
     return true;
   });
 
+/**
+ * A screen of email or username fields whose recorded submit went once they were typed, with
+ * nothing sent, as a site that turns its Continue into its single sign-on control once it knows
+ * the login does: the step takes Enter in its last field in place of that submit, which sends the
+ * field's form, as a step with a submit key does. The host refuses a field in no form, and the
+ * screen then waits as one gone (`screenGoneUnsent`). Enter spends the replay's one such wait, so
+ * the step takes it at most once, and a press that fails ends the screen with its own failure.
+ */
+const submitGoneAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  recorded: SignInRecipeStep,
+  step: AutofillStep,
+  failed: string,
+) =>
+  Effect.gen(function* () {
+    if (
+      failed !== "submit_refused" ||
+      step.submit === undefined ||
+      replay.progress.anythingSent ||
+      replay.sent.maySent.size > 0 ||
+      step.fields.length === 0 ||
+      !step.fields.every((field) => field.slot === "email" || field.slot === "username")
+    )
+      return undefined;
+    const here = yield* input.hooks.inspect(step);
+    if (!("outcome" in here) || here.reason !== "not_found" || here.target !== "submit")
+      return undefined;
+    const { submit: _gone, submitVia: _via, ...rest } = step;
+    const keyed: AutofillStep = { ...rest, submitKey: "Enter" };
+    const inspection = yield* input.hooks.inspect(keyed);
+    if ("outcome" in inspection) return undefined;
+    if ((yield* admitScreen(input, replay, recorded, inspection.page)) !== undefined)
+      return undefined;
+    replay.progress.screenGone = true;
+    yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });
+    return shownScreen(keyed, inspection);
+  });
+
 /** Fill only a recorded screen whose live controls and origin passed inspection. */
 const runScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -263,8 +302,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
     const inspected = yield* inspectRecordedScreen(input, replay, recorded, until, later);
     if (typeof inspected === "string" || "outcome" in inspected || "codeScreenMissing" in inspected)
       return inspected;
-    const { step } = inspected;
-    let { inspection } = inspected;
+    let { step, inspection } = inspected;
     // The screen is shown and needs the login: a value-free replay stops before anything is sent.
     if (replay.valueFree && (recorded.approval !== undefined || step.fields.length > 0))
       return replay.outcome(valuesNeeded);
@@ -345,6 +383,11 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
         recorded.refills,
       );
       if (failed === undefined) break;
+      const keyed = yield* submitGoneAfterTyping(input, replay, recorded, step, failed);
+      if (keyed !== undefined) {
+        ({ step, inspection } = keyed);
+        continue;
+      }
       // A fieldless step whose submit the page kept disabled through the host's wait typed and
       // clicked nothing, so it waits for its screen again within the screen's own wait, as it
       // did while the host refused a disabled submit, and so does a fill whose screen went with
