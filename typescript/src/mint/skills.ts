@@ -74,8 +74,8 @@ const catalog = [
   {
     name: "caller-input",
     description:
-      "Read before settling any tool's inputs and errors: what the input schema holds, the rules checked before touching the site, InvalidInput versus InputNotApplied, and asking the run's caller mid-run for what only they know",
-    references: ["caller-choice.ts", "caller-code.ts"],
+      "Read before settling any tool's inputs and errors: what the input schema holds, the rules checked before touching the site, InvalidInput versus InputNotApplied, and asking the run's caller mid-run for what only they know or handing the browser to a person when the request asks for it",
+    references: ["caller-choice.ts", "caller-code.ts", "browser-handoff.ts"],
   },
   {
     name: "publication",

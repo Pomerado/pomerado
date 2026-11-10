@@ -36,6 +36,11 @@ const keepsBounds: Readonly<
     question.type === "secret" &&
     question.secretKind === declaration.secretKind &&
     question.maxLength === declaration.maxLength,
+  // The inputs shown beside the browser are the declared ones, in the declared order.
+  browser_handoff: (question, declaration) =>
+    declaration.type === "browser_handoff" &&
+    question.type === "browser_handoff" &&
+    JSON.stringify(question.show_inputs) === JSON.stringify(declaration.show_inputs ?? []),
   // The page's label is the prompt, so only its length is checked. It is a text question or a
   // choice the caller answers from the page's options alone, never another kind.
   site_field: (question, declaration) =>

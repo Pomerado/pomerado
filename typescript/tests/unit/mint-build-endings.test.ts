@@ -14,6 +14,7 @@ import { fileHandleRefusal } from "../../src/mint/file-handles.js";
 import { fileReadbackRefusal } from "../../src/mint/file-readback.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure } from "../../src/mint/sign-in-failure.js";
+import { mintSessionSignInFailure, SessionSignInFailed } from "../../src/standalone/session-sign-in.js";
 import { portableMintProjection } from "../support/portable-mint.js";
 
 /*
@@ -543,7 +544,7 @@ const oneTimeLoginUrl = new MintFailure({
   code: "PublicationUnavailable",
   reason: "login_url_one_time",
 });
-/** Advice the host gives once: finishing again, or passing httpVersion, publishes the read. */
+/** An ask the minter always settles: a passing live test of the HTTP version, or httpVersion. */
 const httpUntested = new MintFailure({
   code: "PublicationUnavailable",
   reason: "http_implementation_untested",
@@ -1021,6 +1022,13 @@ const noMatchUntested = new MintFailure({
   reason: "no_match_case_untested" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: noMatchRationale },
 });
+const listLimitRationale =
+  "Add live test cases that set limit below and above the default page, run them on each version, then call finish_build again.";
+const listLimitUntested = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "list_limit_untested" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: listLimitRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1040,6 +1048,11 @@ it.each([
   {
     refusal: noMatchUntested,
     step: { refusalRationale: noMatchRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: listLimitUntested,
+    step: { refusalRationale: listLimitRationale },
     absent: "refusalInstruction",
   },
 ])(
@@ -1734,11 +1747,12 @@ const declinedExample = {
 
 /**
  * A build that signs in through `steps`, one authenticate each, then sends `report`. A step that is
- * a failure fails its authenticate before its dispatch fence, and `{ afterFence }` fails it past
- * the fence.
+ * a failure fails its authenticate before its dispatch fence, `{ afterFence }` fails it past the
+ * fence, `{ request }` sends that request in place of the authenticate, and a function gives the
+ * step's result when the step runs.
  */
 const signInThenDecline = (
-  steps: readonly (object | MintFailure)[],
+  steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
   report: {
     readonly reason: string;
@@ -1750,12 +1764,15 @@ const signInThenDecline = (
   return fixture(
     (_request, index) =>
       [
-        ...steps.map((_, step) => call("execute", authenticate, `sign_in_${step}`)),
+        ...steps.map((next, step) =>
+          call("execute", "request" in next ? next.request : authenticate, `sign_in_${step}`),
+        ),
         call("report_blocked", report),
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
-        const step = steps[executions++] ?? submittedScreen;
+        const next = steps[executions++] ?? submittedScreen;
+        const step = typeof next === "function" ? next() : next;
         if (step instanceof MintFailure) return Effect.fail(step);
         const dispatched = beforeDispatch({ reviewId: "review_sign_in", action: "authentication" });
         return "afterFence" in step && step.afterFence instanceof MintFailure
@@ -1841,6 +1858,65 @@ it.each([
     });
   },
 );
+
+// A sign-in that confirmed still stands when a later sign-in goes unchecked, so the site gap the
+// build then reports keeps its own reason, until something shows the site signed out: a signed-in
+// check that did not confirm, a session the host saw lost, a step whose automatic sign-in failed,
+// or a browser the host replaced, which starts on a new, empty profile.
+let browserReplaced = false;
+it.each([
+  { after: "nothing else", steps: [submittedScreen], ends: { blocked: { reason: "site_lacks_capability" } } },
+  {
+    after: "a failed signed-in check",
+    steps: [signInCheck("failed"), submittedScreen],
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a session the host saw lost",
+    steps: [submittedScreen],
+    overrides: { signInSessionLoss: () => "session_not_kept" as const },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "an explore whose automatic sign-in failed",
+    steps: [
+      {
+        request: { ...authenticate, purpose: "explore" },
+        afterFence: mintSessionSignInFailure(
+          new SessionSignInFailed({
+            refusal: "session_sign_in_failed",
+            trigger: "signed_out_mid_operation",
+            reason: "replay_failed",
+          }),
+        ),
+      },
+      submittedScreen,
+    ],
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a browser the host replaced",
+    steps: [
+      () => {
+        browserReplaced = true;
+        return submittedScreen;
+      },
+    ],
+    overrides: {
+      entryNavigation: () =>
+        browserReplaced ? { state: "replaced" as const, reason: "recovery" } : undefined,
+    },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+])("decides a site_lacks_capability report after a confirmed sign-in, $after and an unchecked one", async (row) => {
+  browserReplaced = false;
+  const f = await signInThenDecline(
+    [submittedScreen, signInCheck("authenticated"), ...row.steps],
+    row.overrides,
+    { reason: "site_lacks_capability", explanation: "The signed-in pages offer no way to do this." },
+  );
+  expect(await f.run()).toMatchObject(row.ends);
+});
 
 // A report rewritten to sign-in unavailable still says why the build stopped. Its caller reads the
 // minter's explanation only after the pipeline a blocked explanation takes: the login's secrets

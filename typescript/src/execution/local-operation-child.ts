@@ -90,6 +90,8 @@ const authoredFrame = (error: unknown): string | undefined => {
   return undefined;
 };
 const replies = new Map<string, (result: Effect.Effect<unknown, Error>) => void>();
+/** What to tell when the host says a request it is still answering opened to its caller. */
+const openings = new Map<string, () => void>();
 const send = (message: unknown) =>
   Effect.try({
     try: () => {
@@ -103,10 +105,11 @@ const send = (message: unknown) =>
     },
     catch: localError,
   });
-const call = (payload: object) =>
+const call = (payload: object, opened?: () => void) =>
   Effect.async<unknown, Error>((resume) => {
     const id = randomUUID();
     replies.set(id, resume);
+    if (opened !== undefined) openings.set(id, opened);
     Effect.runCallback(send({ id, ...payload }), {
       onExit: (exit) => {
         if (Exit.isFailure(exit)) {
@@ -117,6 +120,7 @@ const call = (payload: object) =>
     });
     return Effect.sync(() => {
       replies.delete(id);
+      openings.delete(id);
     }).pipe(Effect.zipRight(send({ kind: "cancel", id })), Effect.orDie);
   });
 const start = await Effect.runPromise(
@@ -132,8 +136,13 @@ const start = await Effect.runPromise(
         resume(Effect.fail(new Error("Malformed local IPC message")));
         return;
       }
+      if (reply.right.kind === "opened") {
+        openings.get(reply.right.id)?.();
+        return;
+      }
       const complete = replies.get(reply.right.id);
       replies.delete(reply.right.id);
+      openings.delete(reply.right.id);
       if (reply.right.kind === "reply") complete?.(Effect.succeed(reply.right.value));
       else
         complete?.(
@@ -181,8 +190,8 @@ const childScriptInput = (
 ) =>
   makeScriptInput(
     questions,
-    (request) =>
-      call({ kind: "ask", request }).pipe(
+    (request, opened) =>
+      call({ kind: "ask", request }, opened).pipe(
         Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
         Effect.mapError(
           (error) =>
@@ -259,6 +268,11 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
                 ),
               collect: (request) =>
                 call({ kind: "file_collect", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              screenshot: (request) =>
+                call({ kind: "file_screenshot", ...request }).pipe(
                   Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
                   Effect.mapError((error) => fileRefusal(localError(error))),
                 ),

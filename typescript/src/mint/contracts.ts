@@ -27,6 +27,7 @@ import type {
 } from "../runtime/policy-metadata.js";
 import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
+import { cardFillFields } from "../runtime/script-card-fill.js";
 import { DownloadCap } from "../runtime/files.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
@@ -505,9 +506,9 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The registry stayed unavailable through the host's retries; publishing may be tried again. */
     | "registry_unavailable"
     | "example_output_unavailable"
-    /** A read's HTTP implementation never passed a live test; the minter is asked once. */
+    /** A read's HTTP implementation never passed a live test; a host may ask until it settles. */
     | "http_implementation_untested"
-    /** A read's HTTP implementation changed since its passing live test; asked once too. */
+    /** A read's HTTP implementation changed since its passing live test; asked the same way. */
     | "http_implementation_stale"
     /** A write session's composed script declares no `write.confirmation`. */
     | "confirmation_undeclared"
@@ -902,22 +903,15 @@ export type SignInStep = typeof SignInStep.Type;
 
 /**
  * A host card-fill step: the payment card fields on the checkout showing now, each with the card
- * handle the host types into it. It clicks nothing. Each handle is a card answer's, named once.
+ * handle the host types into it, or each with its card slot and the checkout's total for a host
+ * that fills a payment method. It clicks nothing. Each handle is a card answer's, named once.
  */
-export const CardFillStep = Schema.Struct({
-  fields: Schema.Array(
-    Schema.Struct({
-      selector: SignInSelector,
-      handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
-    }),
-  ).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(4),
-    Schema.filter((fields) => new Set(fields.map((field) => field.handle)).size === fields.length, {
-      message: () => "name each card handle once",
-    }),
-  ),
-});
+export const CardFillStep = cardFillFields(
+  Schema.Struct({
+    selector: SignInSelector,
+    handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
+  }),
+);
 export type CardFillStep = typeof CardFillStep.Type;
 
 /** A commit mark's name, as a script's `enteringCommit` takes it and its contract declares it. */
@@ -3119,8 +3113,9 @@ export interface MintDependencies {
    * `session_not_kept` when the site accepted the login but the signed-in session did not survive
    * the page load after it. A blocked ending the report's checks accept while that sign-in is
    * unconfirmed, other than the owner's `owner_declined`, `question_unanswered` or `owner_ended`,
-   * ends the build as sign-in unavailable, worded by this answer. Absent, or undefined, the ending says the site
-   * could not be signed in.
+   * ends the build as sign-in unavailable, worded by this answer, even after an earlier sign-in
+   * confirmed. Absent, or undefined, an earlier confirmed sign-in that still stands keeps the
+   * report's own ending, and otherwise the ending says the site could not be signed in.
    */
   readonly signInSessionLoss?: () => SessionLoss | undefined;
   /**
