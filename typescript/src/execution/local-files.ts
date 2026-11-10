@@ -168,10 +168,6 @@ if (first?.result?.saved !== true) return { saved: false };
 return { saved: true, name: first.name, ...(first.contentType === undefined ? {} : { contentType: first.contentType }) };`;
 
 /**
- * Native page code that waits for the slot's downloads, as `FileHostHook.takeDownloads` says,
- * then ends its capture and reports each one in the order they began.
- */
-/**
  * Whether `takeAllCode` has waited long enough: the first `max` downloads to begin have all
  * ended, since a take reports a download past `max` by its place in the order they began, never
  * by when it ended; or at least one began, every one that began ended, and nothing began or ended
@@ -188,6 +184,10 @@ export function takeAllSettled(
   return ended > 0 && ended === downloads.length && quietMs >= bounds.settleMs;
 }
 
+/**
+ * Native page code that waits for the slot's downloads, as `FileHostHook.takeDownloads` says,
+ * then ends its capture and reports each one in the order they began.
+ */
 const takeAllCode = (
   slot: string,
   bounds: { readonly timeoutMs: number; readonly settleMs: number; readonly max: number },

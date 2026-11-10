@@ -233,7 +233,8 @@ export type DownloadFailureReason = typeof DownloadFailureReason.Type;
  * One download a `files.collectAll` trigger started: the file it collected, or why it took none
  * and the browser's suggested name. `url`, when the browser reported an `http:` or `https:`
  * address for the download, is that address, so a script can tell which item started it when
- * names repeat. It is the script's alone: the file object carries no address.
+ * names repeat. After a redirect it is the final address, which may be a short-lived signed link,
+ * so it goes to the script alone and is never stored: the file object carries no address.
  */
 export const CollectedDownload = Schema.Union(
   Schema.Struct({
