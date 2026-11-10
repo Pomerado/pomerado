@@ -132,7 +132,7 @@ import {
   resultDigestPath,
   resultDigestThresholdBytes,
 } from "./result-digest.js";
-import { contentDigest } from "./step-checks.js";
+import { codeContentDigest } from "./code-digest.js";
 import { writePathNotice } from "./write-session.js";
 import {
   caseDigest,
@@ -508,13 +508,18 @@ const newObservationReasons: ReadonlySet<string> = new Set([
   "live_test_cases_failing",
 ]);
 /**
- * Publication refusals the host asks about only once in an attempt: finishing again, or passing
- * `httpVersion` for an HTTP version, publishes. They are advice, not a host check refusing a step.
+ * Publication refusals the host asks about only once in an attempt: finishing again publishes.
+ * They are advice, not a host check refusing a step.
  */
-const askedOnceReasons: ReadonlySet<string> = new Set([
+const askedOnceReasons: ReadonlySet<string> = new Set(["login_url_one_time"]);
+/**
+ * The ask to test an HTTP version, which a host may repeat at every `finish_build` until a live
+ * test of the current file passes or `httpVersion` names why it can't port. The minter can always
+ * settle it, so it is never a host check refusing a step that a `host_refused` report stands on.
+ */
+const httpVersionAskReasons: ReadonlySet<string> = new Set([
   "http_implementation_untested",
   "http_implementation_stale",
-  "login_url_one_time",
 ]);
 /**
  * The host's publication refusals whose instruction here names a step that fixes them within the
@@ -3605,8 +3610,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** The caller's accepted answers and approved changes, in order, for the outcome reviewer. */
       const acceptedAnswers: unknown[] = [];
       /**
-       * The digest of what `entrypoint`'s import closure holds in the workspace now, without
-       * paths; undefined when it cannot be read, and a failed read is reported to the host.
+       * The digest of what `entrypoint`'s import closure's code does in the workspace now, without
+       * paths, comments, formatting or schema annotations (`codeContentDigest`), so a live test's
+       * result stays current through an edit that only rewords what a schema tells readers, on
+       * either version; undefined when it cannot be read, and a failed read is reported to the host.
        */
       const stepDigest = (entrypoint: string) =>
         Effect.tryPromise({
@@ -3616,7 +3623,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const text: unknown = await session.readFile?.({ path });
               return typeof text === "string" ? text : undefined;
             }, entrypoint);
-            return files.size === 0 ? undefined : contentDigest(files);
+            return files.size === 0 ? undefined : codeContentDigest(files);
           },
           catch: (error) => error,
         }).pipe(
@@ -6477,15 +6484,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               };
               // The host's own publication checks refused it, as a sign-in that fails on a new
               // browser: neither Guardian's decision nor an outage. An output the example could not
-              // make available is an infrastructure gap, and a refusal the host asks only once,
-              // such as a one-time login URL or an untested HTTP version, is advice: finishing
-              // again publishes.
+              // make available is an infrastructure gap, a refusal the host asks only once, such
+              // as a one-time login URL, is advice: finishing again publishes, and the ask to test
+              // an HTTP version is one the minter always settles itself.
               const hostChecksRefused =
                 publication._tag === "Left" &&
                 publication.left.code === "PublicationUnavailable" &&
                 !publicationOutage(publication.left) &&
                 publication.left.reason !== "example_output_unavailable" &&
-                !askedOnceReasons.has(publication.left.reason ?? "");
+                !askedOnceReasons.has(publication.left.reason ?? "") &&
+                !httpVersionAskReasons.has(publication.left.reason ?? "");
               // A submission the host already refused, sent again with nothing changed after a
               // later finish_build got past that refusal, is refused the same way again: no new
               // host refusal, so a minter cannot make a basis for host_refused by repeating one.
@@ -6870,8 +6878,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     {},
                     (error.reason === "http_implementation_stale"
                       ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
-                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once, against the example. Then call finish_build again with the same executionId.") +
-                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host asks only once.",
+                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once against the example and runs every case it ran on src/tool.mjs on it too. Then call finish_build again with the same executionId.") +
+                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host may ask again at every finish_build until one of these holds: calling again unchanged, or deleting the file, does not answer it.",
                   );
                 if (error.reason === "login_url_one_time")
                   return notPublished(
