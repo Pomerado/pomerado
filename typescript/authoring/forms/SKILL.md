@@ -208,7 +208,8 @@ the file and puts it there, and never anywhere else. When the site states a file
 declaring it on the input, as `fileInputWithin({ maxBytes: 5_242_880, extensions: [".pdf"] })`,
 and passing it to `files.place`, rather than checking the file in code. Return a download as a
 `FileOutput` from `files.collect(trigger)`, where `trigger` makes the execute call that starts
-it; you see only its name, type, size and sha256. While the tool is being built, the file has
+it, and a screenshot of the page, or of one element, from `files.screenshot({ selector })`; you
+see only its name, type, size and sha256. While the tool is being built, the file has
 no download_url or expires_at; the published tool's runs add them. Prefer returning the file as
 collected, and never require those fields in code. The host refuses a result whose `$file`
 differs from the file it collected: `download_url` and `expires_at` are the host's own link to

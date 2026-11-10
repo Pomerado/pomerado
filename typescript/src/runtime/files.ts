@@ -6,7 +6,8 @@ import type { Effect } from "effect";
  * script's code or its result. An input holds a reference the host resolves (`FileInput`); the
  * script hands it to `files.place`, and the host writes the bytes onto the browser's machine and
  * into the page's file input. A download the page starts is collected by the host
- * (`files.collect`), which keeps the bytes and gives the script a `FileOutput` to return.
+ * (`files.collect`), which keeps the bytes and gives the script a `FileOutput` to return, and so
+ * is a screenshot of the page or one element (`files.screenshot`).
  *
  * In an operation's published JSON Schema, every file field carries `format: "file"`: an input's
  * is a string reference, an output's an object with one `$file` property.
@@ -154,7 +155,7 @@ export type DownloadCap = typeof DownloadCap.Type;
  * - `type_mismatch`: the file's bytes are not of the type it declares.
  * - `executable`: the file is a program.
  * - `not_accepted`: the file input's `accept` attribute does not take the file.
- * - `field_not_found`: the field locator matched no element, or more than one.
+ * - `field_not_found`: the field or element locator matched no element, or more than one.
  * - `not_file_input`: the field is not a file input.
  * - `other_site`: the field's page is not on the tool's site.
  * - `no_download`: no download finished within the wait.
@@ -209,6 +210,18 @@ export const FileField = Schema.Union(
 );
 
 /**
+ * What `files.screenshot` captures: the page's viewport, the whole page with `fullPage`, or the one
+ * visible element a Playwright `selector` names, as data the host writes into its own locator.
+ */
+export const ScreenshotTarget = Schema.Struct({
+  selector: Schema.optionalWith(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000)), {
+    exact: true,
+  }),
+  fullPage: Schema.optionalWith(Schema.Boolean, { exact: true }),
+});
+export type ScreenshotTarget = typeof ScreenshotTarget.Type;
+
+/**
  * The run's file service, as the runner binds it into a script's context. The host implements it
  * outside the script's process (`makeRunFiles`), so bytes never reach the script.
  */
@@ -231,6 +244,13 @@ export interface FileChannel {
     readonly slot: string;
     readonly timeoutMs: number;
   }) => Effect.Effect<FileObject, FileRefused>;
+  /**
+   * Takes a PNG screenshot of the run's page, or of one element on it, and keeps it for the caller
+   * as `collect` keeps a download. Optional: a host without it refuses `files.screenshot`.
+   */
+  readonly screenshot?: (
+    request: ScreenshotTarget & { readonly timeoutMs: number },
+  ) => Effect.Effect<FileObject, FileRefused>;
 }
 
 /** The context's `files`: what an operation's script calls. */
@@ -266,6 +286,17 @@ export interface ScriptFiles {
   readonly collect: (
     trigger: () => Promise<unknown>,
     options?: { readonly timeoutMs?: number },
+  ) => Promise<FileObject>;
+  /**
+   * Has the host take a PNG screenshot of the page and returns it for the output, as `collect`
+   * returns a download: of the viewport, of the whole page with `fullPage`, or of the one element
+   * `selector` names once it is visible, waiting up to `timeoutMs` (30 s by default). A selector
+   * that matches no visible element, or more than one, throws an `OperationFailure`
+   * (`field_not_found`), as does a screenshot over the host's caps, which it names. Taking one
+   * sends nothing to the site. The bytes stay with the host.
+   */
+  readonly screenshot: (
+    options?: ScreenshotTarget & { readonly timeoutMs?: number },
   ) => Promise<FileObject>;
 }
 
