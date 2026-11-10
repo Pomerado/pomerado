@@ -23,6 +23,14 @@ remember-this-device box with its checked state. Then send the code step at once
 minutes, so send that step before any other probing.
 
 Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
+When the task turns out to need a sign-in after steps you ran signed out, decide which case it is,
+and ask the caller with request_input when you can't tell. (1) The steps are separate tools, such
+as a search that works signed out and an add to cart that needs the account; signed-out reads stay
+their own tool so they can run in parallel. Build the one the request names and suggest the other
+as a new build. (2) The whole task needs the account: sign in first and run it from its start
+signed in; once a write went out signed out, suggest that as a new build instead. (3) Rarely, one write needs a signed-out part and then a signed-in part: go on signed
+in after it, and follow the host's notice for where its runs sign in. A write already sent signed
+out never runs again.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
 or settings the task does not concern.
 
