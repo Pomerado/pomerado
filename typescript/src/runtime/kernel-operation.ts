@@ -21,6 +21,7 @@ import { inspectSignInRejection } from "./sign-in-rejection.js";
 import {
   FileField,
   FileRefused,
+  ScreenshotTarget,
   SiteFileLimits,
   type FileChannel,
   type FileRefusalReason,
@@ -275,8 +276,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on either.
+   * captures a download the page starts, `screenshot` a picture of the page. The bytes stay with
+   * the host. A run without the host's file service, such as an offline run, throws
+   * `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -578,6 +580,41 @@ const scriptFiles = (
         if (overCap !== undefined)
           throw new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
         throw fileFailure(error, true);
+      }
+    },
+    screenshot: async (shot = {}) => {
+      const files = channel();
+      if (files.screenshot === undefined)
+        throw new OperationFailure("This run's host takes no screenshots", { dispatch: "not_sent" });
+      // The target is data the host writes into its own locator; anything else names no element.
+      // An option left undefined, such as an absent input passed on, is no option; anything but
+      // an options object, such as a selector passed alone, still names no target.
+      const given =
+        typeof shot === "object" && shot !== null && !Array.isArray(shot)
+          ? Object.fromEntries(Object.entries(shot).filter(([, value]) => value !== undefined))
+          : shot;
+      const target = Schema.decodeUnknownEither(ScreenshotTarget)(given);
+      if (Either.isLeft(target)) throw fileFailure(new FileRefused({ reason: "field_not_found" }));
+      try {
+        return await settle(
+          files.screenshot({
+            ...target.right,
+            timeoutMs: Math.min(
+              shot.timeoutMs ?? downloadWaitMs,
+              Math.max(0, options.deadline.remainingMs()),
+            ),
+          }),
+        );
+      } catch (error) {
+        // A picture over the caps is the host's limit, as a download's is; it sent nothing.
+        const overCap =
+          error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+        if (overCap !== undefined)
+          throw new OperationFailure(overCap.replace("downloaded file", "screenshot"), {
+            cause: error,
+            dispatch: "not_sent",
+          });
+        throw fileFailure(error);
       }
     },
   };

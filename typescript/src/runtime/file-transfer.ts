@@ -12,6 +12,7 @@ import {
   FileRefused,
   isFileObject,
   MediaType,
+  ScreenshotTarget,
   SiteFileLimits,
   type FileChannel,
   type FileLimits,
@@ -85,6 +86,21 @@ export interface FileHostHook {
     slot: string,
     bounds: { readonly timeoutMs: number; readonly maxBytes: number },
   ) => Effect.Effect<TakenDownload | undefined, Error>;
+  /**
+   * A new path on the machine the host's page code runs on, for `files.screenshot` to write its PNG
+   * to, and the read of what it wrote, never more than `maxBytes` of it: a file over them is
+   * `tooLarge`. For a host whose page calls return less than one file may hold, as the native
+   * browser's 1 MiB result limit; without it, the page call returns the PNG itself.
+   */
+  readonly screenshotFile?: () => Effect.Effect<
+    {
+      readonly path: string;
+      readonly read: (
+        maxBytes: number,
+      ) => Effect.Effect<Uint8Array | { readonly tooLarge: true }, Error>;
+    },
+    Error
+  >;
   /**
    * Keeps a collected file for the run's caller and returns its id, and when the host serves the
    * bytes, where and until when.
@@ -343,6 +359,39 @@ try {
   await element.dispose();
 }`;
 
+const Screenshot = Schema.Union(
+  Schema.Struct({ refused: Schema.Literal("field_not_found") }),
+  Schema.Struct({ saved: Schema.Literal(true) }),
+  Schema.Struct({ tooLarge: Schema.Literal(true) }),
+  Schema.Struct({ base64: Schema.String }),
+);
+
+/**
+ * Page code that takes a PNG screenshot of the page, or of the one element `target.selector`
+ * names once it is visible, and writes it to `sink` when that is a path, else returns it as
+ * base64 when it holds at most `sink` bytes. The selector is data in the host's own locator.
+ */
+const screenshotCode = (target: ScreenshotTarget, waitMs: number, sink: string | number) => {
+  const element = target.selector !== undefined;
+  // Playwright reads a timeout of 0 as no timeout at all.
+  const timeoutMs = Math.max(1, Math.floor(waitMs));
+  const options = [
+    `type: "png"`,
+    `timeout: ${timeoutMs}`,
+    ...(target.fullPage === true && !element ? ["fullPage: true"] : []),
+    ...(typeof sink === "string" ? [`path: ${JSON.stringify(sink)}`] : []),
+  ];
+  return `
+const target = ${element ? `page.locator(${JSON.stringify(target.selector)})` : "page"};${
+    element
+      ? `
+try { await target.waitFor({ state: "visible", timeout: ${timeoutMs} }); } catch { return { refused: "field_not_found" }; }`
+      : ""
+  }
+const image = await target.screenshot({ ${options.join(", ")} });
+return ${typeof sink === "string" ? "{ saved: true }" : `image.length > ${sink} ? { tooLarge: true } : { base64: image.toString("base64") }`};`;
+};
+
 /**
  * One run's files over a host's hook. A script's reference is resolved by `resolve`, which names
  * the hook's reference for each one the run may use, such as the references in its input. A file
@@ -460,28 +509,18 @@ export const makeRunFiles = (options: {
         Effect.tap((slot) => Effect.sync(() => slots.add(slot))),
         Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
       );
-    const collect: RunFiles["collect"] = ({ slot, timeoutMs }) =>
+    /** Keeps a file within the run's caps for its caller, as one the run collected. */
+    const keepCollected = (name: string, bytes: Uint8Array, contentType?: string) =>
       Effect.gen(function* () {
-        if (!slots.delete(slot)) return yield* refuse("unknown_reference");
-        const current = yield* Ref.get(used);
-        const room = Math.min(limits.fileBytes, limits.runBytes - current.bytes);
-        const taken = yield* options.hook
-          .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
-          .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
-        if (taken === undefined) return yield* refuse("no_download");
-        if ("tooLarge" in taken)
-          return yield* refuseOverCap(room < limits.fileBytes ? "run_limit" : "too_large");
-        const name = safeName(taken.name, "download");
-        if (isProgram(taken.bytes, name)) return yield* refuse("executable");
-        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuseOverCap("run_limit");
-        yield* count(taken.bytes.byteLength);
+        if (!(yield* fits(bytes.byteLength))) return yield* refuseOverCap("run_limit");
+        yield* count(bytes.byteLength);
         // The bytes decide the type when they prove one, else the server's; never the name.
         const media_type =
-          sniffedType(taken.bytes) ?? serverType(taken.media_type) ?? "application/octet-stream";
-        const sha256 = createHash("sha256").update(taken.bytes).digest("hex");
-        const size = taken.bytes.byteLength;
+          sniffedType(bytes) ?? serverType(contentType) ?? "application/octet-stream";
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const size = bytes.byteLength;
         const kept = yield* options.hook
-          .keep({ name, media_type, size, sha256, bytes: taken.bytes })
+          .keep({ name, media_type, size, sha256, bytes })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         const file: FileObject = {
           $file: {
@@ -497,6 +536,54 @@ export const makeRunFiles = (options: {
         yield* Ref.update(collected, (files) => [...files, file]);
         return file;
       });
+    const collect: RunFiles["collect"] = ({ slot, timeoutMs }) =>
+      Effect.gen(function* () {
+        if (!slots.delete(slot)) return yield* refuse("unknown_reference");
+        const current = yield* Ref.get(used);
+        const room = Math.min(limits.fileBytes, limits.runBytes - current.bytes);
+        const taken = yield* options.hook
+          .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
+          .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
+        if (taken === undefined) return yield* refuse("no_download");
+        if ("tooLarge" in taken)
+          return yield* refuseOverCap(room < limits.fileBytes ? "run_limit" : "too_large");
+        const name = safeName(taken.name, "download");
+        if (isProgram(taken.bytes, name)) return yield* refuse("executable");
+        return yield* keepCollected(name, taken.bytes, taken.media_type);
+      });
+    const screenshot: NonNullable<RunFiles["screenshot"]> = ({ timeoutMs, ...request }) =>
+      Effect.gen(function* () {
+        overCap = undefined;
+        const unavailable = () => new FileRefused({ reason: "unavailable" });
+        // Decoding keeps only the target's own fields, the selector as data.
+        const target = Schema.decodeUnknownEither(ScreenshotTarget)(request);
+        if (Either.isLeft(target)) return yield* refuse("field_not_found");
+        const current = yield* Ref.get(used);
+        const room = Math.max(0, Math.min(limits.fileBytes, limits.runBytes - current.bytes));
+        const file =
+          options.hook.screenshotFile === undefined
+            ? undefined
+            : yield* options.hook.screenshotFile().pipe(Effect.mapError(unavailable));
+        const shot = yield* run(
+          screenshotCode(target.right, timeoutMs, file?.path ?? room),
+          Math.min(300, Math.ceil(timeoutMs / 500) + 5),
+        ).pipe(
+          Effect.flatMap(Schema.decodeUnknown(Screenshot)),
+          Effect.mapError(unavailable),
+        );
+        if ("refused" in shot) return yield* refuse(shot.refused);
+        const taken =
+          "base64" in shot
+            ? new Uint8Array(Buffer.from(shot.base64, "base64"))
+            : "tooLarge" in shot
+              ? shot
+              : file === undefined
+                ? yield* Effect.fail(unavailable())
+                : yield* file.read(room).pipe(Effect.mapError(unavailable));
+        if (!(taken instanceof Uint8Array))
+          return yield* refuseOverCap(room < limits.fileBytes ? "run_limit" : "too_large");
+        return yield* keepCollected("screenshot.png", taken);
+      });
     const checkOutput: RunFiles["checkOutput"] = (output) =>
       Ref.get(collected).pipe(
         Effect.flatMap((files) =>
@@ -507,7 +594,7 @@ export const makeRunFiles = (options: {
             : refuse("not_collected"),
         ),
       );
-    return { place, arm, collect, checkOutput, overCap: () => overCap };
+    return { place, arm, collect, screenshot, checkOutput, overCap: () => overCap };
   });
 
 /** Every `$file` object in an output, wherever it sits. */
