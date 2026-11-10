@@ -3119,8 +3119,9 @@ export interface MintDependencies {
    * `session_not_kept` when the site accepted the login but the signed-in session did not survive
    * the page load after it. A blocked ending the report's checks accept while that sign-in is
    * unconfirmed, other than the owner's `owner_declined`, `question_unanswered` or `owner_ended`,
-   * ends the build as sign-in unavailable, worded by this answer. Absent, or undefined, the ending says the site
-   * could not be signed in.
+   * ends the build as sign-in unavailable, worded by this answer, even after an earlier sign-in
+   * confirmed. Absent, or undefined, an earlier confirmed sign-in that still stands keeps the
+   * report's own ending, and otherwise the ending says the site could not be signed in.
    */
   readonly signInSessionLoss?: () => SessionLoss | undefined;
   /**
