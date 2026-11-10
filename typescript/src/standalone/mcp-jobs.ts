@@ -21,7 +21,7 @@ import {
 } from "../runtime/local-job-store.js";
 import {
   InputRequestFailure,
-  maximumInputWaitMs,
+  inputWaitMs,
   validateAnswer,
   type InputAnswers,
   type InputAsker,
@@ -195,7 +195,7 @@ const jobAsker =
       const now = yield* Clock.currentTimeMillis;
       const expiresAt = Math.min(
         bounds?.sourceEndsAt ?? Number.POSITIVE_INFINITY,
-        now + maximumInputWaitMs,
+        now + inputWaitMs(request),
       );
       return yield* makeInputAsker((checked) =>
         job.inputPermit.withPermits(1)(pendingAnswer(job, checked, expiresAt)),

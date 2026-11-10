@@ -316,6 +316,11 @@
       "import": "./dist/typescript/src/mint/autofill-results.js",
       "default": "./dist/typescript/src/mint/autofill-results.js"
     },
+    "./core/mint/code-digest": {
+      "types": "./dist/typescript/src/mint/code-digest.d.ts",
+      "import": "./dist/typescript/src/mint/code-digest.js",
+      "default": "./dist/typescript/src/mint/code-digest.js"
+    },
     "./core/mint/contracts": {
       "types": "./dist/typescript/src/mint/contracts.d.ts",
       "import": "./dist/typescript/src/mint/contracts.js",

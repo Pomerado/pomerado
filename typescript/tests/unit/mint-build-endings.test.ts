@@ -14,6 +14,7 @@ import { fileHandleRefusal } from "../../src/mint/file-handles.js";
 import { fileReadbackRefusal } from "../../src/mint/file-readback.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure } from "../../src/mint/sign-in-failure.js";
+import { mintSessionSignInFailure, SessionSignInFailed } from "../../src/standalone/session-sign-in.js";
 import { portableMintProjection } from "../support/portable-mint.js";
 
 /*
@@ -647,7 +648,7 @@ const hostCheckRefused = new MintFailure({
   code: "PublicationUnavailable",
   reason: "autofill_recipe_not_verified",
 });
-const guardianCorrection = new MintFailure({
+const guardianDenialArgs = {
   code: "ReviewDenied",
   review: {
     outcome: "deny",
@@ -656,7 +657,8 @@ const guardianCorrection = new MintFailure({
     rationale: "Read the price from the result row.",
     findings: [],
   },
-});
+} as const;
+const guardianCorrection = new MintFailure(guardianDenialArgs);
 const publicationOutage = new MintFailure({
   code: "PublicationUnavailable",
   reason: "registry_unavailable",
@@ -666,7 +668,7 @@ const oneTimeLoginUrl = new MintFailure({
   code: "PublicationUnavailable",
   reason: "login_url_one_time",
 });
-/** Advice the host gives once: finishing again, or passing httpVersion, publishes the read. */
+/** An ask the minter always settles: a passing live test of the HTTP version, or httpVersion. */
 const httpUntested = new MintFailure({
   code: "PublicationUnavailable",
   reason: "http_implementation_untested",
@@ -1085,6 +1087,77 @@ it("refuses host_refused once a later finish_build got past the host's refusal t
   });
 });
 
+/** A secret handle in published source, which the minter replaces with a run-time question. */
+const secretHandle = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "secret_handle",
+  screening: { category: "authored_source", path: "src/tool.ts", replacements: 0 },
+});
+
+// A host that runs every check on a submission before it answers returns every refusal it found
+// at once: the minter reads each one's reason and instruction in that one finish_build result, so
+// it fixes them all in one round. A later result names only its own refusals.
+it.each([
+  {
+    basis: "beside another host refusal",
+    refusal: { code: "PublicationUnavailable", reason: "variants_unsupported" } as const,
+  },
+  {
+    basis: "beside Guardian's denial",
+    refusal: guardianDenialArgs,
+  },
+])("returns every refusal the host found in one submission $basis", async ({ refusal }) => {
+  const refusals = [
+    new MintFailure({
+      ...refusal,
+      alsoRefused: [
+        secretHandle,
+        new MintFailure({ code: "PublicationUnavailable", reason: "file_readback" }),
+        noMatchUntested,
+      ],
+    }),
+    variantsUnsupported,
+  ];
+  let published = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [call("execute", pureExample), finishAs(0), finishAs(1), finishAs(2)][index] ??
+      prose("Stopping."),
+    {
+      publish: () => {
+        const next = refusals[published++];
+        return next === undefined
+          ? Effect.succeed({ publicationRef: "published_revision", diagnostics: [] })
+          : Effect.fail(next);
+      },
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  const first = resultOf(f.requests[2], "finish_0") as Record<string, unknown>;
+  expect(first).toMatchObject({
+    status: "not_published",
+    code: refusal.code,
+    instruction: expect.stringContaining("alsoRefused"),
+  });
+  expect(first.alsoRefused).toEqual([
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "secret_handle",
+      path: "src/tool.ts",
+      instruction: expect.stringContaining("src/tool.ts holds a {{secret.…}} handle"),
+    }),
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "file_readback",
+      instruction: expect.stringContaining("outside the host's file service"),
+    }),
+    // A host's own reason core has no text for says what to do in its rationale.
+    { code: "PublicationUnavailable", reason: "no_match_case_untested", instruction: noMatchRationale },
+  ]);
+  expect(resultOf(f.requests[3], "finish_1")).not.toHaveProperty("alsoRefused");
+});
+
 /** A host check's refusal that carries a review of its own, as a host may attach to one. */
 const reviewedHostRefusal = new MintFailure({
   code: "PublicationUnavailable",
@@ -1102,6 +1175,10 @@ it.each([
     publish: [variantsUnsupported, guardianCorrection, hostCheckRefused],
   },
   { basis: "with a review of its own", publish: [reviewedHostRefusal] },
+  {
+    basis: "beside Guardian's denial of the same submission",
+    publish: [new MintFailure({ ...guardianDenialArgs, alsoRefused: [hostCheckRefused] })],
+  },
   {
     basis: "with a review of its own after a finish_build got past the first",
     publish: [variantsUnsupported, guardianCorrection, reviewedHostRefusal],
@@ -1144,6 +1221,13 @@ const noMatchUntested = new MintFailure({
   reason: "no_match_case_untested" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: noMatchRationale },
 });
+const listLimitRationale =
+  "Add live test cases that set limit below and above the default page, run them on each version, then call finish_build again.";
+const listLimitUntested = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "list_limit_untested" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: listLimitRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1153,6 +1237,7 @@ const noMatchUntested = new MintFailure({
 it.each([
   {
     refusal: variantsUnsupported,
+    reason: "variants_unsupported",
     step: {
       refusalInstruction: expect.stringContaining(
         "Either remove supportedVariants from the tool's metadata",
@@ -1162,12 +1247,36 @@ it.each([
   },
   {
     refusal: noMatchUntested,
+    reason: "no_match_case_untested",
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
+  // A host refusal listed beside Guardian's denial of the same submission names its fix too.
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
+    reason: "variants_unsupported",
+    step: {
+      refusalInstruction: expect.stringContaining(
+        "Either remove supportedVariants from the tool's metadata",
+      ),
+    },
+    absent: "refusalRationale",
+  },
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [noMatchUntested] }),
+    reason: "no_match_case_untested",
+    step: { refusalRationale: noMatchRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: listLimitUntested,
+    reason: "list_limit_untested",
+    step: { refusalRationale: listLimitRationale },
+    absent: "refusalInstruction",
+  },
 ])(
-  "refuses the first host_refused after $refusal.reason, which names its fix, and accepts a second",
-  async ({ refusal, step, absent }) => {
+  "refuses the first host_refused after a $refusal.code naming $reason, which names its fix, and accepts a second",
+  async ({ refusal, reason, step, absent }) => {
     const explanation = "A Pomerado check refused publication, so no tool was published.";
     const f = await fixture(
       (_request, index) =>
@@ -1184,7 +1293,7 @@ it.each([
     expect(first).toEqual({
       status: "blocked_refused",
       reason: "host_refusal_names_step",
-      refusedReason: refusal.reason,
+      refusedReason: reason,
       ...step,
       userInputRequired: false,
       instruction: hostRefusalNamesStep,
@@ -1196,7 +1305,7 @@ it.each([
       stopReason: "host_refused",
     });
     expect(blockedRecord(outcome)).toMatchObject({
-      hostRefusals: [{ source: "publication", reason: refusal.reason }],
+      hostRefusals: [{ source: "publication", reason }],
     });
   },
 );
@@ -1857,11 +1966,12 @@ const declinedExample = {
 
 /**
  * A build that signs in through `steps`, one authenticate each, then sends `report`. A step that is
- * a failure fails its authenticate before its dispatch fence, and `{ afterFence }` fails it past
- * the fence.
+ * a failure fails its authenticate before its dispatch fence, `{ afterFence }` fails it past the
+ * fence, `{ request }` sends that request in place of the authenticate, and a function gives the
+ * step's result when the step runs.
  */
 const signInThenDecline = (
-  steps: readonly (object | MintFailure)[],
+  steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
   report: {
     readonly reason: string;
@@ -1873,12 +1983,15 @@ const signInThenDecline = (
   return fixture(
     (_request, index) =>
       [
-        ...steps.map((_, step) => call("execute", authenticate, `sign_in_${step}`)),
+        ...steps.map((next, step) =>
+          call("execute", "request" in next ? next.request : authenticate, `sign_in_${step}`),
+        ),
         call("report_blocked", report),
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
-        const step = steps[executions++] ?? submittedScreen;
+        const next = steps[executions++] ?? submittedScreen;
+        const step = typeof next === "function" ? next() : next;
         if (step instanceof MintFailure) return Effect.fail(step);
         const dispatched = beforeDispatch({ reviewId: "review_sign_in", action: "authentication" });
         return "afterFence" in step && step.afterFence instanceof MintFailure
@@ -1964,6 +2077,65 @@ it.each([
     });
   },
 );
+
+// A sign-in that confirmed still stands when a later sign-in goes unchecked, so the site gap the
+// build then reports keeps its own reason, until something shows the site signed out: a signed-in
+// check that did not confirm, a session the host saw lost, a step whose automatic sign-in failed,
+// or a browser the host replaced, which starts on a new, empty profile.
+let browserReplaced = false;
+it.each([
+  { after: "nothing else", steps: [submittedScreen], ends: { blocked: { reason: "site_lacks_capability" } } },
+  {
+    after: "a failed signed-in check",
+    steps: [signInCheck("failed"), submittedScreen],
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a session the host saw lost",
+    steps: [submittedScreen],
+    overrides: { signInSessionLoss: () => "session_not_kept" as const },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "an explore whose automatic sign-in failed",
+    steps: [
+      {
+        request: { ...authenticate, purpose: "explore" },
+        afterFence: mintSessionSignInFailure(
+          new SessionSignInFailed({
+            refusal: "session_sign_in_failed",
+            trigger: "signed_out_mid_operation",
+            reason: "replay_failed",
+          }),
+        ),
+      },
+      submittedScreen,
+    ],
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+  {
+    after: "a browser the host replaced",
+    steps: [
+      () => {
+        browserReplaced = true;
+        return submittedScreen;
+      },
+    ],
+    overrides: {
+      entryNavigation: () =>
+        browserReplaced ? { state: "replaced" as const, reason: "recovery" } : undefined,
+    },
+    ends: { recoveryReason: "sign_in_unavailable" },
+  },
+])("decides a site_lacks_capability report after a confirmed sign-in, $after and an unchecked one", async (row) => {
+  browserReplaced = false;
+  const f = await signInThenDecline(
+    [submittedScreen, signInCheck("authenticated"), ...row.steps],
+    row.overrides,
+    { reason: "site_lacks_capability", explanation: "The signed-in pages offer no way to do this." },
+  );
+  expect(await f.run()).toMatchObject(row.ends);
+});
 
 // A report rewritten to sign-in unavailable still says why the build stopped. Its caller reads the
 // minter's explanation only after the pipeline a blocked explanation takes: the login's secrets

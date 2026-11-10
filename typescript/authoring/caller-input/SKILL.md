@@ -228,6 +228,10 @@ already asked for, or to solve a CAPTCHA.
      plants code in the page, opens a DevTools session, takes an accessibility snapshot,
      screenshot or PDF of the page, records the page, or reads a request body, so delete
      such probes before you ask for the card.
+   - When the host says it fills the card from a payment method, never ask for card
+     parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
+     field's slot (`card_number`, `card_expiry`, `card_cvc`) and the order total the
+     checkout shows as `{ amount, currency }`.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
@@ -261,16 +265,58 @@ the step again, then call `enteringCommit` again for that step, and click once, 
 skill says. The wait can be long, so in that next call confirm the page still shows the chosen
 option before acting on it.
 
+## Hand the browser to a person
+
+A run can stop at one step, hand its live browser to a person, and go on once they mark the
+step done. The person sees the page and your prompt, and may review it, correct fields or do
+the step themselves, submitting included.
+
+- Add a hand-off only when the build's request asks for a person to review or do a step, such
+  as "let me check the form before it's submitted" or "I'll enter the signature myself".
+  Never add one on your own. Never use one to get past a CAPTCHA or a bot check. Never use one
+  to sign in, unless the request asks for a person to sign in.
+- Declare it in `questions` like any other question, named for its context, such as
+  `review_claim`:
+  `{ type: "browser_handoff", prompt, show_inputs }`. Write `prompt` as the task the person
+  does, naming what to check: "Check the claim form: the policy number, the amount and the
+  description. Correct anything that is wrong, then mark this step done." List in
+  `show_inputs` the inputs that help the person check, by their top-level names, up to 20.
+  Never list a secret or a file.
+- When the request wants the check optional per run, add a boolean input named for the
+  context, such as `review_claim_before_submit`, with the default the request gives, and hand
+  off only when it is true. Never a generic name such as `review_before_submit`. When the
+  request wants the check every time, add no input.
+- Fill the form first, then call `await handOff("review_claim")`. It resolves once the
+  person marks the step done, and asks nothing else in the same request. The deadline pauses
+  meanwhile, up to 30 minutes.
+- In a write, the person may submit, so every declared commit step not yet confirmed reads
+  sent once the hand-off opens. After it, read the page again and handle both outcomes:
+  - The person submitted: read the site's confirmation, call `verified()` and return the
+    result.
+  - The form still waits: check it is the same form, such as by its id, with no confirmation.
+    Call `notCommitted(name)` for the step, then enter it with `enteringCommit` and submit, as
+    usual. The form keeps the person's corrections. `notCommitted` works once per step in a
+    run, so a step you already put back before the hand-off can't go back again: a second call
+    throws `CommitAlreadySent`. Hand off before the step's first click.
+  - Anything else, neither the same form nor a result you can read: throw
+    `new errors.HandoffStateChanged()`. The run stops without acting further and reports
+    `handoff_state_changed`, with a possible change to the site for a write.
+
+`references/browser-handoff.ts` fills an example claims form, hands it to a person for review
+when its input asks, then returns the person's submission or submits the form itself.
+
 ## When no answer comes
 
 `ask` throws `ScriptInputFailure`:
 
-- `NoResponse`: the caller did not answer within the request's window (at most ten
-  minutes, less when the job's window ends sooner). The run fails as `no_response`. It
+- `NoResponse`: the caller did not answer within the request's window (at most 30 minutes
+  for a hand-off and ten minutes for any other question, less when the job's window ends
+  sooner). The run fails as `no_response`. It
   is never retried or repaired, and its result says whether a step before the question
   may already have changed the site.
 - `Unavailable`: the host could not put the question to the caller, or the answer did
-  not fit the question.
+  not fit the question. A host that cannot show its browser to a person refuses a hand-off
+  this way.
 - `Unauthorized`: the caller's access to the job was revoked while the run waited.
 - `Undeclared` or `InvalidOptions`: the ask names an id that `questions` does not
   declare, gives a choice no options or duplicate values, gives options to another type,

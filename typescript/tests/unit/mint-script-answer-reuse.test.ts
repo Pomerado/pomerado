@@ -178,3 +178,29 @@ describe("a later step's script question", () => {
     ).toEqual([entry, entry]);
   });
 });
+
+describe("a browser hand-off", () => {
+  it("is never answered from a kept answer: each one asks the person again", () => {
+    const review = request([
+      {
+        id: "review_claim",
+        type: "browser_handoff",
+        prompt: "Check the claim form, then mark this step done.",
+        show_inputs: [],
+      },
+    ]);
+    const done: ValidAnswers = {
+      review_claim: { type: "browser_handoff", value: { done: true } },
+    };
+    expect(keys(review)).toEqual([undefined]);
+    expect(kept(review, done)).toEqual([]);
+    expect(
+      reusedScriptAnswers(review, keys(review), [
+        {
+          question: { id: "review_claim", type: "confirm", prompt: "Check the claim form." },
+          answer: { type: "browser_handoff", value: { done: true } },
+        },
+      ]),
+    ).toBeUndefined();
+  });
+});

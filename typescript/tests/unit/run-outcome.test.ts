@@ -388,7 +388,13 @@ describe("run outcomes", () => {
             .map((outcome) => outcome.code),
         ),
       ].sort(),
-    ).toEqual(["credentials_rejected", "input_rejected", "no_response", "outcome_unknown"]);
+    ).toEqual([
+      "credentials_rejected",
+      "handoff_state_changed",
+      "input_rejected",
+      "no_response",
+      "outcome_unknown",
+    ]);
     for (const outcome of classifiedOutcomes())
       if ("possible_commit" in outcome.details)
         expect(outcome.possibleCommit).toBe(outcome.details["possible_commit"]);

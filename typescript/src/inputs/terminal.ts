@@ -1,7 +1,11 @@
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { Effect } from "effect";
 import { makeInputAsker } from "./callback.js";
-import { InputRequestFailure, publicOptionLabel } from "../runtime/input-request.js";
+import {
+  browserHandoffWaitMs,
+  InputRequestFailure,
+  publicOptionLabel,
+} from "../runtime/input-request.js";
 import type { InputAnswers, Question } from "../runtime/input-request.js";
 
 /**
@@ -91,8 +95,12 @@ const line = (prompt: string, masked = false) =>
 
 const answerChoices = (question: Extract<Question, { readonly type: "choice" | "multi_choice" }>) =>
   Effect.gen(function* () {
+    const recommended: readonly string[] =
+      typeof question.recommended === "string" ? [question.recommended] : (question.recommended ?? []);
     for (const [index, option] of question.options.entries())
-      process.stderr.write(`${index + 1}. ${publicOptionLabel(option)}\n`);
+      process.stderr.write(
+        `${index + 1}. ${publicOptionLabel(option)}${recommended.includes(option.id) ? " (recommended)" : ""}\n`,
+      );
     const reply = (yield* line(
       question.type === "multi_choice" ? "Numbers separated by commas: " : "> ",
     )).trim();
@@ -133,6 +141,8 @@ const answerQuestion = (question: Question): Effect.Effect<unknown, InputRequest
     process.stderr.write(`\n${question.prompt}\n`);
     switch (question.type) {
       case "text":
+        if (question.recommended !== undefined)
+          process.stderr.write(`Recommended: ${question.recommended}\n`);
         return yield* line("> ");
       case "secret":
         return yield* line("> ", true);
@@ -163,6 +173,12 @@ const answerQuestion = (question: Question): Effect.Effect<unknown, InputRequest
       case "choice":
       case "multi_choice":
         return yield* answerChoices(question);
+      // The person works in the run's own browser window; Enter hands it back.
+      case "browser_handoff":
+        yield* line(
+          `Do this in the open browser window. The run waits up to ${browserHandoffWaitMs / 60_000} minutes. Press Enter here once you are done: `,
+        );
+        return { done: true };
     }
   });
 

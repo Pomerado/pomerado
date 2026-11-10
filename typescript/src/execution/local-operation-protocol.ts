@@ -3,7 +3,12 @@ import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
-import { FileField, fileReferenceMaxLength, SiteFileLimits } from "../runtime/files.js";
+import {
+  FileField,
+  fileReferenceMaxLength,
+  ScreenshotTarget,
+  SiteFileLimits,
+} from "../runtime/files.js";
 import {
   maximumRefusalChoiceLength,
   maximumRefusalChoices,
@@ -98,6 +103,8 @@ export const LocalOperationStart = Schema.Struct({
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),
+  /** The request `id` names, which the host still answers, opened to its caller. */
+  Schema.Struct({ kind: Schema.Literal("opened"), id: Id }),
   Schema.Struct({
     kind: Schema.Literal("failure"),
     id: Id,
@@ -151,6 +158,13 @@ export const LocalOperationMessage = Schema.Union(
     kind: Schema.Literal("file_collect"),
     id: Id,
     slot: Id,
+    timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+  }),
+  /** `files.screenshot`: the host keeps a picture of the page or one element. */
+  Schema.Struct({
+    kind: Schema.Literal("file_screenshot"),
+    id: Id,
+    ...ScreenshotTarget.fields,
     timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
   }),
   /** One `SiteHttp` request the child validated, for the host's transport to send. */
