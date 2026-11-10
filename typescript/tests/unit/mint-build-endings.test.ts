@@ -544,7 +544,7 @@ const oneTimeLoginUrl = new MintFailure({
   code: "PublicationUnavailable",
   reason: "login_url_one_time",
 });
-/** Advice the host gives once: finishing again, or passing httpVersion, publishes the read. */
+/** An ask the minter always settles: a passing live test of the HTTP version, or httpVersion. */
 const httpUntested = new MintFailure({
   code: "PublicationUnavailable",
   reason: "http_implementation_untested",
@@ -1022,6 +1022,13 @@ const noMatchUntested = new MintFailure({
   reason: "no_match_case_untested" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: noMatchRationale },
 });
+const listLimitRationale =
+  "Add live test cases that set limit below and above the default page, run them on each version, then call finish_build again.";
+const listLimitUntested = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "list_limit_untested" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: listLimitRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1041,6 +1048,11 @@ it.each([
   {
     refusal: noMatchUntested,
     step: { refusalRationale: noMatchRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: listLimitUntested,
+    step: { refusalRationale: listLimitRationale },
     absent: "refusalInstruction",
   },
 ])(

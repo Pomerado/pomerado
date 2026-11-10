@@ -506,9 +506,9 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The registry stayed unavailable through the host's retries; publishing may be tried again. */
     | "registry_unavailable"
     | "example_output_unavailable"
-    /** A read's HTTP implementation never passed a live test; the minter is asked once. */
+    /** A read's HTTP implementation never passed a live test; a host may ask until it settles. */
     | "http_implementation_untested"
-    /** A read's HTTP implementation changed since its passing live test; asked once too. */
+    /** A read's HTTP implementation changed since its passing live test; asked the same way. */
     | "http_implementation_stale"
     /** A write session's composed script declares no `write.confirmation`. */
     | "confirmation_undeclared"
