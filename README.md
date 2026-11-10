@@ -189,7 +189,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 | `typescript/src/` | Minter, Guardian, runtime, browser helpers and the local MCP host |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
 | `typescript/tests/` | Unit tests and browser tests with local fixture sites |
-| `tools/` | Build helpers and the CI scans |
+| `tools/` | Build helpers, the CI scans and the browser shard planner |
 | `docs/` | Guides for users, agents and maintainers |
 | `third-party/` | Licenses for adapted third-party code |
 
@@ -205,7 +205,7 @@ Join the [Pomerado Discord](https://discord.gg/QCwQFydAym) to get help, share in
 - Pomerado is agent friendly. [AGENTS.md](AGENTS.md) gives your coding agent the setup and the rules.
 - Alan or Akshay reviews every pull request before it merges.
 - Everyone follows our [code of conduct](CODE_OF_CONDUCT.md).
-- Security problems go privately through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security).
+- Security problems go privately to security@pomerado.ai or through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security). [SECURITY.md](SECURITY.md) has the details.
 - [CONTRIBUTING.md](CONTRIBUTING.md) has the steps to build, test and open a pull request.
 
 ## License

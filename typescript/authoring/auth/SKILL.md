@@ -84,6 +84,10 @@ query, fragment or path, since a host refuses such a link for a workspace site.
    another page. The banner's own control counts even when it sits in the sign-in form or has no
    type, as on a page wrapped in one form: it sends nothing typed, since the host empties the
    step's fields and cancels that click's own submission.
+   When a notice that is not a cookie banner covers the sign-in and its only way out commits the
+   account, ask the owner once whether to accept it; on yes, prefer putting its accept control in
+   the sign-in step's `dismiss` with the answered question cited in `confirmedBy`, and keep the
+   build a read.
    Reopening the login route in an `explore` to read it again is fine, after a failed sign-in too.
    `references/auth-entry.ts` shows a bounded second probe that reads a login form's controls.
 
@@ -179,17 +183,19 @@ attribute.
     the label, type and placeholder. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.
-    For a phone box that keeps only the local number and has no country picker, prefer adding
-    `format: "national"` to that field: the host then types the number without its calling code.
+    For a phone box that keeps only the local number and has no country picker, or a picker that
+    already shows the number's country as the screen loads, prefer adding `format: "national"` to
+    that field: the host then types the number without its calling code.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
     otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
-    into one-character boxes is one `code` field per box, every box from the first to the last, in
-    order, as a split date is one field per part (below), even when the page moves the focus to
-    the next box or takes a pasted code in the first. Count the boxes on the screen before you
-    send the step. A step field never carries `codeBox` or any box number: the host reads each
-    box's place from the page, so send only `selector` and `slot` for each box. The host asks
-    once, types one character into each and submits only once each box holds one. A step that
+    into one-character boxes is one code, one `code` field per box, every box from the first to
+    the last, in order, as a split date is one field per part (below), even when the page moves the
+    focus to the next box, switches each box on only after the one before it holds a digit, or
+    takes a pasted code in the first. Count the boxes on the screen before you send the step. A
+    step field never carries `codeBox` or any box number: the host reads each box's place from the
+    page, so send only `selector` and `slot` for each box. The host asks once, types one character
+    into each, waiting for each box as it types, and submits only once each box holds one. A step that
     names only some of the boxes, or names them out of order, comes back refused as
     `code_boxes_incomplete`, typing nothing: its `codeBoxes` says how many boxes the screen shows
     and which ones the step named; send the step again with all of them. When a code screen asks
@@ -226,6 +232,16 @@ attribute.
   method order above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
+  A screen that offers a password route beside a code the site sends is a method choice too: list
+  `password` with each code method it offers, each with its own control, and name this login's
+  route as `submit`. So is a control that switches which identifier the screen asks for, when this
+  login's identifier needs it: list it as `identifier_username`, `identifier_email`,
+  `identifier_phone` or `identifier_account_number`, by the identifier it brings up. The tool's
+  runs keep the route each recorded sign-in took.
+  A method choice in a native drop-down (a `select`) names the drop-down as each method's selector
+  and as `submit`, the value it lists for each method as that method's `option`, and the one to
+  pick now as the step's own `option`; the host chooses that option. Prefer this over clicking the
+  drop-down.
 - `submitKey: "Enter"`, in place of `submit`: a code or password screen whose form has no submit
   control and submits on Enter. The host presses Enter in the step's last field.
 - Every selector and submit you send publishes with the tool, as does each screen's page address.
@@ -360,17 +376,28 @@ passkey, adding a phone number or turning on two-factor. Record its decline cont
 check, so runs pass it too; a run where it does not show skips it once the check verifies the
 session.
 
+When a sign-in screen asks to sign out another device or session, or to trust this browser,
+before the site goes on, send it as a `signInStep` with no fields, its control as `submit`, and
+`choice` naming that kind (`sign_out_other_device` or `trust_this_device`). Ask the owner first,
+as for any step that changes the account. Their yes covers this build. Each later run presses the
+control when its caller allows that choice and stops before it otherwise. When the screen offers
+a decline that still finishes the sign-in, prefer recording that decline as a plain step.
+
 # Signed in
 
 Prefer an observed protected business/account page or authenticated workflow control that the
 signed-out flow cannot reach, corroborated by the live business example. Generic Sign out or
 account chrome alone does not establish access to the caller's workflow. The signed-in marker you
-send is a separate check, of presence only (`auth.sign-in-check`): for it, a site-wide account menu
-or sign-out control is the right choice once `check_signed_in_marker` shows the signed-out page
-lacks it. <!-- pomerado:section auth.signed-in-page:start
-Call `authenticate` with `signInStep: { signedIn: { selector } }`. When the landing page
-shows no such marker, add `openPath`, the observed path of an account page that does, and the host
-opens it and checks there; never guess a protected route.
+send is a separate check, of presence only (`auth.sign-in-check`); send it once
+`check_signed_in_marker` shows the signed-out page lacks it. <!-- pomerado:section auth.signed-in-page:start
+Call `authenticate` with `signInStep: { signedIn: { selector } }`. The host checks the marker in
+many places across the site, not only where this sign-in lands: after every reset, at the start of
+every operation, after a page load in the middle of a run, and on whatever page a failure lands
+on. Choose a site-wide element only a signed-in user sees, such as the global header's account
+menu or sign-out control, never something only the page after sign-in shows, even when the site
+keeps its session only in page memory or session storage. When the landing page shows no such
+marker, add `openPath`, the observed path of an account page that does, and the host opens it and
+checks there; never guess a protected route.
 pomerado:section auth.signed-in-page:end --> The host checks that the submitted
 sign-in's recorded controls/form no longer show a password entry awaiting sign-in; unrelated
 password controls on the account page do not fail this check. It also checks that this sign-in
@@ -410,13 +437,7 @@ the same field on the same screen three times in a row ends sign-in in this buil
 Every sign-in you record ends with a deterministic sign-in check, sent as `signInStep.signedIn`: a
 marker every signed-in account shows and a signed-out page never does. Never put an account's
 name, email or number in it: the check publishes with the tool and runs for every login, and the
-host refuses one that names this account.
-
-The host checks the marker in many places across the site, not only where this sign-in lands:
-after every reset, at the start of every operation, after a page load in the middle of a run, and
-on whatever page a failure lands on. Choose a site-wide element only a signed-in user sees, such as
-the global header's account menu or sign-out control, never something only the page after sign-in
-shows.
+host refuses one that names this account. Where the marker must show is under "Signed in" above.
 
 - Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
   generated class names such as `css-1q2w3e`.
@@ -442,7 +463,7 @@ pomerado:section auth.marker-checks:end --> When it reports the signed-out page 
   with another marker. The marker must show on the signed-in page now. A fresh load never refuses
   it: the result reports `freshLoad`, and when it is false a notice says why. When the new tab
   showed the sign-in form, the site keeps its session only in page memory or session storage, and
-  the host signs in automatically at each operation start; the marker must still be site-wide.
+  the host signs in automatically at each operation start.
 
 The published tool records the check with its screens.
 

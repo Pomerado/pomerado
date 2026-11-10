@@ -1,7 +1,11 @@
-import { Effect, Option, Schema } from "effect";
+import { Effect, Either, Option, Schema } from "effect";
+import { keyHolds, typingPauses } from "../runtime/typing-pace.js";
 import { holdsFocusCode } from "./field-focus-code.js";
 
-/** Keyboard remains decodable for older control documents, but is temporarily unsupported. */
+/**
+ * How the host types a sign-in value: `paste` inserts it at once, `keyboard` presses a key per
+ * character (`InsertionOptions.trustedKeys`).
+ */
 export type CredentialTypingMode = "paste" | "keyboard";
 
 /** The one-use, value-free binding a Kernel focus call placed on the original field. */
@@ -32,7 +36,10 @@ export const InsertionRefusal = Schema.Literal(
   "origin_changed",
   /** The bound field no longer holds its document's focus: another element, or none, does. */
   "focus_moved",
-  /** The document itself does not hold the browser's focus. */
+  /**
+   * No longer given: a field that holds its document's focus takes the value even when the browser
+   * reports the window unfocused, as some headless browsers do. Kept for hosts that map each refusal.
+   */
   "document_unfocused",
   /** A private answer's observed question no longer reads as it did when the host inspected it. */
   "question_changed",
@@ -66,6 +73,30 @@ export interface InsertionOptions {
    * refusal after the first may leave part of the text typed.
    */
   readonly keys?: true | undefined;
+  /**
+   * Press a key per character with the browser's own trusted key events (`Input.dispatchKeyEvent`
+   * on the private socket, a key down carrying the character and a key up), at a person's pace
+   * (`typingPauses`), for a page that takes only typed text. It takes precedence over `keys`. The
+   * guard holds before each key; page code that moves the focus in the moment between the guard
+   * and the key can take that key. A refusal after the first key may leave part of the text
+   * typed. A field that dropped a letter or digit then takes the whole text at once, as without
+   * this option. A text with a control character is inserted at once instead, so no key it holds
+   * presses Enter or Tab.
+   */
+  readonly trustedKeys?: true | undefined;
+  /**
+   * With `trustedKeys`, hold each key down for a person's press, 60 to 150 ms (`keyHolds`), before
+   * its key up, and space key downs about 120 ms apart, as a person types a one-time code.
+   */
+  readonly held?: true | undefined;
+  /**
+   * With `trustedKeys`, the fields the second key on goes into, one key each in turn, as a row of
+   * one-character boxes takes a code typed into its first box while its page moves the focus box
+   * to box: each key's own field's guard holds before it, so a field that does not hold the focus
+   * by then ends the typing with `focus_moved`. Every binding is found in one read of each
+   * session's document. The fields are left as typed, with no look for dropped keys.
+   */
+  readonly across?: readonly CredentialTarget[] | undefined;
 }
 
 /**
@@ -172,18 +203,21 @@ const nativeDescendants = (node: typeof NativeNode.Type, frameId: string | undef
   return descendants;
 };
 
-/** Ephemeral, bounded native traversal: exactly one opaque marker, never a selector fallback. */
-const findMarkedNode = (
-  value: unknown,
-  key: string,
-): { backendNodeId: number; frameId: string | undefined } | "binding_ambiguous" | undefined => {
+/**
+ * Ephemeral, bounded native traversal: each key's one opaque marker, never a selector fallback.
+ * A key two nodes carry is `binding_ambiguous`.
+ */
+const findMarkedNodes = (value: unknown, keys: ReadonlySet<string>) => {
   const document = Schema.decodeUnknownOption(NativeDocument)(value);
   if (document._tag === "None") throw new Error("Credential target document unavailable");
   const { root } = document.value;
   const pending: { value: unknown; frameId: string | undefined }[] = [
     { value: root, frameId: undefined },
   ];
-  let found: { backendNodeId: number; frameId: string | undefined } | undefined;
+  const found = new Map<
+    string,
+    { backendNodeId: number; frameId: string | undefined } | "binding_ambiguous"
+  >();
   let visited = 0;
   while (pending.length > 0) {
     if (++visited > 50_000) throw new Error("Credential target document too large");
@@ -194,14 +228,42 @@ const findMarkedNode = (
     const node = decoded.value;
     const attributes = node.attributes ?? [];
     for (let index = 0; index < attributes.length; index += 2) {
-      if (attributes[index] !== key) continue;
-      if (found !== undefined) return "binding_ambiguous";
-      found = { backendNodeId: node.backendNodeId, frameId: next.frameId };
+      const key = attributes[index];
+      if (key === undefined || !keys.has(key)) continue;
+      found.set(
+        key,
+        found.has(key)
+          ? "binding_ambiguous"
+          : { backendNodeId: node.backendNodeId, frameId: next.frameId },
+      );
     }
     pending.push(...nativeDescendants(node, next.frameId));
   }
   return found;
 };
+
+/**
+ * Page code that takes the field's one-use binding off it and returns its guard: a function that
+ * answers why the field may no longer take the value, or nothing while it may. Without a binding
+ * in this world it returns nothing.
+ */
+const bindingGuard = `(field, key, origin) => {
+  const binding = field[key];
+  field.removeAttribute(key);
+  delete field[key];
+  if (!binding) return undefined;
+  const { document, frame } = binding;
+  const holdsFocus = ${holdsFocusCode};
+  return () => {
+    if (!field.isConnected) return "detached";
+    if (field.ownerDocument !== document) return "document_changed";
+    if (document.defaultView !== frame || frame.document !== document) return "frame_changed";
+    if (frame.origin !== origin) return "origin_changed";
+    if (!holdsFocus(field)) return "focus_moved";
+    if (binding.questionRequired &&
+        (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return "question_changed";
+  };
+}`;
 
 /**
  * Guard and insertion share this synchronous call on the original DOM object. Native insertion
@@ -211,22 +273,8 @@ const findMarkedNode = (
  */
 const atomicInsert = `function(key, origin, text, keys) {
   const field = this;
-  const binding = field[key];
-  field.removeAttribute(key);
-  delete field[key];
-  if (!binding) return "binding_not_in_world";
-  const { document, frame } = binding;
-  const holdsFocus = ${holdsFocusCode};
-  const guard = () => {
-    if (!field.isConnected) return "detached";
-    if (field.ownerDocument !== document) return "document_changed";
-    if (document.defaultView !== frame || frame.document !== document) return "frame_changed";
-    if (frame.origin !== origin) return "origin_changed";
-    if (!holdsFocus(field)) return "focus_moved";
-    if (!document.hasFocus()) return "document_unfocused";
-    if (binding.questionRequired &&
-        (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return "question_changed";
-  };
+  const guard = (${bindingGuard})(field, key, origin);
+  if (!guard) return "binding_not_in_world";
   const refused = guard();
   if (refused) return refused;
   if (!keys) return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
@@ -245,6 +293,78 @@ const atomicInsert = `function(key, origin, text, keys) {
   }
   return "inserted";
 }`;
+
+/**
+ * Takes the binding for typing by trusted keys: the binding's guard as a remote function the host
+ * calls before each key (`guardCheck`), or the refusal when this world holds no binding.
+ */
+const claimForKeys = `function(key, origin) {
+  return (${bindingGuard})(this, key, origin) ?? "binding_not_in_world";
+}`;
+const guardCheck = `function() { return this() ?? "ready"; }`;
+/**
+ * Runs on the field once its last key went in. A field that kept some of the typed characters, each
+ * of them one of the text's in order, but lost a letter or digit, as one that drops keys does, gets
+ * the whole text at once in place of what it kept, guarded as each key was: the atomic insertion
+ * typing replaced. A field that lost only other characters, as one that filters spaces or a plus
+ * does, and a field at its `maxLength` are left as typed, and so is a field left empty, for the next
+ * call's check, as one the page emptied was before. A field that shows anything else, as one that
+ * formats or masks its value with its own marks, is left as typed, and so is a field the call can
+ * no longer read, as on a page that sent itself on the last key. An editable's text is selected
+ * before the guard, so the guard also checks whatever page code that selection runs.
+ */
+const replaceDropped = `function(guard, text) {
+  const kept = Array.from(String(this.value ?? this.textContent ?? ""));
+  const typed = Array.from(text);
+  const lettersAndDigits = (characters) => characters.filter((character) => /[\\p{L}\\p{N}]/u.test(character)).length;
+  let at = 0;
+  const dropped = kept.length > 0 && lettersAndDigits(kept) < lettersAndDigits(typed) &&
+    !(this.maxLength >= 0 && kept.length >= this.maxLength) &&
+    kept.every((character) => (at = typed.indexOf(character, at) + 1) > 0);
+  if (!dropped) return "inserted";
+  const editable = typeof this.select !== "function";
+  if (editable) document.execCommand("selectAll");
+  const refused = guard();
+  if (refused) return refused;
+  if (!editable) this.select();
+  return document.execCommand("insertText", false, text) ? "inserted" : "insertion_rejected";
+}`;
+
+/** A US keyboard's key for each character it types, with its code and legacy key code, as Playwright's layout has them. */
+const usKeys = new Map<string, readonly [code: string, keyCode: number]>([
+  ...[..."0123456789"].map((digit, at) => [digit, [`Digit${at}`, 48 + at]] as const),
+  ...[...")!@#$%^&*("].map((shifted, at) => [shifted, [`Digit${at}`, 48 + at]] as const),
+  ...(
+    [
+      [" ", "Space", 32],
+      ["`~", "Backquote", 192],
+      ["-_", "Minus", 189],
+      ["=+", "Equal", 187],
+      ["[{", "BracketLeft", 219],
+      ["]}", "BracketRight", 221],
+      ["\\|", "Backslash", 220],
+      [";:", "Semicolon", 186],
+      ["'\"", "Quote", 222],
+      [",<", "Comma", 188],
+      [".>", "Period", 190],
+      ["/?", "Slash", 191],
+    ] as const
+  ).flatMap(([characters, code, keyCode]) =>
+    [...characters].map((character) => [character, [code, keyCode]] as const),
+  ),
+]);
+
+/** The key down and up a person's press of `character` sends; a character no key types has no code. */
+const keyEvents = (character: string) => {
+  const letter = /^[a-z]$/iu.test(character) ? character.toUpperCase() : undefined;
+  const [code, keyCode] =
+    letter === undefined ? (usKeys.get(character) ?? ["", 0]) : [`Key${letter}`, letter.charCodeAt(0)];
+  const key = { key: character, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+  return [
+    { type: "keyDown", ...key, text: character, unmodifiedText: character },
+    { type: "keyUp", ...key },
+  ];
+};
 
 const command = (
   cdp: PrivateCredentialCdp,
@@ -265,59 +385,93 @@ const resultOf = (value: unknown) => {
   return decoded.value.result;
 };
 
+type Bound = { readonly sessionId: string; readonly objectId: string };
+/** A target's field, resolved in its world (`findBindings`). */
+type BoundField = Bound & { readonly target: CredentialTarget };
+
+const releaseObject = (cdp: PrivateCredentialCdp, bound: Bound) =>
+  command(cdp, bound.sessionId, "Runtime.releaseObject", { objectId: bound.objectId });
+
 /**
- * The one field the target's binding marks, resolved in its world, or why not, sending no value.
- * A session whose document the browser refuses to read, or the host cannot walk, such as a large
- * third-party frame's, is skipped: when it held the field, the binding is not found, and a marker
- * copied elsewhere holds no binding in the private world. A binding world that fails and a node
- * the browser refuses to resolve leave the binding unresolved. So nothing before the insertion
- * fails.
+ * The fields the targets' bindings mark, each resolved in its world, in the targets' order, or why
+ * not, sending no value; one read of each session's document finds them all. A session whose
+ * document the browser refuses to read, or the host cannot walk, such as a large third-party
+ * frame's, is skipped: when it held the field, the binding is not found, and a marker copied
+ * elsewhere holds no binding in the private world. A binding world that fails and a node the
+ * browser refuses to resolve leave the binding unresolved. So nothing before the insertion fails.
+ * The first target that is not resolved answers for all, and the fields resolved before it are
+ * released.
  */
-const findBinding = (
+const findBindings = (
   cdp: PrivateCredentialCdp,
-  target: CredentialTarget,
+  [first, ...rest]: readonly [CredentialTarget, ...CredentialTarget[]],
   bindingWorld: CredentialBindingWorld | undefined,
+  release: (effect: Effect.Effect<unknown, Error>) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
-    let found:
-      { sessionId: string; backendNodeId: number; frameId: string | undefined } | undefined;
-    for (const sessionId of cdp.sessions(target.targetId)) {
+    const keys = new Set([first, ...rest].map((target) => target.bindingKey));
+    const found = new Map<
+      string,
+      { sessionId: string; backendNodeId: number; frameId: string | undefined } | "binding_ambiguous"
+    >();
+    for (const sessionId of cdp.sessions(first.targetId)) {
       const read = yield* Effect.either(
         command(cdp, sessionId, "DOM.getDocument", { depth: -1, pierce: true }),
       );
       if (read._tag === "Left") continue;
-      const walked = yield* Effect.either(
-        Effect.try(() => findMarkedNode(read.right, target.bindingKey)),
-      );
+      const walked = yield* Effect.either(Effect.try(() => findMarkedNodes(read.right, keys)));
       if (walked._tag === "Left") continue;
-      const node = walked.right;
-      if (node === undefined) continue;
-      if (node === "binding_ambiguous" || found !== undefined) return "binding_ambiguous" as const;
-      found = { sessionId, ...node };
+      for (const [key, node] of walked.right)
+        found.set(
+          key,
+          node === "binding_ambiguous" || found.has(key) ? "binding_ambiguous" : { sessionId, ...node },
+        );
     }
-    if (found === undefined) return "binding_not_found" as const;
-    let executionContextId: number | undefined;
-    if (bindingWorld !== undefined) {
-      const world = yield* Effect.either(
-        bindingWorld(cdp, { sessionId: found.sessionId, frameId: found.frameId }),
-      );
-      if (world._tag === "Left") return "binding_unresolved" as const;
-      executionContextId = world.right;
+    const worlds = new Map<string, Either.Either<number, Error>>();
+    const resolve = (target: CredentialTarget) =>
+      Effect.gen(function* () {
+        const node = found.get(target.bindingKey);
+        if (node === undefined) return "binding_not_found" as const;
+        if (node === "binding_ambiguous") return node;
+        let executionContextId: number | undefined;
+        if (bindingWorld !== undefined) {
+          const at = `${node.sessionId} ${node.frameId ?? ""}`;
+          const world =
+            worlds.get(at) ??
+            (yield* Effect.either(
+              bindingWorld(cdp, { sessionId: node.sessionId, frameId: node.frameId }),
+            ));
+          worlds.set(at, world);
+          if (world._tag === "Left") return "binding_unresolved" as const;
+          executionContextId = world.right;
+        }
+        const resolved = yield* Effect.either(
+          command(cdp, node.sessionId, "DOM.resolveNode", {
+            backendNodeId: node.backendNodeId,
+            ...(executionContextId === undefined ? {} : { executionContextId }),
+          }),
+        );
+        const objectId =
+          resolved._tag === "Left"
+            ? undefined
+            : Option.getOrUndefined(Schema.decodeUnknownOption(ResolvedNode)(resolved.right))
+                ?.object.objectId;
+        return objectId === undefined
+          ? ("binding_unresolved" as const)
+          : { sessionId: node.sessionId, objectId, target };
+      });
+    const firstBound = yield* resolve(first);
+    if (typeof firstBound === "string") return firstBound;
+    const bound: [BoundField, ...BoundField[]] = [firstBound];
+    for (const target of rest) {
+      const next = yield* resolve(target);
+      if (typeof next === "string") {
+        for (const each of bound) yield* release(releaseObject(cdp, each));
+        return next;
+      }
+      bound.push(next);
     }
-    const resolved = yield* Effect.either(
-      command(cdp, found.sessionId, "DOM.resolveNode", {
-        backendNodeId: found.backendNodeId,
-        ...(executionContextId === undefined ? {} : { executionContextId }),
-      }),
-    );
-    const objectId =
-      resolved._tag === "Left"
-        ? undefined
-        : Option.getOrUndefined(Schema.decodeUnknownOption(ResolvedNode)(resolved.right))?.object
-            .objectId;
-    return objectId === undefined
-      ? ("binding_unresolved" as const)
-      : { sessionId: found.sessionId, objectId };
+    return bound;
   });
 
 /**
@@ -350,11 +504,136 @@ const readBackPhone = (
     Effect.orElseSucceed(() => "inserted" as const),
   );
 
+/** A credential call's finite answer, read from its reply; any other leaves whether the value landed unknown. */
+const answerOf = <A extends string>(reply: unknown, answers: Schema.Schema<A>) =>
+  Effect.try({
+    try: () => resultOf(reply).value,
+    catch: (error) =>
+      error instanceof Error ? error : new Error("Credential insertion unavailable"),
+  }).pipe(
+    Effect.flatMap((answer) =>
+      Schema.decodeUnknown(answers)(answer).pipe(
+        Effect.mapError((cause) => new Error("Credential insertion unavailable", { cause })),
+      ),
+    ),
+  );
+
+/** The guard's answer before a key: the field may take it, or why not. */
+const GuardAnswer = Schema.Union(Schema.Literal("ready"), InsertionRefusal);
+
+/** Guards and inserts the whole text in one call (`atomicInsert`). */
+const insertAtOnce = (
+  cdp: PrivateCredentialCdp,
+  bound: Bound,
+  target: CredentialTarget,
+  text: string,
+  keys: boolean,
+) =>
+  command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
+    objectId: bound.objectId,
+    functionDeclaration: atomicInsert,
+    arguments: [
+      { value: target.bindingKey },
+      { value: target.documentOrigin },
+      { value: text },
+      { value: keys },
+    ],
+    returnByValue: true,
+  }).pipe(Effect.flatMap((reply) => answerOf(reply, CredentialInsertion)));
+
+/**
+ * Types the text by trusted keys (`InsertionOptions.trustedKeys`): takes each binding's guard, then
+ * for each character runs its field's guard and, while the field may take the key, presses the key
+ * on the field's own session. Each key goes into the field at its place (`across`), the last taking
+ * any keys left, so with one field every key goes into it. A person's pause (`typingPauses`) runs
+ * from one key's guard to the next; `held` holds each key down for a person's press (`keyHolds`)
+ * and spaces the pauses about 120 ms. A single field that dropped keys then takes the text at once
+ * (`replaceDropped`). Every guard's remote function is released however the typing ends.
+ */
+const pressKeys = (
+  cdp: PrivateCredentialCdp,
+  [first, ...rest]: readonly [BoundField, ...BoundField[]],
+  text: string,
+  held: boolean,
+  release: (effect: Effect.Effect<unknown, Error>) => Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const claimed: Bound[] = [];
+    const claim = (field: BoundField) =>
+      Effect.gen(function* () {
+        const reply = yield* command(cdp, field.sessionId, "Runtime.callFunctionOn", {
+          objectId: field.objectId,
+          functionDeclaration: claimForKeys,
+          arguments: [{ value: field.target.bindingKey }, { value: field.target.documentOrigin }],
+          returnByValue: false,
+        });
+        const objectId = yield* Effect.try({
+          try: () => resultOf(reply).objectId,
+          catch: (error) =>
+            error instanceof Error ? error : new Error("Credential insertion unavailable"),
+        });
+        if (objectId === undefined) return yield* answerOf(reply, CredentialInsertion);
+        const guard = { sessionId: field.sessionId, objectId };
+        claimed.push(guard);
+        return guard;
+      });
+    const typing = Effect.gen(function* () {
+      const firstGuard = yield* claim(first);
+      if (typeof firstGuard === "string") return firstGuard;
+      const guards: [Bound, ...Bound[]] = [firstGuard];
+      for (const field of rest) {
+        const guard = yield* claim(field);
+        if (typeof guard === "string") return guard;
+        guards.push(guard);
+      }
+      const characters = Array.from(text);
+      const pauses = typingPauses(text, undefined, held ? 120 : undefined);
+      const holds = held ? keyHolds(characters.length) : [];
+      let keyAt = Date.now();
+      for (const [index, character] of characters.entries()) {
+        if (index > 0)
+          yield* Effect.sleep(Math.max(0, (pauses[index - 1] ?? 0) - (Date.now() - keyAt)));
+        keyAt = Date.now();
+        const guard = guards[Math.min(index, guards.length - 1)] ?? firstGuard;
+        const checked = yield* command(cdp, guard.sessionId, "Runtime.callFunctionOn", {
+          objectId: guard.objectId,
+          functionDeclaration: guardCheck,
+          arguments: [],
+          returnByValue: true,
+        });
+        const answer = yield* answerOf(checked, GuardAnswer);
+        if (answer !== "ready") return answer;
+        for (const [at, event] of keyEvents(character).entries()) {
+          if (at > 0 && held) yield* Effect.sleep(holds[index] ?? 0);
+          yield* command(cdp, guard.sessionId, "Input.dispatchKeyEvent", event);
+        }
+      }
+      if (rest.length > 0) return "inserted" as const;
+      return yield* command(cdp, first.sessionId, "Runtime.callFunctionOn", {
+        objectId: first.objectId,
+        functionDeclaration: replaceDropped,
+        arguments: [{ objectId: firstGuard.objectId }, { value: text }],
+        returnByValue: true,
+      }).pipe(
+        Effect.flatMap((landed) => answerOf(landed, CredentialInsertion)),
+        // error-reporting-allow: typed-recovery every key went in, and a read that fails, as on a page that sent itself on the last key, inserted nothing and can't tell what the field kept
+        Effect.orElseSucceed(() => "inserted" as const),
+      );
+    });
+    return yield* typing.pipe(
+      Effect.ensuring(
+        Effect.forEach(claimed, (guard) => release(releaseObject(cdp, guard)), { discard: true }),
+      ),
+    );
+  });
+
 /**
  * The credential-only native DOM reads and Runtime calls on the private socket resolve the original
  * field binding, insert atomically into that remote object, then release it. No parameters enter
- * recorder history or logs, and the secret is an argument, never Kernel REST script text. A phone
- * number (`InsertionOptions.phone`) is read back from that same object before its release.
+ * recorder history or logs, and the secret is an argument, never Kernel REST script text. Typed by
+ * trusted keys, each character also goes as an `Input.dispatchKeyEvent` parameter on that same
+ * socket. A phone number (`InsertionOptions.phone`) is read back from that same object before its
+ * release.
  */
 export const makeCredentialKeyboard = (
   cdp: PrivateCredentialCdp,
@@ -364,43 +643,25 @@ export const makeCredentialKeyboard = (
 ): CredentialKeyboard => ({
   insertText: (target, text, options) =>
     Effect.gen(function* () {
-      const bound = yield* findBinding(cdp, target, bindingWorld);
+      const keyed = options?.trustedKeys === true && !/\p{Cc}/u.test(text);
+      const targets: readonly [CredentialTarget, ...CredentialTarget[]] = [
+        target,
+        ...(keyed ? (options.across ?? []) : []),
+      ];
+      const bound = yield* findBindings(cdp, targets, bindingWorld, release);
       if (typeof bound === "string") return bound;
-      let readBack: "inserted" | "changed" | "cut_short" = "inserted";
-      const value = yield* command(cdp, bound.sessionId, "Runtime.callFunctionOn", {
-        objectId: bound.objectId,
-        functionDeclaration: atomicInsert,
-        arguments: [
-          { value: target.bindingKey },
-          { value: target.documentOrigin },
-          { value: text },
-          { value: options?.keys === true },
-        ],
-        returnByValue: true,
-      }).pipe(
-        Effect.tap((inserted) =>
-          Effect.gen(function* () {
-            if (options?.phone !== true) return;
-            const answer = Option.getOrUndefined(Schema.decodeUnknownOption(RemoteResult)(inserted));
-            if (answer?.exceptionDetails === undefined && answer?.result.value === "inserted")
-              readBack = yield* readBackPhone(cdp, bound, text);
-          }),
+      const typing = keyed
+        ? pressKeys(cdp, bound, text, options.held === true, release)
+        : insertAtOnce(cdp, bound[0], target, text, options?.keys === true);
+      return yield* typing.pipe(
+        Effect.flatMap((inserted) =>
+          inserted === "inserted" && options?.phone === true
+            ? readBackPhone(cdp, bound[0], text)
+            : Effect.succeed(inserted),
         ),
         Effect.ensuring(
-          release(
-            command(cdp, bound.sessionId, "Runtime.releaseObject", { objectId: bound.objectId }),
-          ),
+          Effect.forEach(bound, (field) => release(releaseObject(cdp, field)), { discard: true }),
         ),
       );
-      const answer = yield* Effect.try({
-        try: () => resultOf(value).value,
-        catch: (error) =>
-          error instanceof Error ? error : new Error("Credential insertion unavailable"),
-      });
-      // An answer outside the finite set leaves whether the value landed unknown.
-      const inserted = yield* Schema.decodeUnknown(CredentialInsertion)(answer).pipe(
-        Effect.mapError((cause) => new Error("Credential insertion unavailable", { cause })),
-      );
-      return inserted === "inserted" ? readBack : inserted;
     }),
 });

@@ -159,7 +159,15 @@ const fieldDigest = (values: readonly unknown[]) => {
   return {
     withValue: present.length,
     distinct: distinct.size,
-    ...(lengths.length === 0 ? {} : { length: [Math.min(...lengths), Math.max(...lengths)] }),
+    // Never spread into Math.min or Math.max: a list of many records overflows the call stack.
+    ...(lengths.length === 0
+      ? {}
+      : {
+          length: [
+            lengths.reduce((least, length) => Math.min(least, length)),
+            lengths.reduce((most, length) => Math.max(most, length)),
+          ],
+        }),
     samples: [...distinct.values()].slice(0, sampleLimit).map(sampleOf),
   };
 };
@@ -530,6 +538,11 @@ type PublicationExample =
       readonly completed: boolean;
       /** The source changed after the example ran, so the schemas were read again offline. */
       readonly schemasReadOffline?: boolean;
+      /**
+       * The example ran the agent's exampleInput in place of the caller's own input, which the
+       * tool refused with InvalidInput.
+       */
+      readonly substitute?: boolean;
     }
   | {
       readonly kind: "write";
@@ -541,7 +554,7 @@ type PublicationExample =
 /** What the review is told about its evidence, part of the notes the host gives it. */
 export const publicationEvidenceNote = (example: PublicationExample) =>
   example.kind === "read"
-    ? `The actual ${example.completed ? "completed" : "failed"} example used executed/${example.entrypoint}; its actual screened output and provenance are in ${exampleOutputPath}. Judge the declared capability claims against that output, not against exploratory probe observations. Its input/output contract was extracted from the imported operation before running the business action.${example.schemasReadOffline === true ? " The source changed after the example ran, so the host read the input and output schemas and questions again offline from current source and checked that the example's own input and output decode against them." : ""} Inspect its baseline and current source for schema compatibility. Publish only if the JSON schemas in publication/definition.json still describe the current operation.`
+    ? `The actual ${example.completed ? "completed" : "failed"} example used executed/${example.entrypoint}; its actual screened output and provenance are in ${exampleOutputPath}. Judge the declared capability claims against that output, not against exploratory probe observations. Its input/output contract was extracted from the imported operation before running the business action.${example.schemasReadOffline === true ? " The source changed after the example ran, so the host read the input and output schemas and questions again offline from current source and checked that the example's own input and output decode against them." : ""} Inspect its baseline and current source for schema compatibility. Publish only if the JSON schemas in publication/definition.json still describe the current operation.${example.substitute === true ? " The example ran a substitute input, another record of the same kind on this site that the agent found or the owner gave, because the tool refused the caller's own input with InvalidInput, its input error, in an earlier example of this build. Judge the claims against the substitute's output. The caller's input is a case the tool must still refuse with that error, never a value the tool must serve: check that the current source still refuses it, and any live test case on it." : ""}`
     : `This is a write build. Its one real write ran as the act session under publication/session/: step N's source is under publication/session/N/, in order, and ${sessionOutputPath} holds the screened output of the step named for publication. The composed operation was never run. The host extracted its input/output contract and declared write confirmation (${example.writeConfirmation}) offline from current source, and ${example.intentDerived ? "the input the session ran, the agent's exampleInput read from the request and the owner's answers because the caller sent none," : "the caller's own input"} decodes against it. Judge the composed script against the session steps, their outputs and the captures: it must reproduce the same flow from its input, perform and return the confirmation or read-back it declares, and never resubmit or commit twice. 'unverifiable' is valid only if the session evidence shows the site offered no commit response the script can check, no confirmation and no read-back. Each confirm popup must keep the session step's literal decideDialog step name. Do not call for another run of the write.`;
 
 /** The authority a publication review grants: publish what is under review, run nothing. */

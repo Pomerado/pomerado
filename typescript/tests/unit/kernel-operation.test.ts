@@ -381,7 +381,7 @@ it.each([
 it("does not retain a handled Kernel timeout after a later successful call", async () => {
   const timeout = "TimeoutError: locator.waitFor: Timeout 5000ms exceeded";
   const kernel = fakeKernel((code) =>
-    code === "first" ? { success: false, error: timeout } : { success: true, result: null },
+    code.includes("first") ? { success: false, error: timeout } : { success: true, result: null },
   );
   const operation = defineOperation(
     { input: Schema.Struct({}), output: Schema.String },
@@ -1237,7 +1237,7 @@ describe("a commit step whose click saved nothing", () => {
       const whileAsked: unknown[] = [];
       let clicks = 0;
       const kernel = fakeKernel((code) => {
-        if (code === "return click();") clicks += 1;
+        if (code.includes("return click();")) clicks += 1;
         return {
           success: true,
           result: clicks === 2 && options.secondClick === "flagged" ? "flagged" : null,

@@ -112,10 +112,13 @@ const stepSelectors = (step: SignInRecipeStep, at: string): Text[] => [
       : []),
   ]),
   ...(step.submit === undefined ? [] : [{ part: `${at}.submit`, text: step.submit }]),
-  ...(step.methods ?? []).map((option, index) => ({
-    part: `${at}.methods[${index}].selector`,
-    text: option.selector,
-  })),
+  ...(step.methods ?? []).flatMap((method, index) => [
+    { part: `${at}.methods[${index}].selector`, text: method.selector },
+    // A native select's option value publishes with the tool too.
+    ...(method.option === undefined
+      ? []
+      : [{ part: `${at}.methods[${index}].option`, text: method.option }]),
+  ]),
 ];
 
 /** What a page names past its origin: a path's path, an absolute URL's path, query and fragment. */

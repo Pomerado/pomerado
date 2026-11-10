@@ -37,7 +37,7 @@ export interface PomeradoMcpOptions extends ServerOptions {
     request: PomeradoRequest,
     name: string,
   ) => Effect.Effect<
-    (artifact: MintArtifact) => Effect.Effect<unknown, Error, Scope.Scope>,
+    (artifact: MintArtifact, effect?: "read" | "write") => Effect.Effect<unknown, Error, Scope.Scope>,
     Error,
     Scope.Scope
   >;
@@ -127,7 +127,7 @@ const helperTools = (
     "provide_input",
     {
       description:
-        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
+        'Answer the current job questions using its request_id and answers keyed by question ID. A choice is an option id; with allowOther, {"other": text} instead; with allowNote, {"option": id, "note": text}. A multi_choice is an array of option ids, or {"options": [ids]} with "other" (allowOther) or "note" (allowNote). A browser_handoff hands the open browser window to the user: show them its prompt and any notice, and answer {"done": true} only after they say they finished the step there. Secret answers sent here are visible to your MCP client and model; ask the user before sending them. No login or secret is saved.',
       inputSchema: standard(ProvideInput),
       annotations: writeHints,
     },
@@ -199,15 +199,27 @@ export const makePomeradoMcp = (options: PomeradoMcpOptions) =>
                 const publish = yield* options.prepare(request, name);
                 const pomerado = yield* createPomerado({ ...options.pomerado, ask });
                 const result = yield* pomerado.mint(request);
+                // The calling agent reads only codes: no diagnostics, page text or step detail.
+                const denial = result.publicationDenial;
                 if (result.artifact === undefined)
                   return {
                     build: result.build,
                     summary: result.summary,
+                    ...(result.stopReason === undefined ? {} : { stopReason: result.stopReason }),
+                    ...(result.hostFailure === undefined ? {} : { hostFailure: result.hostFailure }),
+                    ...(denial === undefined
+                      ? {}
+                      : {
+                          publicationDenial: {
+                            ...(denial.reason === undefined ? {} : { reason: denial.reason }),
+                            ...(denial.category === undefined ? {} : { category: denial.category }),
+                          },
+                        }),
                     ...(result.untrustedSignInOrigins === undefined
                       ? {}
                       : { untrustedSignInOrigins: result.untrustedSignInOrigins }),
                   };
-                const integration = yield* publish(result.artifact);
+                const integration = yield* publish(result.artifact, result.effect);
                 return { build: result.build, integration };
               }),
             )

@@ -2,7 +2,22 @@
 
 Describe the problem and the resulting behavior. Link related issues.
 
-## Validation
+## Risk class
+
+<!--
+Keep one line.
+High: authentication, credentials or secrets handling, permissions, data deletion, the release workflow, or anything that changes what leaves the user's machine. A high-risk change also needs a second independent review of its security, data safety and rollback plan.
+Medium: any other change to how the package behaves.
+Low: documentation, tests, internal tooling and copy.
+-->
+
+Low / Medium / High, because ...
+
+## Rollback plan
+
+How to undo this if it goes wrong, for example reverting this pull request and releasing again, and anything a revert alone doesn't undo.
+
+## How it was tested
 
 List the checks you ran and their results, including anything you could not run.
 

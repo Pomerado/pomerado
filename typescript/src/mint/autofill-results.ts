@@ -130,7 +130,7 @@ export const unansweredFailure = ({ cause: unanswered }: Unanswered) =>
 
 const filledNotices = {
   blocked:
-    "The host filled the fields, but another element sat over the submit and caught its click (blockedBy), such as a cookie or tracking consent banner, so nothing was sent and no fill was spent. Never click the submit yourself. Find that banner's own control with a read-only explore (never read a field the host filled): its close or dismiss control, else one that rejects or declines what is not essential, else accept when that is the only way out. Then send this same signInStep again with that control's selector as dismiss: the host clicks it, then clicks the submit once more, typing nothing unless the dismiss emptied a field. When that element has no such control, such as a fixed header or footer, send this same signInStep again without dismiss, and without resizing or scrolling the page: the host then presses the submit from the keyboard.",
+    "The host filled the fields, but another element sat over the submit and caught its click (blockedBy), such as a cookie or tracking consent banner, so nothing was sent and no fill was spent. Never click the submit yourself. Find that banner's own control with a read-only explore (never read a field the host filled): its close or dismiss control, else one that rejects or declines what is not essential in one click, else accept. Then send this same signInStep again with that control's selector as dismiss: the host clicks it, then clicks the submit once more, typing nothing unless the dismiss emptied a field. When that element has no such control, such as a fixed header or footer, send this same signInStep again without dismiss, and without resizing or scrolling the page: the host then presses the submit from the keyboard.",
   failed:
     "The host filled the fields, but its click of the submit failed. You may click that one submit yourself in an explore, and nothing else: never read, change or return a field the host filled. Then continue with the next signInStep, or signedIn.",
   none: "The host filled the fields; the screen has no button. Explore read-only to see what it revealed, then send the next signInStep for it.",
@@ -147,23 +147,26 @@ const filledNotices = {
 
 /**
  * After a phone field whose `maxLength` is shorter than the number the host typed, when the number
- * says its calling code: it names no digit of the number.
+ * says its calling code (`code`): it names that code and no other digit of the number, so that on
+ * a screen with a country picker the picker shows the number's country before the number goes
+ * without its calling code.
  */
-const localNumberNotice =
-  "The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits.";
+const localNumberNotice = (code: string) =>
+  `The phone field seems to take only the local number: it kept just the start of the number the host typed. Nothing was submitted and nobody was asked. If the screen has no country picker, prefer sending this signInStep again with that phone field's format set to national: the host then types the number without its country calling code, and reads the field back again before it submits. If the screen has a country picker, prefer setting that phone field's format to national only when the picker already shows the country for calling code +${code} as the screen loads, which is what a run will see, and otherwise keep the full number, so the read-back stops a number typed under another country.`;
 
 /**
  * A step the host stopped before its submit because a phone field kept other digits than the
  * number it typed (field status `changed`). When the field seems to take only the local number
  * (`local`, from `takesLocalNumber`) and the number is written in international form, it says to
- * send the step again with the field's format set to national, naming no digit of the number.
- * Otherwise it names the number's calling code when it is written in international form
- * (`callingCode`), else the site's own country, as a number written without its calling code most
- * likely belongs to it. Nothing was submitted and nobody was asked.
+ * send the step again with the field's format set to national, naming only the number's calling
+ * code, for a screen with a country picker to show first. Otherwise it names the number's calling
+ * code when it is written in international form (`callingCode`), else the site's own country, as
+ * a number written without its calling code most likely belongs to it. Nothing was submitted and
+ * nobody was asked.
  */
 export const changedPhoneNotice = (number: string | undefined, local = false) => {
   const code = number === undefined ? undefined : callingCode(number);
-  if (local && code !== undefined) return localNumberNotice;
+  if (local && code !== undefined) return localNumberNotice(code);
   const lead =
     "The phone field kept different digits than the number the host typed, as when the site's country picker is set to another country. Nothing was submitted and nobody was asked.";
   return code === undefined
@@ -209,6 +212,13 @@ export const dismissRefusedNotice =
 export const keyboardSubmitNotice =
   "Something sat over the submit and caught the host's click, so the host pressed the same submit from the keyboard instead, and nothing on the covering element was clicked. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signedIn.";
 
+/**
+ * After a step whose submit the host clicked through the site's own control over it
+ * (`via: "click_layer"`).
+ */
+export const clickLayerSubmitNotice =
+  "The site lays its own control, with the same name as the submit, over the submit inside the sign-in form, so the host clicked that control as the submit. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signedIn.";
+
 /** After a step whose submit key the host pressed. */
 const keyNotices = {
   failed:
@@ -233,5 +243,6 @@ export const stepNotice = (
   )
     return keyNotices[stepReport.submit];
   if (stepReport.via === "keyboard") return keyboardSubmitNotice;
+  if (stepReport.via === "click_layer") return clickLayerSubmitNotice;
   return filledNotices[stepReport.submit];
 };

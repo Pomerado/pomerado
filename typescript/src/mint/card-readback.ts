@@ -119,6 +119,9 @@ export const cardReadback = (
 export const cardReadbackRule =
   "a card stays with the host: fillCard types the caller's card from its handles, and once a build has the caller's card or its source calls fillCard, no source reads a field's value or the page's markup, runs or plants code in the page, opens a DevTools session, takes an accessibility snapshot, screenshot or PDF of the page, records the page, or reads a request body";
 
+/** How each refusal `cardReadbackRefusal` gives ends, after its file, line and what code does. */
+const refusalEnd = `: ${cardReadbackRule}. Nothing was executed.`;
+
 /**
  * Why a live step is refused before review for code that could read a typed card back, when the
  * build has the caller's card (`cardIssued`) or its source calls `fillCard`.
@@ -132,5 +135,12 @@ export const cardReadbackRefusal = (
   const found = cardReadback(files, cardIssued);
   return found === undefined
     ? undefined
-    : `${found.path} line ${found.line} ${found.does}: ${cardReadbackRule}. Nothing was executed.`;
+    : `${found.path} line ${found.line} ${found.does}${refusalEnd}`;
 };
+
+/**
+ * Whether a reason is a refusal `cardReadbackRefusal` gave, as a host returns it for the step it
+ * refused: an `unsupported` execution's observations.
+ */
+export const isCardReadbackRefusal = (reason: unknown): boolean =>
+  typeof reason === "string" && reason.endsWith(refusalEnd);

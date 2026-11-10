@@ -109,3 +109,18 @@ export const modelCauseMetadata = (cause: Cause.Cause<unknown>): ModelFailureMet
     interrupted: Cause.isInterrupted(cause),
   };
 };
+
+/**
+ * The provider refused the request as over the model's input limit, its context window, by its own
+ * code. That is no outage, and the same request fails the same way.
+ */
+export const overContextWindow = (finite: ModelFailureMetadata) =>
+  finite.code === "context_length_exceeded" || finite.providerCode === "context_length_exceeded";
+
+/**
+ * The provider could not decrypt an encrypted item the request sent back, such as a compaction it
+ * returned earlier, by its own code. That is no outage, and the same request fails the same way.
+ */
+export const unreadableEncryptedItem = (finite: ModelFailureMetadata) =>
+  finite.code === "invalid_encrypted_content" ||
+  finite.providerCode === "invalid_encrypted_content";

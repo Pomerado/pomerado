@@ -13,7 +13,8 @@ export const monthStatement = (month: string) => `${statement}month,${month}\n`;
  * name, size and sha256), a link that downloads a statement and one for each of two months'
  * statements. `received` lists each upload,
  * and `requested` the path of every request the site answered. Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
- * embeds that address in an iframe.
+ * embeds that address in an iframe. `/shadow-drop` does the same with its input inside an open
+ * shadow root.
  */
 export const startFileSite = async (options: { readonly frame?: string } = {}) => {
   const received: { readonly name: string; readonly size: number; readonly sha256: string }[] = [];
@@ -52,6 +53,19 @@ export const startFileSite = async (options: { readonly frame?: string } = {}) =
 <label>Drop <input type="file"></label>
 <script>
 document.querySelector("input").addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  fetch("/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+});
+</script>`);
+        return;
+      }
+      if (url.pathname === "/shadow-drop") {
+        response.end(`<title>Shadow drop</title>
+<div id="host"></div>
+<script>
+const root = document.getElementById("host").attachShadow({ mode: "open" });
+root.innerHTML = '<label>Scan <input type="file"></label>';
+root.querySelector("input").addEventListener("change", (event) => {
   const file = event.target.files[0];
   fetch("/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
 });

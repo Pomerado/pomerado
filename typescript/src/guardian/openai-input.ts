@@ -79,6 +79,10 @@ export const guardianReviewInput = (
         : { ownerConfirmedStep: turn.sources.ownerConfirmedStep }),
       // The exact frame origins a host card-fill step may type a card answer into.
       ...(reviewKindOf(turn.pending) === "execution" ? { paymentFrameOrigins } : {}),
+      // The most a card-fill step that names slots may pay, when the host has one.
+      ...(reviewKindOf(turn.pending) === "execution" && turn.pending.paymentLimit !== undefined
+        ? { paymentLimit: turn.pending.paymentLimit }
+        : {}),
     },
     ...extra,
     // A later publication round: the prior round's decision and what changed since it.
@@ -117,6 +121,10 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.finding === undefined
               ? {}
               : { finding: turn.pending.questionCandidate.finding }),
+            // The change the host refused until the caller confirms it.
+            ...(turn.pending.questionCandidate.hostConfirmation === undefined
+              ? {}
+              : { hostConfirmation: turn.pending.questionCandidate.hostConfirmation }),
             // The confirm questions that ask the owner to confirm a step a review held.
             ...(turn.sources?.heldStepQuestions === undefined
               ? {}

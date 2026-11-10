@@ -232,7 +232,7 @@ it("gives a write build's update review the write effect before its first act st
   const mintUpdate = f.requests[0]?.tools.find((tool) => tool.name === "mint_update");
   expect(JSON.stringify(mintUpdate ?? null)).toContain(
     JSON.stringify(
-      "No update removes the requested action itself or allows repeating a write that may have committed. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety.",
+      "No update removes the requested action itself or allows repeating a write that may have committed. The one exception to the first: a write build that has sent no write may become a read of the same task when the caller confirms that change. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety.",
     ).slice(1, -1),
   );
 });
@@ -1000,6 +1000,107 @@ it("asks for the caller's confirmation before a change that widens what the buil
   expect(updates.reviews).toEqual([]);
 });
 
+/** The site's own app, on another registrable domain, which the request names. */
+const app = "https://app.notes-cloud.test";
+const namesApp = `Sign in and list the notes on the account, read only. After sign-in the session may move to the site's app at ${app}; read the notes there if it does.`;
+const toApp = {
+  summary: `Build the tool on ${app}, where the sign-in landed.`,
+  changes: [{ setting: "site", origin: app }],
+  confirmedBy: ["move_site"],
+  recommend: "update",
+};
+const moveQuestion = {
+  questions: [
+    {
+      id: "move_site",
+      type: "confirm",
+      prompt: `The sign-in landed on ${app}, the site's app. Build the tool there instead of on ${site}?`,
+    },
+  ],
+};
+type QuestionFacts = Parameters<NonNullable<MintDependencies["reviewQuestion"]>>[1];
+
+/**
+ * Guardian's question review as its policy reads: a question asking leave to do what trusted
+ * intent already names is reworded as already authorized, unless the host's own record says it
+ * refused that very change until the caller confirms it. It keeps each question's facts, not a
+ * blocked report's.
+ */
+const policyFaithfulQuestionReview = (reviewed: QuestionFacts[]) => ({
+  reviewQuestion: (_request: AgentInputRequest, facts?: QuestionFacts) =>
+    Effect.sync(() => {
+      if (facts?.blockedOutcome !== true) reviewed.push(facts);
+      return facts?.hostConfirmation?.changes.some(
+        (change) => change.setting === "site" && change.origin === app,
+      ) === true
+        ? { outcome: "allow_business" as const, rationale: "The host needs this yes." }
+        : {
+            outcome: "reword" as const,
+            label: "already_authorized" as const,
+            rationale: "No question is needed: the request already names the app.",
+          };
+    }),
+});
+
+// A read build whose sign-in lands on the site's app at another address, which the request names:
+// the host refuses the move until the caller confirms it, and the confirm question that follows
+// must reach the caller. Fails when the question review never hears the host's demand, since it
+// then rewords the question as already authorized and the move never applies.
+it("tells the question review the host is waiting for the caller's yes to a site change, until it applies", async () => {
+  const updates = updateHost(["allow"]);
+  const reviewed: QuestionFacts[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("mint_update", { ...toApp, confirmedBy: [] }, "unconfirmed"),
+        call("request_input", moveQuestion, "ask"),
+        call("mint_update", toApp, "confirmed"),
+        call("request_input", { questions: [{ id: "list", type: "text", prompt: "Which list?" }] }),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      ...policyFaithfulQuestionReview(reviewed),
+      askInput: answering([{ move_site: { confirmed: true } }]),
+    },
+    { effect: "read", siteOrigin: site, intent: namesApp },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "unconfirmed")).toMatchObject({
+    status: "clarification_required",
+    source: "host",
+    reason: "confirmation_required",
+  });
+  expect(reviewed[0]?.hostConfirmation).toEqual({ changes: [{ setting: "site", origin: app }] });
+  expect(resultOf(f.requests, "ask")).not.toMatchObject({ status: "question_rejected" });
+  expect(resultOf(f.requests, "confirmed")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, siteOrigin: app },
+  });
+  expect(updates.applied[0]?.next).toMatchObject({ siteOrigin: app });
+  // The confirmed move applied, so the host waits for nothing and a later question hears nothing.
+  expect(reviewed).toHaveLength(2);
+  expect(reviewed[1]).not.toHaveProperty("hostConfirmation");
+});
+
+// Control: with no refusal by the host on record, a question asking leave for a change the request
+// already settles reaches the question review as before, and is reworded as before.
+it("tells the question review nothing when the host refused no change", async () => {
+  const updates = updateHost(["allow"]);
+  const reviewed: QuestionFacts[] = [];
+  const f = await fixture(
+    (_request, index) => [call("request_input", moveQuestion, "ask")][index] ?? prose(),
+    { ...updates.overrides, ...policyFaithfulQuestionReview(reviewed) },
+    { effect: "read", siteOrigin: site, intent: namesApp },
+  );
+  await f.run();
+  expect(reviewed).toHaveLength(1);
+  expect(reviewed[0]).not.toHaveProperty("hostConfirmation");
+  expect(resultOf(f.requests, "ask")).toMatchObject({
+    status: "question_rejected",
+    questionNeeded: false,
+  });
+});
+
 // Fails when an applied update leaves the outcome reviewer unaware that the remaining work changed,
 // or when a refused one tells it the work changed.
 it("tells the outcome reviewer about an applied update, never a refused one", async () => {
@@ -1056,4 +1157,245 @@ it("tells the outcome reviewer about an applied update, never a refused one", as
   expect(events.filter((event) => event.kind === "task_updated")).toEqual([
     expect.objectContaining({ change: expect.stringContaining(dropCheck.summary) as unknown }),
   ]);
+});
+
+const readQuestion = {
+  questions: [
+    {
+      id: "effect",
+      type: "choice",
+      prompt: "The request says save a note, but its example only reads the notes. Which do you mean?",
+      options: [
+        { id: "read", label: "Only read the notes" },
+        { id: "write", label: "Save the note on the site" },
+      ],
+    },
+  ],
+};
+const toRead = {
+  summary: "Only read the notes; never save one.",
+  changes: [{ setting: "effect", effect: "read" }],
+  confirmedBy: ["effect"],
+  recommend: "update",
+};
+
+it("lets a write build that sent nothing become a read once Guardian allows it, and runs its live example", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", readQuestion, "ask"),
+        call("mint_update", toRead, "update"),
+        call("execute", { ...example, target: "liveBrowser" }, "example"),
+        call("finish_build", { ...publication, executionId: "execution_1" }, "finish"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ effect: "read" }]),
+      reviewAndExecute: numberedExecutions(),
+      lowersEffect: true,
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "updated",
+    task: { revision: 1, effect: "read" },
+  });
+  // Guardian adjudicated the narrowing, with the build still a write as it reviewed it.
+  expect(updates.reviews[0]?.update).toMatchObject({
+    effect: "write",
+    changes: [{ setting: "effect", effect: "read" }],
+  });
+  expect(updates.applied[0]?.next).toMatchObject({ revision: 1, effect: "read" });
+  expect(resultOf(f.requests, "example")).toMatchObject({ status: "completed" });
+  expect(f.counts().published).toBe(1);
+});
+
+it("keeps a write build a write once its write session started, and says why", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...example, purpose: "act", target: "liveBrowser" }, "act"),
+        call("request_input", readQuestion, "ask"),
+        call("mint_update", toRead, "update"),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ effect: "read" }]), lowersEffect: true },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "act")).toMatchObject({ status: "completed" });
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "write_sent",
+  });
+  expect(updates.reviews).toEqual([]);
+});
+
+it("refuses to lower a write build on a host that doesn't apply it", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [call("request_input", readQuestion, "ask"), call("mint_update", toRead, "update")][index] ??
+      prose(),
+    { ...updates.overrides, askInput: answering([{ effect: "read" }]) },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "effect_lowering_unsupported",
+  });
+  expect(updates.reviews).toEqual([]);
+});
+
+it("refuses an update that changes the effect both ways", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", saveQuestion, "ask"),
+        call(
+          "mint_update",
+          {
+            ...toWrite,
+            changes: [
+              { setting: "effect", effect: "write" },
+              { setting: "effect", effect: "read" },
+            ],
+          },
+          "update",
+        ),
+      ][index] ?? prose(),
+    { ...updates.overrides, askInput: answering([{ save: "save" }]) },
+    { effect: "read", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "effect_conflict",
+  });
+  expect(updates.reviews).toEqual([]);
+  expect(updates.applied).toEqual([]);
+});
+
+it("keeps a write build a write once a step Guardian labelled a write may have reached the site", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...example, purpose: "explore", target: "liveBrowser" }, "explore"),
+        call("request_input", readQuestion, "ask"),
+        call("mint_update", toRead, "update"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ effect: "read" }]),
+      lowersEffect: true,
+      outcomeReview: {
+        model: { turn: () => Effect.void },
+        save: () => Effect.void,
+        recordAssessment: () => Effect.void,
+      },
+      reviewAndExecute: (_input, beforeDispatch) =>
+        (beforeDispatch?.({ reviewId: "review_cart", action: "write" }) ?? Effect.void).pipe(
+          Effect.as({
+            executionId: "explore_1",
+            status: "completed" as const,
+            effect: "possible" as const,
+            resultRef: "explore_result",
+            observations: { page: "Menu" },
+            review: {
+              reviewId: "review_cart",
+              outcome: "allow" as const,
+              rationale: "Scripted review.",
+              action: "write" as const,
+            },
+          }),
+        ),
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "write_sent",
+  });
+  expect(updates.reviews).toEqual([]);
+});
+
+it("lets a lowered build run its example again on a host that binds repeatable reads", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", readQuestion, "ask"),
+        call("mint_update", toRead, "update"),
+        call("execute", { ...example, target: "liveBrowser" }, "first"),
+        call("execute", { ...example, target: "liveBrowser" }, "again"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ effect: "read" }]),
+      reviewAndExecute: numberedExecutions(),
+      lowersEffect: true,
+      repeatableRead: true,
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({ status: "updated", repeatableRead: true });
+  expect(resultOf(f.requests, "again")).toMatchObject({ status: "completed" });
+});
+
+it("keeps a write build a write once a host reports its write claimed", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [call("request_input", readQuestion, "ask"), call("mint_update", toRead, "update")][index] ??
+      prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ effect: "read" }]),
+      lowersEffect: true,
+      exampleClaimed: true,
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({
+    status: "update_refused",
+    reason: "write_sent",
+  });
+  expect(updates.reviews).toEqual([]);
+});
+
+it("publishes a lowered build only from an example that ran as a read", async () => {
+  const updates = updateHost(["allow"]);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "offline"),
+        call("request_input", readQuestion, "ask"),
+        call("mint_update", toRead, "update"),
+        call("finish_build", { ...publication, executionId: "execution_1" }, "stale"),
+        call("execute", { ...example, target: "liveBrowser" }, "fresh"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      askInput: answering([{ effect: "read" }]),
+      reviewAndExecute: numberedExecutions(),
+      lowersEffect: true,
+    },
+    { effect: "write", siteOrigin: site },
+  );
+  await f.run();
+  expect(resultOf(f.requests, "update")).toMatchObject({ status: "updated" });
+  expect(resultOf(f.requests, "stale")).toMatchObject({
+    status: "not_published",
+    reason: "example_before_effect_change",
+  });
+  expect(String(resultOf(f.requests, "stale")?.["instruction"])).toContain("fresh live example");
+  expect(resultOf(f.requests, "fresh")).toMatchObject({ status: "completed" });
 });

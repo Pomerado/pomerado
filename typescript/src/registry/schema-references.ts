@@ -60,21 +60,40 @@ const conjoined = (target: Json, siblings: Json): Json => {
   return { ...merged, allOf: [...allOfIn(merged), held] };
 };
 /**
+ * The children of a schema an inliner follows: given a child's key, the path to follow inside
+ * that child, or undefined to leave the child as written. A list's items follow its key's path.
+ */
+export type SchemaPath = (key: string) => SchemaPath | undefined;
+const everywhere: SchemaPath = () => everywhere;
+
+/**
  * A published operation schema with its local references resolved against the schema's root,
  * so it can be read, or nested under another schema, without its `$defs`. A reference that
  * cannot be inlined or recurses throws rather than leaving a dangling one.
  */
-export const inlineLocalRefs = (schema: Record<string, unknown>): Record<string, unknown> => {
+export const inlineLocalRefs = (schema: Record<string, unknown>): Record<string, unknown> =>
+  inlineLocalRefsAlong(schema, everywhere);
+
+/**
+ * A published schema inlined as `inlineLocalRefs` inlines it, but only along `path`: each child
+ * the path leaves out stays as written, its references neither resolved nor counted toward the
+ * limit. A reader of only part of a schema inlines that part, so a reference elsewhere that
+ * recurses or does not resolve never stops it. One on the path throws, as `inlineLocalRefs` does.
+ */
+export const inlineLocalRefsAlong = (
+  schema: Record<string, unknown>,
+  path: SchemaPath,
+): Record<string, unknown> => {
   let nodes = 0;
   const definitions = isRecord(schema["$defs"]) ? schema["$defs"] : {};
-  const visit = (value: unknown, expanding: readonly unknown[]): unknown => {
+  const visit = (value: unknown, expanding: readonly unknown[], along: SchemaPath): unknown => {
     if (Array.isArray(value)) {
       if (++nodes > inlinedSchemaNodeLimit) throw new UnresolvedSchemaReference();
-      return value.map((child) => visit(child, expanding));
+      return value.map((child) => visit(child, expanding, along));
     }
-    return isRecord(value) ? visitSchema(value, expanding) : value;
+    return isRecord(value) ? visitSchema(value, expanding, along) : value;
   };
-  const visitSchema = (value: Json, expanding: readonly unknown[]): Json => {
+  const visitSchema = (value: Json, expanding: readonly unknown[], along: SchemaPath): Json => {
     if (++nodes > inlinedSchemaNodeLimit) throw new UnresolvedSchemaReference();
     const reference = value["$ref"];
     if (typeof reference === "string") {
@@ -87,21 +106,27 @@ export const inlineLocalRefs = (schema: Record<string, unknown>): Record<string,
       const siblings = { ...value };
       delete siblings["$ref"];
       const inner = [...expanding, target];
-      return conjoined(visitSchema(target, inner), visitSchema(siblings, inner));
+      return conjoined(visitSchema(target, inner, along), visitSchema(siblings, inner, along));
     }
     const allOf: unknown = value["allOf"];
     if (Array.isArray(allOf) && allOf.length === 1 && isRecord(allOf[0])) {
       const siblings = { ...value };
       delete siblings["allOf"];
-      return conjoined(visitSchema(allOf[0], expanding), visitSchema(siblings, expanding));
+      return conjoined(
+        visitSchema(allOf[0], expanding, along),
+        visitSchema(siblings, expanding, along),
+      );
     }
     return Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => key !== "$defs")
-        .map(([key, child]) => [key, visit(child, expanding)]),
+        .map(([key, child]) => {
+          const childPath = along(key);
+          return [key, childPath === undefined ? child : visit(child, expanding, childPath)];
+        }),
     );
   };
-  return visitSchema(schema, []);
+  return visitSchema(schema, [], path);
 };
 
 /**

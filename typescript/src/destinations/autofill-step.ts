@@ -8,6 +8,8 @@ import {
   autofillSignedInCode,
   autofillStepCode,
   type ControlIdentity,
+  coveringControlNameLimit,
+  coveringControlsLimit,
   SignedInPage,
 } from "./autofill-page-code.js";
 import { openAutofillLogin } from "./autofill-page.js";
@@ -36,7 +38,8 @@ import type {
   DateControl,
   DateOfBirthFormat,
   PhoneFormat,
-  SignInMethodChoice,
+  RecipeMethodChoice,
+  SignInChoice,
   RejectedMarker,
   SubmitKey,
 } from "./autofill-contracts.js";
@@ -133,11 +136,16 @@ export interface AutofillStepRequest {
   readonly submit?: string | undefined;
   /** Enter, pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
-  /** A two-factor method choice: every method offered, and `submit` the one picked. */
-  readonly methods?:
-    readonly { readonly method: SignInMethodChoice; readonly selector: string }[] | undefined;
+  /** A method choice: every method or way in offered, and `submit` the one picked. */
+  readonly methods?: AutofillStep["methods"];
+  /** The picked method's `option`, when it is chosen from a native select (`AutofillStep`). */
+  readonly option?: string | undefined;
   /** The own close, reject or accept control of a notice that covers the screen (`AutofillStep`). */
   readonly dismiss?: string | undefined;
+  /** The owner's answers that allowed `dismiss` to accept a notice (`AutofillStep`). */
+  readonly confirmedBy?: readonly string[] | undefined;
+  /** The action with a lasting effect on the account the submit takes (`AutofillStep`). */
+  readonly choice?: SignInChoice | undefined;
 }
 
 /**
@@ -153,9 +161,23 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
   readonly submit?: string | undefined;
   /** Enter, pressed in the last field to submit its form; never with `submit`. */
   readonly submitKey?: SubmitKey | undefined;
-  /** A two-factor method choice: every method offered, and `submit` the one picked. */
+  /**
+   * A method choice: every two-factor method or way in offered, and `submit` the one picked. A
+   * method chosen from a native select names that select and the value it lists for the method
+   * (`option`).
+   */
   readonly methods?:
-    readonly { readonly method: SignInMethodChoice; readonly selector: string }[] | undefined;
+    | readonly {
+        readonly method: RecipeMethodChoice;
+        readonly selector: string;
+        readonly option?: string | undefined;
+      }[]
+    | undefined;
+  /**
+   * The picked method's `option`: the host chooses it in the submit, a native select, with the
+   * browser's own select action, and refuses a select that does not list it (`not_found`).
+   */
+  readonly option?: string | undefined;
   /**
    * The own close, reject or accept control of a cookie, consent or similar notice that covers the screen,
    * which the host clicks before it types, when the page shows it, and again before it clicks the
@@ -165,12 +187,26 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
    */
   readonly dismiss?: string | undefined;
   /**
-   * `keyboard`: the host presses the submit from the keyboard rather than clicking it first, as a
-   * recorded screen whose submit another element covered was sent (a recipe's `submitVia`). Never
-   * the minter's: the host's click again of a `blocked` screen presses a covered submit from the
-   * keyboard by itself.
+   * The ids of this build's answered questions where the owner allowed `dismiss` to accept a
+   * notice that is not a cookie banner. The recorded step leaves that dismiss out, so a run never
+   * clicks it.
    */
-  readonly submitVia?: "keyboard" | undefined;
+  readonly confirmedBy?: readonly string[] | undefined;
+  /**
+   * `keyboard`: the host presses the submit from the keyboard rather than clicking it first, as a
+   * recorded screen whose submit another element covered was sent (a recipe's `submitVia`).
+   * `click_layer`: the host first clicks the submit's centre with the mouse when the site's own
+   * control with the submit's name sits over it, as a recorded screen was sent, and clicks the
+   * submit otherwise. Never the minter's: the host's click again of a `blocked` screen presses a
+   * covered submit from the keyboard by itself, and any fill clicks such a control by itself.
+   */
+  readonly submitVia?: "keyboard" | "click_layer" | undefined;
+  /**
+   * The action with a lasting effect on the account the submit takes, on a step with no fields and
+   * one submit. The recipe records it, and a run presses that submit only when its caller allowed
+   * the choice.
+   */
+  readonly choice?: SignInChoice | undefined;
 }
 
 /** Whether the host submits the step itself: it clicks its submit or presses its submit key. */
@@ -210,6 +246,12 @@ const Target = Schema.Struct({
    * judges the controls again.
    */
   scriptHref: Schema.optional(Schema.Boolean),
+  /**
+   * The code of its first script destination other than one that does nothing (`scriptAction`,
+   * `scriptHref`), as the browser runs it, at most 2,000 characters: a refusal's evidence alone,
+   * which no check judges (`targetEvidence`).
+   */
+  scriptCode: Schema.optional(Schema.String),
   methods: Schema.Array(Schema.String),
   /**
    * The method its form submits by with it: a submit button's own `formmethod` when it has one,
@@ -279,25 +321,68 @@ const coveringRoles = [
 /**
  * The element that sat over a submit and caught the host's click, by its tag and ARIA role, each
  * one of a fixed list: never its text, id, label or class names, which page code may write from
- * what the host typed.
+ * what the host typed. A modal dialog a person sees, that element or one in it, makes the role
+ * `dialog` (`alertdialog` for that role). `controls`, when it has any, are its own buttons and
+ * links a person sees, or that dialog's, in page order, each by role and accessible name as the
+ * page has it (`accessibleNames`, which keeps typed values out as far as page code can tell), so
+ * the minter can name a notice's own control as `dismiss`. A control with no name, such as a close
+ * button that shows only an image, comes with an empty name as `iconOnly`, and over
+ * `coveringControlsLimit` those and controls named close, dismiss, reject, decline or accept are
+ * kept first. A name is page text: the host screens it for typed values, as it screens every step
+ * result, before the minter reads it. A host on an older core reports no controls, and no
+ * `iconOnly` one.
  */
 export const CoveringElement = Schema.Struct({
   tag: Schema.Literal(...coveringTags, "other"),
   role: Schema.NullOr(Schema.Literal(...coveringRoles)),
+  controls: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        role: Schema.Literal("button", "link"),
+        name: Schema.String,
+        iconOnly: Schema.optional(Schema.Literal(true)),
+      }),
+    ),
+  ),
 });
-/** What page code read of a covering element: its tag and role attribute, as the page has them. */
-export const ReadCoveringElement = Schema.Struct({ tag: Schema.String, role: Text });
+/**
+ * What page code read of a covering element: its tag and role attribute, and its own controls'
+ * roles and names, as the page has them.
+ */
+export const ReadCoveringElement = Schema.Struct({
+  tag: Schema.String,
+  role: Text,
+  controls: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ role: Text, name: Text, iconOnly: Schema.optional(Schema.Literal(true)) }),
+    ),
+  ),
+});
 const isCoveringTag = Schema.is(Schema.Literal(...coveringTags));
 const isCoveringRole = Schema.is(Schema.Literal(...coveringRoles));
-/** A covering element as the host reports it: a tag or role off its list is none of the page's. */
+/**
+ * A covering element as the host reports it: a tag or role off its list is none of the page's. A
+ * control is a link or else a button, kept only with a name of at most `coveringControlNameLimit`
+ * characters, never cut, or as `iconOnly` with an empty name, and at most `coveringControlsLimit`
+ * of them.
+ */
 export const coveringElement = (
   read: typeof ReadCoveringElement.Type,
 ): typeof CoveringElement.Type => {
   const tag = read.tag.toLowerCase();
   const role = read.role?.trim().toLowerCase();
+  const controls = (read.controls ?? [])
+    .flatMap(({ role: controlRole, name, iconOnly }) => {
+      const kind = controlRole === "link" ? ("link" as const) : ("button" as const);
+      if (name === null || name.length > coveringControlNameLimit) return [];
+      if (name.trim() !== "") return [{ role: kind, name }];
+      return iconOnly === true ? [{ role: kind, name: "", iconOnly }] : [];
+    })
+    .slice(0, coveringControlsLimit);
   return {
     tag: isCoveringTag(tag) ? tag : "other",
     role: role !== undefined && isCoveringRole(role) ? role : null,
+    ...(controls.length === 0 ? {} : { controls }),
   };
 };
 /** A control as Guardian judges it: its markup's own words, never a value. */
@@ -350,7 +435,7 @@ export const LocatedError = Schema.Struct({
   /** A fill call's: when the primary page's document began loading (`performance.timeOrigin`). */
   document: Schema.optional(Schema.Number),
   searched: Schema.optional(Searched),
-  /** An inert submit: where it was found. */
+  /** A submit that lists no option the step names: where it was found. */
   located: Schema.optional(FoundIn),
 });
 const Located = Schema.Union(
@@ -517,10 +602,14 @@ export type AutofillStepReport =
        * for the page's main frame went out, as a form's submission sends. With `via: "keyboard"`,
        * another element caught the host's click again of a `blocked` screen, or the step said to
        * (`submitVia`), and the host pressed Enter on that same submit instead, once focus landed
-       * on it.
+       * on it. With `via: "click_layer"`, the element over the submit was the site's own control
+       * for it, with the submit's own accessible name, in the submit's closest form or dialog and
+       * holding no field, and the host clicked the submit's centre with the mouse, so that control
+       * took the click as a person's would.
        * `failed`: the click or press threw before any such request went out.
        * `blocked`: another element sat over the submit and caught the host's click (`blockedBy`),
-       * so nothing was sent; the fields still hold what was typed. A fill reports it so; a click
+       * and it was no control of the site's own for the submit, so nothing was sent; the fields
+       * still hold what was typed. A fill reports it so; a click
        * again does only when focus would not land on the submit for a press from the keyboard.
        * `refused`: after the fill the host refused a control where it then sat or submitted.
        * `stayed_disabled`: the submit stayed disabled after the fields were filled, through the
@@ -545,8 +634,11 @@ export type AutofillStepReport =
        * after the page's own handlers ran on the click, so what the step filled may have gone out.
        */
       readonly clicked?: true;
-      /** A `clicked` submit the host pressed from the keyboard: Enter on the submit itself. */
-      readonly via?: "keyboard";
+      /**
+       * A `clicked` submit the host pressed from the keyboard (Enter on the submit itself), or
+       * clicked through the site's own control laid over it (`click_layer`).
+       */
+      readonly via?: "keyboard" | "click_layer";
       /**
        * Host-only, on a `refused` submit of a step with a submit or a submit key whose every field
        * takes a code: once the host typed every field, and before it clicked anything, the step's
@@ -558,7 +650,7 @@ export type AutofillStepReport =
        * otherwise (`runReplayStep`).
        */
       readonly closedInPlace?: true;
-      /** What caught a `blocked` click, by its markup's own names, never its text or a value. */
+      /** What caught a `blocked` click: tag, role and `controls`, whose names the host screens. */
       readonly blockedBy?: typeof CoveringElement.Type;
       /** The primary page after the submit settled, byte-exact like every URL. */
       readonly url: string;
@@ -689,7 +781,10 @@ const isScriptAddress = (url: string) => URL.parse(url)?.protocol === "javascrip
  * browser the host has typed nothing into yet (`judgedBeforeTyping` unset) judges its submit by its
  * frame, document and destinations other than scripts, whatever a script runs: no script can send
  * a typed value, and the next screen is inspected before anything is typed there.
- * A card-fill step's never is, nor any other script action or link.
+ * A card-fill step's never is, nor any other script action or link. A step whose every field takes
+ * a code, one code split across boxes, needs only the field at `from` to take typing: a page may
+ * switch each box on only once the one before it holds a digit, and the fill waits for each later
+ * box before it types there.
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
@@ -706,6 +801,7 @@ export const untrustedTarget = (
 ) => {
   const predicate = signInUrlTrust(trust, step);
   const signIn = !step.fields.some((field) => isCardSlot(field.slot));
+  const splitCode = step.fields.every((field) => field.slot === "code");
   // Nothing typed on this browser yet either, so no script can carry a typed value anywhere.
   const typesNothing =
     signIn && step.fields.length === 0 && trust.judgedBeforeTyping === undefined;
@@ -771,7 +867,8 @@ export const untrustedTarget = (
     const choosable =
       step.fields[index]?.slot === "date_of_birth" &&
       (target.control === "select" || target.control === "combobox");
-    if (index >= from && !target.editable && !choosable)
+    const toType = splitCode ? index === from : index >= from;
+    if (toType && !target.editable && !choosable)
       return withCheck(refused("not_editable", index), "not_editable", {
         control: target.control,
         ...targetEvidence(target, named),

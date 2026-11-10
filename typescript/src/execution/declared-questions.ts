@@ -1,8 +1,7 @@
-import type { InputRequest, Question } from "../runtime/input-request.js";
-import {
-  longestLabel,
-  type ScriptQuestionDeclaration,
-  type ScriptQuestionDeclarations,
+import { longestPrompt, type InputRequest, type Question } from "../runtime/input-request.js";
+import type {
+  ScriptQuestionDeclaration,
+  ScriptQuestionDeclarations,
 } from "../runtime/script-input.js";
 
 // The host's check that a running script asks only what publication reviewed. The questions come
@@ -37,11 +36,16 @@ const keepsBounds: Readonly<
     question.type === "secret" &&
     question.secretKind === declaration.secretKind &&
     question.maxLength === declaration.maxLength,
+  // The inputs shown beside the browser are the declared ones, in the declared order.
+  browser_handoff: (question, declaration) =>
+    declaration.type === "browser_handoff" &&
+    question.type === "browser_handoff" &&
+    JSON.stringify(question.show_inputs) === JSON.stringify(declaration.show_inputs ?? []),
   // The page's label is the prompt, so only its length is checked. It is a text question or a
   // choice the caller answers from the page's options alone, never another kind.
   site_field: (question, declaration) =>
     declaration.type === "site_field" &&
-    question.prompt.length <= longestLabel &&
+    question.prompt.length <= longestPrompt &&
     ((question.type === "text" && question.maxLength === undefined) ||
       (question.type === "choice" && question.allowOther !== true && question.allowNote !== true)),
 };

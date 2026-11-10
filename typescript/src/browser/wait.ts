@@ -105,8 +105,21 @@ const waitBounded = (promise, ms, fallback = undefined) => {
   ]).finally(() => clearTimeout(timer));
 };
 const waitSeconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1) + " s";
-const waitContextLost = (error) =>
-  /Execution context was destroyed|Frame was detached/.test(String(error?.message));
+// How many reads in a row the running wait lost to a closed target. waitProgress sets it to 0 as a
+// wait starts, and again at the sample after a look that lost none.
+let waitClosedLosses = 0;
+// A read the page cut short by replacing or removing what it read, so the next look reads again.
+// A cross-site frame runs as a target of its own, and a read of one that went reports a closed
+// target. While the call's page is open, that target was a frame of it, which goes once. A page
+// that closed, such as a popup the wait reads, fails every look instead, so the third such read in
+// a row throws.
+const waitContextLost = (error) => {
+  const message = String(error?.message);
+  if (/Execution context was destroyed|Frame was detached/.test(message)) return true;
+  if (!/Target page, context or browser has been closed|Target closed/.test(message) || page.isClosed()) return false;
+  waitClosedLosses += 1;
+  return waitClosedLosses < 3;
+};
 // Generic loading signs. A busy region or an indeterminate progress bar says the page is loading;
 // a determinate bar (one with a value) is a rating, a step or a meter. A class that names a
 // skeleton, shimmer, spinner or loader is only a hint, and never on a form control.
@@ -196,6 +209,8 @@ const waitRequestKey = (request) => {
 const waitProgress = (options = {}) => {
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   const key = "pomerado.waitProgress." + Date.now() + "." + Math.random();
+  waitClosedLosses = 0;
+  let closedAtSample = 0;
   let started = Date.now();
   // Requests that start before this are the action's: from the baseline look, taken just before
   // the action, to a second after it returned. A wait without an action causes none.
@@ -278,6 +293,11 @@ const waitProgress = (options = {}) => {
     const now = Date.now();
     samples += 1;
     sampledAt = now;
+    // A look that lost a read to a closed target saw no progress by it. One that lost none ends
+    // the run of such losses.
+    if (waitClosedLosses > closedAtSample) changes = changes.filter((kind) => kind !== "page replaced");
+    else waitClosedLosses = 0;
+    closedAtSample = waitClosedLosses;
     const note = (kind) => {
       if (!baseline) mark(kind, now);
     };
@@ -343,8 +363,9 @@ const waitProgress = (options = {}) => {
         region = seen;
       }
     } catch (error) {
+      const closedBefore = waitClosedLosses;
       if (!waitContextLost(error)) throw error;
-      note("page replaced");
+      if (waitClosedLosses === closedBefore) note("page replaced");
     }
   };
   return {
@@ -542,7 +563,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     cleanupMs = () => Math.min(250, beforeStop());
     const unchangedMs = options.unchangedMs ?? waitLimits.unchanged;
     const unchangedFrom = begun + unchangedMs;
-    // A page or frame the action is replacing can drop a look midway; the next look sees the new one.
+    // A page or frame the action is replacing or removing can drop a look midway; the next look
+    // reads the page again.
     // The page cannot always be read: a native dialog stops its scripts, and while a navigation
     // is pending Playwright cannot evaluate in it. A look the page holds up ends at the deadline
     // (with outcomeWaitLateMs of grace, so a look begun just before it finishes), at once for a dialog,
@@ -565,21 +587,39 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     const result = (candidate, observations, evidence) => {
       const handles = events.hit(candidate.name)?.handles ?? {};
+      // A native dialog stops the page, so the last look it allowed can predate an event outcome
+      // that matched since, such as a save's response just before the dialog. Once a dialog opened,
+      // each event outcome reads as it stands now, and those that matched besides the winner, the
+      // dialog's own outcome included, are on the result and in the summary too.
+      const evented = ["response", "dialog", "popup"];
+      const dialogOpened = events.dialogOpen();
+      const also = !dialogOpened ? []
+        : candidates.filter((each) => each !== candidate && evented.includes(each.kind) && events.hit(each.name) !== undefined);
+      const observed = !dialogOpened ? observations
+        : Object.fromEntries(candidates.flatMap((each) =>
+          evented.includes(each.kind) ? [[each.name, outcomeWaitEventRead(each, events)]]
+            : observations[each.name] === undefined ? [] : [[each.name, observations[each.name]]]));
       const answer = {
         outcome: candidate.name,
         kind: candidate.kind,
         afterMs: Date.now() - begun,
         looks,
         evidence,
-        observations,
+        observations: observed,
       };
       for (const [name, value] of Object.entries(handles)) outcomeWaitHidden(answer, name, value);
-      // A dialog that opened while the wait listened stays open whichever outcome won.
+      for (const each of also)
+        for (const [name, value] of Object.entries(events.hit(each.name).handles))
+          if (answer[name] === undefined) outcomeWaitHidden(answer, name, value);
+      // A dialog that opened while the wait listened stays open whichever outcome won, and the
+      // summary says so.
       if (answer.dialog === undefined) outcomeWaitHidden(answer, "dialog", events.dialog());
       finish(
         { outcome: candidate.name },
         '"' + candidate.name + '"' + (candidate.kind === "locator" ? "" : " (" + candidate.kind + ")") + " showed after " +
-          answer.afterMs + " ms (" + looks + (looks === 1 ? " look)" : " looks)"),
+          answer.afterMs + " ms (" + looks + (looks === 1 ? " look)" : " looks)") +
+          also.map((each) => '; "' + each.name + '" (' + each.kind + ") also matched").join("") +
+          (answer.dialog === undefined ? "" : "; a native " + answer.dialog.type() + " dialog is left open on the result's dialog"),
       );
       return answer;
     };
@@ -603,8 +643,9 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       const now = Date.now();
       const stale = now < unchangedFrom ||
         (now < until - unchangedMs && (inflightAtStart || progress.causedInflight()));
-      // With the page unreadable, only the outcomes the page announced as events decide, in the
-      // listed order.
+      // With the page unreadable, a native dialog open included, only the outcomes the page
+      // announced as events decide, in the listed order: a dialog outcome wins unless a response
+      // or popup outcome listed before it already matched, and that one wins with the dialog held.
       const blocked = events.dialogOpen() || (observations === undefined && events.anyHit());
       // While a navigation the action set off is on its way, the elements shown are the old
       // document's, about to be replaced: a locator or invalid fields count only on the new one.
@@ -1147,11 +1188,18 @@ const waitForChange = async (fields, options = {}) => {
  *   `[low, high]` or a function). It races the page's answers, so a request the site batches,
  *   caches or renames never hangs the wait: name one only for a write's commit request.
  * - `{ dialog: true | type | [types] }`: a native dialog opened, even one the action's own click
- *   raised. Page scripts stop while it is open, so it decides at once, and a dialog of a type no
- *   outcome names fails as `outcome_unknown`. The wait never accepts or dismisses it: a dialog
- *   that opened while it listened is on the result's or failure's `dialog`, whichever won. An
- *   action still waiting to click when a dialog opens clicks once the dialog is handled, so
- *   handle it before ending the call.
+ *   raised. Page scripts stop while it is open, so it decides at once, in the listed order: a
+ *   response or popup outcome listed before it that already matched still wins, else the dialog
+ *   does. Once a dialog opened, every other response, dialog or popup outcome that matched is on
+ *   the result too, such as `result.response`, and the summary says it also matched: prefer
+ *   checking a response before reading a dialog as a refusal. The wait never accepts or dismisses
+ *   it: a dialog that opened while it listened is on the result's or failure's `dialog`, whichever
+ *   won, and the result's summary names it. Until it is handled, reads of the page or of a
+ *   response's body wait, so prefer handing a dialog on `result.dialog` over before any other
+ *   read. A dialog of a type no outcome names fails as `outcome_unknown` only when no response or
+ *   popup outcome has already matched; otherwise that outcome wins with the dialog still open on
+ *   `result.dialog`. An action still waiting to click when a dialog opens clicks once the dialog
+ *   is handled, so handle it before ending the call.
  * - `{ popup: true | (page) => boolean }`: the page opened a new tab or window.
  * - `{ announced: string | RegExp }`: a live region (`aria-live`, or the role `alert`, `status`,
  *   `log` or `alertdialog`) announced matching text after the action, as a screen reader hears
@@ -1246,9 +1294,10 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * the page, and returns `CommitConfirmation`, plain data a call can return. It never marks a write
  * done or not done without proof: whatever the response and the page leave open is `unclear`.
  *
- * - A response that is not 2xx or 3xx is `not_done`; a 201 with a Location is `done` at once. A 3xx
- *   whose Location is the page that posted (same path), or whose query names an error or failure,
- *   is `unclear` unless the page shows an error.
+ * - A 4xx response, or one below 200, is `not_done`; a 5xx is `unclear`, since a server can fail
+ *   after it saved; a 201 with a Location is `done` at once. A 3xx whose Location is the page that
+ *   posted (same path), or whose query names an error or failure, is `unclear` unless the page
+ *   shows an error.
  * - A 2xx body that reads as JSON is `not_done` for a success field (`success`, `succeeded`,
  *   `isSuccess`, any case) that is false, `"false"`, 0 or `"no"` or holds an error word, `ok:
  *   false`, an error field holding an error (not empty, and not a word for none such as "No
@@ -1271,8 +1320,9 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * - Otherwise the commit is `done`: `queued` for a 202, or a body whose status says queued, pending
  *   or processing, with that word as `status_label`, else `completed`. An outcome with no response
  *   is `not_done` when the page shows a new error, else `unclear`. A native dialog that opened
- *   during the wait and says the write failed is `not_done`; while one stays open the page can't
- *   be read, which is `unclear`.
+ *   during the wait and says the write failed is `not_done`, unless the response is a 5xx or
+ *   proves a record (a 201 with a Location): that is `unclear`, naming both. While one stays open
+ *   the page can't be read, which is `unclear`.
  *
  * It never clicks, and it reads the body for at most 1 s and the page for at most about 2 s.
  */
@@ -1486,13 +1536,17 @@ const confirmCommit = await (async () => {
     });
     const notDone = (reason) => ({ state: "not_done", status: "failed", reason });
     const unclear = (reason) => ({ state: "unclear", status: "unconfirmed", reason });
-    // A native dialog that opened during the wait and says the write failed is the page's answer.
-    // While one stays open the page can't be read, and the look below finds it unclear.
+    // A native dialog that opened during the wait and says the write failed is the page's answer,
+    // unless the response is a server error or proves a record (below). While one stays open the
+    // page can't be read, and the look below finds it unclear.
     const dialog = outcome?.dialog;
-    if (dialog !== undefined && dialog !== null && saysError(dialog.message()))
-      return notDone("a native " + dialog.type() + ' dialog said "' + clip(dialog.message()) + '"');
+    const dialogFailed =
+      dialog !== undefined && dialog !== null && saysError(dialog.message())
+        ? "a native " + dialog.type() + ' dialog said "' + clip(dialog.message()) + '"'
+        : undefined;
     const response = outcome?.response;
     if (response === undefined || response === null) {
+      if (dialogFailed !== undefined) return notDone(dialogFailed);
       const seen = await watch(page);
       const answered = outcome?.outcome === undefined ? "" : '; "' + outcome.outcome + '" answered the wait';
       if (seen !== undefined && seen.errors.length > 0)
@@ -1501,9 +1555,17 @@ const confirmCommit = await (async () => {
     }
     const status = response.status();
     const where = response.request().method() + " " + new URL(response.url()).pathname + " answered " + status;
-    if (status < 200 || status >= 400) return notDone(where);
+    // A server can fail after it saved, so a 5xx never proves the write did not go through.
+    if (status >= 500)
+      return unclear(where + ", a server error, which can come after a save" + (dialogFailed === undefined ? "" : "; " + dialogFailed));
     const location = String(response.headers()["location"] ?? "").trim();
-    if (status === 201 && location !== "") return done(where + " with Location " + clip(location), false);
+    // A 201 with a Location names the record the commit created, so a dialog's words alone can't
+    // make it not done.
+    const created = status === 201 && location !== "" ? where + " with Location " + clip(location) : undefined;
+    if (created !== undefined && dialogFailed !== undefined) return unclear(created + ", which proves a record, but " + dialogFailed);
+    if (dialogFailed !== undefined) return notDone(dialogFailed);
+    if (status < 200 || status >= 400) return notDone(where);
+    if (created !== undefined) return done(created, false);
     const body = await readBody(response, status);
     const found = body.json === undefined ? {} : judgeBody(body.json);
     if (found.failed !== undefined) return notDone(where + "; its body's " + found.failed);

@@ -16,7 +16,7 @@ const site = "https://site.example.test";
 const host = "site.example.test";
 const code = "246810";
 const login = { username: "owner@site.example.test", password: "synthetic-password" };
-// Six boxes filled one focus and one insertion at a time, the host's looks and the marker's wait:
+// Six boxes filled one focus and one key at a time, the host's looks and the marker's wait:
 // more than the default 30 s allows on a busy machine.
 test.describe.configure({ timeout: 120_000 });
 
@@ -30,7 +30,8 @@ const boxes = [1, 2, 3, 4, 5, 6]
 /**
  * The code screen: six boxes and a Verify button. The sixth digit sends the code once, and so does
  * each click of Verify, which is counted. An accepted code puts the account in place of the screen;
- * an expired one signs the session out.
+ * an expired one signs the session out. Each box's key downs are kept, with whether each was
+ * trusted.
  */
 const codeScreen = `<main id="view"><p>Enter the code we sent you</p>${boxes}<button id="verify" type="button">Verify</button></main>
 <script>
@@ -38,12 +39,16 @@ const view = document.getElementById("view");
 const boxes = [...document.querySelectorAll(".otp")];
 const typed = () => boxes.map((box) => box.value).join("");
 window.clicks = 0;
+window.keys = [];
 let sent = false;
 const check = () =>
   fetch("/api/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: typed() }) })
     .then((response) => {
       view.innerHTML = response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>';
     });
+boxes.forEach((box, index) => box.addEventListener("keydown", (event) => {
+  window.keys.push({ box: index + 1, key: event.key, trusted: event.isTrusted });
+}));
 boxes.forEach((box, index) => box.addEventListener("input", () => {
   if (box.value !== "" && boxes[index + 1]) boxes[index + 1].focus();
   if (sent || !/^[0-9]{6}$/.test(typed())) return;
@@ -148,6 +153,10 @@ test("a run signs in through six code boxes that send the code themselves, and n
   expect(ended).toEqual({ signedIn: true, alreadySignedIn: false });
   expect(checks).toEqual([code]);
   expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
+  // The local host types by keyboard: each digit went into its own box as one trusted key.
+  expect(await page.evaluate(() => Reflect.get(window, "keys"))).toEqual(
+    Array.from(code, (key, at) => ({ box: at + 1, key, trusted: true })),
+  );
   await expect(page.locator("#account")).toBeVisible();
   // The host clicked nothing and found the code screen closed in place, and the sign-in's own
   // check found the account, so the replay counted the screen as sent by the page.

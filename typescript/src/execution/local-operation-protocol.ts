@@ -98,6 +98,8 @@ export const LocalOperationStart = Schema.Struct({
 });
 export const LocalOperationReply = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("reply"), id: Id, value: Schema.Unknown }),
+  /** The request `id` names, which the host still answers, opened to its caller. */
+  Schema.Struct({ kind: Schema.Literal("opened"), id: Id }),
   Schema.Struct({
     kind: Schema.Literal("failure"),
     id: Id,

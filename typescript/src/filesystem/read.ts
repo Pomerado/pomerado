@@ -32,6 +32,10 @@ const readComplete = async (handle: FileHandle, size: number, maximumBytes: numb
  * cannot be traversed, so local development opens each part by path, refusing symlinks (macOS
  * O_NOFOLLOW_ANY rejects one anywhere in the path), and then proves every held descriptor is
  * still the entry at its path.
+ *
+ * No open uses O_DIRECTORY. gVisor treats it like a trailing slash, which follows a final symlink
+ * even with O_NOFOLLOW, so a symlinked directory would pass. Opening a part below a non-directory
+ * fails with ENOTDIR anyway, and the read checks that the last part is a regular file.
  */
 const openBelow = async (directory: string, parts: readonly string[], handles: FileHandle[]) => {
   const descriptorRelative = process.platform === "linux";
@@ -45,10 +49,7 @@ const openBelow = async (directory: string, parts: readonly string[], handles: F
     handles.push(
       await open(
         descriptorRelative ? `/proc/self/fd/${parent?.fd}/${part}` : path,
-        constants.O_RDONLY |
-          noFollow |
-          constants.O_NONBLOCK |
-          (index < parts.length - 1 ? constants.O_DIRECTORY : 0),
+        constants.O_RDONLY | noFollow | constants.O_NONBLOCK,
       ),
     );
     paths.push(path);
@@ -75,7 +76,7 @@ export async function readScopedFile(
   const handles: FileHandle[] = [];
   try {
     handles.push(
-      await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW),
+      await open(directory, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK),
     );
     await openBelow(directory, parts, handles);
     const handle = handles[handles.length - 1];

@@ -8,6 +8,7 @@ import {
   mintIdleCompactionTokens,
 } from "../../src/mint/idle-compaction.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
+import type { MintRecoveryFactory } from "../../src/mint/recovery-contracts.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
@@ -619,4 +620,220 @@ it("sends no note after a compaction when no skill was read", async () => {
     "function_call",
     "function_call_result",
   ]);
+});
+
+// One tool result can exceed the model's whole context, such as a result a takeover replays from
+// an earlier worker. A compaction keeps the items after the request it compacts as they are, so
+// it never shrinks that result: the request carries the result's first part and size instead,
+// with the same bytes on every later request.
+it("sends a tool result too large for the context as its bounded first part, after a compaction too", async () => {
+  const oversized = JSON.stringify({
+    results: Array.from({ length: 40_000 }, (_unused, index) => ({
+      name: `Synthetic item ${index}`,
+      description: `A synthetic description of item ${index}. `.repeat(3),
+    })),
+  });
+  expect(oversized.length).toBeGreaterThan(4_000_000);
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_catalog" ? Effect.succeed(oversized) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const responses: ModelResponse[] = [
+    {
+      ...call("execute", explore, mintCompactionLimitTokens + 8_500, "explore_catalog"),
+      output: [compactedItem, ...call("execute", explore, 2_000, "explore_catalog").output],
+    },
+    call("execute", example, 30_000),
+    call("finish_build", finish, 30_000),
+  ];
+  const requests: ModelRequest[] = [];
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            requests.push(request);
+            return responses[requests.length - 1] ?? call("finish_build", finish);
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  const sentResult = (request: ModelRequest | undefined) =>
+    JSON.stringify(
+      items(request).find(
+        (item) => item.type === "function_call_result" && item.callId === "explore_catalog",
+      ),
+    );
+  const [, afterCompaction, later] = requests;
+  expect(items(afterCompaction)[0]).toMatchObject(compactedItem);
+  const sent = sentResult(afterCompaction);
+  expect(sent.length).toBeLessThan(64 * 1024);
+  expect(sent).toContain("result_truncated");
+  expect(sent).toContain(String(oversized.length));
+  expect(JSON.stringify(afterCompaction?.input).length).toBeLessThan(256 * 1024);
+  expect(sentResult(later)).toBe(sent);
+});
+
+// A request the provider refuses as over the model's context does not end the run while a way to
+// shrink it remains: the minter compacts the history first, then saves each long tool result
+// whole as a workspace file and sends its first part and the file's path, a smaller part each
+// time the provider refuses again. The file keeps the whole result, and later requests send the
+// same bytes.
+it("recovers from a request over the context by compacting, then saving its long tool results to files", async () => {
+  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(5_000) });
+  expect(long.length).toBeGreaterThan(100_000);
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_page" ? Effect.succeed(long) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const responses: ModelResponse[] = [
+    call("execute", explore, 2_000, "explore_page"),
+    call("execute", example, 30_000),
+    call("finish_build", finish, 30_000),
+  ];
+  const sentResult = (request: ModelRequest | undefined) =>
+    JSON.stringify(
+      items(request).find(
+        (item) => item.type === "function_call_result" && item.callId === "explore_page",
+      ) ?? null,
+    );
+  const requests: ModelRequest[] = [];
+  const steps: string[] = [];
+  let answered = 0;
+  const saved = new Map<string, string>();
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            requests.push(request);
+            if (isCompaction(request)) {
+              steps.push("compaction");
+              return compacted();
+            }
+            // The provider refuses a request that carries the page's result before a compaction,
+            // or more than 6,000 characters of it after one.
+            const result = sentResult(request);
+            const compactedRequest = items(request)[0]?.type === "compaction";
+            if (result !== "null" && (!compactedRequest || result.length > 6_000)) {
+              steps.push("refused");
+              throw Object.assign(new Error("Input exceeds the context window"), {
+                status: 400,
+                code: "context_length_exceeded",
+              });
+            }
+            steps.push("answered");
+            answered += 1;
+            return responses[answered - 1] ?? call("finish_build", finish);
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+    saveResult: (path, text) =>
+      Effect.sync(() => {
+        saved.set(path, text);
+      }),
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  expect(steps).toEqual([
+    "answered",
+    "refused",
+    "compaction",
+    "refused",
+    "refused",
+    "answered",
+    "answered",
+  ]);
+  const [, , , afterCompaction, firstCut, secondCut, later] = requests;
+  expect(sentResult(afterCompaction)).toContain("Synthetic page text. ".repeat(40));
+  expect(sentResult(afterCompaction).length).toBeGreaterThan(long.length);
+  expect(sentResult(firstCut).length).toBeLessThan(sentResult(afterCompaction).length);
+  const sent = sentResult(secondCut);
+  expect(sent.length).toBeLessThan(6_000);
+  expect(sent).toContain("result_truncated");
+  expect(sent).toContain(String(long.length));
+  // The whole result is in the workspace file the request names.
+  expect(saved.size).toBe(1);
+  const [path = "", file] = [...saved][0] ?? [];
+  expect(path).toMatch(/^captures\/results\//u);
+  expect(sent).toContain(path);
+  expect(file).toBe(long);
+  expect(sentResult(later)).toBe(sent);
+});
+
+// Recovery ends: a request the provider still refuses as over the context once every step was
+// taken fails as before, after one compaction and one send per step.
+it("ends a run whose request stays over the context after every recovery step", async () => {
+  const long = JSON.stringify({ text: "Synthetic page text. ".repeat(5_000) });
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (toolCall, invoke) =>
+        toolCall.callId === "explore_page" ? Effect.succeed(long) : invoke,
+    });
+  const explore = { ...example, purpose: "explore" };
+  const steps: string[] = [];
+  const f = await fixture(() => call("finish_build", finish), {
+    model: makeOpenAIMinter(
+      {
+        getModel: () => ({
+          getResponse: async (request) => {
+            if (isCompaction(request)) {
+              steps.push("compaction");
+              return compacted();
+            }
+            const carries = items(request).some(
+              (item) => item.type === "function_call_result" && item.callId === "explore_page",
+            );
+            if (carries) {
+              steps.push("refused");
+              throw Object.assign(new Error("Input exceeds the context window"), {
+                status: 400,
+                code: "context_length_exceeded",
+              });
+            }
+            steps.push("answered");
+            return call("execute", explore, 2_000, "explore_page");
+          },
+          getStreamedResponse: () => {
+            throw new Error("Unused stream");
+          },
+        }),
+      },
+      "medium",
+      {},
+      { recoveryFactory },
+    ),
+    agentRecovery: { save: () => Effect.void },
+  });
+  const outcome = await f.run();
+
+  expect(outcome.build).not.toBe("published");
+  expect(steps).toEqual(["answered", "refused", "compaction", "refused", "refused", "refused"]);
 });

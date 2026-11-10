@@ -1,5 +1,10 @@
 import { Schema } from "effect";
-import { failureDetail, withFailureContext } from "../runtime/failure-detail.js";
+import { urlSpans } from "../privacy/url-spans.js";
+import {
+  failureDetail,
+  redactDiagnosticText,
+  withFailureContext,
+} from "../runtime/failure-detail.js";
 import type { FailureContextValue } from "../runtime/failure-detail.js";
 import type {
   AutofillRefusal,
@@ -34,7 +39,10 @@ export const refused = (
   ...(target === undefined ? {} : { target }),
 });
 
-/** Value-free evidence of a refusal: finite facts, origins and counts, never a URL or a value. */
+/**
+ * Value-free evidence of a refusal: finite facts, origins and counts, never a URL or a value, and a
+ * refused script's code screened as `scriptEvidence` screens it.
+ */
 type RefusalEvidence = Readonly<Record<string, FailureContextValue | undefined>>;
 
 /**
@@ -116,8 +124,27 @@ export const namedOrigin = (url: string, named: ReadonlySet<string> | undefined)
 };
 
 /**
+ * A script destination's code as evidence holds it: screened for credentials
+ * (`redactDiagnosticText`), each URL in it cut to its origin (`urlOrigin`), and at most 120
+ * characters.
+ */
+const scriptEvidence = (code: string) => {
+  const screened = redactDiagnosticText(code);
+  let text = "";
+  let cursor = 0;
+  for (const span of urlSpans(screened)) {
+    text += screened.slice(cursor, span.start) + urlOrigin(screened.slice(span.start, span.end));
+    cursor = span.end;
+  }
+  return (text + screened.slice(cursor)).slice(0, 120);
+};
+
+/**
  * Where a control sits and submits, by origin: its own frame, its document and each destination,
- * each named only when `named` holds it (`namedOrigin`).
+ * each named only when `named` holds it (`namedOrigin`). While nothing was typed (`named` unset),
+ * also the code of its first script destination other than one that does nothing (`actionScript`,
+ * `scriptEvidence`), so a refused script can be told apart from another; once anything was typed,
+ * page code may have put a typed value in it.
  */
 export const targetEvidence = (
   target: (typeof Targets.Type)["fields"][number] | null | undefined,
@@ -129,6 +156,9 @@ export const targetEvidence = (
         frameOrigin: target.ownerUrl === null ? "none" : namedOrigin(target.ownerUrl, named),
         documentOrigin: namedOrigin(target.documentOrigin, named),
         actionOrigins: target.actions.map((action) => namedOrigin(action, named)).join(" "),
+        ...(named === undefined && target.scriptCode !== undefined
+          ? { actionScript: scriptEvidence(target.scriptCode) }
+          : {}),
       };
 
 /** The control a refusal is about, among the step's controls a call found. */

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { call, callFailure, serve, submitted } from "./picker-fixture.js";
+import { type Api, call, callFailure, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper, run as a Kernel call body runs it, on synthetic pages that each model one
 // kind of picker or one way a picker misbehaves. Chromium must generate the events: the widgets
@@ -77,6 +77,43 @@ test("pickValue picks a native select's option by label, value or another spelli
   expect(await call(page, `return await pickValue(${state}, "Texas", fast);`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Texas", available: ["California", "Nevada"], matches: [] },
   });
+});
+
+// A select whose options depend on another field, such as times on a date, still holds the old
+// field's options when the pick starts right after that field was set: the picker reads the list
+// again while it lacks the value or holds it disabled, rather than refusing a value the new list
+// offers.
+test("pickValue waits for a native select's options to load after the field they depend on", async ({ page }) => {
+  const times: Record<string, readonly (readonly [string, string, boolean?])[]> = {
+    "2030-03-04": [["17:00", "5:00 PM"], ["18:30", "6:30 PM", true], ["19:00", "7:00 PM"]],
+    "2030-03-05": [["17:30", "5:30 PM"], ["18:00", "6:00 PM"], ["18:30", "6:30 PM"]],
+  };
+  await serve(
+    page,
+    `<form><label>Date <select name="date"><option value="2030-03-04">March 4</option><option value="2030-03-05">March 5</option></select></label>
+<label>Time <select name="time"><option value="17:00">5:00 PM</option><option value="18:30" disabled>6:30 PM</option><option value="19:00">7:00 PM</option></select></label></form>
+<script>
+const date = document.querySelector("[name=date]"), time = document.querySelector("[name=time]");
+date.addEventListener("change", async () => {
+  const slots = await (await fetch("/times?date=" + date.value)).json();
+  time.innerHTML = slots.map(([value, label, disabled]) => '<option value="' + value + '"' + (disabled ? " disabled" : "") + '>' + label + '</option>').join("");
+});
+</script>`,
+    (params) => ({ body: times[params.get("date") ?? ""] ?? [], delayMs: 600 }),
+  );
+  expect(
+    await call(page, `await page.getByLabel("Date").selectOption("2030-03-05");
+return await pickValue(page.getByLabel("Time"), "6:00 PM", fast);`),
+  ).toEqual({ result: { picked: true, kind: "select", label: "6:00 PM", value: "18:00", rank: "exact", refills: 0 } });
+  expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:00" });
+  // A time the old date lists greyed out, open on the new date, is picked too.
+  expect(
+    await call(page, `await page.getByLabel("Date").selectOption("2030-03-04");
+await page.getByLabel("Time").locator("option", { hasText: "5:00 PM" }).waitFor({ state: "attached" });
+await page.getByLabel("Date").selectOption("2030-03-05");
+return await pickValue(page.getByLabel("Time"), "6:30 PM", fast);`),
+  ).toMatchObject({ result: { picked: true, label: "6:30 PM", value: "18:30" } });
+  expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:30" });
 });
 
 // A town the list writes in one of the usual other forms, such as St for Saint, is picked; one it
@@ -223,7 +260,7 @@ test("pickValue reports no match, with what the site suggested, instead of timin
   });
 });
 
-test("pickValue types again key by key when the field listens only to keys, and answers that land out of order never win", async ({ page }) => {
+test("pickValue types the value once more, its last key once the page goes quiet, when an older, slower answer to an earlier key landed last", async ({ page }) => {
   const cities = ["Sacramento", "Salem", "San Diego", "San Jose", "Santa Fe", "Santiago", "Seattle", "Spokane"];
   const asked: string[] = [];
   await serve(
@@ -257,6 +294,39 @@ list.addEventListener("click", (event) => {
     result: { picked: true, label: "Santiago", rank: "exact" },
   });
   expect(await submitted(page)).toEqual({ city: "Santiago" });
+});
+
+test("pickValue picks on its first try, typing key by key, from a field whose page reacts only to keys", async ({ page }) => {
+  const asked: string[] = [];
+  await serve(
+    page,
+    `<form><label>Street <input id="street" role="combobox" aria-controls="streets" autocomplete="off"></label>
+<ul id="streets" role="listbox"></ul><input type="hidden" name="street"></form>
+<script>
+const input = document.getElementById("street"), list = document.getElementById("streets");
+// Only a key asks for suggestions; a value set at once asks nothing.
+input.addEventListener("keyup", async () => {
+  const answer = await (await fetch("/api/streets?q=" + encodeURIComponent(input.value))).json();
+  list.innerHTML = answer.map((name) => '<li role="option">' + name + "</li>").join("");
+});
+list.addEventListener("click", (event) => {
+  input.value = event.target.textContent;
+  document.querySelector("[name=street]").value = event.target.textContent;
+  list.innerHTML = "";
+});
+</script>`,
+    (params) => {
+      const query = params.get("q") ?? "";
+      asked.push(query);
+      return { delayMs: 40, body: ["Oak Lane", "Oak Street", "Orchard Road"].filter((name) => name.startsWith(query)) };
+    },
+  );
+  expect(await call(page, `return await pickValue(page.getByLabel("Street"), "Oak Lane", fast);`)).toMatchObject({
+    result: { picked: true, label: "Oak Lane", rank: "exact" },
+  });
+  expect(await submitted(page)).toEqual({ street: "Oak Lane" });
+  // Typed once, a key at a time: the page asked for each prefix once, from the first key.
+  expect(asked).toEqual(["O", "Oa", "Oak", "Oak ", "Oak L", "Oak La", "Oak Lan", "Oak Lane"]);
 });
 
 test("pickValue types the value once more when a slower, older answer replaced the list", async ({ page }) => {
@@ -428,8 +498,8 @@ input.addEventListener("keydown", (event) => {
     result: { picked: true, kind: "typeahead", values: [{ label: "urgent", value: "", added: true }], removed: [] },
   });
   expect(await submitted(page)).toEqual({ tags: "urgent" });
-  // Filled once and committed with Enter: never typed again key by key.
-  expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(["Enter"]);
+  // Typed once, key by key, and committed with Enter: never typed again.
+  expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(["u", "r", "g", "e", "n", "t", "Enter"]);
 });
 
 test("pickValue types an empty list's search box again key by key, never with Enter", async ({ page }) => {
@@ -452,7 +522,9 @@ search.addEventListener("keydown", (event) => { if (event.key === "Enter") windo
 });
 
 test("pickValue refuses as the empty list did when typing it again runs out of time", async ({ page }) => {
-  // Typing draws "No matches" at once; each key also asks the site, which never answers.
+  // Typing draws "No matches" at once; each key also asks the site, which answers until it has
+  // been asked for the whole term, then never answers again.
+  let whole = false;
   await serve(
     page,
     `<form><label>Branch <input id="branch" role="combobox" aria-controls="branches" autocomplete="off"></label>
@@ -460,9 +532,13 @@ test("pickValue refuses as the empty list did when typing it again runs out of t
 <script>
 const input = document.getElementById("branch"), list = document.getElementById("branches");
 input.addEventListener("input", () => { list.hidden = false; list.innerHTML = '<li class="no-results">No matches</li>'; });
-input.addEventListener("keydown", () => { fetch("/api/branches?q=" + encodeURIComponent(input.value)); });
+input.addEventListener("keyup", () => { fetch("/api/branches?q=" + encodeURIComponent(input.value)); });
 </script>`,
-    () => ({ delayMs: 20_000, body: [] }),
+    (params) => {
+      const delayMs = whole ? 20_000 : 0;
+      if (params.get("q") === "Northside") whole = true;
+      return { delayMs, body: [] };
+    },
   );
   expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 3000 });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Northside", available: [], matches: [] },
@@ -470,7 +546,8 @@ input.addEventListener("keydown", () => { fetch("/api/branches?q=" + encodeURICo
 });
 
 test("pickValue still refuses, and never types again, when too little of its time is left", async ({ page }) => {
-  // The site answers every term with nothing, after 2.3 s of the call's 3 s.
+  // The site answers every term with nothing, 2.4 s after each key of the call's 4 s, so once typed
+  // at a person's pace less than a third of the call is left.
   await serve(
     page,
     `<form><label>Branch <input id="branch" role="combobox" aria-controls="branches" autocomplete="off"></label>
@@ -485,12 +562,13 @@ input.addEventListener("input", async () => {
   list.innerHTML = '<li class="no-results">No matches</li>';
 });
 </script>`,
-    () => ({ delayMs: 2300, body: [] }),
+    () => ({ delayMs: 2400, body: [] }),
   );
-  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 3000 });`)).toEqual({
+  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Northside", { ...fast, timeout: 4000 });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Northside", available: [], matches: [] },
   });
-  expect(await page.evaluate(() => (window as unknown as { inputs: number }).inputs)).toBe(1);
+  // Typed once, key by key: never typed again.
+  expect(await page.evaluate(() => (window as unknown as { inputs: number }).inputs)).toBe("Northside".length);
 });
 
 test("pickValue's wait for the page to go quiet is bounded on a page that never does", async ({ page }) => {
@@ -878,6 +956,85 @@ list.addEventListener("click", (event) => { button.textContent = event.target.te
   await expect(page.getByRole("button", { name: "Region" })).toHaveText("Region 87");
 });
 
+/**
+ * A dropdown of `total` locations the site sends 100 at a time, the next page once the list scrolls
+ * to its bottom, asked for `lateMs` after it does. With a search box, it lists the locations holding
+ * the box's text. `window.pages` counts the pages of the whole list it asked for.
+ */
+const locations = (search: boolean, lateMs = 0, total = 3000) => `<form><button type="button" aria-label="Location" aria-haspopup="listbox" aria-controls="location-popup" aria-expanded="false">Choose</button>
+<div id="location-popup" hidden>${search ? '<input aria-label="Find location" autocomplete="off">' : ""}
+<ul role="listbox" id="locations" style="height:200px;overflow-y:auto;margin:0;padding:0"></ul></div></form>
+<script>
+const button = document.querySelector("button"), popup = document.getElementById("location-popup"), list = document.getElementById("locations"), search = popup.querySelector("input");
+const rows = async (from, q) => (await (await fetch("/api/locations?from=" + from + "&q=" + encodeURIComponent(q))).json())
+  .map((name) => '<li role="option" style="height:20px">' + name + "</li>").join("");
+window.pages = 0;
+let next = 0, busy = false;
+const more = async () => {
+  if (busy || next >= ${total} || search?.value) return;
+  busy = true;
+  if (next > 0) await new Promise((resolve) => setTimeout(resolve, ${lateMs}));
+  window.pages++;
+  list.insertAdjacentHTML("beforeend", await rows(next, ""));
+  next += 100;
+  busy = false;
+};
+list.addEventListener("scroll", () => { if (list.scrollTop + list.clientHeight >= list.scrollHeight - 10) more(); });
+button.addEventListener("click", () => { popup.hidden = false; button.setAttribute("aria-expanded", "true"); if (next === 0) more(); });
+search?.addEventListener("input", async () => { list.innerHTML = await rows(0, search.value); });
+list.addEventListener("click", (event) => { button.textContent = event.target.textContent; popup.hidden = true; button.setAttribute("aria-expanded", "false"); });
+</script>`;
+const locationApi: Api = (params) => {
+  const query = (params.get("q") ?? "").toLowerCase();
+  const from = Number(params.get("from"));
+  const names = Array.from({ length: 3000 }, (_, index) => `Location ${index + 1}`).filter((name) => name.toLowerCase().includes(query));
+  return { body: names.slice(from, from + 100) };
+};
+
+test("pickValue reads a long list with no search box to its end, or fails as options_loading, never refusing from part of it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await serve(page, locations(false), locationApi);
+  // Read to its end, the list gives the value; a slower machine may run out of time first.
+  const read = await call(
+    page,
+    `try { const { picked, label } = await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", { ...fast, timeout: 40000 }); return { picked, label }; }
+    catch (error) { return { failed: error.message }; }`,
+    60,
+  );
+  expect([{ picked: true, label: "Location 2500" }, { failed: "options_loading" }]).toContainEqual(read.result);
+  await page.reload();
+  expect(
+    await call(
+      page,
+      `try { return await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", { ...fast, timeout: 3000 }); }
+      catch (error) { return { name: error.name, message: error.message, listRead: error.loading?.listRead > 0 }; }`,
+    ),
+  ).toEqual({ result: { name: "PickerFailure", message: "options_loading", listRead: true } });
+});
+
+test("pickValue narrows a list longer than 50 options with its search box once the first lack the value", async ({ page }) => {
+  await serve(page, locations(true), locationApi);
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", fast);`)).toMatchObject({
+    result: { picked: true, label: "Location 2500", rank: "exact" },
+  });
+  await expect(page.getByRole("button", { name: "Location" })).toHaveText("Location 2500");
+  // One page of the whole list, then the search: never scrolled on through it.
+  expect(await page.evaluate(() => (window as unknown as { pages: number }).pages)).toBe(1);
+  // A value among the first 50 is still searched for, so an option that ties further down shows.
+  await page.reload();
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 20", fast);`)).toMatchObject({
+    result: { picked: true, label: "Location 20", rank: "exact" },
+  });
+  expect(await page.getByLabel("Find location").inputValue()).toBe("Location 20");
+});
+
+test("pickValue waits for the next page a scroll asks for a moment late before calling the list's end", async ({ page }) => {
+  await serve(page, locations(false, 250, 300), locationApi);
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 250");`)).toMatchObject({
+    result: { picked: true, label: "Location 250" },
+  });
+});
+
 test("pickValue works inside a shadow root", async ({ page }) => {
   await serve(page, `<form><picker-box></picker-box></form>
 <script>
@@ -1093,7 +1250,7 @@ test("pickValue fails as options_loading when the list never finishes loading", 
   });
 });
 
-test("pickValue's options_loading names a request its typing started that never answered", async ({ page }) => {
+test("pickValue's options_loading names the requests its typing started that never answered", async ({ page }) => {
   await serve(
     page,
     `<label>Account <input id="account" autocomplete="off"></label><ul id="accounts" role="listbox"></ul>
@@ -1102,7 +1259,7 @@ test("pickValue's options_loading names a request its typing started that never 
   );
   const failed = await callFailure(page, `return await pickValue(page.getByLabel("Account"), "Savings", { ...fast, timeout: 2000 });`);
   expect(failed.error).toBe("options_loading");
-  expect(failed.stack).toMatch(/^PickerFailure: options_loading \(1 request it started in flight \(fetch, \d+\.\d s\)\)$/u);
+  expect(failed.stack).toMatch(/^PickerFailure: options_loading \(7 requests it started in flight \(fetch, the oldest \d+\.\d s\)\)$/u);
 });
 
 test("pickValue waits for a site's own answered signal when given one", async ({ page }) => {
@@ -1111,9 +1268,10 @@ test("pickValue waits for a site's own answered signal when given one", async ({
 <script>
 const input = document.getElementById("code"), list = document.getElementById("codes");
 input.addEventListener("input", () => {
-  // The old options stay until the new answer, which arrives in two parts.
-  setTimeout(() => { list.insertAdjacentHTML("beforeend", '<li role="option">' + input.value + '-A</li>'); }, 150);
-  setTimeout(() => { list.innerHTML = '<li role="option">' + input.value + '</li><li role="option">' + input.value + '-B</li>'; list.dataset.query = input.value; }, 450);
+  // The old options stay until the new answer for what was typed, which arrives in two parts.
+  const query = input.value;
+  setTimeout(() => { list.insertAdjacentHTML("beforeend", '<li role="option">' + query + '-A</li>'); }, 150);
+  setTimeout(() => { list.innerHTML = '<li role="option">' + query + '</li><li role="option">' + query + '-B</li>'; list.dataset.query = query; }, 450);
 });
 list.addEventListener("click", (event) => { input.value = event.target.textContent; list.innerHTML = ""; });
 </script>`);
@@ -1121,6 +1279,32 @@ list.addEventListener("click", (event) => { input.value = event.target.textConte
     await call(
       page,
       `return await pickValue(page.getByLabel("Code"), "ZX9", { ...fast, answered: async (popup, query) => (await popup.getAttribute("data-query")) === query });`,
+    ),
+  ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
+});
+
+// The answer can land after the picker read the list and before answered() looks at the marker:
+// answered() is then true while the options read are still the older answer's. Here the site's
+// answer lands exactly then, as answered() starts its look, once the older answer has held still.
+test("pickValue never ranks options it read before the site's answered signal turned true", async ({ page }) => {
+  await serve(page, `<label>Code <input id="code" role="combobox" aria-controls="codes" autocomplete="off"></label>
+<ul id="codes" role="listbox" data-query=""></ul>
+<script>
+const input = document.getElementById("code"), list = document.getElementById("codes");
+const show = (query, names) => { list.innerHTML = names.map((name) => '<li role="option">' + name + "</li>").join(""); list.dataset.query = query; };
+let typed = "", typedAt = 0;
+// An older query's answer shows at once; the answer for what was typed waits for answerLate.
+input.addEventListener("input", () => { typed = input.value; typedAt = Date.now(); show("ZX", ["ZX10", "ZX9 Legacy"]); });
+window.answerLate = () => { if (list.dataset.query !== typed && Date.now() - typedAt >= 1000) show(typed, [typed, typed + " Legacy"]); };
+list.addEventListener("click", (event) => { input.value = event.target.textContent; list.innerHTML = ""; });
+</script>`);
+  expect(
+    await call(
+      page,
+      `return await pickValue(page.getByLabel("Code"), "ZX9", { ...fast, answered: async (popup, query) => {
+        await popup.evaluate(() => window.answerLate());
+        return (await popup.getAttribute("data-query")) === query;
+      } });`,
     ),
   ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
 });

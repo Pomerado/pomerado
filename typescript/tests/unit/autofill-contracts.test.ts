@@ -94,3 +94,17 @@ it("keeps the signed-in page code's popups fifth, with no challenge check by def
   expect(code).toContain("const challengeFields = [];");
   expect(code).toContain("const authenticationOrigins = [];");
 });
+
+// The harness decodes the minter's step strictly. A signed-in check names a selector or a URL path,
+// with the account page the host opens first, and decodes to exactly what was sent.
+it("takes a signed-in check of a selector or a URL path, with its account page", () => {
+  const decode = (signedIn: unknown) =>
+    Schema.decodeUnknownEither(SignInStep)({ signedIn }, { onExcessProperty: "error" });
+  for (const signedIn of [
+    { selector: "#account-menu" },
+    { urlPath: "/account" },
+    { selector: "#account-menu", urlPath: "/account", openPath: "/account/profile?tab=1" },
+  ])
+    expect(decode(signedIn)).toEqual(Either.right({ signedIn }));
+  expect(Either.isLeft(decode({ openPath: "/account" }))).toBe(true);
+});

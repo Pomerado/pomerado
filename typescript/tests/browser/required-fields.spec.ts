@@ -786,3 +786,233 @@ test("unfilledRequiredFields with before lists only the labelled fields that ans
     error: "labels_missing",
   });
 });
+
+/**
+ * Custom drop-downs whose required flag sits on a hidden input beside the visible box, as many
+ * component libraries draw them: the box has no required mark, and the hidden input takes the
+ * chosen value and the browser's own check. One input is not displayed at all, and one is
+ * transparent and hidden from assistive technology.
+ */
+const hiddenFlagDropdowns = `
+  <div class="dropdown" data-input-type="select">
+    <label for="window">Delivery window</label>
+    <input id="window" role="combobox" aria-expanded="false" aria-controls="window-list" readonly>
+    <div role="listbox" id="window-list" hidden><div role="option">Morning</div><div role="option">Evening</div></div>
+    <input name="window" required tabindex="-1" style="display:none">
+  </div>
+  <div class="dropdown">
+    <span id="packaging-label">Packaging</span>
+    <div role="combobox" aria-haspopup="listbox" aria-labelledby="packaging-label" aria-controls="packaging-list" aria-expanded="false" tabindex="0">&#8203;</div>
+    <div role="listbox" id="packaging-list" hidden><div role="option">Box</div><div role="option">Bag</div></div>
+    <input name="packaging" required tabindex="-1" aria-hidden="true" style="opacity:0;position:absolute;width:1px;height:1px">
+  </div>`;
+
+/** Opens each drop-down's listbox, and puts a chosen option in its box and its hidden input. */
+const dropdownScript = `<script>
+  for (const wrapper of document.querySelectorAll(".dropdown")) {
+    const box = wrapper.querySelector("[role=combobox]");
+    const list = wrapper.querySelector("[role=listbox]");
+    const store = wrapper.querySelector("input[tabindex='-1']");
+    box.addEventListener("click", () => { list.hidden = false; box.setAttribute("aria-expanded", "true"); });
+    list.addEventListener("click", (event) => {
+      const chosen = event.target.closest("[role=option]").textContent;
+      if (box instanceof HTMLInputElement) box.value = chosen; else box.textContent = chosen;
+      store.value = chosen;
+      list.hidden = true;
+      box.setAttribute("aria-expanded", "false");
+    });
+  }
+</script>`;
+
+const hiddenFlagFields = [
+  {
+    label: "Delivery window",
+    shape: "combobox",
+    options: [
+      { value: "Morning", label: "Morning" },
+      { value: "Evening", label: "Evening" },
+    ],
+  },
+  {
+    label: "Packaging",
+    shape: "combobox",
+    options: [
+      { value: "Box", label: "Box" },
+      { value: "Bag", label: "Bag" },
+    ],
+  },
+];
+
+test("unfilledRequiredFields reads a drop-down's required flag from the hidden input beside it, and fillRequiredField fills it", async ({
+  page,
+}) => {
+  await page.setContent(`<form aria-label="Order">
+  <label for="name">Name</label><input id="name" name="name" required>
+  ${hiddenFlagDropdowns}
+  <button>Place order</button>
+</form>${dropdownScript}`);
+  const form = `page.getByRole("form", { name: "Order" })`;
+  // A visible required field reads as before; each drop-down is asked by its own label and options.
+  expect(await call(page, `return await unfilledRequiredFields(${form});`)).toEqual({
+    result: [{ label: "Name", shape: "text" }, ...hiddenFlagFields],
+  });
+  // The visible box is what gets filled, and once the hidden input holds the choice it drops out.
+  expect(
+    await call(
+      page,
+      `return [
+        await fillRequiredField(${form}, "Delivery window", "Evening"),
+        await fillRequiredField(${form}, "Packaging", "Bag"),
+        await unfilledRequiredFields(${form}),
+      ];`,
+    ),
+  ).toEqual({ result: [{ shape: "combobox" }, { shape: "combobox" }, [{ label: "Name", shape: "text" }]] });
+  expect(await submitted(page)).toEqual({ name: "", window: "Evening", packaging: "Bag" });
+});
+
+test("blockingRequiredFields returns a new drop-down whose hidden input the browser's own check stopped", async ({
+  page,
+}) => {
+  const form = `page.getByRole("form", { name: "Review" })`;
+  // The review shows the drop-downs only after Place order, and the browser refuses the submit
+  // while their hidden inputs are empty, so nothing is sent.
+  await page.setContent(blockedReview(hiddenFlagDropdowns));
+  expect(await call(page, `return await visibleFieldLabels(${form});`)).toEqual({ result: ["Item", "item"] });
+  await page.evaluate(() => {
+    const later = document.querySelector("#later");
+    if (later instanceof HTMLElement) later.hidden = false;
+    document.forms[0]?.requestSubmit();
+  });
+  expect(await call(page, `return await blockingRequiredFields(${form}, ["Item", "item"]);`)).toEqual({
+    result: { fields: hiddenFlagFields },
+  });
+});
+
+test("a hidden required input belongs only to the one visible field its wrapper holds", async ({ page }) => {
+  await page.setContent(`<form aria-label="Pickup">
+  <div role="group" aria-labelledby="slot-label"><span id="slot-label">Pickup slot</span>
+    <div data-input-type="select">
+      <label for="day">Day</label><input id="day" role="combobox" aria-controls="day-list" readonly>
+      <div role="listbox" id="day-list" hidden><div role="option">Monday</div><div role="option">Tuesday</div></div>
+      <input name="day" required tabindex="-1" style="display:none">
+    </div>
+    <div data-input-type="select">
+      <label for="hour">Hour</label><input id="hour" role="combobox" aria-controls="hour-list" readonly>
+      <div role="listbox" id="hour-list" hidden><div role="option">9:00</div><div role="option">10:00</div></div>
+    </div>
+  </div>
+  <div role="group" aria-labelledby="name-label"><span id="name-label">Full name</span>
+    <input aria-label="First name" name="first"><input aria-label="Last name" name="last">
+    <input name="full_name" required tabindex="-1" style="display:none">
+  </div>
+</form>`);
+  // Two drop-downs share a group, and only the first has a hidden required input in its own
+  // wrapper: the other stays optional. One directly in a group of two boxes is neither's.
+  expect(await call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: "Pickup" }));`)).toEqual({
+    result: [
+      {
+        label: "Day",
+        shape: "combobox",
+        options: [
+          { value: "Monday", label: "Monday" },
+          { value: "Tuesday", label: "Tuesday" },
+        ],
+      },
+    ],
+  });
+});
+
+test("a hidden required input outside a field's wrapper, or with a label of its own, flags no visible field", async ({
+  page,
+}) => {
+  await page.setContent(`
+<form aria-label="Contact">
+  <div><label for="email">Email</label><input id="email" type="email" name="email"></div>
+  <input name="token" required style="display:none">
+</form>
+<form aria-label="Engraving">
+  <div data-input-type="select">
+    <label for="font">Font</label><input id="font" role="combobox" readonly>
+    <input aria-label="Custom font" name="custom_font" required style="display:none">
+  </div>
+</form>
+<form aria-label="Country">
+  <label for="country">Country</label>
+  <select id="country" name="country" required aria-hidden="true" tabindex="-1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
+    <option value="">Choose</option><option>France</option><option>Spain</option>
+  </select>
+  <span role="combobox" aria-haspopup="listbox" aria-labelledby="country-shown" tabindex="0"><span id="country-shown">Choose a country</span></span>
+</form>`);
+  const unfilled = (name: string) =>
+    call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: ${JSON.stringify(name)} }));`);
+  // A stray hidden input sits outside the one field's wrapper.
+  expect(await unfilled("Contact")).toEqual({ result: [] });
+  // A hidden field with its own label is a field the page hides, not the visible one's flag.
+  expect(await unfilled("Engraving")).toEqual({ result: [] });
+  // A native select with its own label behind a styled box is still asked as itself.
+  expect(await unfilled("Country")).toEqual({
+    result: [
+      {
+        label: "Country",
+        shape: "select",
+        options: [
+          { value: "France", label: "France" },
+          { value: "Spain", label: "Spain" },
+        ],
+      },
+    ],
+  });
+});
+
+test("a hidden box to tick or file to attach beside a field is not its required flag", async ({ page }) => {
+  await page.setContent(`<form aria-label="Gift">
+  <div>
+    <label for="note">Gift note</label><input id="note" name="note">
+    <input type="checkbox" name="agree" required style="display:none">
+    <input type="file" name="photo" required style="display:none">
+  </div>
+</form>`);
+  // A checkbox or a file input is a field of its own, never a drop-down's required flag.
+  expect(await call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: "Gift" }));`)).toEqual({
+    result: [],
+  });
+});
+
+test("a field labelled from afar claims no hidden input its own wrapper does not hold", async ({ page }) => {
+  await page.setContent(`<form aria-label="Survey">
+  <h2 id="size-heading">Size</h2>
+  <section>
+    <div role="combobox" aria-labelledby="size-heading" aria-controls="size-list" aria-expanded="false" tabindex="0">&#8203;</div>
+    <div role="listbox" id="size-list" hidden><div role="option">Small</div><div role="option">Large</div></div>
+    <div class="rating"><span>Rate us</span><input name="rating" required tabindex="-1" style="display:none"></div>
+  </section>
+  <label>Name<input name="name"></label>
+</form>`);
+  // The element holding the drop-down and its far-off heading is the whole form, which holds
+  // another field too, so it is no wrapper of the drop-down's own: the rating's input stays apart.
+  expect(await call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: "Survey" }));`)).toEqual({
+    result: [],
+  });
+});
+
+test("a hidden required input labelled as the field itself is that field's required flag", async ({ page }) => {
+  await page.setContent(`<form aria-label="Shirt">
+  <div data-input-type="select">
+    <input role="combobox" aria-label="Colour" aria-controls="colour-list" aria-expanded="false" readonly>
+    <div role="listbox" id="colour-list" hidden><div role="option">Red</div><div role="option">Blue</div></div>
+    <input aria-label="Colour" name="colour" required tabindex="-1" style="display:none">
+  </div>
+</form>`);
+  expect(await call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: "Shirt" }));`)).toEqual({
+    result: [
+      {
+        label: "Colour",
+        shape: "combobox",
+        options: [
+          { value: "Red", label: "Red" },
+          { value: "Blue", label: "Blue" },
+        ],
+      },
+    ],
+  });
+});

@@ -14,7 +14,9 @@ export const QuestionId = Schema.String.pipe(Schema.pattern(questionIdPattern));
 const OptionId = Schema.String.pipe(Schema.pattern(/^[a-z0-9_]{1,64}$/));
 
 const Label = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256));
-const Prompt = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000));
+/** The longest prompt any question takes, in UTF-16 code units. */
+export const longestPrompt = 2000;
+const Prompt = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(longestPrompt));
 const maximumOptions = 50;
 const maximumQuestions = 8;
 /** The longest free-text or secret answer any question accepts. */
@@ -206,6 +208,37 @@ export const passwordlessEligible = (question: typeof CredentialQuestion.Type) =
   question.fields === "username_password" &&
   question.allowSave;
 
+/** The most inputs a hand-off may show beside the browser. */
+export const maximumShownInputs = 20;
+/** A top-level operation input's name, as a hand-off's `show_inputs` lists it. */
+export const shownInputPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+/**
+ * The operation inputs a hand-off may show beside the browser, by their top-level names: at most
+ * `maximumShownInputs`, each once. A host never shows a secret or a file there, and masks as it
+ * decides.
+ */
+export const ShownInputs = Schema.Array(
+  Schema.String.pipe(Schema.pattern(shownInputPattern)),
+).pipe(
+  Schema.maxItems(maximumShownInputs),
+  Schema.filter((names) => new Set(names).size === names.length, {
+    message: () => "shown inputs must be unique",
+  }),
+);
+
+/**
+ * The run hands its live browser to a person, who does the task `prompt` describes, such as
+ * reviewing a form before it is submitted, then marks it done (`{ done: true }`). The host shows
+ * the page, the prompt and the inputs `show_inputs` names. It is the only question of its request,
+ * which only a script or the host raises, and it waits up to `browserHandoffWaitMs`. A host that
+ * cannot show the browser to a person fails the request with `Unavailable`, never answers it.
+ */
+export const BrowserHandoffQuestion = Schema.Struct({
+  ...base,
+  type: Schema.Literal("browser_handoff"),
+  show_inputs: ShownInputs,
+});
+
 export const Question = Schema.Union(
   ChoiceQuestion,
   MultiChoiceQuestion,
@@ -213,6 +246,7 @@ export const Question = Schema.Union(
   ConfirmQuestion,
   SecretQuestion,
   CredentialQuestion,
+  BrowserHandoffQuestion,
 );
 export type Question = typeof Question.Type;
 
@@ -248,6 +282,15 @@ export const InputRequest = Schema.Struct({
       request.source === "system" ||
       !request.questions.some((question) => question.type === "credential"),
     { message: () => "only the host asks for a login" },
+  ),
+  Schema.filter(
+    (request) =>
+      !request.questions.some((question) => question.type === "browser_handoff") ||
+      ((request.source === "script" || request.source === "system") &&
+        request.questions.length === 1),
+    {
+      message: () => "a browser hand-off is the only question of a script's or the host's request",
+    },
   ),
   Schema.filter(
     (request) => {
@@ -296,6 +339,9 @@ const MultiChoiceAnswer = Schema.Union(
     note: Schema.optional(Text),
   }),
 );
+/** A hand-off's answer, which the host writes once the person marks the step done. */
+export const BrowserHandoffAnswer = Schema.Struct({ done: Schema.Literal(true) });
+export type BrowserHandoffAnswer = typeof BrowserHandoffAnswer.Type;
 const ConfirmAnswer = Schema.Struct({
   confirmed: Schema.Boolean,
   text: Schema.optional(Schema.String.pipe(Schema.maxLength(maximumAnswerLength))),
@@ -357,7 +403,8 @@ export type ValidAnswer =
   | { readonly type: "text"; readonly value: string }
   | { readonly type: "confirm"; readonly value: typeof ConfirmAnswer.Type }
   | { readonly type: "secret"; readonly value: string }
-  | { readonly type: "credential"; readonly value: CredentialAnswer };
+  | { readonly type: "credential"; readonly value: CredentialAnswer }
+  | { readonly type: "browser_handoff"; readonly value: BrowserHandoffAnswer };
 export type ValidAnswers = Readonly<Record<string, ValidAnswer>>;
 
 export class InvalidAnswer extends Data.TaggedError("InvalidAnswer")<{
@@ -493,6 +540,11 @@ const validateOne = (
         return invalid("password_required");
       return Either.right({ type: "credential", value: decoded.right });
     }
+    case "browser_handoff": {
+      const decoded = decodeAs(BrowserHandoffAnswer, value);
+      if (Either.isLeft(decoded)) return invalid("malformed");
+      return Either.right({ type: "browser_handoff", value: decoded.right });
+    }
   }
 };
 
@@ -522,16 +574,50 @@ export const validateAnswer = (
 
 /**
  * Whether a question's answer is protected: a secret or a website login, which goes only to the
- * broker or the credential store. Every other answer is a plain business answer.
+ * broker or the credential store, or a browser hand-off, which only the owner's protected page
+ * answers, since the person there holds the signed-in browser and may type secrets into it. Every
+ * other answer is a plain business answer.
  */
 export const isProtectedQuestion = (question: Question) =>
-  question.type === "secret" || question.type === "credential";
+  question.type === "secret" ||
+  question.type === "credential" ||
+  question.type === "browser_handoff";
 
 /**
- * The longest any request waits: Kernel waits about ten minutes for one
- * step's input, and nothing parks, so every source shares this one bound.
+ * The longest any other request waits: Kernel waits about ten minutes for one step's input, and
+ * nothing parks, so every source shares this one bound, except a browser hand-off's.
  */
 export const maximumInputWaitMs = 10 * 60_000;
+
+/**
+ * The longest a browser hand-off waits for the person to finish the step. It may outlast the
+ * provider's ten-minute wait for one step's input because the host, not the provider, holds the
+ * browser while the person works: a host keeps the browser session alive for the whole wait, with
+ * any idle timeout longer than this bound.
+ */
+export const browserHandoffWaitMs = 30 * 60_000;
+
+/** Whether a request hands the browser to a person. */
+export const isBrowserHandoff = (request: InputRequest) =>
+  request.questions.some((question) => question.type === "browser_handoff");
+
+/** How long a request waits for its answer: a hand-off `browserHandoffWaitMs`, any other less. */
+export const inputWaitMs = (request: InputRequest): number =>
+  isBrowserHandoff(request) ? browserHandoffWaitMs : maximumInputWaitMs;
+
+/**
+ * Whether an artifact's declared script questions (its `questions`, by id) include a browser
+ * hand-off, so a run of it may hand its browser to a person. A host that shows the browser only
+ * when it starts one with a visible window reads this before it launches the run.
+ */
+export const handsOff = (questions: Readonly<Record<string, unknown>> | undefined): boolean =>
+  questions !== undefined &&
+  Object.values(questions).some(
+    (declaration) =>
+      typeof declaration === "object" &&
+      declaration !== null &&
+      Reflect.get(declaration, "type") === "browser_handoff",
+  );
 
 /**
  * `NoResponse`: the window ended unanswered, and the job fails as `no_response`. The others

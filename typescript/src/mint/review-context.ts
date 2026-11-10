@@ -10,6 +10,7 @@ import { MintFailure, type WritePath } from "./contracts.js";
 import { executedSourceClosure } from "./operation-source.js";
 import type { MintProjection } from "./projection.js";
 import { screenMintText } from "./workspace.js";
+import { explorationAllowedEffect } from "./exploration-effect.js";
 import type { WriteOutcome } from "./outcome-review-contracts.js";
 
 /**
@@ -59,22 +60,13 @@ export const screenedWritePath = (
   path: WritePath,
 ): Effect.Effect<WritePath, MintFailure> =>
   Effect.gen(function* () {
-    const steps = yield* Effect.forEach(path.steps, ({ commit, does }) =>
-      projection.text(does, "review").pipe(Effect.map((screened) => ({ commit, does: screened }))),
+    const steps = yield* Effect.forEach(path.steps, (step) =>
+      projection.text(step.does, "review").pipe(Effect.map((screened) => ({ ...step, does: screened }))),
     );
     return { steps, ends: yield* projection.text(path.ends, "review") };
   });
 
-/**
- * What Guardian may approve for an anonymous read or exploration. Opening the public sign-in
- * page, including the site's own redirects to its sign-in origin and its own sign-in link or
- * button, is discovery; entering or submitting any credential is the host-owned sign-in step,
- * never authored exploration. After the host signed in, a context step that asks for no
- * credential and verifies no one, such as choosing a company, is navigation. A read keeps the
- * limits the request states; context it gives, such as today's date, is no filter.
- */
-export const explorationAllowedEffect =
-  "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Clicking the site's own sign-in link or button to open its sign-in screen or dialog is navigation, even when the page says results need a login. Entering or submitting a username, email, phone number, password or code, submitting a sign-in step, or switching accounts is not: credential submission belongs only to the host-owned authenticate step. After the host has signed in, entering the caller's own input into a context step that asks for no username, email, phone number, password, code, date of birth, ZIP or security answer and does not verify who the user is, such as choosing a supplier, company, client or language, and continuing past it is navigation, not a sign-in step or an account switch. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.";
+export { explorationAllowedEffect } from "./exploration-effect.js";
 
 /**
  * What Guardian may approve for a write build's `act` step. The write is the whole task the
@@ -104,7 +96,7 @@ const signInAllowedEffect =
  * checkout, which submits nothing by itself.
  */
 const cardFillAllowedEffect =
-  "Typing the caller's payment card into the card fields of the site's own checkout, for the booking or purchase the caller asked for: the host types the card answers the caller gave privately and clicks nothing. Nothing on the site is submitted, booked or bought by this step.";
+  "Filling the caller's payment card or payment method into the card fields of the site's own checkout, for the booking or purchase the caller asked for: the host types the card answers the caller gave privately and clicks nothing. Nothing on the site is submitted, booked or bought by this step.";
 
 const offlineAllowedEffect =
   "Offline local files, source checks and computation only. No live website, credentials or network.";

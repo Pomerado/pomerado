@@ -220,6 +220,8 @@ const handleRequest = (
   deadline: Deadline,
   message: Exclude<LocalOperationMessage, { kind: "result" | "error" | "cancel" | "journal" }>,
   cardHandles: RunCardHandles,
+  /** Tells the child that its request opened to the caller, as the asker says (`AskBounds`). */
+  opened: Effect.Effect<void> = Effect.void,
 ): Effect.Effect<unknown, Error> =>
   Effect.suspend<unknown, Error, never>(() => {
     if (message.kind === "execute") {
@@ -294,7 +296,8 @@ const handleRequest = (
             code: "Undeclared",
           }),
         );
-      return suspended(deadline, options.ask(message.request)).pipe(
+      // The child marks a browser hand-off's commit steps sent once the asker opens it.
+      return suspended(deadline, options.ask(message.request, { opened: () => opened })).pipe(
         // ScriptInput validates raw answers in the child; the host has already typed them.
         Effect.map((answers) => scriptAnswers(message.request, answers, cardHandles)),
       );
@@ -408,7 +411,13 @@ const receiveOperation = (
         Effect.runSync(Deferred.fail(completed, new Error("Duplicate local operation request")));
         return;
       }
-      const task = handleRequest(options, deadline, message, cardHandles).pipe(
+      const task = handleRequest(
+        options,
+        deadline,
+        message,
+        cardHandles,
+        Effect.ignore(sendToChild(process, { kind: "opened", id: message.id })),
+      ).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
           if (Exit.isSuccess(exit))

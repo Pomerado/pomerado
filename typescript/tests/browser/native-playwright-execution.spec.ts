@@ -1137,3 +1137,64 @@ export default defineOperation({ input: Schema.Struct({}), output: Schema.Struct
   ).toBe("not_sent");
   expect(await effectOf(run("pureFiles", { callsBrowser: true }))).toBe("not_sent");
 });
+
+test("the native keyboard types a code split across boxes through its first box, one held key per box", async () => {
+  await native(async (executor) => {
+    const site = "https://code.example.test";
+    const code = "482913";
+    const boxes = Array.from(
+      code,
+      (_, at) =>
+        `<input id="box-${at + 1}" name="d${at + 1}" maxlength="1" inputmode="numeric" aria-label="Digit ${at + 1}">`,
+    ).join("");
+    // Each box hands the focus to the next once a digit goes in; the page reports every key event.
+    const screen = `<form method="post" action="/verify">${boxes}<button id="verify">Verify</button></form><script>
+const boxes = [...document.querySelectorAll("input")];
+boxes.forEach((box, at) => box.addEventListener("input", () => { if (box.value !== "" && boxes[at + 1]) boxes[at + 1].focus(); }));
+for (const type of ["keydown", "keyup"])
+  document.addEventListener(type, (event) => window.reportKey({ type, field: event.target.name ?? "", at: event.timeStamp }), true);
+</script>`;
+    await Effect.runPromise(
+      executor.execute(`
+      context.keysSeen = [];
+      await context.exposeBinding('reportKey', (_source, event) => context.keysSeen.push(event));
+      await context.route('${site}/**', route => route.request().method() === 'POST'
+        ? route.fulfill({contentType:'text/html', body:'<p>Signed in</p>'})
+        : route.fulfill({contentType:'text/html', body:${JSON.stringify(screen)}}));
+      await page.goto('${site}/verify');
+    `),
+    );
+    const step = {
+      fields: Array.from(code, (_, at) => ({ selector: `#box-${at + 1}`, slot: "code" as const })),
+      submit: "#verify",
+    };
+    const host = { targetId: executor.targetId, execute: executor.execute };
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
+    );
+    if ("outcome" in inspection) throw new Error(`Fixture refused: ${inspection.reason}`);
+    const report = await Effect.runPromise(
+      fillAutofillStep({
+        step,
+        values: [...code],
+        inspection,
+        page: host,
+        keyboard: executor.keyboard,
+        typing: "keyboard",
+        settleMs: 500,
+      }),
+    );
+    expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+    const seen = (await Effect.runPromise(
+      executor.execute("return context.keysSeen;"),
+    )) as readonly { readonly type: string; readonly field: string; readonly at: number }[];
+    const downs = seen.filter((event) => event.type === "keydown");
+    const ups = seen.filter((event) => event.type === "keyup");
+    // One key down per box, in order, with no box typed twice.
+    expect(downs.map(({ field }) => field)).toEqual(Array.from(code, (_, at) => `d${at + 1}`));
+    // Each key held as a person's press, from its key down to the key up after it.
+    expect(ups).toHaveLength(code.length);
+    for (const [at, down] of downs.entries())
+      expect((ups[at]?.at ?? down.at) - down.at).toBeGreaterThanOrEqual(55);
+  });
+});

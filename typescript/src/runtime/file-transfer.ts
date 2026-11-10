@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Effect, Either, Ref, Schema } from "effect";
 import type { BrowserExecute } from "./browser-execution.js";
@@ -6,6 +6,7 @@ import { acceptsSource, bytesMatchType, isProgram, sniffedType } from "./file-ty
 import {
   defaultFileLimits,
   downloadUrlMaxLength,
+  type DownloadCap,
   FileField,
   fileFormat,
   FileName,
@@ -75,8 +76,9 @@ export const downloadSettleMs = 1_000;
 /**
  * Where a host keeps file bytes; it implements this and `makeRunFiles` does the rest. The browser's
  * machine is wherever the page's Playwright code runs: the local machine for the native browser, a
- * browser VM for a hosted browser, reached through its filesystem API. Bytes never pass through a
- * script's code, its result or the script's own process.
+ * browser VM for a hosted browser, reached through its filesystem API. With `placeByBrowserPath`,
+ * it is the browser's own machine, which may be another than the one the page code runs on. Bytes
+ * never pass through a script's code, its result or the script's own process.
  */
 export interface FileHostHook {
   /** The caller's file a reference names. Fails when there is none. */
@@ -89,6 +91,15 @@ export interface FileHostHook {
     readonly name: string;
     readonly bytes: Uint8Array;
   }) => Effect.Effect<string, Error>;
+  /**
+   * The path `writeToBrowser` returns is on the browser's own machine, which the page code's
+   * Playwright may not share, as for a Chromium browser reached only through its DevTools
+   * websocket that keeps its files on its own machine. The placement then sets the input through
+   * a DevTools session on the frame's target with `DOM.setFileInputFiles`, so the browser reads
+   * that path itself, instead of with `setInputFiles`, which reads it where Playwright runs.
+   * Chromium only. Absent or false, the placement is unchanged.
+   */
+  readonly placeByBrowserPath?: boolean;
   /**
    * Directs the browser's downloads into a new directory only this capture uses and returns a
    * slot naming it. A hosted browser sets its download directory (Chromium's
@@ -133,10 +144,23 @@ export interface FileHostHook {
   >;
 }
 
+/**
+ * The optional `FileHostHook` flags this core honors. An older core ignores a flag it doesn't
+ * know, so a host that may run on one reads this list before it relies on a flag.
+ */
+export const fileHostHookFlags: readonly (keyof FileHostHook)[] = ["placeByBrowserPath"];
+
 /** A run's file service: the channel its script calls, and the check of its output. */
 export interface RunFiles extends FileChannel {
   /** Fails unless every `$file` object in `output` is a file this run collected, unchanged. */
   readonly checkOutput: (output: unknown) => Effect.Effect<void, FileRefused>;
+  /**
+   * The cap the latest capture's download went over, with its size, else undefined: each `arm`
+   * starts it again, and a run's files belong to one execution. A build's host marks a failed
+   * execution with it only when that failure is the cap refusal (`ExecutionEvidence.fileCap`).
+   * Optional, so a host's own file service may leave it out; `makeRunFiles` always sets it.
+   */
+  readonly overCap?: () => DownloadCap | undefined;
 }
 
 /** A refusal before any page call: nothing reached the page. */
@@ -301,11 +325,45 @@ const fieldLocator = (field: FileField) =>
     : `page.locator(${JSON.stringify(field.selector)})`;
 
 /**
+ * Page code that sets `element`, the file input in `frame`, to `path` on the browser's own machine
+ * with `DOM.setFileInputFiles`. It marks the element with a one-time attribute, finds the marked
+ * node in the DevTools document of the target that renders the frame (the frame's own target when
+ * it runs in its own process, else its nearest ancestor's, the page's at the top), whose tree
+ * holds every shadow root and same-process frame below, and removes the mark either way.
+ */
+const setByBrowserPathCode = (path: string, marker: string) => `
+  const marker = ${JSON.stringify(marker)};
+  await element.evaluate((node, marker) => node.setAttribute("data-placing-file", marker), marker);
+  let session;
+  try {
+    for (let owner = frame; session === undefined; owner = owner.parentFrame()) {
+      if (owner.parentFrame() === null) session = await page.context().newCDPSession(page);
+      else session = await page.context().newCDPSession(owner).catch(() => undefined);
+    }
+    const { root } = await session.send("DOM.getDocument", { depth: -1, pierce: true });
+    const pending = [root];
+    let input;
+    while (input === undefined && pending.length > 0) {
+      const node = pending.pop();
+      const attributes = node.attributes ?? [];
+      for (let index = 0; index + 1 < attributes.length; index += 2)
+        if (attributes[index] === "data-placing-file" && attributes[index + 1] === marker) input = node;
+      pending.push(...(node.children ?? []), ...(node.shadowRoots ?? []), ...(node.contentDocument === undefined ? [] : [node.contentDocument]));
+    }
+    if (input === undefined) throw new Error("The file input is not in the frame's document");
+    await session.send("DOM.setFileInputFiles", { files: [${JSON.stringify(path)}], backendNodeId: input.backendNodeId });
+  } finally {
+    await element.evaluate((node) => node.removeAttribute("data-placing-file")).catch(() => undefined);
+    await session?.detach().catch(() => undefined);
+  }`;
+
+/**
  * Page code that finds the one element `field` names and, only when it is a file input whose
  * frame is on the site and whose `accept` takes the file, sets that same element to `path`, then
  * reads back the names and sizes it holds. The frame's address comes from Playwright, not from
  * the page. A frame is on the site at the site's own origin, or on an https host of its
- * registrable domain.
+ * registrable domain. With `byBrowserPath`, the browser reads `path` on its own machine
+ * (`setByBrowserPathCode`); else Playwright's `setInputFiles` reads it where the page code runs.
  */
 const placeCode = (options: {
   readonly field: FileField;
@@ -314,6 +372,7 @@ const placeCode = (options: {
   readonly siteOrigin: string;
   readonly siteDomain: string | undefined;
   readonly timeoutMs: number;
+  readonly byBrowserPath: boolean;
 }) => `
 const accepts = ${acceptsSource};
 const field = ${fieldLocator(options.field)};
@@ -328,8 +387,12 @@ try {
   const onSiteHost = ${options.siteDomain === undefined ? "() => false" : hostOnSiteSource(options.siteDomain)};
   const onSite = address !== null && (address.origin === ${JSON.stringify(options.siteOrigin)} || (address.protocol === "https:" && onSiteHost(address.hostname)));
   if (!onSite) return { refused: "other_site" };
-  if (!accepts(facts.accept, ${JSON.stringify(options.file)})) return { refused: "not_accepted" };
-  await element.setInputFiles(${JSON.stringify(options.path)}, { timeout: ${options.timeoutMs} });
+  if (!accepts(facts.accept, ${JSON.stringify(options.file)})) return { refused: "not_accepted" };${
+    options.byBrowserPath
+      ? setByBrowserPathCode(options.path, randomUUID())
+      : `
+  await element.setInputFiles(${JSON.stringify(options.path)}, { timeout: ${options.timeoutMs} });`
+  }
   return { chosen: await element.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size }))) };
 } finally {
   await element.dispose();
@@ -351,6 +414,16 @@ export const makeRunFiles = (options: {
 }): Effect.Effect<RunFiles> =>
   Effect.gen(function* () {
     const limits = options.limits ?? defaultFileLimits;
+    /** The latest download refused over the caps, with the cap it went over. */
+    let overCap: DownloadCap | undefined;
+    const refuseOverCap = (reason: "too_large" | "run_limit") =>
+      Effect.suspend(() => {
+        overCap =
+          reason === "too_large"
+            ? { limit: "file", maxBytes: limits.fileBytes }
+            : { limit: "run", maxBytes: limits.runBytes, maxFiles: limits.runFiles };
+        return refuse(reason);
+      });
     const used = yield* Ref.make({ files: 0, bytes: 0 });
     const collected = yield* Ref.make<readonly FileObject[]>([]);
     const slots = new Set<string>();
@@ -415,6 +488,7 @@ export const makeRunFiles = (options: {
             siteOrigin,
             siteDomain: siteDomain(siteOrigin),
             timeoutMs: timeoutSec * 1000,
+            byBrowserPath: options.hook.placeByBrowserPath === true,
           }),
           timeoutSec * 2 + 5,
         ).pipe(
@@ -432,8 +506,12 @@ export const makeRunFiles = (options: {
           size: bytes.byteLength,
         } satisfies PlacedFile;
       });
+    // Each capture starts with no refusal, so `overCap` names only the latest one's.
     const arm: RunFiles["arm"] = () =>
-      options.hook.armDownloads().pipe(
+      Effect.sync(() => {
+        overCap = undefined;
+      }).pipe(
+        Effect.zipRight(options.hook.armDownloads()),
         Effect.tap((slot) => Effect.sync(() => slots.add(slot))),
         Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
       );
@@ -476,10 +554,11 @@ export const makeRunFiles = (options: {
           .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         if (taken === undefined) return yield* refuse("no_download");
-        if ("tooLarge" in taken) return yield* refuse(room < limits.fileBytes ? "run_limit" : "too_large");
+        if ("tooLarge" in taken)
+          return yield* refuseOverCap(room < limits.fileBytes ? "run_limit" : "too_large");
         const name = safeName(taken.name, "download");
         if (isProgram(taken.bytes, name)) return yield* refuse("executable");
-        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuse("run_limit");
+        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuseOverCap("run_limit");
         return yield* keepDownload(name, taken.bytes, taken.media_type);
       });
     const takeDownloads = options.hook.takeDownloads;
@@ -557,6 +636,7 @@ export const makeRunFiles = (options: {
       collect,
       ...(collectAll === undefined ? {} : { collectAll }),
       checkOutput,
+      overCap: () => overCap,
     };
   });
 

@@ -24,6 +24,7 @@ import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { runMint } from "../../src/mint/harness.js";
+import { failureDetail } from "../../src/runtime/failure-detail.js";
 import { EventUnavailable } from "../../src/runtime/errors.js";
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -569,8 +570,13 @@ it.each([
   },
 );
 
-// A review request over Guardian's model input limit fails the same way when resubmitted, so it
-// ends the attempt at once instead of offering resubmissions until the outage budget runs out.
+// A review request the model provider refuses for good, such as one carrying an encrypted item it
+// cannot read back, fails the same way when resubmitted, so it ends the attempt at once instead of
+// offering resubmissions until the outage budget runs out. The outcome names the provider's own
+// code and HTTP status.
+const providerRefusal = failureDetail("guardian_dependency_failed", {
+  context: { providerCode: "invalid_encrypted_content", httpStatus: 400 },
+});
 it.each([
   {
     kind: "execution review",
@@ -581,6 +587,7 @@ it.each([
       reviewFailure: "InputTooLarge",
       reviewPhase: "review_computation",
       reviewDispatch: "not_sent",
+      failureDetail: providerRefusal,
     }),
   },
   {
@@ -591,10 +598,11 @@ it.each([
       code: "ReviewUnavailable",
       reviewFailure: "InputTooLarge",
       reviewPhase: "review_computation",
+      failureDetail: providerRefusal,
     }),
   },
 ])(
-  "ends the attempt on a $kind over the model's input limit, without offering a retry",
+  "ends the attempt on a $kind whose encrypted item the provider cannot read back, without offering a retry, and names the provider's refusal",
   async ({ exampleFirst, call, failure }) => {
     let calls = 0;
     const failing = () =>
@@ -616,9 +624,14 @@ it.each([
         }),
       exampleFirst ? { publish: failing } : { reviewAndExecute: failing },
     );
-    expect(await f.run()).toMatchObject({
-      build: "incomplete",
-      hostFailure: "review_unavailable",
+    const outcome = await f.run();
+    expect(outcome).toMatchObject({ build: "incomplete", hostFailure: "review_unavailable" });
+    expect(outcome.diagnostics.map((entry): unknown => JSON.parse(entry))).toContainEqual({
+      phase: "review",
+      reason: "review_unavailable",
+      code: "InputTooLarge",
+      providerCode: "invalid_encrypted_content",
+      httpStatus: 400,
     });
     expect(calls).toBe(1);
   },
@@ -1598,6 +1611,99 @@ it.each([
     ]);
   },
 );
+
+// A host that lists where the output fails the schema hands the minter that list as data, as
+// `inputIssues` is for the input, bounded; a host that lists none leaves the refusal as it was.
+it("returns the host's output issues with a contract output mismatch, at most 20, each text at most 200", async () => {
+  const issue = (index: number) => ({
+    path: `items[].field${index}`,
+    issue: "type" as const,
+    expected: "an integer",
+    observed: "string",
+  });
+  const long = "x".repeat(300);
+  const refusals: unknown[] = [];
+  for (const outputIssues of [
+    [{ path: "status", issue: "missing" as const, expected: '"quoted"', observed: "absent" }],
+    Array.from({ length: 25 }, (_, index) =>
+      index === 0
+        ? { ...issue(index), path: long }
+        : index === 1
+          ? { ...issue(index), expected: long }
+          : issue(index),
+    ),
+    undefined,
+  ]) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose: "act" });
+          refusals.push(JSON.parse(yield* turn.actions.finish(publication)));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({
+              code: "PublicationUnavailable",
+              reason: "contract_output_mismatch",
+              ...(outputIssues === undefined ? {} : { outputIssues }),
+            }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect: "write" });
+  }
+  const [one, many, none] = refusals;
+  expect(one).toMatchObject({
+    reason: "contract_output_mismatch",
+    outputIssues: [{ path: "status", issue: "missing", expected: '"quoted"', observed: "absent" }],
+  });
+  const returned: unknown = Reflect.get(Object(many), "outputIssues");
+  expect(returned).toHaveLength(20);
+  const [cutPath, cutExpected, ...rest] = Array.isArray(returned) ? returned : [];
+  const pathText = String(Reflect.get(Object(cutPath), "path"));
+  const expectedText = String(Reflect.get(Object(cutExpected), "expected"));
+  expect(pathText).toHaveLength(200);
+  expect(pathText.endsWith("…")).toBe(true);
+  expect(expectedText).toHaveLength(200);
+  expect(expectedText.endsWith("…")).toBe(true);
+  expect(rest).toEqual(Array.from({ length: 18 }, (_, index) => issue(index + 2)));
+  expect(none).toMatchObject({ reason: "contract_output_mismatch" });
+  expect(none).not.toHaveProperty("outputIssues");
+});
+
+// A write build's output mismatch asks for a schema its output decodes against, sends the minter to
+// the step that confirmed the write, and lets a field a later cancel, refund or delete left
+// unreadable go optional so the tool can publish. A read's text is unchanged.
+it("words a write build's output mismatch apart from a read build's", async () => {
+  const instructions: Record<string, string> = {};
+  for (const { effect, purpose } of [
+    { effect: "read", purpose: "example" },
+    { effect: "write", purpose: "act" },
+  ] as const) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose });
+          const answer = JSON.parse(yield* turn.actions.finish(publication));
+          const instruction = String(Reflect.get(Object(answer), "instruction"));
+          instructions[effect] = instruction.slice(instruction.indexOf("Not published:"));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({ code: "PublicationUnavailable", reason: "contract_output_mismatch" }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect });
+  }
+  expect(instructions).toStrictEqual({
+    read: "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+    write:
+      "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId. The host extracts the contract offline; never run the write or the example again for this.",
+  });
+});
 
 // A finish_build the host refuses before publication runs is a decision too.
 it.each([
@@ -2704,12 +2810,12 @@ it("tells the agent to ask a rejected read-or-write question again, never to wit
 
 // A reword came back as "reword the question, or withdraw it", and builders dropped questions the
 // owner needed to answer. Guardian's label now says whether a question is still needed.
-it("tells the minter to ask a reworded question again, once, unless Guardian found none needed", async () => {
+it("tells the minter to ask a reworded question again unless Guardian found none needed", async () => {
   const responses: Record<string, unknown>[] = [];
   const asks = [
     { id: "account", label: "unclear" },
-    // The same question sent back again after its one rewording.
-    { id: "account", label: "unclear" },
+    // The same question sent back again after its rewording, with no label.
+    { id: "account", label: undefined },
     { id: "plan", label: "repeat" },
     { id: "region", label: undefined },
   ] as const;
@@ -2740,11 +2846,53 @@ it("tells the minter to ask a reworded question again, once, unless Guardian fou
   );
   // A question that needs other words is asked again; one Guardian found unneeded is not.
   expect(responses[0]).toMatchObject({ questionNeeded: true });
-  // It is asked again once: sent back after that, the minter goes on without it.
+  // Sent back again with no label that says it is still needed, the minter goes on without it.
   expect(responses[1]).toMatchObject({ questionNeeded: false });
   expect(responses[2]).toMatchObject({ questionNeeded: false });
   // An older reviewer gives no label, so the rationale alone says which.
   expect(responses[3]).not.toHaveProperty("questionNeeded");
+});
+
+// Guardian reworded a needed question under a no-question label, then reworded the minter's new
+// wording as unclear. The host had stopped the question for good after one rewording, so the
+// owner was never asked and the build ended without a tool.
+it("asks a reworded question again while Guardian's latest label says it is still needed", async () => {
+  const responses: Record<string, unknown>[] = [];
+  const reviews = [
+    { outcome: "reword", label: "readable", rationale: "Reword to: Which shorter default?" },
+    { outcome: "reword", label: "unclear", rationale: "Reword to: Name the default plainly." },
+    { outcome: "allow_business", rationale: "Only the owner knows the default." },
+  ] as const;
+  let reviewed = 0;
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const ask = () => turn.actions.requestInput(textQuestion("Which default?", "default"));
+        responses.push(
+          JSON.parse(yield* ask()),
+          JSON.parse(yield* ask()),
+          JSON.parse(yield* ask()),
+        );
+      }),
+    {
+      reviewQuestion: () => Effect.sync(() => reviews[reviewed++] ?? reviews[2]),
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return { default: { type: "text" as const, value: "Short default." } };
+        }),
+    },
+  );
+  await f.run();
+  expect(responses[1]).toMatchObject({
+    status: "question_rejected",
+    questionNeeded: true,
+    instruction: expect.stringContaining("Guardian wants this question in other words") as unknown,
+  });
+  expect(reviewed).toBe(3);
+  expect(asked).toBe(1);
+  expect(responses[2]).not.toMatchObject({ status: "question_rejected" });
 });
 
 // The question review didn't know a build was a write build, so it rejected the true statement
@@ -5243,6 +5391,44 @@ it("ends a signed-in build as no_response when the minter's question goes unansw
   });
 });
 
+// A read repair can't write, so a host may let it hear no answer while signed in. The flag reaches
+// no write repair and no build.
+it("hands a signed-in read repair's unanswered question back when its host allows it", async () => {
+  const signedIn = { websiteCredentialsAvailable: true, handBackSignedInReadRepair: true } as const;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(
+          JSON.parse(yield* turn.actions.requestInput(textQuestion("May the email be empty?"))),
+        ).toMatchObject({ status: "no_answer", userInputRequired: false });
+        expect(turn.isComplete()).toBe(false);
+        yield* turn.actions.execute(execution);
+        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+          status: "published",
+        });
+      }),
+    signedIn,
+  );
+  const outcome = await f.run({ ...request, mode: "maintenance", effect: "read" });
+  expect(outcome).toMatchObject({ build: "published" });
+  expect(outcome).not.toHaveProperty("noResponse");
+  for (const run of [
+    { ...request, mode: "maintenance", effect: "write" },
+    { ...request, effect: "read" },
+  ]) {
+    const ended = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(
+            JSON.parse(yield* turn.actions.requestInput(textQuestion("Which account page?"))),
+          ).toMatchObject({ status: "no_response" });
+        }),
+      signedIn,
+    );
+    expect(await ended.run(run)).toMatchObject({ build: "incomplete", noResponse: {} });
+  }
+});
+
 it("ends a signed-in build as no_response when its example's script question goes unanswered", async () => {
   const f = await fixture(
     (turn) =>
@@ -5266,6 +5452,47 @@ it("ends a signed-in build as no_response when its example's script question goe
   expect(await f.run()).toMatchObject({
     build: "incomplete",
     noResponse: { possibleCommit: false },
+  });
+});
+
+/** What the minter's first request says about signing in. */
+const websiteAuthentication = (input: string) => modelInput(input).websiteAuthentication;
+
+const unboundSignInInstruction =
+  "No website credentials are bound to this invocation. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate before dependent business work; the host asks the caller for a login and continues within the same call. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+const preAuthorizedSignInInstruction =
+  "A login the caller already authorized for this site is attached; the build has not signed in with it yet. Credential values are private host input. If the requested operation works signed out, proceed with its business flow and example without discovering a login or calling authenticate. If the task needs an account or the site presents a login wall, discover the actual login entry and pass it as loginUrl to execute purpose authenticate, with a signInStep for each sign-in screen, before dependent business work; the host signs in with the attached login and continues within the same call. Call authenticate before asking the caller for another login or to relax a rule about which login to use. You cannot request credentials; if the site cannot be reached, report that instead of starting sign-in. Codes and other sign-in steps during authenticate go to the caller through the host: a text, email or authenticator code that is part of signing in is a code field of the signInStep, never a request_input question.";
+
+it("tells a build with no login bound and none pre-authorized exactly what it was told before", async () => {
+  let seen: unknown;
+  const f = await fixture((turn) =>
+    Effect.sync(() => {
+      seen = websiteAuthentication(turn.input);
+    }),
+  );
+  await f.run();
+  expect(JSON.stringify(seen)).toBe(
+    JSON.stringify({ credentialsAvailable: false, instruction: unboundSignInInstruction }),
+  );
+});
+
+// A login the caller authorized that waits for the build's first sign-in is attached, not
+// missing: the minter calls authenticate for it before asking the caller about logins.
+it("tells a build with a pre-authorized login to sign in through authenticate", async () => {
+  let seen: unknown;
+  const f = await fixture(
+    (turn) =>
+      Effect.sync(() => {
+        seen = websiteAuthentication(turn.input);
+      }),
+    { websiteLoginPreAuthorized: true, autofillSignIn: true },
+  );
+  await f.run();
+  expect(seen).toEqual({
+    credentialsAvailable: false,
+    loginPreAuthorized: true,
+    instruction: preAuthorizedSignInInstruction,
   });
 });
 

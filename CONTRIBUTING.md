@@ -4,7 +4,7 @@ We welcome bug reports, documentation improvements and code contributions. Start
 
 Pomerado is agent friendly. Point your coding agent at [AGENTS.md](AGENTS.md), which has the setup, the layout and the rules it should follow. You answer for its changes as if you wrote them.
 
-Please follow our [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately with **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security), never in a public issue.
+Please follow our [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately, never in a public issue: email security@pomerado.ai or use **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security). See [SECURITY.md](SECURITY.md).
 
 ## Set up the repository
 
@@ -12,7 +12,7 @@ To use Pomerado with your agent, start with [Get started](README.md#get-started)
 
 - macOS or Linux.
 - Node 24.21 or a later Node 24 release.
-- pnpm 10.34.5, which corepack installs for you.
+- pnpm 10.34.5, which corepack installs for you and checks against the SHA-512 that `packageManager` in package.json names.
 - git 2.36 or later, and jq.
 
 Fork the repository, then clone your fork and install its dependencies.
@@ -65,6 +65,8 @@ bash tools/ci-scan.sh content
 ```
 
 Browser tests run the built `dist/`, so build before you run them. If you encounter test timeouts in resource-constrained or virtualized environments, reducing worker concurrency with `corepack pnpm test:browser --workers=2` may help. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
+
+On a pull request, [tools/test-map.ts](tools/test-map.ts) uses a daily map of the files each test file reads to work out which test files a change needs. A pull request runs only those test files, and every test when it can't tell. Pushes to `main` always run every test. To run every test on a pull request, label it `ci:full` and push again. The repository variable `TEST_SELECTION_DISABLED=true` turns selection off for every pull request.
 
 ## Open a pull request
 

@@ -101,6 +101,10 @@ fills an ISO date into whatever date control the page has: a native date input, 
 `MMMM`, `D`, `YYYY` and so on) in a text box, a select or a dropdown, whose option it matches by
 number or month name. It throws an `Error` named `FormControlFailure` whose message is a fixed
 reason, never a value.
+A date box inside a calendar picker can show a typed date the page hasn't taken. Prefer
+`fillDate(control, iso, format, { commit: "keyboard", blur: "tab", committed })`, where
+`committed` reads the picker's own selected date, such as its button's label, and prefer
+confirming the dates from the site's next request before reading results.
 
 `pickValue(control, wanted, options)` chooses one value in any picker: a native select, a
 datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from divs, or a
@@ -126,12 +130,16 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+Publication review sends one back ("Own picker").
+When a picker's options depend on another field, such as times on a date or a party size, models
+on a make or regions on a country, set that field first, whatever order the page shows them in,
+then pick once its options have loaded for that value.
 `references/picker.ts` picks a typeahead value and refuses a missing one,
 `references/picker-first.ts` takes the first of several equal matches and returns it,
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
 select. `references/custom-selection.ts` and
 `references/dialog-picker.ts` write out a combobox and a dialog picker step by step, for a
-control the helper cannot drive; report that gap with what the page showed.
+control `pickValue` was seen failing on; say in the code what the page showed.
 
 Preserve add/replace and single/multiple intent. `pickValues`' `mode` keeps or replaces
 the chips already chosen. Query aliases
@@ -148,9 +156,10 @@ with `waitForOutcome({ popup }, { action: () => field.click({ timeout: 5000 }) }
 call, so a popup that never opens fails in seconds; then wait the same way, without an
 action, for the exact option within that popup. A zero count directly
 after a click does not establish absence. Inspect the post-action accessibility
-snapshot before changing the selector or attempting another action.
+snapshot before changing the selector or attempting another action. Close a popup you opened
+as the core skill's pop-up rule says.
 
-A filled query plus a visible listbox can still show the previous response. `pickValue`
+A typed query plus a visible listbox can still show the previous response. `pickValue`
 waits for the list to settle and types again when it lacks the value; when the site marks
 which query its options answer, pass that check as `answered`. A matching old option alone
 does not establish the answer.
@@ -161,7 +170,8 @@ skill) to close the banner before the action, and one that opens later.
 
 Decide whether each pop-up, banner or interstitial is conditional or always triggered. A
 conditional one shows only for some accounts, states or visits, such as a cookie banner, a
-one-time promotion or a membership upsell shown only to non-members: name its close control as
+one-time promotion, an app-download or location prompt, or a membership upsell shown only to
+non-members: name its close control as
 `dismiss` of `waitForReady` (core skill), which closes it whenever it opens, rather than checking
 for it at one point. Never wait for it or require it. One the page always opens in answer to an action,
 such as a confirmation dialog a button always opens, may be expected, and the script accepts it
@@ -214,6 +224,16 @@ sets a file input from base64 input with `setInputFiles` uses a deprecated patte
 still allows while the build has no file handle and no `FileInput`: a repair keeps its input as
 it is, and a new tool takes a `FileInput` and uses `files.place`.
 
+When a form asks for more than one upload, prefer one `FileInput` per upload, named for the site's
+label, each placed by its own `files.place` call. Prefer making an input required only when every
+form the tool fills requires its upload; one a repair adds stays optional, so existing callers keep
+working. Before filling anything, prefer checking each upload the page marks required. When the
+tool's input for it holds no file, prefer throwing `new errors.InvalidInput(message, { field })`
+before any commit mark, with a message that starts "Caller input error:" and names that upload by
+the site's label. When no input takes that upload, the tool lacks it, not the caller: prefer
+throwing `new errors.OperationFailure(message)` before any commit mark, naming that upload by the
+site's label, so a repair can add an optional input for it.
+
 Some sites' Download or Share button only prints the page, through `window.print` or a print
 frame in the site's code, and offers no file. Prefer checking the site's code or page before
 clicking such a button live, since its print dialog can stop the page from answering. When the
@@ -228,7 +248,8 @@ such forms save each step as you go. A read build may not fill in or advance suc
 form (it asks the caller and changes its task to a write with `mint_update` first, as the
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
-form (core skill). A signed-out quote or price form that only fetches is a read too, but a
+form, or a signed-in session's per-visit location control that saves nothing to the account (core
+skill). A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
-import { fillAutofillStep, resubmitAutofillStep } from "../destinations/autofill-fill.js";
+import {
+  fillAutofillStep,
+  resubmitAutofillStep,
+  type TypedBox,
+} from "../destinations/autofill-fill.js";
 import { autofillApprovalNumber, autofillMarkerVisible } from "../destinations/autofill-marker.js";
 import {
   checkAutofillSignedIn,
@@ -136,8 +140,9 @@ export const makeSignInBrowser = (options: {
       readonly step: AutofillStep;
       readonly inspection: AutofillInspection;
       readonly values: readonly string[];
+      readonly typedBoxes?: TypedBox[];
     }) =>
-      fillAutofillStep({ ...input, page, keyboard: options.keyboard }).pipe(
+      fillAutofillStep({ ...input, page, keyboard: options.keyboard, typing: "keyboard" }).pipe(
         // The session's record counts what `rememberTyping` counts: a fill that typed.
         Effect.tap((report) =>
           Effect.sync(() => {

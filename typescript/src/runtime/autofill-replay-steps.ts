@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
@@ -7,7 +7,8 @@ import {
   type AutofillRecipeStep,
   isSecondFactor,
   type RejectedMarker,
-  type SignInMethodChoice,
+  type SignInChoice,
+  SignInMethodChoice,
 } from "../destinations/autofill-recipe.js";
 import type {
   AutofillSlot,
@@ -22,7 +23,9 @@ import {
   type SecurityAnswerFills,
   isExtraSecret,
   isSecret,
+  type NamedFields,
   provesLogin,
+  takesAnotherCode,
 } from "./autofill-state.js";
 import type {
   AnsweredLoginFields,
@@ -64,7 +67,9 @@ type SignedInReplay = {
  * - `unclear`: something may have reached the site and the recipe's sign-in check failed.
  * `password_rejected` means the site took the password and showed its screen again, so the owner
  * may be asked for the login; `challenge_unsolved` means a screen never showed behind a challenge
- * the host could not clear, whose vendor `challenge` names.
+ * the host could not clear, whose vendor `challenge` names; `sign_in_choice_not_allowed` means a
+ * recorded screen that names a `choice` showed and the run's caller did not allow it, so the
+ * replay stopped before its submit, and `choice` names it.
  */
 export type AutofillReplayOutcome<V extends string = string> =
   | (SignedInReplay & { readonly alreadySignedIn: true })
@@ -78,12 +83,14 @@ export type AutofillReplayOutcome<V extends string = string> =
       readonly reason: string;
       readonly rejectedFields?: readonly RejectedMarker["slot"][];
       readonly challenge?: V;
+      readonly choice?: SignInChoice;
     }
   | {
       readonly outcome: "unclear";
       readonly reason: string;
       readonly rejectedFields?: readonly RejectedMarker["slot"][];
       readonly challenge?: V;
+      readonly choice?: SignInChoice;
     };
 
 /** Private existing-attempt state survives browser and credential replay rebuilds. */
@@ -134,8 +141,15 @@ export const methodLabels: Record<SignInMethodChoice, string> = {
   recovery_code: "Recovery code",
 };
 
-/** A recorded method choice's option. */
-export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[number];
+/** A recorded method choice's two-factor option, which a run picks again; never a way in. */
+export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[number] & {
+  readonly method: SignInMethodChoice;
+};
+const isTwoFactorMethod = Schema.is(SignInMethodChoice);
+/** Whether a recorded method choice's option is a two-factor method rather than a way in. */
+export const isTwoFactorOption = (
+  option: NonNullable<AutofillRecipeStep["methods"]>[number],
+): option is SignInMethodOption => isTwoFactorMethod(option.method);
 
 /**
  * What a host adds to a replay from what it keeps besides the login's record, each optional: the
@@ -147,7 +161,9 @@ export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[numb
  *   given back;
  * - `identifierConflict`: whether the host refuses the identifiers a step would type;
  * - `refuseShownAnswer`: after a failed check, a saved answer whose question shows again;
- * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again.
+ * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again;
+ * - `allowedChoices`: the recorded screens' choices this run's caller allowed, whose submits the
+ *   replay presses. None when absent, so the replay stops before any screen that names a choice.
  */
 export interface HostedSignIn<
   E extends YieldableError,
@@ -162,9 +178,7 @@ export interface HostedSignIn<
       ) => L)
     | undefined;
   readonly method?:
-    | ((
-        methods: NonNullable<AutofillRecipeStep["methods"]>,
-      ) => Effect.Effect<SignInMethodOption | undefined, E>)
+    | ((methods: readonly SignInMethodOption[]) => Effect.Effect<SignInMethodOption | undefined, E>)
     | undefined;
   readonly settleRecoveryCodes?:
     | ((taken: readonly TakenRecoveryCode[], reached: boolean) => Effect.Effect<void>)
@@ -176,6 +190,7 @@ export interface HostedSignIn<
     | ((ran: readonly AutofillStep[]) => Effect.Effect<void, E>)
     | undefined;
   readonly resubmit?: ((session: ReplaySession<E, V, L>) => ClearThenResubmit<E, V>) | undefined;
+  readonly allowedChoices?: readonly SignInChoice[] | undefined;
 }
 
 export interface AutofillReplayInput<
@@ -269,7 +284,7 @@ export const settleFilled = <E extends YieldableError, V extends string, L exten
  */
 export const pickMethod = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
-  methods: NonNullable<AutofillRecipeStep["methods"]>,
+  methods: readonly SignInMethodOption[],
 ) =>
   Effect.gen(function* () {
     const hosted = yield* input.hosted?.method?.(methods) ?? Effect.succeed(undefined);
@@ -410,9 +425,12 @@ export const shownAgain = <E>(
 
 /**
  * Whether a recorded screen's planned refill of `slot` holds now: the screen lists it (`planned`,
- * its recipe step's `refills`), it went out once at most so far, and the screen also asks for a
- * second factor this replay has not sent, as a site that wants the password entered again with a
- * one-time code does. A screen asking for it again any other way is a rejection.
+ * its recipe step's `refills`) and it went out once at most so far. A password's also needs the
+ * screen to ask for a second factor this replay has not sent, as a site that wants the password
+ * entered again with a one-time code does; a code's needs the screen's code boxes, as the host
+ * found them (`codeScreens.shown`), to be none of the code screen's that ran before
+ * (`codeScreens.earlier`, `takesAnotherCode`). A screen asking for either again any other way
+ * is a rejection.
  */
 const plannedRefill = (
   step: AutofillStep,
@@ -420,17 +438,30 @@ const plannedRefill = (
   planned: readonly AutofillSecret[],
   maySent: ReadonlySet<AutofillSecret>,
   refilled: ReadonlySet<AutofillSecret>,
+  codeScreens: CodeScreens | undefined,
 ) =>
   planned.some((each) => each === slot) &&
   !refilled.has(slot) &&
-  step.fields.some(
-    (field) => isSecondFactor(field.slot) && isSecret(field.slot) && !maySent.has(field.slot),
-  );
+  (slot === "code"
+    ? codeScreens !== undefined && takesAnotherCode(codeScreens.shown, codeScreens.earlier)
+    : step.fields.some(
+        (field) => isSecondFactor(field.slot) && isSecret(field.slot) && !maySent.has(field.slot),
+      ));
+
+/**
+ * The screen a planned code refill would fill, as the host found it (`shown`, `namedFields`), and
+ * the code screen that ran before it, as the sign-in recorded it (`earlier`).
+ */
+export interface CodeScreens {
+  readonly shown: NamedFields;
+  readonly earlier: NamedFields | undefined;
+}
 
 /**
  * Whether a step would fill a secret that may have gone out already beyond what a retry of a
  * refused code, or the recorded screen's planned refill, allows: a password or code once more
  * each, so either goes out at most twice; a date of birth, ZIP or recovery code never again.
+ * A planned code refill needs `codeScreens`, and is refused without them.
  */
 export const refillRefused = (
   step: AutofillStep,
@@ -439,6 +470,7 @@ export const refillRefused = (
   codeAgain: "rejected" | undefined,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[] = [],
+  codeScreens?: CodeScreens,
 ) =>
   step.fields.some(
     (field) =>
@@ -449,7 +481,7 @@ export const refillRefused = (
         codeAgain === "rejected" &&
         (field.slot === "code" || (provesLogin(field.slot) && !refilled.has(field.slot)))
       ) &&
-      !plannedRefill(step, field.slot, planned, maySent, refilled),
+      !plannedRefill(step, field.slot, planned, maySent, refilled, codeScreens),
   );
 
 /** Records each secret a step may have sent, and those it sent a second time. */

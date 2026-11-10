@@ -104,6 +104,9 @@ export const publicationFindingCategories = [
   "schema_mismatch",
   "unsupported_claim",
   "confirmation",
+  // A cart tool the cart rule needs signed in, published with no verified sign-in. It asks for
+  // evidence like an unsupported claim, and names the rule so a host can tell the two apart.
+  "cart_sign_in",
   // An input narrowed to the example's value, which blocks publication like a source correction.
   "example_value",
   // A safety default an earlier copy of the source set that the current source drops or weakens,

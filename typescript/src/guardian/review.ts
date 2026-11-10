@@ -41,6 +41,7 @@ import {
 } from "effect";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { WritePath } from "../mint/contracts.js";
+import { explorationAllowedEffect } from "../mint/exploration-effect.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import type { GuardianReasoningEffort } from "./model.js";
 import type { PromptCacheDiagnostic } from "../models/cached-instructions.js";
@@ -254,8 +255,8 @@ export class ReviewFailure extends Data.TaggedError("ReviewFailure")<{
     | "ModelCallStalled"
     /**
      * The model provider refused the review's request as over the model's input limit, its context
-     * window. That is no outage, and the same request fails the same way, so it is never retried as
-     * one.
+     * window, or because it could not decrypt an encrypted item the request sent back. That is no
+     * outage, and the same request fails the same way, so it is never retried as one.
      */
     | "InputTooLarge"
     /**
@@ -411,6 +412,11 @@ export interface PendingExecution {
    */
   readonly writeAuthority?: boolean;
   /**
+   * Execution reviews only: the most a card-fill step that names slots may pay, when the host that
+   * fills the caller's payment method has one. Absent, the review checks no limit.
+   */
+  readonly paymentLimit?: { readonly amount: string; readonly currency: string };
+  /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.
    * Protected answers (secrets and logins) and a read-or-write choice are left out.
@@ -470,10 +476,13 @@ export interface PendingExecution {
        * agent_chosen: a read's live test on an input the minting agent chose instead of the
        * caller's. intent_derived: a read's example or a write's act step whose caller sent empty
        * input runs the agent's reading of the intent and the owner's answered questions as its
-       * submitted input. agent_chosen_batch: a batch of a read's live tests on inputs the minting
-       * agent chose, whose submitted input lists each case's input under `cases`.
+       * submitted input. substitute: a read's example that runs another record of the same kind,
+       * which the agent found on the site or an answer gave, in place of the caller's own input,
+       * after the host recorded the tool refusing that input with InvalidInput.
+       * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
+       * submitted input lists each case's input under `cases`.
        */
-      readonly input?: "agent_chosen" | "intent_derived" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "intent_derived" | "substitute" | "agent_chosen_batch";
       /**
        * Host facts about an offline command's sandbox. The submitted entrypoint is the command
        * text itself; the host runs it through its own shell wrapper, which is not reviewed.
@@ -714,9 +723,10 @@ export interface ReviewRetry {
 
 /**
  * Production retry for Guardian outages: provider errors and a required source read that failed.
- * A review that ran out of turns, whose model call stalled or whose request is over the model's
- * context window is not an outage, and is not started again. A decision that did not decode is
- * reviewed once more only when its review got no correction.
+ * A review that ran out of turns, whose model call stalled, or whose request is over the model's
+ * context window or carries an encrypted item the provider could not decrypt is not an outage, and
+ * is not started again. A decision that did not decode is reviewed once more only when its review
+ * got no correction.
  */
 export const guardianOutageRetry: ReviewRetry = {
   delays: ["2 seconds", "5 seconds", "15 seconds", "30 seconds", "60 seconds"],
@@ -935,13 +945,24 @@ const knownRefusal = (raw: unknown): unknown => {
 };
 
 /**
+ * Whether a refusal's own rationale rests on the step's allowed effects, as a misread of the read
+ * grant does. A hold the execution policy asks the owner for on another ground names that ground.
+ */
+const restsOnAllowedEffects = (raw: object): boolean => {
+  const rationale: unknown = Reflect.get(raw, "rationale");
+  return typeof rationale === "string" && /allowed[\s_]*effects/i.test(rationale);
+};
+
+/**
  * The ground an execution deny or escalate rests on (`refusalGround`) when the host's own record
  * settles it the other way: retry permission when trusted_execution_context.repeatableRead is
  * true, since the host itself refuses before review any run it does not permit, committing a
  * listed write again for a step the review labels a read, which changes nothing, missing write
  * authority for a step whose own authority grants the write (`writeAuthority`), such as an act step
- * reviewed right after a read-only explore, or missing confirmation for the very step the owner
- * confirmed (`confirmed`). Undefined for any other decision.
+ * reviewed right after a read-only explore, missing confirmation for the very step the owner
+ * confirmed (`confirmed`), or missing confirmation for a step the review labels a read whose own
+ * allowed effects are the host's read grant (`explorationAllowedEffect`), whose refusal rests on
+ * those effects. Undefined for any other decision.
  */
 const settledGroundOf = (
   pending: PendingExecution,
@@ -956,7 +977,14 @@ const settledGroundOf = (
   if (ground === "retry_permission" && pending.mintContext?.repeatableRead === true) return ground;
   if (ground === "committed_write" && Reflect.get(raw, "action") === "read") return ground;
   if (ground === "write_authority" && pending.writeAuthority === true) return ground;
-  if (ground === "owner_confirmation" && confirmed !== undefined) return ground;
+  if (
+    ground === "owner_confirmation" &&
+    (confirmed !== undefined ||
+      (Reflect.get(raw, "action") === "read" &&
+        pending.allowedEffects.includes(explorationAllowedEffect) &&
+        restsOnAllowedEffects(raw)))
+  )
+    return ground;
   return undefined;
 };
 
@@ -971,6 +999,13 @@ const settledGroundCorrection: Record<GuardianRefusalGround, string> = {
   owner_confirmation:
     "The host did not accept this refusal: it rests on this step needing the owner's confirmation, and trusted_authority.ownerConfirmedStep shows the owner already confirmed exactly this step, the one an earlier review held for that confirmation, with the same code and input. That answer authorizes this step, and it needs no task update. Decide again without missing confirmation as a ground. Refuse it still, with refusal final, only when the step weakens security or safety in a way no answer authorizes, and say which.",
 };
+
+/**
+ * What the host tells Guardian, once in the same review, about a refusal that holds for the
+ * owner's confirmation a read the step's own allowed effects grant.
+ */
+const grantedReadCorrection =
+  "This step's trusted_authority.allowedEffects grant authorized reads, and you labelled the step a read. A read those effects grant needs no owner confirmation. Prefer allowing it, or name the read's real problem.";
 
 /**
  * The decision a review ends with after the host sent back a refusal on a settled ground. A
@@ -1645,7 +1680,9 @@ export const makeGuardian = (
             if (settled !== undefined) {
               groundPushback = { ground: settled, refused: output as object };
               followUpRounds++;
-              return settledGroundCorrection[settled];
+              return settled === "owner_confirmation" && confirmedStep === undefined
+                ? grantedReadCorrection
+                : settledGroundCorrection[settled];
             }
             if (!unread(output) || readRounds >= requiredReadRounds) return undefined;
             readRounds++;
@@ -1691,8 +1728,9 @@ export const makeGuardian = (
         if (requireEntrypoint && decision.outcome === "allow" && entrypointReadAt !== epoch())
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         // A correctable refusal that asks for the owner's confirmation holds this step for it,
-        // unless the owner already confirmed it; an allowed confirm question that names it records
-        // the ask. A final refusal holds nothing: no answer gets past it.
+        // unless the owner already confirmed it or it is a read the step's own allowed effects
+        // grant whose refusal rests on those effects; an allowed confirm question that names it
+        // records the ask. A final refusal holds nothing: no answer gets past it.
         const rationale: unknown = Reflect.get(decision, "rationale");
         if (
           kind === "execution" &&
@@ -1702,6 +1740,7 @@ export const makeGuardian = (
           typeof raw === "object" &&
           raw !== null &&
           Reflect.get(raw, "refusalGround") === "owner_confirmation" &&
+          settledGroundOf(pending, raw, confirmedStep) === undefined &&
           typeof rationale === "string"
         ) {
           const step = yield* stepIdentity(pending, readSource);

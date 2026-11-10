@@ -152,6 +152,101 @@ async ({kernel,sessionId,files}) => ({ statement: await files.collect(() => kern
   }
 });
 
+// A download over the host's own file caps is the host's limit, which no change to the source
+// gets past. The example's result names the cap, and the build ends host_refused on it at once,
+// with the refusal in the record the blocked explanation's review reads.
+test("a read build whose example's download is over the host's cap ends host_refused naming the cap", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "A recorded build with one live example and a blocked report",
+  });
+  test.setTimeout(60_000);
+  const site = await startFileSite();
+  const guardian = recordingGuardian();
+  const tool = `import { Schema } from "effect";
+import { defineOperation, FileOutput } from "../runtime/index.js";
+export default defineOperation({name:"download_statement",input:Schema.Struct({}),output:Schema.Struct({statement:FileOutput})},
+async ({kernel,sessionId,files}) => ({ statement: await files.collect(() => kernel.browsers.playwright.execute(sessionId,{code:"await page.getByRole('link', { name: 'Download statement' }).click();",timeout_sec:10})) }));`;
+  const cap = { limit: "file", maxBytes: 16 };
+  try {
+    const { built, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Download my statement",
+      fileLimits: { fileBytes: 16, runFiles: 10, runBytes: 1024 },
+      turns: [
+        () => patch({ "src/tool.mjs": tool }),
+        () => [call("execute", { ...act("src/tool.mjs"), purpose: "example" }, "example")],
+        () => [
+          call(
+            "report_blocked",
+            {
+              intent: "End on the host's file cap",
+              reason: "host_refused",
+              explanation: "The statement is over the host's 16-byte cap for one file.",
+            },
+            "blocked",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "example")).toMatchObject({
+      status: "failed",
+      fileCap: { ...cap, instruction: expect.stringContaining("host_refused") },
+    });
+    expect(built.blocked, JSON.stringify(built)).toMatchObject({ reason: "host_refused" });
+    expect(built.build).not.toBe("published");
+    const outcome = guardian.reviews.find((review) => review.kind === "outcome");
+    expect(JSON.stringify(outcome?.input)).toContain("The host refused a download over");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a read build whose example catches the cap refusal and then fails another way names no cap", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "A recorded build with one live example and a refused blocked report",
+  });
+  test.setTimeout(60_000);
+  const site = await startFileSite();
+  const tool = `import { Schema } from "effect";
+import { defineOperation, FileOutput } from "../runtime/index.js";
+export default defineOperation({name:"download_statement",input:Schema.Struct({}),output:Schema.Struct({statement:FileOutput})},
+async ({kernel,sessionId,files}) => { await files.collect(() => kernel.browsers.playwright.execute(sessionId,{code:"await page.getByRole('link', { name: 'Download statement' }).click();",timeout_sec:10})).catch(() => undefined); throw new Error("The statement table never loaded."); });`;
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian: recordingGuardian(),
+      intent: "Download my statement",
+      fileLimits: { fileBytes: 16, runFiles: 10, runBytes: 1024 },
+      turns: [
+        () => patch({ "src/tool.mjs": tool }),
+        () => [call("execute", { ...act("src/tool.mjs"), purpose: "example" }, "example")],
+        () => [
+          call(
+            "report_blocked",
+            {
+              intent: "End on the host's file cap",
+              reason: "host_refused",
+              explanation: "The statement is over the host's 16-byte cap for one file.",
+            },
+            "blocked",
+          ),
+        ],
+      ],
+    });
+    const example = toolResult(last, "example");
+    expect(example).toMatchObject({ status: "failed" });
+    expect(example).not.toHaveProperty("fileCap");
+    expect(toolResult(last, "blocked")).toMatchObject({ reason: "host_not_refused" });
+  } finally {
+    await site.close();
+  }
+});
+
 test("a build's example that changes a file it collected is refused, and the file as collected passes", async () => {
   test.info().annotations.push({
     type: "slow",

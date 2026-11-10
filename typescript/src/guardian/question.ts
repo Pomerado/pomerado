@@ -90,6 +90,27 @@ export interface QuestionFinding {
   readonly explanation: string;
 }
 
+/**
+ * One change the host refused until the caller confirms it, by its setting and its new origin or
+ * value, as the minter proposed it in `mint_update`.
+ */
+export type HostConfirmationChange =
+  | { readonly setting: "site"; readonly origin: string }
+  | {
+      readonly setting: "login";
+      readonly change: "sign_in" | "different_login" | "signed_out";
+    }
+  | { readonly setting: "effect"; readonly effect: "write" };
+
+/**
+ * The host's record that it refused a `mint_update` changing the site, the login or the effect
+ * (`confirmation_required`) until the caller confirms it. The host takes no address or wording in
+ * the request as that confirmation.
+ */
+export interface HostConfirmation {
+  readonly changes: readonly HostConfirmationChange[];
+}
+
 /** One offered option as the caller sees it: the full label, and the masked one the API shows. */
 interface ReviewedOption {
   readonly label: string;
@@ -115,6 +136,8 @@ interface ReviewedQuestion {
   readonly followUp?: { readonly prompt: string; readonly defaultText?: string };
   readonly secretKind?: SecretKind;
   readonly fields?: "username_password" | "password";
+  /** A browser hand-off's operation inputs the host may show beside the browser, by name. */
+  readonly show_inputs?: readonly string[];
 }
 
 /** One proposed input request, reviewed as a whole. Its questions are shown together. */
@@ -146,7 +169,7 @@ export interface PendingQuestion {
   readonly scriptAsk?: true;
   /**
    * Host fact: the build's effect, once decided, so the review knows a write build does the task
-   * once, for real, before it publishes. Its allowedEffects stays empty on purpose.
+   * once, for real, before it publishes. Its allowedEffects authorizes nothing.
    */
   readonly buildEffect?: "read" | "write";
   /**
@@ -160,6 +183,11 @@ export interface PendingQuestion {
    * so the review can allow a question asking the owner to choose between the fixes it permits.
    */
   readonly finding?: QuestionFinding;
+  /**
+   * Host fact: the change of the site, the login or the effect the host refused until the caller
+   * confirms it, so the review can tell a question the host needs from one trusted intent settles.
+   */
+  readonly hostConfirmation?: HostConfirmation;
 }
 
 /** A confirm question that asks the owner to confirm the step execution review `reviewId` held. */
@@ -199,6 +227,7 @@ export const questionForReview = <E>(
     readonly buildEffect?: "read" | "write";
     readonly confirms?: readonly ConfirmedStepQuestion[];
     readonly finding?: QuestionFinding;
+    readonly hostConfirmation?: HostConfirmation;
   },
   screen: (text: string) => Effect.Effect<string, E>,
 ): Effect.Effect<PendingQuestion, E> =>
@@ -245,6 +274,9 @@ export const questionForReview = <E>(
             return { ...base, fields: question.fields };
           case "text":
             return base;
+          // Input names are the contract's identifiers, never caller text: nothing to screen.
+          case "browser_handoff":
+            return { ...base, show_inputs: question.show_inputs };
         }
       }),
     );
@@ -279,6 +311,10 @@ export const questionForReview = <E>(
               explanation: facts.finding.explanation,
             },
           }),
+      // Settings, origins and fixed values the harness decoded from the update: nothing to screen.
+      ...(facts.hostConfirmation === undefined
+        ? {}
+        : { hostConfirmation: facts.hostConfirmation }),
     };
   });
 
@@ -311,8 +347,8 @@ export type AnsweredQuestion = typeof AnsweredQuestion.Type;
 /**
  * The answers to one request as Guardian sees them, each under its question's id, screening every
  * string through `screen`; an id is the request's own key, never caller text. Protected answers
- * (`isProtectedQuestion`: secrets and logins) never appear, not even their prompts. Every other
- * answer does, a confirm beside a notice included.
+ * (`isProtectedQuestion`: secrets, logins and browser hand-offs) never appear, not even their
+ * prompts. Every other answer does, a confirm beside a notice included.
  */
 export const answersForReview = <E>(
   request: Pick<InputRequest, "notice" | "questions">,

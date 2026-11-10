@@ -696,6 +696,35 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     );
   });
 
+  // A signed-in write build saved an account payment setting the caller never named on its way to
+  // the one write the caller asked for, and Guardian let it through as part of that write. Such a
+  // save now goes to the owner first. The undo rule, which needs no confirmation, is unchanged.
+  it("tells Guardian an account setting the task does not name needs the owner's confirmation", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "In a signed-in session, changing the account's saved address, default store, payment settings, preferences or profile is a write; one that trusted intent, an answer or submitted_call.input does not name is not part of the requested write, so escalate it with refusalGround owner_confirmation, naming the setting.";
+    const undo =
+      "A step that only puts back something an earlier step of this job changed on the site, such as a saved filter, sort, setting or field, to the value it held before that change, undoes the build's own change: allow it in any build, read builds included, with no write authority, task update or confirmation, and label it a read.";
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      const writeRule =
+        policy.split("\n").find((line) => line.startsWith("Classify actual website effects")) ??
+        "";
+      expect(writeRule).toContain(` ${sentence} Setting a signed-in session's delivery`);
+      expect(writeRule).toContain(` ${undo} `);
+    }
+  });
+
   // Guardian escalated example runs because it could not read an SDK helper the source imports,
   // such as a browser script built from formControlsCode, and guessed SDK paths that don't exist.
   it("tells Guardian the SDK a source imports is trusted host code", async () => {
@@ -739,7 +768,43 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   });
 
   // Turning off a preselected partner comparison box read as an invented search choice, so an edit
-  // could drop it and leave the box sending the search to another site.
+  // could drop it and leave the box sending the search to another site. A build's own request, an
+  // answer or the input may still keep one on, and so may a site that refuses to submit with it off.
+  const safetyDefaultRule =
+    "Leaving an optional field empty or at the page's default is not inventing it. A safety default is not inventing a choice either: turning off a preselected option whose only effect is sharing the caller's data with another company, such as a partner comparison that opens or sends the search to another site, opting into tracking or analytics beyond what the site needs to work, or subscribing the caller to marketing communications, needs no caller input or answer. Keeping such an option on is what needs a reason: when the page evidence shows one on and the source submits without turning it off, deny and name it, unless trusted intent, an answer or submitted_call.input asks to keep it, or the site refuses to submit with it off.";
+  const safetyDefaultCovers =
+    "A safety default never covers an option that changes what the caller gets, such as which results come back, a seat, a room or a price, or who receives a message the caller asked to send.";
+  /**
+   * The one sentence on a requested change to a published tool. A change asked to leave every
+   * checkbox as the page sets it, a preselected marketing opt-in included. The minter kept turning
+   * the opt-in off, as the safety default and the publication rule for a change that drops one
+   * require, and execution review denied every live step as going against the request, so the
+   * change could only fail and published nothing.
+   */
+  const requestedChangeSafetyDefault =
+    "In a requested change to a published tool, the change's request to keep one on doesn't count as trusted intent unless the site refuses to submit with it off, so prefer allowing source that turns it off.";
+  const changeKeepingOptIn: PendingExecution = {
+    ...pending,
+    screenedIntent:
+      'Change Gift card checkout as its caller asks: "1. Leave every checkbox on the page as the page sets it, including the marketing opt-in. 2. Return the order total as the page shows it."',
+    allowedEffects: ["write"],
+  };
+  const changeReviewPolicies = async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(changeKeepingOptIn, readEntrypoint),
+    );
+    return [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ];
+  };
+
   it("tells Guardian that turning off a data-sharing, tracking or marketing option is a safety default", async () => {
     const requests = readThenDecide({
       outcome: "allow",
@@ -749,14 +814,76 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     await Effect.runPromise(
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
-    const sentence =
-      "Leaving an optional field empty or at the page's default is not inventing it. A safety default is not inventing a choice either: turning off a preselected option whose only effect is sharing the caller's data with another company, such as a partner comparison that opens or sends the search to another site, opting into tracking or analytics beyond what the site needs to work, or subscribing the caller to marketing communications, needs no caller input or answer. Keeping such an option on is what needs a reason: when the page evidence shows one on and the source submits without turning it off, deny and name it, unless trusted intent, an answer or submitted_call.input asks to keep it, or the site refuses to submit with it off. A safety default never covers an option that changes what the caller gets, such as which results come back, a seat, a room or a price, or who receives a message the caller asked to send.";
     for (const policy of [
       instructionsOf(requests[0]),
       guardianExecutionPolicy(otherHost),
       guardianExecutionPolicy(nativeExecutionEnvironment),
-    ])
-      expect(policy).toContain(sentence);
+    ]) {
+      // A build's own request, an answer or the input still keeps one on.
+      expect(policy).toContain(safetyDefaultRule);
+      expect(policy).toContain(safetyDefaultCovers);
+    }
+  });
+
+  // Fails while a requested change's own request to keep a safety default on reads as trusted
+  // intent: execution review then denies the source that turns it off, which the publication rule
+  // for a change and the minter's guide require, and the change ends after repeated denials.
+  it("tells Guardian a requested change's own request to keep a safety default on is not trusted intent", async () => {
+    const policies = await changeReviewPolicies();
+    expect(policies[0]).toContain(
+      `trusted_request: ${JSON.stringify({ intent: changeKeepingOptIn.screenedIntent })}`,
+    );
+    for (const policy of policies)
+      expect(policy).toContain(
+        `${safetyDefaultRule} ${requestedChangeSafetyDefault} ${safetyDefaultCovers}`,
+      );
+  });
+
+  // A change on a site that refuses to submit with the option off may still keep it on: every
+  // sentence that limits a request to keep one on keeps that exception.
+  it("lets a requested change keep a safety default on when the site refuses to submit with it off", async () => {
+    for (const policy of await changeReviewPolicies()) {
+      expect(policy).toContain(safetyDefaultRule);
+      const limits = policy
+        .split(/(?<=\.) /u)
+        .filter((sentence) => sentence.includes("request to keep one on"));
+      for (const sentence of limits)
+        expect(sentence).toContain("unless the site refuses to submit with it off");
+    }
+  });
+
+  // A change that never asks about the option, and every other review, reads the rest of the policy
+  // as before: the change sentence is the only text added to the rule.
+  it("adds only the requested change's sentence to the safety default rule", async () => {
+    for (const policy of await changeReviewPolicies())
+      expect(policy.replace(` ${requestedChangeSafetyDefault}`, "")).toContain(
+        `${safetyDefaultRule} ${safetyDefaultCovers}`,
+      );
+  });
+
+  // A first build's step that turned a preselected marketing opt-in off was denied again and again
+  // as a choice none of the caller's sources settled. The rule against such a choice came first
+  // and the safety default only sentences later, so the review read the rule without it.
+  it("names the safety default in the rule against a choice nobody settled", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      const rule = policy
+        .split(/(?<=\.) /u)
+        .find((sentence) => sentence.includes("a choice among the site's options that none"));
+      expect(rule).toContain("a safety default below needs no caller input or answer");
+      expect(policy).toContain(`${safetyDefaultRule} ${requestedChangeSafetyDefault}`);
+    }
   });
 
   // A sign-in page's notice that signing in accepts the site's terms read as a separate terms
@@ -902,15 +1029,16 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     }
   });
 
-  it("gives every execution review the exact payment frame origins", async () => {
+  it("gives every execution review the exact payment frame origins, and the host's payment limit", async () => {
     const requests = readThenDecide({
       outcome: "allow",
       rationale: "Guarded on the site.",
       action: "read",
     });
+    const paymentLimit = { amount: "40.00", currency: "USD" };
     await Effect.runPromise(
       makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
-        pending,
+        { ...pending, paymentLimit },
         readEntrypoint,
       ),
     );
@@ -918,5 +1046,6 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       "trusted_authority.paymentFrameOrigins",
       paymentFrameOrigins,
     );
+    expect(modelInput(requests)).toHaveProperty("trusted_authority.paymentLimit", paymentLimit);
   });
 });

@@ -3,7 +3,7 @@
 // that returns an outcome its kind refuses is retried with backoff as an outage, from the same
 // input, for as long as the retry budget lasts, instead of being told once which outcomes count;
 // a host kind's allow carries a label its policy gives only to a deny, and the host acts on it;
-// a write build's task update review reads its empty allowedEffects as a read-only build; the
+// a write build's task update review reads its allowedEffects as a read-only build; the
 // reviews disagree about what an owner's answer authorizes.
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
@@ -356,29 +356,33 @@ it.each([
 });
 
 // A write build confirming a page default before its first act step: the host gives the review
-// the build's effect and an empty allowedEffects, and the policy says the empty list, like the
-// read-only effects of earlier exploration reviews, says nothing about the build's effect.
-it("tells a write build's task update review that its empty allowedEffects says nothing of its effect", async () => {
-  const requests = scripted([decision("allow")]);
-  const reviewed = await Effect.runPromise(
-    guardianWith().reviewTaskUpdate(
-      { ...pending, allowedEffects: [] },
-      { ...update, effect: "write" },
-      readSource,
-    ),
-  );
-  expect(reviewed.decision).toMatchObject({ outcome: "allow" });
-  const request = reviewRequest(requests[0]) as unknown as {
-    trusted_review: { policy: string };
-    trusted_authority: { allowedEffects: readonly string[] };
-    update_review: { effect: string };
-  };
-  expect(request.trusted_authority.allowedEffects).toEqual([]);
-  expect(request.update_review.effect).toBe("write");
-  expect(request.trusted_review.policy).toContain(
-    "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects is empty on purpose, because an update performs no action on the site. That empty list, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
-  );
-});
+// the build's effect, and allowedEffects, empty or the build's read grant, which the policy says
+// authorizes nothing and, like the read-only effects of earlier exploration reviews, says nothing
+// about the build's effect.
+it.each([[[]], [["read plans"]]] as const)(
+  "tells a write build's task update review that its allowedEffects %j authorize nothing about its effect",
+  async (allowedEffects) => {
+    const requests = scripted([decision("allow")]);
+    const reviewed = await Effect.runPromise(
+      guardianWith().reviewTaskUpdate(
+        { ...pending, allowedEffects },
+        { ...update, effect: "write" },
+        readSource,
+      ),
+    );
+    expect(reviewed.decision).toMatchObject({ outcome: "allow" });
+    const request = reviewRequest(requests[0]) as unknown as {
+      trusted_review: { policy: string };
+      trusted_authority: { allowedEffects: readonly string[] };
+      update_review: { effect: string };
+    };
+    expect(request.trusted_authority.allowedEffects).toEqual(allowedEffects);
+    expect(request.update_review.effect).toBe("write");
+    expect(request.trusted_review.policy).toContain(
+      "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects authorizes nothing, because an update performs no action on the site. Those effects, empty or not, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
+    );
+  },
+);
 
 // The reviews disagreed about an owner's answer: a question review let the agent ask the owner to
 // confirm a step, the next execution review refused the confirmed step, and the task update review

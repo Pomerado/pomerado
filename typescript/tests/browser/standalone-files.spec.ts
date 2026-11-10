@@ -224,7 +224,15 @@ async () => ({ statement: { $file: { id: "made-up", name: "other.txt", media_typ
     // The script sees why: a file the caller must replace is invalid input, and a refusal before
     // the page sent nothing.
     for (const [tool, reference, refused] of [
-      [unnamed, file, { refused: "The host refused the file: unknown_reference", dispatch: "not_sent" }],
+      [
+        unnamed,
+        file,
+        {
+          refused:
+            "The host refused the file: unknown_reference. Only files sent with the request can be used, so another file needs a new request that includes it.",
+          dispatch: "not_sent",
+        },
+      ],
       [receiptField, fakePdf, { refused: "The host refused the file: type_mismatch", dispatch: null }],
       [receiptField, script, { refused: "The host refused the file: executable", dispatch: null }],
       [receiptField, table, { refused: "The host refused the file: not_accepted", dispatch: null }],

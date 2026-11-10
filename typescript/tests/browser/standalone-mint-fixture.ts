@@ -4,6 +4,7 @@ import { createPomerado } from "../../src/standalone/pomerado.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import type { PlaywrightOptions } from "../../src/execution/playwright-execute.js";
+import type { FileLimits } from "../../src/runtime/files.js";
 import {
   authorityOf,
   contextOf,
@@ -38,6 +39,8 @@ export const mint = async (options: {
   readonly browser?: PlaywrightOptions;
   /** The attempt's time limit; 60 s by default. */
   readonly timeoutMs?: number;
+  /** The host's file caps; the defaults otherwise. */
+  readonly fileLimits?: FileLimits;
 }) => {
   const requests: ModelRequest[] = [];
   const asked: InputRequest[] = [];
@@ -50,6 +53,7 @@ export const mint = async (options: {
       Effect.gen(function* () {
         const service = yield* createPomerado({
           ...(options.browser === undefined ? {} : { browser: options.browser }),
+          ...(options.fileLimits === undefined ? {} : { files: { limits: options.fileLimits } }),
           minterProvider: minter,
           guardianProvider: options.guardian.provider,
           outcomeReviewerProvider: options.reviewer ?? quietReviewer,

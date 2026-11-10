@@ -47,6 +47,11 @@ interface SiteOptions {
   readonly redirectWhenSignedIn?: boolean;
   /** The login screen shows `#login-error` after a wrong password. */
   readonly marker?: boolean;
+  /**
+   * The site opens on a choice of how to sign in: a password, which goes on to the login screen,
+   * or a code by email or text, which goes straight to the code screen.
+   */
+  readonly ways?: boolean;
   readonly method?: boolean;
   readonly code?: boolean;
   readonly question?: boolean;
@@ -89,6 +94,7 @@ interface SiteOptions {
 }
 
 const pages = {
+  ways: ["#with-password", "#with-phone", "#with-email", "#with-text"],
   login: ["#username", "#password", "#sign-in"],
   method: ["#by-text", "#by-app"],
   code: ["#code", "#verify"],
@@ -231,7 +237,8 @@ const fakeSite = (options: SiteOptions = {}) => {
           state.captcha ||= !right && options.captcha !== undefined;
           if (right && afterLogin() === "account") land();
           else if (right) navigate(afterLogin());
-        } else if (page === "method") navigate("code");
+        } else if (page === "ways") navigate(step.submit === "#with-password" ? "login" : "code");
+        else if (page === "method") navigate("code");
         else if (page === "code") {
           state.codeError = values[0] !== code;
           if (!state.codeError) land();
@@ -263,7 +270,13 @@ const fakeSite = (options: SiteOptions = {}) => {
             opened.push(url);
             state.loginError = false;
             state.usernameError = false;
-            navigate(state.signedIn && options.redirectWhenSignedIn === true ? "account" : "login");
+            navigate(
+              state.signedIn && options.redirectWhenSignedIn === true
+                ? "account"
+                : options.ways === true
+                  ? "ways"
+                  : "login",
+            );
           }),
     markerVisible: (selector) =>
       Effect.sync(
@@ -517,11 +530,82 @@ it("asks a recipe's method choice and clicks the recorded control of the method 
   });
 });
 
+it("stops before a version 13 choice screen's control when the run does not allow its choice", async () => {
+  const fake = fakeSite({ method: true });
+  const { ask } = owner();
+  const recipe: SignInRecipe = {
+    version: 13,
+    steps: [
+      loginStep,
+      { page: `${origin}/method`, fields: [], submit: "#by-text", submittedBy: "host", choice: "sign_out_other_device" },
+    ],
+    signedIn: { selector: "#account" },
+  };
+  expect(await signIn(recipe, fake, ask)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "sign_in_choice_not_allowed" })),
+  );
+  // The login went out, and the screen's control was never clicked.
+  expect(fake.fills).toEqual([{ page: "login", values: [account.username, account.password] }]);
+});
+
 /** A code screen, on the site's own origin unless `at` says otherwise. */
 const codeScreenAt = (at = origin) => ({
   page: `${at}/code`,
   fields: [{ selector: "#code", slot: "code" as const }],
   submit: "#verify",
+});
+
+it("replays a version 14 recipe's recorded way in, and picks only among the code methods beside it", async () => {
+  // One screen offers a password, a phone number or a code by email or text. Each way's recipe
+  // records the route its own sign-in took there.
+  const ways = [
+    { method: "password" as const, selector: "#with-password" },
+    { method: "identifier_phone" as const, selector: "#with-phone" },
+    { method: "email" as const, selector: "#with-email" },
+    { method: "sms" as const, selector: "#with-text" },
+  ];
+  const waysStep = (submit: string, methods = ways) => ({
+    page: `${origin}/ways`,
+    fields: [],
+    submit,
+    methods,
+  });
+  const wayRecipe = (...steps: SignInRecipe["steps"][number][]) =>
+    ({ version: 14, steps, signedIn: { selector: "#account" } }) as SignInRecipe;
+  // The password path clicks Password and asks nothing besides its login.
+  const passwordSite = fakeSite({ ways: true });
+  const passwordOwner = owner();
+  expect(
+    await signIn(wayRecipe(waysStep("#with-password"), loginStep), passwordSite, passwordOwner.ask),
+  ).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(kinds(passwordOwner.asked)).toEqual(["credential:missing_credentials"]);
+  expect(passwordSite.fills.map(({ page }) => page)).toEqual(["ways", "login"]);
+  // The code path asks its method among the code methods only, never the password or the phone.
+  const codeSite = fakeSite({ ways: true });
+  const codeOwner = owner();
+  expect(
+    await signIn(wayRecipe(waysStep("#with-email"), codeScreenAt()), codeSite, codeOwner.ask),
+  ).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(kinds(codeOwner.asked)).toEqual(["credential:missing_credentials", "method", "code"]);
+  expect(codeOwner.asked[1]?.questions[0]).toMatchObject({
+    type: "choice",
+    options: [
+      { id: "option_0", label: "Email" },
+      { id: "option_1", label: "Text message" },
+    ],
+  });
+  expect(codeSite.fills.map(({ page }) => page)).toEqual(["ways", "code"]);
+  // Beside a way in, a lone code method is the code path's route, so nothing is asked about it.
+  const lone = owner();
+  const passwordOrEmail = ways.filter(({ method }) => method === "password" || method === "email");
+  expect(
+    await signIn(
+      wayRecipe(waysStep("#with-email", passwordOrEmail), codeScreenAt()),
+      fakeSite({ ways: true }),
+      lone.ask,
+    ),
+  ).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(kinds(lone.asked)).toEqual(["credential:missing_credentials", "code"]);
 });
 
 it("signs in when the code lands on a chooser the site shows before any page with the marker", async () => {
@@ -639,7 +723,7 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
 });
 
 it.each([
-  ["an unknown version", { ...recipeOf(), version: 11 }, "unknown_version"],
+  ["an unknown version", { ...recipeOf(), version: 15 }, "unknown_version"],
   ["a recipe without steps", { ...recipeOf(), steps: [] }, "invalid"],
 ])("refuses %s with MissingRecipe before opening anything", async (_case, recipe, reason) => {
   const fake = fakeSite();

@@ -68,14 +68,14 @@ const catalog = [
   {
     name: "cart",
     description:
-      "Read before building any tool that reads, adds to, changes or checks out a cart: when to sign in or check out as a guest, read the cart before and after, quantity, account values and site limits",
+      "Read before building any tool that reads, adds to, changes or checks out a cart: when to sign in or use a guest cart or checkout, read the cart before and after, quantity, account values and site limits",
     references: [],
   },
   {
     name: "caller-input",
     description:
-      "Read before settling any tool's inputs and errors: what the input schema holds, the rules checked before touching the site, InvalidInput versus InputNotApplied, and asking the run's caller mid-run for what only they know",
-    references: ["caller-choice.ts", "caller-code.ts"],
+      "Read before settling any tool's inputs and errors: what the input schema holds, the rules checked before touching the site, InvalidInput versus InputNotApplied, and asking the run's caller mid-run for what only they know or handing the browser to a person when the request asks for it",
+    references: ["caller-choice.ts", "caller-code.ts", "browser-handoff.ts"],
   },
   {
     name: "publication",

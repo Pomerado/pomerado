@@ -41,6 +41,8 @@ inputs use (see "Apply and read back").
   steps often change with the result set. Set the nearest step inside the caller's bound (down
   for a maximum, up for a minimum), the range's end for a value outside it, read the applied
   bound back and return it beside the results (core skill, "Configure, then read").
+  For a range slider, prefer setting its value in one move and waiting once for the results, not
+  after each step.
 - A filter group the page disables for this result set, such as a price filter when only one
   result shows, is part of the answer: check that a group is enabled before opening it, never
   wait on a disabled one, and return the results with that filter reported as not offered.
@@ -82,7 +84,8 @@ neither: it tailors the answer. Apply it, read it back and always return it, as 
 or `applied_zip`, the site's default included when the caller gave none, as the core skill's
 input schema says ("Inputs that tailor the answer"). When the caller gives a location but no
 store, use what the site would show for that location, such as the nearest store, rather than
-what the site guessed from the browser's own location, and return what was applied.
+what the site guessed from the browser's own location, and return what was applied. Look up
+a value the caller names as the core skill's input schema says.
 
 ## Results
 
@@ -111,11 +114,14 @@ page's echo of the query, such as a results heading, matches it as the core skil
 compares, except a query the site says it corrected or
 rewrote (below). A search
 that applied every input and got the site's no-results message returns an empty list, never an
-error. The site's own error page or error banner, or an error status or error body from the data
+error, unless other evidence on the same page contradicts it. The site's own error page or error
+banner, or an error status or error body from the data
 request the page depends on, is a failure: throw `OperationFailure` naming what the site showed,
 never an empty list or a success built from it. When the page answers such a reply with its
 no-results message, as some store finders do for a 404, or with a refusal of the caller's value
-(caller-input skill), that answer stands.
+(caller-input skill), that answer stands. An empty answer that other evidence on the same page
+contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that
+evidence shows.
 
 Retail and grocery grids often interleave sponsored copies of their organic results and put
 promoted carousels above or inside the grid (core skill, "Results, related records and

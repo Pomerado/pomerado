@@ -275,6 +275,121 @@ it("runs a write step again after the host reports the first submission was neve
   expect(outcome).toMatchObject({ build: "published" });
 });
 
+type FailureFields = ConstructorParameters<typeof MintFailure>[0];
+/** A host check stopped the step at its first commit, before anything of it went out. */
+const stoppedAtCommit = {
+  code: "Unavailable",
+  failureDetail: { subCause: "autofill_step_failed", operation: "autofill.replay" },
+} satisfies FailureFields;
+/** The step's runner may have run: its result could not be read. */
+const resultUnread = {
+  code: "Unavailable",
+  execution: {
+    phase: "execute",
+    reason: "invalid_response",
+    dispatch: "unknown",
+    stage: "result_decode",
+    runnerResult: {
+      cause: "truncated",
+      resultBytes: 12,
+      exitCode: 0,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      eventsBytes: 0,
+      eventsComplete: true,
+      missingChannels: [],
+    },
+  },
+} satisfies FailureFields;
+/** The step's runner finished, and its capture failed. */
+const captureFailed = {
+  code: "Unavailable",
+  runnerFailure: {
+    status: "failed",
+    effect: "possible",
+    errorCode: "unclassified",
+    captureGap: "capture_publication",
+  },
+} satisfies FailureFields;
+
+/**
+ * A repair, with no outcome review, whose write step `src/book.ts` fails at the host the first
+ * time with `failure` and is submitted again.
+ */
+const hostStoppedWrite = async (failure: FailureFields) => {
+  const runs: string[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        minter("execute", step("src/book.ts"), "first"),
+        minter("execute", step("src/book.ts"), "again"),
+      ][index] ?? respond(message("Stopped.")),
+    {
+      reviewAndExecute: allowedStep((entrypoint) =>
+        Effect.suspend(() => {
+          runs.push(entrypoint);
+          return runs.length === 1
+            ? Effect.fail(new MintFailure(failure))
+            : Effect.succeed({
+                executionId: "booked",
+                status: "completed" as const,
+                effect: "possible" as const,
+                resultRef: "booking_result",
+                observations: { page: "Table booked." },
+              });
+        }),
+      ),
+    },
+    { effect: "write", mode: "maintenance" },
+  );
+  const outcome = await f.run();
+  return {
+    runs,
+    first: toolOutput(f.requests[1] as ModelRequest, "first"),
+    again: toolOutput(f.requests[2] as ModelRequest, "again"),
+    writes: (outcome.writes ?? []).map(({ write }) => write),
+  };
+};
+
+// Fails when a host failure that says nothing of the step was sent, but carries no
+// `execution.dispatch`, is tracked as a lost write: with no outcome review, the repair can never
+// run the step again.
+it("runs a repair's write step again after a host failure that says nothing was sent", async () => {
+  const flagged = await hostStoppedWrite({ ...stoppedAtCommit, nothingSent: true });
+  const unflagged = await hostStoppedWrite(stoppedAtCommit);
+
+  // The minter hears the same failure either way.
+  expect(flagged.first).toMatchObject({ status: "tool_failed", code: "Unavailable" });
+  expect(flagged.first).toEqual(unflagged.first);
+  // With the flag, no lost write is tracked, and the step runs again.
+  expect(flagged.runs).toEqual(["src/book.ts", "src/book.ts"]);
+  expect(flagged.again).toMatchObject({ executionId: "booked", status: "completed" });
+  expect(flagged.writes.map((write) => write.executionId)).toEqual(["booked"]);
+  // Without it, the step is a write that may have reached the site, refused for the attempt.
+  expect(unflagged.runs).toEqual(["src/book.ts"]);
+  expect(unflagged.again).toMatchObject({ status: "unsupported" });
+  expect(JSON.stringify(unflagged.again)).toMatch(
+    /src\/book\.ts stays refused for the rest of this attempt/u,
+  );
+  expect(unflagged.writes).toEqual([
+    expect.objectContaining({ status: "result_lost", entrypoint: "src/book.ts" }),
+  ]);
+  // A failure that itself says the step may have run stays a tracked write despite the flag.
+  for (const ran of [resultUnread, captureFailed]) {
+    const contradicted = await hostStoppedWrite({ ...ran, nothingSent: true });
+    const plain = await hostStoppedWrite(ran);
+    expect(contradicted.first).toEqual(plain.first);
+    expect(contradicted.runs).toEqual(["src/book.ts"]);
+    expect(contradicted.again).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(contradicted.again)).toMatch(
+      /src\/book\.ts stays refused for the rest of this attempt/u,
+    );
+    expect(contradicted.writes).toEqual([
+      expect.objectContaining({ status: "result_lost", entrypoint: "src/book.ts" }),
+    ]);
+  }
+});
+
 // Fails when a write's digest follows the host runtime's relative import out of the workspace:
 // the workspace refuses that path, so the digest was undefined and a copy of the step under
 // another name ran the write again.
@@ -331,8 +446,14 @@ it("tracks a write's source by content when it imports the host runtime, and ref
   });
 });
 
-/** A build that runs the write step `src/book.ts` twice, with or without an outcome review. */
-const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
+/**
+ * A build that runs the write step `src/book.ts` twice, with or without an outcome review, and
+ * with the host's `repeatAllowed` when given.
+ */
+const repeatedWrite = async (
+  outcomeReview?: OutcomeReviewHost,
+  repeatAllowed?: MintDependencies["repeatAllowed"],
+) => {
   let dispatched = 0;
   const f = await fixture(
     (_request, index) =>
@@ -354,6 +475,7 @@ const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
         }),
       ),
       ...(outcomeReview === undefined ? {} : { outcomeReview }),
+      ...(repeatAllowed === undefined ? {} : { repeatAllowed }),
     },
     { effect: "write" },
   );
@@ -361,6 +483,25 @@ const repeatedWrite = async (outcomeReview?: OutcomeReviewHost) => {
   const refusal = toolOutput(f.requests[2] as ModelRequest, "again");
   return { dispatched, refusal, reason: JSON.stringify(refusal) };
 };
+
+// Fails while the harness refuses every repeat of a write: a host that keeps a step from sending
+// the write's last step again, such as a practice save on a test account, cannot let it run.
+it("runs a repeat of a write when the host allows it, and refuses it without the hook", async () => {
+  const asked: string[] = [];
+  const allowed = await repeatedWrite(undefined, (request, repeats) =>
+    Effect.sync(() => {
+      asked.push(`${request.purpose} ${request.entrypoint} repeats ${repeats.join(", ")}`);
+      return true;
+    }),
+  );
+  const refused = await repeatedWrite();
+
+  expect(asked).toEqual(["act src/book.ts repeats booked"]);
+  expect(allowed.dispatched).toBe(2);
+  expect(allowed.refusal).toMatchObject({ executionId: "booked", status: "completed" });
+  expect(refused.dispatched).toBe(1);
+  expect(refused.refusal).toMatchObject({ status: "unsupported" });
+});
 
 // Fails when the refusal tells an agent with no outcome review to wait for one: it can never
 // come, so the agent sends the write again through a copy of the step.

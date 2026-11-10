@@ -44,6 +44,7 @@ import { fileReadbackRefusal } from "../mint/file-readback.js";
 import { cardReadbackRefusal } from "../mint/card-readback.js";
 import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
+import { downloadCapFailures } from "../runtime/kernel-operation.js";
 import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
@@ -53,6 +54,7 @@ import { InputRequestFailure, type InputAsker } from "../runtime/input-request.j
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
+import type { DownloadCap } from "../runtime/files.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import {
@@ -63,6 +65,7 @@ import {
 import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
 import { sessionCardFill } from "./card-fill.js";
+import { localHandOffAsker, visibleBrowser } from "./hand-off.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
 /**
@@ -300,6 +303,18 @@ const actOutcome = (
 const uncollectedFileMessage =
   "This output holds a `$file` that is not exactly a file this execution collected. Return each file as `files.collect` gave it, and put any other fact about the file in a separate field.";
 
+/**
+ * The cap a failed step's download went over, only when the step failed with that refusal: a
+ * script that caught it and then failed another way reports its own failure.
+ */
+const capRefusalOf = (failure: Error, cap: DownloadCap | undefined) =>
+  cap !== undefined &&
+  failure instanceof LocalOperationFailure &&
+  failure.tag === "OperationFailure" &&
+  failure.message === downloadCapFailures[cap.limit === "file" ? "too_large" : "run_limit"]
+    ? cap
+    : undefined;
+
 type Journal = Parameters<MintDependencies["reviewAndExecute"]>[2];
 interface ReceiptInput {
   readonly state: MintState;
@@ -324,6 +339,8 @@ interface ReceiptInput {
   readonly writePathRemaining?: readonly string[];
   /** The step ran after the host sent a login no check verified; see `afterUnverifiedSignIn`. */
   readonly afterUnverifiedSignIn?: true;
+  /** The latest download the step's files refused over the host's caps (`RunFiles.overCap`). */
+  readonly fileCap?: DownloadCap;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -355,6 +372,17 @@ const failedReceipt = (
             effect: execution.target === "pureFiles" ? "not_sent" : "possible",
             commits: [],
           };
+    // A live example on the caller's own input that the tool itself refused as invalid, never
+    // its schema's decode of that input, lets a substitute example run in its place.
+    if (
+      execution.purpose === "example" &&
+      execution.target === "liveBrowser" &&
+      intentDerivedInput === undefined &&
+      failure instanceof LocalOperationFailure &&
+      (failure.tag === "InvalidInput" || failure.code === "InvalidInput") &&
+      failure.inputIssues === undefined
+    )
+      state.refusedCallerExamples.push(input);
     runs.set(id, {
       sources,
       entrypoint: execution.entrypoint,
@@ -391,6 +419,7 @@ const failedReceipt = (
         ...(writeSession === undefined ? {} : { writeSession }),
       },
       review: reviewFeedback(reviewed),
+      ...(receipt.fileCap === undefined ? {} : { fileCap: receipt.fileCap }),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
       ...(unanswered || (failure instanceof LocalOperationFailure && failure.code === "NoResponse")
         ? { noResponse: { possibleCommit: execution.purpose === "act" } }
@@ -609,7 +638,9 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
-                ask: scriptAsk,
+                ask: localHandOffAsker(scriptAsk, {
+                  visible: live && visibleBrowser(state.session.options.browser),
+                }),
                 declaredQuestions: draftQuestionDeclarations(
                   execution.entrypoint,
                   entrypointSource,
@@ -661,18 +692,23 @@ const authoredExecution = (
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
+        const fileCap =
+          executed._tag === "Left" ? capRefusalOf(executed.left, runFiles?.overCap?.()) : undefined;
         const receipt = {
           state,
           execution,
           id,
           sources,
           input,
-          ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
+          ...(selected.mark === "intent_derived" || selected.mark === "substitute"
+            ? { intentDerivedInput: selected.input }
+            : {}),
           reviewed,
           journal,
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
           ...(pathLeft.length === 0 ? {} : { writePathRemaining: pathLeft }),
           ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
+          ...(fileCap === undefined ? {} : { fileCap }),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

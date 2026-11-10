@@ -1,21 +1,25 @@
 import { Option, Schema } from "effect";
 import {
   AutofillApproval,
+  AutofillApprovalDelivery,
   AutofillPopup,
   DateControl,
   DateOfBirthFormat,
   IdentifierKinds,
+  isWayMethod,
   maximumCodeBoxes,
   maximumStepFields,
+  MethodOption,
   PhoneFormat,
   PrivateIdentifierLabel,
   onePrivateIdentifier,
   onePrivateIdentifierMessage,
   privateIdentifierFits,
   privateIdentifierMessage,
+  RecipeMethodChoice,
   RejectedMarker,
   SecretSlots,
-  SignInMethodChoice,
+  SignInChoice,
   stepFieldsFit,
   stepFieldsMessage,
   SubmitKey,
@@ -24,6 +28,7 @@ import type { AutofillField } from "./autofill-step.js";
 export {
   AutofillPopup,
   RejectedMarker,
+  SignInChoice,
   SignInMethodChoice,
   SignInMethod,
 } from "./autofill-contracts.js";
@@ -32,6 +37,13 @@ export {
 export const autofillRecipePath = "auth-fill.json";
 
 const Selector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/**
+ * A recorded method choice's method before version 14: a two-factor method, never a way in, so a
+ * version 1 to 13 recipe that names one is refused, as a host that predates version 14 refuses it.
+ */
+const TwoFactorMethod = RecipeMethodChoice.pipe(
+  Schema.filter((method) => !isWayMethod(method) || "only a version 14 recipe names a way in"),
+);
 const SecretRecipeField = Schema.Struct({
   selector: Selector,
   slot: SecretSlots,
@@ -43,7 +55,9 @@ const SecretRecipeField = Schema.Struct({
 /**
  * An identifier field by every kind it accepts, which each run resolves against its own login. A
  * `private_identifier`, accepted alone with the site's own `label` for its field, rides only in a
- * version 9 or 10 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`).
+ * version 9 to 14 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`,
+ * `ClickLayerAutofillRecipe`, `MethodOptionAutofillRecipe`, `SignInChoiceAutofillRecipe`,
+ * `SignInWayAutofillRecipe`).
  */
 const IdentifierRecipeField = Schema.Struct({
   selector: Selector,
@@ -94,7 +108,7 @@ const RecipeStep = Schema.Struct({
   submit: Schema.optional(Selector),
   submittedBy: Schema.optional(Schema.Literal("host", "minter")),
   methods: Schema.optional(
-    Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: Selector })).pipe(
+    Schema.Array(Schema.Struct({ method: TwoFactorMethod, selector: Selector })).pipe(
       Schema.minItems(1),
       Schema.maxItems(8),
     ),
@@ -123,15 +137,18 @@ export const LegacyAutofillRecipe = Schema.Struct({
 /**
  * A version 2 step may also name `matchSelector` on a device approval: the element its screen shows
  * a number in for the owner to pick on their device, which a replay reads again and shows the owner
- * when it is 1 to 3 digits. It rides in every version from 2 without one of its own. A host that
- * predates it ignores it in a version 2 recipe and refuses a version 4 to 8 recipe that has it, as
- * a host that predates `refills` refuses one with that.
+ * when it is 1 to 3 digits. It may say `delivery: "paste"` on an email-link approval whose link
+ * signs in only the browser that opens it: a replay asks the owner to paste the link and opens it
+ * itself. Each rides in every version from 2 without one of its own. A host that predates one
+ * ignores it in a version 2 recipe, asking for the approval as before, and refuses a recipe of
+ * version 4 or later that has it, as a host that predates `refills` refuses one with that.
  */
 const PopupRecipeStep = Schema.Struct({
   ...RecipeStep.fields,
   popup: Schema.optional(AutofillPopup),
   approval: Schema.optional(AutofillApproval),
   matchSelector: Schema.optional(Selector),
+  delivery: Schema.optional(AutofillApprovalDelivery),
 });
 /** Version 2 keeps a host that does not know it from dropping popup metadata and filling the primary tab. */
 export const PopupAutofillRecipe = Schema.Struct({
@@ -197,8 +214,13 @@ export const WorkspaceAutofillRecipe = workspacePages(
     steps: Schema.Array(WorkspaceRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
   }).annotations({ parseOptions: { onExcessProperty: "error" } }),
 );
-/** The secret a later screen may ask for again, beside a second factor: the password. */
-export const RefillSlot = Schema.Literal("password");
+/**
+ * The secret a later screen may ask for again: the password, beside a second factor, or a code, on
+ * a second code screen whose code field is not the earlier one's, as a sign-in that asks for two
+ * different one-time codes in a row does.
+ */
+export const RefillSlot = Schema.Literal("password", "code");
+export type RefillSlot = typeof RefillSlot.Type;
 /** A second factor: the one-time values a screen that asks for the password again also takes. */
 export const isSecondFactor = (slot: string) => slot === "code" || slot === "recovery_code";
 /**
@@ -206,8 +228,8 @@ export const isSecondFactor = (slot: string) => slot === "code" || slot === "rec
  * its last field submits that field's form, on a screen whose form has no submit control. Such a
  * step fills a field and names no submit or method choice. It may also list `refills`, the
  * secrets an earlier screen of the sign-in took that this screen asks for again, as a site that
- * wants the password re-entered with a one-time code does: only a screen that takes the refilled
- * field and a second factor may list one.
+ * wants the password re-entered with a one-time code does, or one that asks for a second, different
+ * code after the first: only a screen that takes the refilled field and a second factor may list one.
  */
 const keyStepFields = {
   ...WorkspaceRecipeStep.fields,
@@ -249,7 +271,8 @@ const KeyRecipeStep = keyStepRules(Schema.Struct(keyStepFields));
  * Version 5: version 4 whose steps may submit with a key (`submitKey`) or refill a secret
  * (`refills`). A host that does not know version 5 refuses it, so it never replays such a step
  * without submitting it or without the refill; a version 5 recipe with a key this host does not
- * know is refused too, as a version 5 host that predates `refills` refuses one that has it.
+ * know is refused too, as a version 5 host that predates `refills` refuses one that has it, and
+ * one that knows only a password refill refuses a code refill.
  */
 export const KeySubmitAutofillRecipe = workspacePages(
   Schema.Struct({
@@ -382,12 +405,24 @@ export const WildcardAutofillRecipe = workspacePages(
       recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
   ),
 );
-/** Version 8's check of a step's `submitVia`, which later versions keep. */
+/**
+ * How the host sent a step's covered submit: `keyboard`, pressed from the keyboard, from version 8,
+ * or `click_layer`, clicked through the site's own control over it, from version 11 only.
+ */
+const SubmitVia = Schema.Literal("keyboard", "click_layer");
+/**
+ * Version 8's check of a step's `submitVia`, which later versions keep: only a step that names a
+ * submit says it, and only a version 11 step (`clickLayer`) says `click_layer`.
+ */
 const keyboardRule = <
-  Step extends { readonly submit?: string | undefined; readonly submitVia?: "keyboard" | undefined },
+  Step extends {
+    readonly submit?: string | undefined;
+    readonly submitVia?: typeof SubmitVia.Type | undefined;
+  },
   Encoded,
 >(
   step: Schema.Schema<Step, Encoded>,
+  clickLayer = false,
 ) =>
   step.pipe(
     Schema.filter(
@@ -395,6 +430,12 @@ const keyboardRule = <
         step.submitVia === undefined ||
         step.submit !== undefined ||
         "a submitVia step names a submit",
+    ),
+    Schema.filter(
+      (step) =>
+        clickLayer ||
+        step.submitVia !== "click_layer" ||
+        "only a version 11 or later recipe says click_layer",
     ),
   );
 /**
@@ -406,7 +447,7 @@ const keyboardRule = <
 const KeyboardRecipeStep = keyboardRule(
   Schema.extend(
     WildcardRecipeStep,
-    Schema.Struct({ submitVia: Schema.optional(Schema.Literal("keyboard")) }),
+    Schema.Struct({ submitVia: Schema.optional(SubmitVia) }),
   ),
 );
 /**
@@ -435,7 +476,7 @@ export const KeyboardSubmitAutofillRecipe = workspacePages(
  * most. Each run fills it from its own login, never from the recipe.
  */
 const PrivateRecipeField = Schema.Union(IdentifierRecipeField, SecretRecipeField);
-/** A version 9 step's own fields, before its checks; version 10 keeps them. */
+/** A version 9 step's own fields, before its checks; versions 10 to 12 keep them. */
 const privateStepFields = {
   ...keyStepFields,
   rejectedMarkers: Schema.optional(
@@ -448,7 +489,7 @@ const privateStepFields = {
   ),
   dismiss: Schema.optional(Selector),
   anySegments: Schema.optional(SegmentList),
-  submitVia: Schema.optional(Schema.Literal("keyboard")),
+  submitVia: Schema.optional(SubmitVia),
 };
 /** A version 9 step: a version 8 step whose fields and markers may name a private identifier. */
 const PrivateRecipeStep = keyboardRule(
@@ -494,22 +535,18 @@ const NationalRecipeField = Schema.Union(
   ),
   SecretRecipeField,
 );
+/** A version 10 step's own fields, before their checks; versions 11 and 12 keep them. */
+const nationalStepFields = {
+  ...privateStepFields,
+  fields: Schema.Array(NationalRecipeField).pipe(
+    Schema.maxItems(maximumStepFields + maximumCodeBoxes),
+    Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+    Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
+  ),
+};
 /** A version 10 step: a version 9 step whose fields are version 10 fields. */
 const NationalRecipeStep = keyboardRule(
-  wildcardRule(
-    dismissRule(
-      keyStepRules(
-        Schema.Struct({
-          ...privateStepFields,
-          fields: Schema.Array(NationalRecipeField).pipe(
-            Schema.maxItems(maximumStepFields + maximumCodeBoxes),
-            Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
-            Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
-          ),
-        }),
-      ),
-    ),
-  ),
+  wildcardRule(dismissRule(keyStepRules(Schema.Struct(nationalStepFields)))),
 );
 /**
  * Version 10: version 9 whose identifier fields may say `format: "national"`. A host that does not
@@ -531,6 +568,171 @@ export const NationalPhoneAutofillRecipe = workspacePages(
       recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
   ),
 );
+/**
+ * A version 11 step: a version 10 step whose `submitVia` may also say `click_layer`. The site laid
+ * its own control, with the submit's own name, over the submit in the submit's form or dialog,
+ * and the host clicked the submit's centre with the mouse, so that control took the click as a
+ * person's would. A replay clicks it so first, when it finds such a control there, and clicks the
+ * submit otherwise.
+ */
+const ClickLayerRecipeStep = keyboardRule(
+  wildcardRule(dismissRule(keyStepRules(Schema.Struct(nationalStepFields)))),
+  true,
+);
+/**
+ * Version 11: version 10 whose steps' `submitVia` may say `click_layer`. A host that does not know
+ * version 11 refuses it, so it never replays such a step by clicking a submit the site's own
+ * control covers. A recipe with no such step is written as before, in the lowest version it needs.
+ */
+export const ClickLayerAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(11),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(ClickLayerRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
+/** A version 12 method choice's methods, each a `method`; version 14's may name a way in. */
+const optionMethods = (method: Schema.Schema<RecipeMethodChoice>) =>
+  Schema.optional(
+    Schema.Array(
+      Schema.Struct({ method, selector: Selector, option: Schema.optional(MethodOption) }),
+    ).pipe(Schema.minItems(1), Schema.maxItems(8)),
+  );
+/** A version 12 step's own fields, before their checks; version 13 keeps them. */
+const optionStepFields = { ...nationalStepFields, methods: optionMethods(TwoFactorMethod) };
+/**
+ * A version 12 step: a version 11 step whose methods may each name `option`, the value a native
+ * select lists for that method, when the select is the method's control. A replay chooses the
+ * method it picks there with the browser's own select action.
+ */
+const OptionRecipeStep = keyboardRule(
+  wildcardRule(dismissRule(keyStepRules(Schema.Struct(optionStepFields)))),
+  true,
+);
+/**
+ * Version 12: version 11 whose methods may name `option`. A host that does not know version 12
+ * refuses it, so it never replays such a method choice by clicking the select. A recipe whose
+ * methods name no option is written as before, in the lowest version it needs.
+ */
+export const MethodOptionAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(12),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(OptionRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
+/** Version 13's check of a step's `choice`, which version 14 keeps. */
+const choiceRule = <
+  Step extends {
+    readonly fields: readonly unknown[];
+    readonly submit?: string | undefined;
+    readonly methods?: unknown;
+    readonly approval?: unknown;
+    readonly choice?: SignInChoice | undefined;
+  },
+  Encoded,
+>(
+  step: Schema.Schema<Step, Encoded>,
+) =>
+  step.pipe(
+    Schema.filter(
+      (step) =>
+        step.choice === undefined ||
+        (step.fields.length === 0 &&
+          step.submit !== undefined &&
+          step.methods === undefined &&
+          step.approval === undefined) ||
+        "a choice step fills no field and names one submit, with no method choice or approval",
+    ),
+  );
+/**
+ * A version 13 step: a version 12 step that may name `choice`, the action with a lasting effect on
+ * the account its submit takes (`SignInChoice`). Only a step that fills no field and names one
+ * submit, with no method choice or approval, names one. A replay presses that submit
+ * only when the run's caller allowed the choice, and otherwise stops before it.
+ */
+const ChoiceRecipeStep = choiceRule(
+  keyboardRule(
+    wildcardRule(
+      dismissRule(
+        keyStepRules(Schema.Struct({ ...optionStepFields, choice: Schema.optional(SignInChoice) })),
+      ),
+    ),
+    true,
+  ),
+);
+/**
+ * Version 13: version 12 whose steps may name `choice`. A host that does not know version 13
+ * refuses it, so it never presses such a submit without the caller's allow. A recipe whose steps
+ * name no choice is written as before, in the lowest version it needs.
+ */
+export const SignInChoiceAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(13),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(ChoiceRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
+/** A version 14 step: a version 13 step whose methods may name a way in (`RecipeMethodChoice`). */
+const WayRecipeStep = choiceRule(
+  keyboardRule(
+    wildcardRule(
+      dismissRule(
+        keyStepRules(
+          Schema.Struct({
+            ...optionStepFields,
+            methods: optionMethods(RecipeMethodChoice),
+            choice: Schema.optional(SignInChoice),
+          }),
+        ),
+      ),
+    ),
+    true,
+  ),
+);
+/**
+ * Version 14: version 13 whose method choices may name a way in: `password`, a sign-in screen's
+ * first choice between a password and a code the site sends, or an `identifier_` kind, the
+ * identifier a control switches the screen to ask for. A run takes the recorded route of such a
+ * choice and picks only among its code methods otherwise. A host that does not know version 14
+ * refuses it; a recipe whose methods name no way in is written as before, in the lowest version it
+ * needs.
+ */
+export const SignInWayAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(14),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(WayRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
 export const AutofillRecipe = Schema.Union(
   LegacyAutofillRecipe,
   PopupAutofillRecipe,
@@ -541,9 +743,13 @@ export const AutofillRecipe = Schema.Union(
   KeyboardSubmitAutofillRecipe,
   PrivateIdentifierAutofillRecipe,
   NationalPhoneAutofillRecipe,
+  ClickLayerAutofillRecipe,
+  MethodOptionAutofillRecipe,
+  SignInChoiceAutofillRecipe,
+  SignInWayAutofillRecipe,
 );
 export type AutofillRecipe = typeof AutofillRecipe.Type;
-export type AutofillRecipeStep = typeof NationalRecipeStep.Type;
+export type AutofillRecipeStep = typeof WayRecipeStep.Type;
 
 /**
  * Whether a live path is a recorded screen's: as many segments, each the same, except that each
@@ -609,6 +815,8 @@ interface RecordedRecipeStep {
   readonly approval?: AutofillRecipeStep["approval"] | undefined;
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string | undefined;
+  /** `paste` for an email-link approval whose link the owner pastes for the host to open. */
+  readonly delivery?: AutofillRecipeStep["delivery"] | undefined;
   readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"] | undefined;
   /** With each identifier field's accepted kinds, never a value. */
   readonly fields: readonly AutofillField[];
@@ -616,14 +824,19 @@ interface RecordedRecipeStep {
   /** The key pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
   readonly submittedBy?: "host" | "minter" | undefined;
-  /** `keyboard` when the host pressed the step's covered submit from the keyboard. */
-  readonly submitVia?: "keyboard" | undefined;
+  /**
+   * `keyboard` when the host pressed the step's covered submit from the keyboard, `click_layer`
+   * when it clicked through the site's own control over it.
+   */
+  readonly submitVia?: "keyboard" | "click_layer" | undefined;
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillRecipeStep["methods"] | undefined;
   /** The secrets an earlier screen took that this one asks for again with a second factor. */
   readonly refills?: AutofillRecipeStep["refills"] | undefined;
   /** The covering notice's own control the host clicked on this screen. */
   readonly dismiss?: string | undefined;
+  /** The action with a lasting effect on the account the screen's submit takes. */
+  readonly choice?: SignInChoice | undefined;
   /** The page the step ran on, origin and path only. */
   readonly page: string;
   /** The segments of `page`'s path written as `*`, which any one segment matches. */
@@ -643,6 +856,7 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
   ...((step.anySegments ?? []).length === 0 ? {} : { anySegments: step.anySegments }),
   ...(step.approval === undefined ? {} : { approval: step.approval }),
   ...(step.matchSelector === undefined ? {} : { matchSelector: step.matchSelector }),
+  ...(step.delivery === undefined ? {} : { delivery: step.delivery }),
   ...(step.popup === undefined ? {} : { popup: step.popup }),
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
   fields: step.fields.map((field) =>
@@ -672,6 +886,7 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
   ...(step.submitVia === undefined ? {} : { submitVia: step.submitVia }),
   ...(step.methods === undefined ? {} : { methods: step.methods }),
   ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+  ...(step.choice === undefined ? {} : { choice: step.choice }),
 });
 
 /** Whether a recorded screen names a private identifier, in a field or a marker. */
@@ -687,15 +902,17 @@ const namesNational = (step: RecordedRecipeStep) =>
   step.fields.some((field) => isIdentifierKind(field.slot) && field.format === "national");
 
 /**
- * A verified sign-in's recipe: version 10 only when an identifier field says
- * `format: "national"`, else version 9 only when a step names a private identifier, else version
- * 8 only when a step says `submitVia`, else version 7 only when a step lists segments written as
- * `*` (`anySegments`; an empty list is none and is left out), else version 6 only when a step
- * names `dismiss`, else version 5 only when a step submits with a key or refills a secret
- * (`refills`), else version 4 only when its sign-in may move to a workspace host
- * (`origins.workspace`, or a workspace step), else version 2 only with a popup or an approval,
- * else version 1. A security answer's question selector rides in any of them. Versions 4 to 10
- * write `workspace` before `steps`.
+ * A verified sign-in's recipe: version 14 only when a method choice names a way in (`password` or
+ * an `identifier_` kind), else version 13 only when a step names a `choice`, else version 12 only
+ * when a step's method names an `option`, else version 11 only when a step says `submitVia:
+ * "click_layer"`, else version 10 only when an identifier field says `format: "national"`, else
+ * version 9 only when a step names a private identifier, else version 8 only when a step says
+ * `submitVia`, else version 7 only when a step lists segments written as `*` (`anySegments`; an
+ * empty list is none and is left out), else version 6 only when a step names `dismiss`, else
+ * version 5 only when a step submits with a key or refills a secret (`refills`), else version 4
+ * only when its sign-in may move to a workspace host (`origins.workspace`, or a workspace step),
+ * else version 2 only with a popup or an approval, else version 1. A security answer's question
+ * selector rides in any of them. Versions 4 to 14 write `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
@@ -705,9 +922,27 @@ export const autofillRecipe = <SignedIn>(
   const lists = steps.some((step) => (step.anySegments ?? []).length > 0);
   const pressed = steps.some((step) => step.submitVia !== undefined);
   const national = steps.some(namesNational);
-  if (national || steps.some(namesPrivateIdentifier))
+  const layered = steps.some((step) => step.submitVia === "click_layer");
+  const options = steps.some((step) =>
+    (step.methods ?? []).some((method) => method.option !== undefined),
+  );
+  const chosen = steps.some((step) => step.choice !== undefined);
+  const ways = steps.some((step) =>
+    (step.methods ?? []).some((method) => isWayMethod(method.method)),
+  );
+  if (ways || chosen || options || layered || national || steps.some(namesPrivateIdentifier))
     return {
-      version: national ? (10 as const) : (9 as const),
+      version: ways
+        ? (14 as const)
+        : chosen
+          ? (13 as const)
+          : options
+            ? (12 as const)
+            : layered
+              ? (11 as const)
+              : national
+                ? (10 as const)
+                : (9 as const),
       ...(origins.workspace === undefined
         ? {}
         : { workspace: { parent: origins.workspace.parent } }),

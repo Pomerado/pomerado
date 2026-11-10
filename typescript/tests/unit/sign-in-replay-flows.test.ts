@@ -178,6 +178,8 @@ interface Answers {
   readonly dates?: string[];
   readonly method?: string;
   readonly confirm?: boolean;
+  /** The sign-in link the owner pastes. */
+  readonly link?: string;
 }
 const owner = (fake: ScriptedSite, answers: Answers = {}) => {
   const codes = [...(answers.codes ?? [code])];
@@ -197,6 +199,7 @@ const owner = (fake: ScriptedSite, answers: Answers = {}) => {
     }
     if (question.id === "code") return codes.shift() ?? code;
     if (question.id === "date_of_birth") return dates.shift() ?? "1990-04-12";
+    if (question.id === "sign_in_link") return answers.link ?? "synthetic-answer";
     return "synthetic-answer";
   };
   const ask = makeInputAsker((request) =>
@@ -815,6 +818,45 @@ it("names the number a device approval's matchSelector shows", async () => {
   expect(prompts.at(-1)).toBe(
     "Approve the sign-in request example.test sent to your device, then confirm here. If it asks you to choose a number, pick 42.",
   );
+});
+
+// An emailed link that signs in only the browser that opens it: a step recorded with
+// `delivery: "paste"` asks the owner for the link and opens it on the run's own browser, and only
+// on the site.
+const pastedLinkSite = (link: string) => {
+  const fake = approvalSite("approve");
+  const signIn = fake.approve;
+  const open = fake.browser.open;
+  return {
+    ...fake,
+    // The owner's yes alone signs nothing in.
+    approve: () => undefined,
+    browser: {
+      ...fake.browser,
+      open: (url: string) =>
+        url === link
+          ? Effect.sync(() => {
+              fake.trace.push(`open:${new URL(url).pathname}`);
+              signIn();
+            })
+          : open(url),
+    },
+  };
+};
+const pasteStep = {
+  page: `${origin}/approve`,
+  fields: [],
+  approval: "email_link" as const,
+  delivery: "paste" as const,
+};
+
+it("asks the owner to paste a recorded email link and opens it on the run's browser", async () => {
+  const link = `${origin}/magic/AbCdEf0123456789`;
+  const fake = pastedLinkSite(link);
+  const { result } = await signIn(recipe(loginStep, pasteStep), fake, { link });
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(steps(fake)).toEqual(["ask:missing_credentials", "fill:login", "ask:sign_in_link"]);
+  expect(fake.trace).toContain("open:/magic/AbCdEf0123456789");
 });
 
 it("fails RecipeFailed when the owner declines a recorded approval", async () => {

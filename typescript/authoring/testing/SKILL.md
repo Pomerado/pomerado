@@ -49,7 +49,7 @@ Design it as soon as you know the page and its inputs, and run it once the examp
   unless the caller's own input supplied its value.
 - Expect `result`, and say in `purpose`, for each input, the row field that shows it applied and
   an example row it excludes. After it runs, read its full output (`live_tests` action `plan`,
-  naming the case) and check that every returned row satisfies every input it set, such as each
+  naming the case, then the file a large output's digest names) and check that every returned row satisfies every input it set, such as each
   row's status the one asked for, each date inside the range and each price under the ceiling;
   that the rows it excludes are absent, so the rows differ from the example's; and that the tool
   read each input back as the site applied it. A row that breaks a filter, or a result no
@@ -99,6 +99,8 @@ little time. Root some cases in the inputs and some in your own code, as below. 
 - the example's own input once more, which a host with several browsers runs cold, first on a
   new browser with an empty profile: the proof that the tool works for a caller the site
   remembers nothing about, with no location, store or filter left from your exploration;
+- when the example runs in place of a caller's input the tool refused, that input, expecting
+  `invalid_input`;
 - one query or filter with no results (`empty`, never a throw). Run it once and see what the
   site shows before you write its expectation: some sites answer it with a fallback grid or a
   "no exact matches" view rather than an empty list. When the tool takes a free-text input, one
@@ -185,7 +187,7 @@ case, use real values the site offers, which you saw while
 exploring: listed options, places, dates, counts, records and retailers the site lists. Never use
 a person's or account's name, number or code, or a private record's, such as an order number,
 and never the caller's own values beyond
-the example's input. List under `notTested` anything the tool claims that you chose not to test,
+the caller's input and the example's. List under `notTested` anything the tool claims that you chose not to test,
 with why. A choice the request, the caller or the owner declined is not part of the tool (core
 skill), so it is never tested.
 
@@ -204,8 +206,8 @@ store, or a pop-up or banner covering a control, fix that step first and run onl
 passes, before the whole batch again. A pop-up
 or banner that shows only on some visits is closed whenever it shows, never waited for (forms
 skill). You get every result: its status, what it returned, and a failure's
-error with the source line that threw. Name cases in action `plan` to read their full outputs,
-and check what they mean, not just pass or fail: every item matches the filters, the order follows
+error with the source line that threw. Name cases in action `plan` to read their outputs (a large one comes
+as a digest naming the file that holds it), and check what they mean, not just pass or fail: every item matches the filters, the order follows
 the sort, the applied location is the one asked for or labeled as another, page 2 differs from
 page 1. A failing case is a bug in the tool: fix the code at that line. Never drop the input,
 narrow the schema except where the site itself bounds the value, or change a case's expectation
@@ -291,8 +293,9 @@ When the host offers no `live_tests`, a read runs its cases one input at a time 
 purpose `test`, target `liveBrowser`, with `testInput`, the tool's input as JSON text; the host
 may limit how many. A signed-in read's inputs there count toward the same four.<!-- pomerado:section testing.http-cases -->
 
-The example uses the caller's input, or your `exampleInput` when that input is empty, and offline
-tests always use the caller's input. If a test shows the schema must widen, widen it in source;
+The example uses the caller's input, or your `exampleInput` when that input is empty or, once the
+tool refused the caller's input with `InvalidInput`, in its place (`AGENTS.md`, "Reads, writes and
+examples"), and offline tests always use the caller's input. If a test shows the schema must widen, widen it in source;
 publication reads the schemas from current source, and only a changed flow needs a fresh example
 (publication skill).<!-- pomerado:section testing.offline-fixtures -->
 
