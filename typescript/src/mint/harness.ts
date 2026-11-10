@@ -5909,6 +5909,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       entryState() !== shownEntryState
                     )
                       confirmedSignInStands = false;
+                    // A step apart from authenticate whose failure says a sign-in left the site
+                    // signed out, such as the host's own sign-in again after it found the page
+                    // signed out.
+                    if (
+                      submitted.purpose !== "authenticate" &&
+                      Exit.isFailure(result) &&
+                      Cause.isFailType(result.cause) &&
+                      (signInLeftSignedOut(result.cause.error) ||
+                        result.cause.error.failureDetail?.phase === "automatic_sign_in")
+                    )
+                      confirmedSignInStands = false;
                     if (submitted.purpose === "authenticate") {
                       noteSignIn(result, crossedDispatchBoundary, submitted.signInStep);
                       // A screen the host refused at its destination check comes back as the
