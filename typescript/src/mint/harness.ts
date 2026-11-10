@@ -5088,6 +5088,34 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           (now) => deadlineAt - now >= (host.caseTimeoutMs ?? defaultLiveTestCaseMs),
         );
       /**
+       * How long one case of a batch runs on `host` by its own limit: `caseTimeoutMs`, or, past a
+       * capped host's last batch, its reserve's (`LiveTestHost.reservedCaseTimeoutMs`).
+       */
+      const ownCaseMs = (host: LiveTestHost) => {
+        const limit = host.caseTimeoutMs ?? defaultLiveTestCaseMs;
+        return Number.isFinite(limit) ? limit : (host.reservedCaseTimeoutMs ?? defaultLiveTestCaseMs);
+      };
+      /**
+       * How long each case of a batch ending at `deadlineAt` may run on `host` when the request
+       * asks for `caseSeconds` (`LiveTestHost.maxCaseTimeoutMs`): the request cut to the host's
+       * maximum, in whole seconds; undefined when that is no longer than the host's own limit, the
+       * host takes no longer one, the batch is the host's reserve (`reservedCaseTimeoutMs`), or
+       * less than that is left before the deadline, since a host starts no case that cannot end in
+       * time and its own limit still lets the shorter cases run.
+       */
+      const batchCaseMs = (
+        host: LiveTestHost,
+        deadlineAt: number,
+        caseSeconds: number | null | undefined,
+      ) =>
+        Effect.map(Clock.currentTimeMillis, (now) => {
+          const most = host.maxCaseTimeoutMs;
+          const reserve = !Number.isFinite(host.caseTimeoutMs ?? defaultLiveTestCaseMs);
+          if (caseSeconds == null || most === undefined || reserve) return undefined;
+          const ms = Math.floor(Math.min(caseSeconds * 1_000, most) / 1_000) * 1_000;
+          return ms > ownCaseMs(host) && ms <= deadlineAt - now ? ms : undefined;
+        });
+      /**
        * The cases a batch on the host's reserve may run once no batch fits
        * (`LiveTestHost.reservedCaseTimeoutMs`): those a failure is pending on, when a batch ending
        * at `deadlineAt` has time for one case there; none without a reserve.
@@ -5245,6 +5273,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               });
             }
           }
+          const caseMs = yield* batchCaseMs(host, deadlineAt, request.caseSeconds);
+          // Read before the batch runs, which may move the host's limits.
+          const ranWithMs = caseMs ?? ownCaseMs(host);
           // A signed-in read's cases run on the build's own signed-in browser, one at a time.
           const workers = signedInBatch
             ? 1
@@ -5260,6 +5291,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             })),
             workers,
             deadlineAt,
+            ...(caseMs === undefined ? {} : { caseTimeoutMs: caseMs }),
           }).pipe(
             // The host's gate refused the batch, such as a cap on live runs.
             Effect.tapError((error) =>
@@ -5449,6 +5481,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             status: "ran",
             ...(result.reviewId === undefined ? {} : { reviewId: result.reviewId }),
             lanes: result.lanes,
+            // The limit each case ran with, once the request asked for one.
+            ...(request.caseSeconds == null
+              ? {}
+              : {
+                  caseSeconds: ranWithMs / 1_000,
+                }),
             ...(sourceDigest === digest
               ? {}
               : {

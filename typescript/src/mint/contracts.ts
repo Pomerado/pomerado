@@ -1084,6 +1084,13 @@ export interface LiveTestHost {
    */
   readonly caseTimeoutMs?: number;
   /**
+   * The longest a batch may ask each of its cases to run (`LiveTestsRequest.caseSeconds`), in
+   * milliseconds. The harness passes a longer request as the batch's `caseTimeoutMs`, cut to this;
+   * it passes none for a request no longer than `caseTimeoutMs`, for the reserve batch
+   * (`reservedCaseTimeoutMs`), or when less than that limit is left before the batch's deadline. Absent, every batch runs at `caseTimeoutMs`, whatever it asks for.
+   */
+  readonly maxCaseTimeoutMs?: number;
+  /**
    * How long one case may run in the one batch a host that caps its batches keeps in reserve past
    * its cap, in milliseconds, while that batch has not run; absent otherwise. Once no batch fits
    * under `caseTimeoutMs`, the harness still runs a batch whose every case is one a failure is
@@ -1120,6 +1127,13 @@ export interface LiveTestBatch {
   /** When the batch must end, in epoch milliseconds. */
   readonly deadlineAt: number;
   /**
+   * How long each case of this batch may run, in milliseconds, when the minter asked for longer
+   * than the host's `caseTimeoutMs`: at most its `maxCaseTimeoutMs`, and only while that much is
+   * left before `deadlineAt`. Absent, the host's own `caseTimeoutMs`. A host still runs no case past its own
+   * maximum, whatever this says.
+   */
+  readonly caseTimeoutMs?: number;
+  /**
    * The read signed in: run every case on the build's own signed-in browser, warm, never on a new
    * browser. The harness then asks for one worker.
    */
@@ -1144,6 +1158,8 @@ export type LiveTestBatchResult =
  * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
+ * `caseSeconds` asks for a longer limit on each case of the batch, which the harness cuts to the
+ * host's `LiveTestHost.maxCaseTimeoutMs`; null or absent, the host's own limit.
  */
 export const LiveTestsRequest = Schema.Struct({
   action: Schema.Literal("plan", "run"),
@@ -1154,6 +1170,9 @@ export const LiveTestsRequest = Schema.Struct({
     ),
   ),
   maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
+  caseSeconds: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 600))),
+  ),
 });
 export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 

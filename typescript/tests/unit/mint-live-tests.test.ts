@@ -1408,6 +1408,56 @@ it("refuses a batch as no_time when less than the host's case limit is left, and
   expect(await attempt(150_000)).toEqual({ batches: 1, status: "ran" });
 });
 
+// A slow site's case can need longer than the host's own limit, so a batch may ask for more, up to
+// the host's maximum; the minter reads the limit each case ran with.
+it("runs a batch's cases at the longer limit it asks for, cut to the host's maximum", async () => {
+  const attempt = async (
+    caseSeconds: number | null | undefined,
+    maxCaseTimeoutMs?: number,
+    batchMs = 28 * 60_000,
+  ) => {
+    const { host, batches } = liveTestHost({});
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("live_tests", caseSeconds === undefined ? runAll : { ...runAll, caseSeconds }, "run"),
+          call("execute", example, "example"),
+          call("finish_build", finish, "finish"),
+        ][index] ?? prose(),
+      {
+        liveTests: {
+          ...host,
+          caseTimeoutMs: 120_000,
+          ...(maxCaseTimeoutMs === undefined ? {} : { maxCaseTimeoutMs }),
+        },
+        // The attempt keeps two minutes after the batch; `batchMs` is what the batch may use.
+        deadline: Deadline.after(2 * 60_000 + batchMs),
+        reviewAndExecute: completedExample,
+        publish: publications().publish,
+      },
+      read,
+    );
+    const root = (f.workspace as unknown as { root: string }).root;
+    await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+    await f.run();
+    const result = resultOf(f.requests[1], "run");
+    // Every attempt runs its batch; only the limit differs.
+    expect({ status: result["status"], batches: batches.length }).toEqual({ status: "ran", batches: 1 });
+    return { batchMs: batches[0]?.caseTimeoutMs, reported: result["caseSeconds"] };
+  };
+  expect(await attempt(160, 180_000)).toEqual({ batchMs: 160_000, reported: 160 });
+  expect(await attempt(240, 180_000)).toEqual({ batchMs: 180_000, reported: 180 });
+  // No longer than the host's own limit, or a host that takes no longer one: the host's own.
+  expect(await attempt(90, 180_000)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160, 100_000)).toEqual({ batchMs: undefined, reported: 120 });
+  // No request: the host's own limit, reported as no limit asked for.
+  expect(await attempt(null, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  expect(await attempt(undefined, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  // Too little left for the longer limit: the host's own, so its shorter cases still run.
+  expect(await attempt(160, 180_000, 150_000)).toEqual({ batchMs: undefined, reported: 120 });
+});
+
 it("says time ran out only when the attempt's end, not the batch's own cap, stopped a case", async () => {
   const stopped = { status: "inconclusive" as const, reason: "deadline" as const };
   const record = async (attemptMs: number) => {
@@ -3680,6 +3730,39 @@ it("refuses host_refused while the reserve is open with its case failing on the 
   expect(guardian.reviews()).toBe(2);
   expect(f.requests).toHaveLength(steps.length);
   expect(outcome.blocked).toEqual({ reason: "host_refused", explanation: spentExplanation });
+});
+
+// A reserve batch keeps its own small limit: a longer one a batch asks for would not fit the
+// reserve's time, so the host's maximum never applies to it.
+it("runs a reserve batch at the reserve's own limit, whatever longer limit it asks for", async () => {
+  const { host, batches } = liveTestHost((batch) => (batch === 0 ? { "page-30": pageTimeout } : {}));
+  const capped = cappedWithReserve({ ...host, maxCaseTimeoutMs: 180_000 }, batches, { regular: 1 });
+  let root = "";
+  const steps = [
+    call("live_tests", runAll, "first"),
+    call("live_tests", { ...runCases(["page-30"]), caseSeconds: 160 }, "reserved"),
+    call("execute", example, "example"),
+    call("finish_build", finish, "finish"),
+  ];
+  const f = await fixture(
+    async (_request, index) => {
+      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
+      return steps[index] ?? prose();
+    },
+    {
+      liveTests: capped,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: publications().publish,
+    },
+    read,
+  );
+  root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": pageCases("page-30") });
+  await f.run();
+  expect(resultOf(f.requests[2], "reserved")).toMatchObject({ status: "ran", caseSeconds: 60 });
+  expect(batches).toHaveLength(2);
+  expect(batches[1]?.caseTimeoutMs).toBeUndefined();
 });
 
 // The reserve being open decides the report alone, so a cases file that cannot be read when the
