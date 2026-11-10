@@ -311,18 +311,10 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "publication",
     "Read this before your first `finish_build`. `finish_build` asks the host to review the current source and publish it against an execution that already ran",
   ],
-  ["publication", "Guardian reports what it finds in rounds, and each round costs minutes"],
-  // A builder that skipped the request's own rules met them again as one refusal per round, so the
-  // checks before `finish_build` open with them.
+  // One finish_build returns every refusal of its submission, so one round fixes them all.
   [
     "publication",
-    "## Check before `finish_build` Before your first `finish_build`, prefer checking the tool against each rule the request states for its inputs, outputs and refusals.",
-  ],
-  // Most extra publication rounds were defects the builder could find in its own source, so before
-  // every call, not only the first, it checks its fields, returns, caller values and live cases.
-  [
-    "publication",
-    "Before each `finish_build`, the first and every later one, prefer one pass over your own source with four questions: for each output field, which line fills it and whether its description says where that value comes from; for each branch that returns, whether it returns every required field with values read on this run; for each value the caller gave or answered through `ask`, whether the output labels it as caller input; and whether any live test case still ends failed or flaky on the source you publish. Fix what this finds before you call.",
+    "One result holds every refusal found in that submission: Guardian's findings, and in `alsoRefused` each other host refusal with its own `reason` and `instruction`.",
   ],
   [
     "publication",
@@ -1350,7 +1342,7 @@ it("renders the pinned standalone authoring", async () => {
     ["9556196163ca35c2145a0c021b83aa6fb06209ab5281ba7d2d33e35cd519fee4", "writes"],
     ["1e8d18459b80eb0d3040fad7814908f7396fcc6f6cbf0ea0cf448c0ce1c99d3f", "cart"],
     ["c64ec8d7e23e56e3aa19e80801f38265c018fa779b15297d6add6700462f54ae", "caller-input"],
-    ["581331269ba679226d4a34b9966103fe47ccf3386f77f4c6f0ee8376cbc3d2c5", "publication"],
+    ["00ce0f951765419f66a91572b6ea92ef327bccf4974e3a33b4783ba7c1a2c206", "publication"],
     ["a812bc6163c8292f61f2cda0b24be48e26bba1cb9534702225f2e226e32b7cf5", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

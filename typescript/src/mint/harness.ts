@@ -1088,6 +1088,9 @@ const loginRequestInstruction = (login: "held" | "supplied" | "inspect" | "unava
       ? "This asks for a website login, which only the host requests, and this build cannot be given one. Do not ask for it again; continue without it or end the attempt and say why."
       : "This asks for a website login, which only the host requests. The host now holds a login for this site: call execute purpose authenticate with target liveBrowser. Never ask for passwords, usernames or logins yourself.";
 
+/** Added to a refusal whose submission the host refused for other reasons too. */
+const alsoRefusedInstruction =
+  " alsoRefused lists the other problems the host found in this same submission, each with its reason and instruction. Fix all of them, and this one, before you call finish_build again.";
 /**
  * What a minter hears, on a host that publishes on the site's own no (`publishOnRefusal`), when
  * its write session has not yet shown a write: that no to the example's valid inputs is the
@@ -3343,6 +3346,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             error.reason === "schema_screening")) ||
         (error.code === "Unavailable" && error.reason === undefined);
       /**
+       * The other refusals the host found in the latest finish_build's submission, beside the one
+       * it answers with, as the minter reads them.
+       */
+      let alsoRefusedReplies: readonly object[] = [];
+      /**
        * A publication refusal the minter can act on: `details` names what was refused, and
        * `instruction` follows what live execution is still available.
        */
@@ -3358,10 +3366,255 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           code,
           reason,
           ...details,
+          ...(alsoRefusedReplies.length === 0 ? {} : { alsoRefused: alsoRefusedReplies }),
           ...availabilityMetadata(),
           userInputRequired: false,
-          instruction: availabilityInstruction() + instruction,
+          instruction:
+            availabilityInstruction() +
+            instruction +
+            // A refusal that ends the attempt asks for no further finish_build.
+            (alsoRefusedReplies.length === 0 || terminal !== undefined
+              ? ""
+              : alsoRefusedInstruction),
         });
+      /**
+       * The reply to a host refusal the minter fixes in its source or metadata, by reason, or
+       * undefined for any other: `reply` shapes it, as the finish_build result or as one entry of
+       * another refusal's `alsoRefused`.
+       */
+      const fixableRefusal = <R>(
+        error: MintFailure,
+        reply: (
+          code: MintFailure["code"],
+          reason: string | undefined,
+          details: object,
+          instruction: string,
+        ) => R,
+        review?: object,
+      ): R | undefined => {
+        // Deterministic, before any review: the minter fixes the extraction, or the owner
+        // confirms a contract change. It is neither a review nor an outage.
+        if (error.reason === "output_obligation_weakened")
+          return reply(
+            error.code,
+            error.reason,
+            { weakenedOutputs: error.weakenedOutputs ?? [] },
+            `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
+              buildEffect === "write"
+                ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
+                : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
+            } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+          );
+        // A host's own comparison with the published tool's inputs: exactly its fixed
+        // instruction, with each broken input as data.
+        if (error.reason === "input_contract_changed")
+          return reply(
+            error.code,
+            error.reason,
+            { brokenInputs: error.brokenInputs ?? [] },
+            inputContractChangedInstruction(buildEffect === "write"),
+          );
+        if (error.reason === "tool_name_taken")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published and not reviewed: ${registryRefusal("tool_name_taken").instruction}`,
+          );
+        if (error.reason === "site_metadata_required")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
+          );
+        if (error.reason === "output_checks_blocked")
+          return reply(
+            error.code,
+            error.reason,
+            { outputFindings: error.outputFindings ?? [] },
+            outputChecksRefusal(error.outputFindings ?? []),
+          );
+        if (error.reason === "variants_unsupported")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: this Kernel script declares supportedVariants, and only Effect runs dispatch variants, so every call would fail with InvalidOutput. Either remove supportedVariants from the tool's metadata (keep one script that handles the variation itself) and call finish_build again with the same executionId; the recorded example and result stay valid and nothing needs to run again. Or, if variants are essential, make it an offline tool: execute a new example with target pureFiles, then call finish_build with that new executionId. The same executionId is refused again while its receipt is a Kernel script.",
+          );
+        if (
+          error.reason === "http_implementation_untested" ||
+          error.reason === "http_implementation_stale"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            // A host's rationale names what it still waits on, such as the cases the
+            // HTTP version has not run.
+            review === undefined ? {} : { review },
+            (error.reason === "http_implementation_stale"
+              ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
+              : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once against the example and runs every case it ran on src/tool.mjs on it too. Then call finish_build again with the same executionId.") +
+              " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host may ask again at every finish_build until one of these holds: calling again unchanged, or deleting the file, does not answer it.",
+          );
+        if (error.reason === "login_url_one_time")
+          return reply(
+            error.code,
+            error.reason,
+            { ...error.publicationFeedback },
+            "Not published yet: the login URL this tool would publish (the loginUrl you passed to authenticate, or the page the browser was on when you passed none) is one authorization request or one browser's session: an identity provider's authorize URL, a URL carrying one-time authorization values, or one carrying a device or session identifier the site put in the link for this browser (oneTimeParameters names the authorize path and those parameters, never their values). They are spent once this sign-in ends or belong to this browser, so later runs that reopen it would start from stale values or another browser's session. The host changed nothing. Navigate the browser to the site's stable sign-in entry, the page a person would bookmark or the site's own login link before it redirected, run authenticate again with that page's address as loginUrl, then call finish_build again with the same executionId. If no stable entry exists, call finish_build again and the host publishes the URL as it is, flagged. The host asks only once.",
+          );
+        if (
+          error.reason === "login_url_contains_credential" ||
+          error.reason === "metadata_contains_credential"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            { ...error.publicationFeedback },
+            "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
+          );
+        if (error.reason === "sign_in_version_refused")
+          return reply(
+            error.code,
+            error.reason,
+            { signInFindings: error.publicationFeedback?.signInFindings ?? [] },
+            "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
+          );
+        if (error.reason === "definition_login_reference") {
+          const section = error.screening?.section;
+          return reply(
+            error.code,
+            error.reason,
+            { section },
+            `Not published: the tool's ${section ?? "definition"} quotes this build's account reference, an opaque value the host gave this build to identify its login (such as an inspection's accountScope). It means nothing to a caller and is never published. ${definitionFix(section)} The existing example and result remain recorded.`,
+          );
+        }
+        if (error.reason === "secret_handle") {
+          const path = error.screening?.path ?? "the source";
+          return reply(
+            error.code,
+            error.reason,
+            { path: error.screening?.path },
+            `Not published: ${path} holds a {{secret.…}} handle. A handle works only in this build's own executions, where the host fills in the caller's answer; published code never holds a handle or a value. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then call finish_build again.`,
+          );
+        }
+        if (error.reason === "file_handle")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: the source holds a {{file.…}} handle, which names a caller's file only in this build. A tool takes each file from its input: type the field as FileInput and pass the input's value to files.place. Remove the handle from the source, then call finish_build again.",
+          );
+        if (error.reason === "file_readback")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: the source moves or reads a file outside the host's file service. Rule: ${fileReadbackRule}. Remove that code, then call finish_build again.`,
+          );
+        if (error.reason === "card_readback")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: the source fills a card and could read it back. Rule: ${cardReadbackRule}. Remove that code, then call finish_build again.`,
+          );
+        if (
+          error.reason === "session_token_literal" ||
+          error.reason === "session_token_placeholder"
+        ) {
+          const path = error.screening?.path ?? "the source";
+          const placeholder = error.reason === "session_token_placeholder";
+          return reply(
+            error.code,
+            error.reason,
+            { path: error.screening?.path, section: error.screening?.section },
+            placeholder
+              ? `Not published: ${path} still reads [session token withheld] where an earlier release withheld a live token, so it no longer matches what ran. Do not paste a token back in: edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded.`
+              : error.screening?.section === "loginUrl"
+                ? "Not published: the login URL holds a literal session token observed during sign-in. Run authenticate again with the site's stable sign-in page URL, without the token, then call finish_build again with the same executionId. The host keeps the URL unchanged for your HTTP work and does not end this build."
+                : `Not published: ${path} holds a literal session token from captures/session-tokens.json. Published code never contains a token. Edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded. Your workspace keeps the token for your own HTTP work. If the file is src/tool-http.mjs, run its live test again first, because the edit invalidates the last one.`,
+          );
+        }
+        if (error.reason === "confirm_action_unmatched")
+          return reply(
+            error.code,
+            error.reason,
+            { confirmActionIds: error.confirmActionIds ?? [] },
+            "Not published: the session accepted confirm popups reported to decideDialog under these step names, and the composed script does not report them under the same names. Reuse each step literal exactly, for example by importing the step's helper, so runs accept the same popups without asking; then call finish_build again with the same executionId. Never run the write again.",
+          );
+        if (error.reason === "write_not_submitted")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, or the site already shows the requested change done, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
+          );
+        if (error.reason === "write_path_unfinished")
+          return reply(
+            error.code,
+            error.reason,
+            { writePathMarks: error.writePathMarks ?? [] },
+            writePathUnfinishedInstruction(error),
+          );
+        if (error.reason === "write_path_undeclared")
+          return reply(
+            error.code,
+            error.reason,
+            { writePathMarks: error.writePathMarks ?? [] },
+            "Not published: the composed script leaves out commit marks of the session's recorded write path from write.commits; writePathMarks names them. Run every step of the path in the composed script, marked by the same helper the session used, declare every mark in order, and call finish_build again with the same executionId. Never run the write again.",
+          );
+        if (error.reason === "refusal_unreadable")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
+          );
+        if (
+          error.reason === "confirmation_undeclared" ||
+          error.reason === "commit_marks_undeclared" ||
+          error.reason === "commit_marks_unentered" ||
+          error.reason === "confirmation_unrecorded" ||
+          error.reason === "contract_input_mismatch" ||
+          error.reason === "contract_output_mismatch"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
+              ? { inputIssues: error.inputIssues }
+              : error.reason === "contract_output_mismatch" &&
+                  error.outputIssues !== undefined &&
+                  error.outputIssues.length > 0
+                ? { outputIssues: boundedOutputIssues(error.outputIssues) }
+                : {},
+            (error.reason === "confirmation_undeclared"
+              ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
+              : error.reason === "commit_marks_undeclared"
+                ? "Not published: the composed script names none of its commit steps. List every step that can change the site (an autosave, a saved form step, the final submit) in order as write.commits, such as commits: ['save-address', 'place-order'], using short lowercase hyphenated names, and mark each with the context's enteringCommit(name) right before the execute call that can send it (an HTTP implementation calls journal.enteringCommit(name) before that request). Opening a form and typing into its fields are not commit steps unless the site's requests show they save the caller's change; a lookup, suggestion, validation or analytics request saves nothing. Then call finish_build again with the same executionId."
+                : error.reason === "commit_marks_unentered"
+                  ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnReadBack === true ? `${readBackPublication} ` : ""}${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : error.publishesOnReadBack === true ? "If the session's steps entered none for any other reason, it cannot publish" : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
+                  : error.reason === "confirmation_unrecorded"
+                    ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
+                    : error.reason === "contract_input_mismatch"
+                      ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty or in place of one the tool refused (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
+                      : request.mode === "maintenance" && buildEffect !== "write"
+                        ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
+                        : request.mode === "maintenance"
+                          ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
+                          : buildEffect === "write"
+                            ? "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId."
+                            : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
+              (error.reason === "contract_output_mismatch" &&
+              request.mode === "maintenance" &&
+              buildEffect !== "write"
+                ? ""
+                : " The host extracts the contract offline; never run the write or the example again for this."),
+          );
+        return undefined;
+      };
       /**
        * A registry refusal of a reviewed publication. A check the minter's metadata or source
        * decides goes back to it to fix, with no cap; any other refusal ends the attempt with its
@@ -6166,6 +6419,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               if (questionOnly) return yield* new MintFailure({ code: "ScopeDenied" });
               yield* active("publication");
               hostRefusalRepeated = false;
+              alsoRefusedReplies = [];
               // Whatever finish_build answers is the attempt's latest stop now, not a test
               // browser's site block.
               testBrowserBlocked = false;
@@ -6558,13 +6812,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // make available is an infrastructure gap, a refusal the host asks only once, such
               // as a one-time login URL, is advice: finishing again publishes, and the ask to test
               // an HTTP version is one the minter always settles itself.
-              const hostChecksRefused =
-                publication._tag === "Left" &&
-                publication.left.code === "PublicationUnavailable" &&
-                !publicationOutage(publication.left) &&
-                publication.left.reason !== "example_output_unavailable" &&
-                !askedOnceReasons.has(publication.left.reason ?? "") &&
-                !httpVersionAskReasons.has(publication.left.reason ?? "");
+              // A Guardian denial may carry host refusals of the same submission in alsoRefused:
+              // the build then did not get past the host's checks either.
+              const hostRefusal =
+                publication._tag === "Right"
+                  ? undefined
+                  : [publication.left, ...(publication.left.alsoRefused ?? [])].find(
+                      (refusal) =>
+                        refusal.code === "PublicationUnavailable" &&
+                        !publicationOutage(refusal) &&
+                        refusal.reason !== "example_output_unavailable" &&
+                        !askedOnceReasons.has(refusal.reason ?? "") &&
+                        !httpVersionAskReasons.has(refusal.reason ?? ""),
+                    );
+              const hostChecksRefused = hostRefusal !== undefined;
               // A submission the host already refused, sent again with nothing changed after a
               // later finish_build got past that refusal, is refused the same way again: no new
               // host refusal, so a minter cannot make a basis for host_refused by repeating one.
@@ -6581,13 +6842,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 hostRefusedSubmissions = [...hostRefusedSubmissions, refusedSubmission].slice(
                   -rememberedRefusedSubmissions,
                 );
-              if (hostChecksRefused && !hostRefusalRepeated)
+              if (hostRefusal !== undefined && !hostRefusalRepeated)
                 refuseByHost({
                   source: "publication",
-                  code: publication.left.code,
-                  ...(publication.left.reason === undefined
-                    ? {}
-                    : { reason: publication.left.reason }),
+                  code: "PublicationUnavailable",
+                  ...(hostRefusal.reason === undefined ? {} : { reason: hostRefusal.reason }),
                 });
               if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
@@ -6662,6 +6921,47 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               if (publication._tag === "Left") {
                 const error = publication.left;
+                // Every other refusal the host found in this submission goes back with this one,
+                // so one revision fixes them all. A host's own reason core has no text for says
+                // what to do in its review rationale, screened like any other.
+                alsoRefusedReplies = yield* Effect.forEach(
+                  error.alsoRefused ?? [],
+                  (other): Effect.Effect<object> =>
+                    Effect.gen(function* () {
+                      const known = fixableRefusal(
+                        other,
+                        (code, reason, details, instruction) => ({
+                          reply: { code, reason, ...details, instruction },
+                          instruction,
+                        }),
+                        other.review === undefined ? undefined : yield* minterReview(other.review),
+                      );
+                      // A listed refusal that names its fix keeps that fix on record as the
+                      // refusal it answers with does, for a host_refused report on it.
+                      if (known !== undefined) {
+                        if (other.reason !== undefined && namedStepReasons.has(other.reason)) {
+                          const told = yield* screenMintText(dependencies, known.instruction).pipe(
+                            Effect.map((screened) =>
+                              capped(screened.trim(), ledgerBounds.instructionChars),
+                            ),
+                            Effect.orElseSucceed(() => ""),
+                          );
+                          if (told === "") namedStepInstructions.delete(other.reason);
+                          else namedStepInstructions.set(other.reason, told);
+                        }
+                        return known.reply;
+                      }
+                      if (other.review?.rationale === undefined)
+                        return { code: other.code, reason: other.reason };
+                      const instruction = capped(
+                        (yield* screenRationale(other.review.rationale)).trim(),
+                        ledgerBounds.instructionChars,
+                      );
+                      if (other.reason !== undefined && rationaleStepReasons.has(other.reason))
+                        namedStepRationales.set(other.reason, instruction);
+                      return { code: other.code, reason: other.reason, instruction };
+                    }),
+                );
                 const outputUnavailable =
                   error.code === "PublicationUnavailable" &&
                   error.reason === "example_output_unavailable";
@@ -6889,227 +7189,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       "Not published: the source this repair would publish is byte for byte the registered revision's, so there is nothing to publish. A new name or description alone is not a repair. The registered revision stays current and this repair ends here; do not call finish_build again.",
                   });
                 }
-                // Deterministic, before any review: the minter fixes the extraction, or the owner
-                // confirms a contract change. It is neither a review nor an outage.
-                if (error.reason === "output_obligation_weakened")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { weakenedOutputs: error.weakenedOutputs ?? [] },
-                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
-                      buildEffect === "write"
-                        ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
-                        : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
-                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
-                  );
-                // A host's own comparison with the published tool's inputs: exactly its fixed
-                // instruction, with each broken input as data.
-                if (error.reason === "input_contract_changed")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { brokenInputs: error.brokenInputs ?? [] },
-                    inputContractChangedInstruction(buildEffect === "write"),
-                  );
-                if (error.reason === "tool_name_taken")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published and not reviewed: ${registryRefusal("tool_name_taken").instruction}`,
-                  );
-                if (error.reason === "site_metadata_required")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
-                  );
-                if (error.reason === "output_checks_blocked")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { outputFindings: error.outputFindings ?? [] },
-                    outputChecksRefusal(error.outputFindings ?? []),
-                  );
-                if (error.reason === "variants_unsupported")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: this Kernel script declares supportedVariants, and only Effect runs dispatch variants, so every call would fail with InvalidOutput. Either remove supportedVariants from the tool's metadata (keep one script that handles the variation itself) and call finish_build again with the same executionId; the recorded example and result stay valid and nothing needs to run again. Or, if variants are essential, make it an offline tool: execute a new example with target pureFiles, then call finish_build with that new executionId. The same executionId is refused again while its receipt is a Kernel script.",
-                  );
-                if (
-                  error.reason === "http_implementation_untested" ||
-                  error.reason === "http_implementation_stale"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    // A host's rationale names what it still waits on, such as the cases the
-                    // HTTP version has not run.
-                    review === undefined ? {} : { review },
-                    (error.reason === "http_implementation_stale"
-                      ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
-                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once against the example and runs every case it ran on src/tool.mjs on it too. Then call finish_build again with the same executionId.") +
-                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host may ask again at every finish_build until one of these holds: calling again unchanged, or deleting the file, does not answer it.",
-                  );
-                if (error.reason === "login_url_one_time")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { ...error.publicationFeedback },
-                    "Not published yet: the login URL this tool would publish (the loginUrl you passed to authenticate, or the page the browser was on when you passed none) is one authorization request or one browser's session: an identity provider's authorize URL, a URL carrying one-time authorization values, or one carrying a device or session identifier the site put in the link for this browser (oneTimeParameters names the authorize path and those parameters, never their values). They are spent once this sign-in ends or belong to this browser, so later runs that reopen it would start from stale values or another browser's session. The host changed nothing. Navigate the browser to the site's stable sign-in entry, the page a person would bookmark or the site's own login link before it redirected, run authenticate again with that page's address as loginUrl, then call finish_build again with the same executionId. If no stable entry exists, call finish_build again and the host publishes the URL as it is, flagged. The host asks only once.",
-                  );
-                if (
-                  error.reason === "login_url_contains_credential" ||
-                  error.reason === "metadata_contains_credential"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { ...error.publicationFeedback },
-                    "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
-                  );
-                if (error.reason === "sign_in_version_refused")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { signInFindings: error.publicationFeedback?.signInFindings ?? [] },
-                    "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
-                  );
-                if (error.reason === "definition_login_reference") {
-                  const section = error.screening?.section;
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { section },
-                    `Not published: the tool's ${section ?? "definition"} quotes this build's account reference, an opaque value the host gave this build to identify its login (such as an inspection's accountScope). It means nothing to a caller and is never published. ${definitionFix(section)} The existing example and result remain recorded.`,
-                  );
-                }
-                if (error.reason === "secret_handle") {
-                  const path = error.screening?.path ?? "the source";
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { path: error.screening?.path },
-                    `Not published: ${path} holds a {{secret.…}} handle. A handle works only in this build's own executions, where the host fills in the caller's answer; published code never holds a handle or a value. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then call finish_build again.`,
-                  );
-                }
-                if (error.reason === "file_handle")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: the source holds a {{file.…}} handle, which names a caller's file only in this build. A tool takes each file from its input: type the field as FileInput and pass the input's value to files.place. Remove the handle from the source, then call finish_build again.",
-                  );
-                if (error.reason === "file_readback")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: the source moves or reads a file outside the host's file service. Rule: ${fileReadbackRule}. Remove that code, then call finish_build again.`,
-                  );
-                if (error.reason === "card_readback")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: the source fills a card and could read it back. Rule: ${cardReadbackRule}. Remove that code, then call finish_build again.`,
-                  );
-                if (
-                  error.reason === "session_token_literal" ||
-                  error.reason === "session_token_placeholder"
-                ) {
-                  const path = error.screening?.path ?? "the source";
-                  const placeholder = error.reason === "session_token_placeholder";
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { path: error.screening?.path, section: error.screening?.section },
-                    placeholder
-                      ? `Not published: ${path} still reads [session token withheld] where an earlier release withheld a live token, so it no longer matches what ran. Do not paste a token back in: edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded.`
-                      : error.screening?.section === "loginUrl"
-                        ? "Not published: the login URL holds a literal session token observed during sign-in. Run authenticate again with the site's stable sign-in page URL, without the token, then call finish_build again with the same executionId. The host keeps the URL unchanged for your HTTP work and does not end this build."
-                        : `Not published: ${path} holds a literal session token from captures/session-tokens.json. Published code never contains a token. Edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded. Your workspace keeps the token for your own HTTP work. If the file is src/tool-http.mjs, run its live test again first, because the edit invalidates the last one.`,
-                  );
-                }
-                if (error.reason === "confirm_action_unmatched")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { confirmActionIds: error.confirmActionIds ?? [] },
-                    "Not published: the session accepted confirm popups reported to decideDialog under these step names, and the composed script does not report them under the same names. Reuse each step literal exactly, for example by importing the step's helper, so runs accept the same popups without asking; then call finish_build again with the same executionId. Never run the write again.",
-                  );
-                if (error.reason === "write_not_submitted")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, or the site already shows the requested change done, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
-                  );
-                if (error.reason === "write_path_unfinished")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { writePathMarks: error.writePathMarks ?? [] },
-                    writePathUnfinishedInstruction(error),
-                  );
-                if (error.reason === "write_path_undeclared")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { writePathMarks: error.writePathMarks ?? [] },
-                    "Not published: the composed script leaves out commit marks of the session's recorded write path from write.commits; writePathMarks names them. Run every step of the path in the composed script, marked by the same helper the session used, declare every mark in order, and call finish_build again with the same executionId. Never run the write again.",
-                  );
-                if (error.reason === "refusal_unreadable")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
-                  );
-                if (
-                  error.reason === "confirmation_undeclared" ||
-                  error.reason === "commit_marks_undeclared" ||
-                  error.reason === "commit_marks_unentered" ||
-                  error.reason === "confirmation_unrecorded" ||
-                  error.reason === "contract_input_mismatch" ||
-                  error.reason === "contract_output_mismatch"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
-                      ? { inputIssues: error.inputIssues }
-                      : error.reason === "contract_output_mismatch" &&
-                          error.outputIssues !== undefined &&
-                          error.outputIssues.length > 0
-                        ? { outputIssues: boundedOutputIssues(error.outputIssues) }
-                        : {},
-                    (error.reason === "confirmation_undeclared"
-                      ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
-                      : error.reason === "commit_marks_undeclared"
-                        ? "Not published: the composed script names none of its commit steps. List every step that can change the site (an autosave, a saved form step, the final submit) in order as write.commits, such as commits: ['save-address', 'place-order'], using short lowercase hyphenated names, and mark each with the context's enteringCommit(name) right before the execute call that can send it (an HTTP implementation calls journal.enteringCommit(name) before that request). Opening a form and typing into its fields are not commit steps unless the site's requests show they save the caller's change; a lookup, suggestion, validation or analytics request saves nothing. Then call finish_build again with the same executionId."
-                        : error.reason === "commit_marks_unentered"
-                          ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnReadBack === true ? `${readBackPublication} ` : ""}${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : error.publishesOnReadBack === true ? "If the session's steps entered none for any other reason, it cannot publish" : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
-                          : error.reason === "confirmation_unrecorded"
-                            ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
-                            : error.reason === "contract_input_mismatch"
-                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty or in place of one the tool refused (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
-                              : request.mode === "maintenance" && buildEffect !== "write"
-                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
-                                : request.mode === "maintenance"
-                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
-                                  : buildEffect === "write"
-                                    ? "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId."
-                                    : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
-                      (error.reason === "contract_output_mismatch" &&
-                      request.mode === "maintenance" &&
-                      buildEffect !== "write"
-                        ? ""
-                        : " The host extracts the contract offline; never run the write or the example again for this."),
-                  );
+                const fixable = fixableRefusal(error, notPublished, review);
+                if (fixable !== undefined) return fixable;
                 if (error.reason === "destination_validation") {
                   // Publication uses the route evidence the host recorded while the example ran.
                   // Source edits and another finish_build on the same receipt cannot change it,
