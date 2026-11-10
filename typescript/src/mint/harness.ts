@@ -555,7 +555,10 @@ const namedStepReasons: ReadonlySet<string> = new Set([
  * host names the step in the refusal's review rationale. One names its step only when it carries
  * a rationale, and only then is a `host_refused` report sent back to it.
  */
-const rationaleStepReasons: ReadonlySet<string> = new Set(["no_match_case_untested"]);
+const rationaleStepReasons: ReadonlySet<string> = new Set([
+  "no_match_case_untested",
+  "list_limit_untested",
+]);
 /** How many host-refused submissions an attempt remembers, the latest kept, to tell a repeat. */
 const rememberedRefusedSubmissions = 8;
 /** An execution request for a sign-in step, read before it decodes. */
