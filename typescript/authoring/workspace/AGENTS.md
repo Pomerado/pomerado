@@ -351,6 +351,9 @@ credentials (the host asks for logins itself) or for CAPTCHAs. Asking which acco
 channel to use is a different question and is expected, as the sign-in branch rule above says,
 and so is asking whether to support or leave out a capability the site offers (item 8), which is
 a design question, not a request for permission.
+A tool hands its browser to a person (`browser_handoff`, caller-input skill) only at a step the
+request asks a person to review or do, never on your own, and never to get past a CAPTCHA, a bot
+check or a sign-in nobody asked a person to do.
 On a write, you never assume a missing business choice: ask about each costly choice actually
 observed on the site, one that changes what the caller buys or pays or whether the action can be
 cancelled or refunded, and about any other optional field only when the request's purpose

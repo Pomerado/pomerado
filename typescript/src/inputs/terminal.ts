@@ -1,7 +1,11 @@
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { Effect } from "effect";
 import { makeInputAsker } from "./callback.js";
-import { InputRequestFailure, publicOptionLabel } from "../runtime/input-request.js";
+import {
+  browserHandoffWaitMs,
+  InputRequestFailure,
+  publicOptionLabel,
+} from "../runtime/input-request.js";
 import type { InputAnswers, Question } from "../runtime/input-request.js";
 
 /**
@@ -169,6 +173,12 @@ const answerQuestion = (question: Question): Effect.Effect<unknown, InputRequest
       case "choice":
       case "multi_choice":
         return yield* answerChoices(question);
+      // The person works in the run's own browser window; Enter hands it back.
+      case "browser_handoff":
+        yield* line(
+          `Do this in the open browser window. The run waits up to ${browserHandoffWaitMs / 60_000} minutes. Press Enter here once you are done: `,
+        );
+        return { done: true };
     }
   });
 

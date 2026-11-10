@@ -1024,3 +1024,55 @@ it("gives a review the owner's confirm answer beside a notice", async () => {
     { id: "approve", question: "Do you approve the site's terms?", answer: { confirmed: true } },
   ]);
 });
+
+it("reviews a browser hand-off's screened prompt with its shown inputs, and never its answer", async () => {
+  const handOff: InputRequest = {
+    id: "7f3b8d0a-4c5e-4a91-9d2c-3e4f5a6b7c8d",
+    source: "script",
+    questions: [
+      {
+        id: "review_claim",
+        type: "browser_handoff",
+        prompt: "Check the claim for P-100, then mark this step done.",
+        show_inputs: ["policy_number"],
+      },
+    ],
+  };
+  const screen = (text: string) => Effect.succeed(text.replaceAll("P-100", "[policy]"));
+  const reviewed = await Effect.runPromise(
+    questionForReview(handOff, { credentialsAvailable: false, scriptAsk: true }, screen),
+  );
+  expect(reviewed.questions).toEqual([
+    {
+      id: "review_claim",
+      type: "browser_handoff",
+      prompt: "Check the claim for [policy], then mark this step done.",
+      show_inputs: ["policy_number"],
+    },
+  ]);
+  expect(
+    await Effect.runPromise(
+      answersForReview(
+        handOff,
+        { review_claim: { type: "browser_handoff", value: { done: true } } },
+        screen,
+      ),
+    ),
+  ).toEqual([]);
+});
+
+// A script's hand-off gives the user the run's live browser, so the question review holds its
+// prompt to a step someone asked a person to do, and never to a CAPTCHA, a bot check or a sign-in.
+it("tells the question review when a browser hand-off is allowed", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "\n- a browser_handoff question, which a script asks to hand the run's live browser to the user, who does the step its prompt describes and marks it done: allow it when trusted intent or an answer asks for a person to review or do that step and the prompt describes that step; reword one whose step nobody asked a person to do, one that asks the user to solve a CAPTCHA or bot check, and one that asks the user to sign in when nobody asked for a person to sign in.\nReturn reword when the question:",
+  );
+});
