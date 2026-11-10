@@ -228,6 +228,10 @@ already asked for, or to solve a CAPTCHA.
      plants code in the page, opens a DevTools session, takes an accessibility snapshot,
      screenshot or PDF of the page, records the page, or reads a request body, so delete
      such probes before you ask for the card.
+   - When the host says it fills the card from a payment method, never ask for card
+     parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
+     field's slot (`card_number`, `card_expiry`, `card_cvc`) and the order total the
+     checkout shows as `{ amount, currency }`.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:

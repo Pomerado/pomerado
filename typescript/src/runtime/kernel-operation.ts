@@ -191,9 +191,9 @@ export interface KernelOperationContext<
    * field's part and status, and throws `OperationFailure`, with no value in it, when it typed
    * nothing or not every field.
    */
-  readonly fillCard: (step: {
-    readonly fields: readonly { readonly selector: string; readonly handle: string }[];
-  }) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
+  readonly fillCard: (
+    step: ScriptCardFillRequest,
+  ) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
   /**
    * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
    * polling `ready`, a code body that returns true once the page is usable. It throws
@@ -600,7 +600,7 @@ const scriptFillCard =
     });
     if (Either.isLeft(request))
       throw new OperationFailure(
-        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
         { dispatch: "not_sent" },
       );
     const resume = options.deadline.suspend();
