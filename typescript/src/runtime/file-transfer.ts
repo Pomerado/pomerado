@@ -593,6 +593,9 @@ export const makeRunFiles = (options: {
                   failed("over_max");
                   continue;
                 }
+                // The host stops once the first `room` ended, so one past them may still be
+                // running; it goes over the run's caps however far it got.
+                if (index >= room) return yield* refuseOverCap("run_limit");
                 if ("ended" in download) {
                   failed(download.ended);
                   continue;

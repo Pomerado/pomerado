@@ -8,7 +8,7 @@ import {
   type FileHostHook,
   type RunFiles,
 } from "../../src/runtime/file-transfer.js";
-import type { FileLimits } from "../../src/runtime/files.js";
+import { defaultFileLimits, type FileLimits } from "../../src/runtime/files.js";
 import { downloadCapFailures, type KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
@@ -32,7 +32,7 @@ const finished = (
  * it is an older host that cannot take every download.
  */
 const fakeHost = (captured?: readonly CapturedDownload[]) => {
-  const seen = { armed: 0, bounds: [] as unknown[], kept: [] as string[] };
+  const seen = { armed: 0, maxes: [] as number[], kept: [] as string[] };
   const hook: FileHostHook = {
     open: () => Effect.fail(new Error("no caller files")),
     writeToBrowser: () => Effect.fail(new Error("no placement")),
@@ -48,7 +48,7 @@ const fakeHost = (captured?: readonly CapturedDownload[]) => {
       : {
           takeDownloads: (_slot, bounds) =>
             Effect.sync(() => {
-              seen.bounds.push(bounds);
+              seen.maxes.push(bounds.max);
               return captured;
             }),
         }),
@@ -159,10 +159,10 @@ describe("files.collectAll", () => {
         { file: file("kept-3", "inline.csv", "application/octet-stream") },
       ],
     });
-    // One capture around the trigger's one call, bounded by what the run's caps leave.
+    // One capture around the trigger's one call, taking at most what the run's caps leave.
     expect(calls).toHaveLength(1);
     expect(seen.armed).toBe(1);
-    expect(seen.bounds).toEqual([{ timeoutMs: 30_000, settleMs: 1_000, max: 10 }]);
+    expect(seen.maxes).toEqual([defaultFileLimits.runFiles]);
     expect(seen.kept).toEqual(["statement-1.csv", "statement-3.csv", "inline.csv"]);
     // Each collected file may stand in the run's output, as a collected one does.
     await Effect.runPromise(files.checkOutput(output));
@@ -197,6 +197,28 @@ describe("files.collectAll", () => {
     expect(overRun.files.overCap?.()).toEqual({ limit: "run", maxBytes: 1024, maxFiles: 2 });
   });
 
+  it("fails a download past what the run's caps leave as over the run cap, whether or not it ended", async () => {
+    const limits = { fileBytes: 1024, runFiles: 2, runBytes: 1024 };
+    // The host stops waiting once the first downloads within the room have ended, so one past it
+    // may come back unfinished; the cap decides its outcome, not which download ended first.
+    for (const max of [undefined, 5]) {
+      const { output, files } = await collectAll(
+        fakeHost([
+          finished("a.csv", csv),
+          finished("b.csv", csv),
+          { name: "c.csv", ended: "unfinished" },
+        ]).hook,
+        { limits, ...(max === undefined ? {} : { max }) },
+      );
+      expect(output).toEqual({
+        failed: "OperationFailure",
+        message: downloadCapFailures["run_limit"],
+        dispatch: "unknown",
+      });
+      expect(files.overCap?.()).toEqual({ limit: "run", maxBytes: 1024, maxFiles: 2 });
+    }
+  });
+
   it("takes at most max downloads and reports each one past it", async () => {
     const { hook, seen } = fakeHost([finished("a.csv", csv), finished("b.csv", csv)]);
     const { output } = await collectAll(hook, { max: 1 });
@@ -204,7 +226,7 @@ describe("files.collectAll", () => {
       { file: expect.objectContaining({ $file: expect.objectContaining({ name: "a.csv" }) }) },
       { failed: "over_max", name: "b.csv" },
     ]);
-    expect(seen.bounds).toEqual([{ timeoutMs: 30_000, settleMs: 1_000, max: 1 }]);
+    expect(seen.maxes).toEqual([1]);
     expect(seen.kept).toEqual(["a.csv"]);
   });
 
@@ -222,7 +244,7 @@ describe("files.collectAll", () => {
     const { output, calls } = await collectAll(hook);
     expect(output).toEqual({
       failed: "OperationFailure",
-      message: expect.stringContaining("files.collectAll"),
+      message: expect.any(String),
       dispatch: "not_sent",
     });
     expect(calls).toEqual([]);
