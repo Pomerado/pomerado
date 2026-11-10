@@ -27,6 +27,7 @@ import type {
 } from "../runtime/policy-metadata.js";
 import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
+import { cardFillFields } from "../runtime/script-card-fill.js";
 import { DownloadCap } from "../runtime/files.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
@@ -902,22 +903,15 @@ export type SignInStep = typeof SignInStep.Type;
 
 /**
  * A host card-fill step: the payment card fields on the checkout showing now, each with the card
- * handle the host types into it. It clicks nothing. Each handle is a card answer's, named once.
+ * handle the host types into it, or each with its card slot and the checkout's total for a host
+ * that fills a payment method. It clicks nothing. Each handle is a card answer's, named once.
  */
-export const CardFillStep = Schema.Struct({
-  fields: Schema.Array(
-    Schema.Struct({
-      selector: SignInSelector,
-      handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
-    }),
-  ).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(4),
-    Schema.filter((fields) => new Set(fields.map((field) => field.handle)).size === fields.length, {
-      message: () => "name each card handle once",
-    }),
-  ),
-});
+export const CardFillStep = cardFillFields(
+  Schema.Struct({
+    selector: SignInSelector,
+    handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
+  }),
+);
 export type CardFillStep = typeof CardFillStep.Type;
 
 /** A commit mark's name, as a script's `enteringCommit` takes it and its contract declares it. */

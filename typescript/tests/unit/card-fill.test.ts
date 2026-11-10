@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { inspectAutofillStep, untrustedTarget } from "../../src/destinations/autofill-step.js";
 import type { AutofillStep, FillSlot } from "../../src/destinations/autofill-step.js";
 import { makeRunCardHandles, runCardFill, scriptAnswers } from "../../src/destinations/card-fill.js";
-import type { CardFillReview } from "../../src/destinations/card-fill.js";
+import type { CardFillFields, CardFillReview } from "../../src/destinations/card-fill.js";
 import {
   isCardSlot,
   onPaymentFrameOrigin,
@@ -68,13 +68,15 @@ const scriptedPage = (
     readonly swappedAt?: number;
     readonly swappedTo?: string;
     readonly swappedActions?: readonly string[];
+    /** How many of Stripe's fields the page shows, from the first. */
+    readonly fields?: number;
   } = {},
 ) => {
   const calls: string[] = [];
   const frameUrl = options.frameUrl ?? stripeFrame;
   const topUrl = options.topUrl ?? checkout;
   const targets = (url: string) =>
-    stripeFields.map((field) => ({
+    stripeFields.slice(0, options.fields).map((field) => ({
       target: {
         ...target(url),
         ...(options.ancestors === undefined ? {} : { ancestors: options.ancestors }),
@@ -154,20 +156,32 @@ const run = (
     readonly swappedAt?: number;
     readonly swappedTo?: string;
     readonly swappedActions?: readonly string[];
-    readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => {
-      readonly fields: readonly { readonly selector: string; readonly handle: string }[];
-    };
+    readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => CardFillFields;
+    readonly fillVia?: Parameters<typeof runCardFill>[0]["fillVia"];
   } = {},
 ) => {
   const { handles, handle } = issued();
-  const { page, calls } = scriptedPage(options);
+  const step = (options.step ?? stripeStep)(handle);
+  const { page, calls } = scriptedPage({ ...options, fields: step.fields.length });
   const typed: string[] = [];
   const reviews: CardFillReview[] = [];
   const fenced: string[] = [];
   const outcome = Effect.runPromise(
     runCardFill({
-      step: (options.step ?? stripeStep)(handle),
-      handles,
+      step,
+      // A host that fills a payment method never reads a card answer.
+      handles:
+        options.fillVia === undefined
+          ? handles
+          : {
+              kindOf: () => {
+                throw new Error("read a card answer");
+              },
+              cardValues: () => {
+                throw new Error("read a card answer");
+              },
+            },
+      ...(options.fillVia === undefined ? {} : { fillVia: options.fillVia }),
       page,
       keyboard: {
         insertText: (_target, text) =>
@@ -400,6 +414,71 @@ describe("a card-fill step", () => {
     expect(result.observations).toContain("top document is not on this site");
     expect(typed).toEqual([]);
     expect(reviews).toEqual([]);
+  });
+});
+
+describe("a card-fill step the host fills from a payment method", () => {
+  const total = { amount: "12.50", currency: "USD" };
+  const slotStep = () => ({
+    fields: [
+      { selector: "#payment-numberInput", slot: "card_number" as const },
+      { selector: "#payment-expiryInput", slot: "card_expiry" as const },
+      { selector: "#payment-cvcInput", slot: "card_cvc" as const },
+    ],
+    total,
+  });
+  const hostFill = () => {
+    const filledBy: Parameters<NonNullable<Parameters<typeof runCardFill>[0]["fillVia"]>>[0][] = [];
+    const fillVia: Parameters<typeof runCardFill>[0]["fillVia"] = (checked) =>
+      Effect.sync(() => {
+        filledBy.push(checked);
+        return {
+          outcome: "filled" as const,
+          fields: checked.step.fields.map(({ slot }) => ({ slot, status: "filled" as const })),
+          submit: "none" as const,
+          url: checkout,
+          typed: true,
+        };
+      });
+    return { filledBy, fillVia };
+  };
+
+  it("hands the checked fields and the total to the host after review, reading no card answer", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed, reviews, fenced } = run({ step: slotStep, fillVia });
+    const result = await outcome;
+    expect(result.status).toBe("filled");
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "filled",
+      fields: ["card_number", "card_expiry", "card_cvc"].map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(typed).toEqual([]);
+    expect(fenced).toEqual(["before typing"]);
+    expect(reviews.map((review) => review.step)).toEqual([slotStep()]);
+    expect(filledBy).toHaveLength(1);
+    expect(filledBy[0]?.total).toEqual(total);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    expect(filledBy[0]?.inspection.page).toBe(reviews[0]?.page);
+  });
+
+  it("refuses card fields in a frame off the list before the host fills", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, reviews } = run({
+      step: slotStep,
+      fillVia,
+      frameUrl: "https://evil-pay.example/card.html",
+    });
+    expect((await outcome).status).toBe("refused");
+    expect(reviews).toEqual([]);
+    expect(filledBy).toEqual([]);
+  });
+
+  it("is refused by a host that doesn't fill payment methods", async () => {
+    const { outcome, typed, reviews, calls } = run({ step: slotStep });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toBe("This host doesn't fill payment methods.");
+    expect([typed, reviews, calls]).toEqual([[], [], []]);
   });
 });
 
