@@ -839,6 +839,31 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       );
   });
 
+  // Fails while Guardian sees only the request's intent: a substitute example or live test case on
+  // another example input the caller sent then reads as values the agent chose, and one naming a
+  // record the caller gave, such as an order number, is denied.
+  it("shows Guardian the other example inputs the caller sent with the request", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    const others = [{ order: "SYNTHETIC-ORDER-2" }, { order: "SYNTHETIC-ORDER-3" }];
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(
+        {
+          ...pending,
+          screenedInput: JSON.stringify(others[0]),
+          screenedOtherExampleInputs: JSON.stringify(others),
+        },
+        readEntrypoint,
+      ),
+    );
+    expect(instructionsOf(requests[0])).toContain(
+      `trusted_request: ${JSON.stringify({ intent: pending.screenedIntent, otherExampleInputs: others })}`,
+    );
+  });
+
   // A change on a site that refuses to submit with the option off may still keep it on: every
   // sentence that limits a request to keep one on keeps that exception.
   it("lets a requested change keep a safety default on when the site refuses to submit with it off", async () => {

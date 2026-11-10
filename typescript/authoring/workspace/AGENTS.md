@@ -583,13 +583,18 @@ finally-style block, so the revert runs on every path, errors and timeouts inclu
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+The request's `otherExampleInputs`, when present, are more inputs the caller gave as examples
+after `businessInput`, in their order. A read's example runs `businessInput` first, and its live
+tests keep a case on each of the others (testing skill). A write runs only `businessInput`.
+
 A read's example record from the caller that the site can't serve, such as a link that moved or
 lost its ID, a record the site says it doesn't have, or a value it refuses, doesn't block the
 build. Have the tool refuse it with `InvalidInput` naming the field, in the site's words
 (caller-input skill), and run the example on it once: that refusal is the tool's error case for
-that input. Then prove the tool on another record of the same kind: one the site lists, passed
-as `exampleInput` on the example, or, only when you find none on the site, one the caller gives
-through `request_input`. Keep a live test case on the caller's input that expects
+that input. Then prove the tool on another record of the same kind, passed as `exampleInput` on
+the example: the first of the caller's `otherExampleInputs` the site serves, else one the site
+lists, or, only when you find none on the site, one the caller gives through `request_input`.
+Keep a live test case on the caller's input that expects
 `invalid_input`, and publish against the example that passed. When neither the site nor the
 caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
 and the site's answer. A write runs the caller's input as it is.

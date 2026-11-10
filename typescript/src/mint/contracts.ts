@@ -653,6 +653,13 @@ export const MintRequest = Schema.Struct({
   mode: Schema.Literal("mint", "maintenance"),
   intent: Schema.String.pipe(Schema.minLength(1)),
   businessInput: Schema.Unknown,
+  /**
+   * More example inputs the caller sent beside `businessInput`, in the caller's order. A read's
+   * example runs `businessInput` first; these are the caller's own values for its live tests and,
+   * once the tool refused `businessInput` with `InvalidInput`, for an example in its place. A
+   * write runs only `businessInput`. Absent when the caller sent one example.
+   */
+  otherExampleInputs: Schema.optional(Schema.Array(Schema.Unknown).pipe(Schema.maxItems(9))),
   observations: Schema.Unknown,
   siteOrigin: Schema.optional(Schema.String.pipe(Schema.maxLength(2048))),
   /**
