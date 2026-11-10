@@ -173,6 +173,7 @@ async ({files}) => ({
   link: await files.screenshot({ selector: "a" }),
   viewport: await files.screenshot({ selector: undefined, fullPage: undefined }),
   missing: await files.screenshot({ selector: "#missing", timeoutMs: 500 }).then(() => null, (error) => error.message),
+  positional: await files.screenshot("a").then(() => null, (error) => error.message),
 }));`,
     },
     contractJsonSchema(Schema.Struct({})),
@@ -202,6 +203,8 @@ async ({files}) => ({
     expect((await png(output["viewport"])).width).toBe(page.width);
     expect(JSON.stringify(result)).not.toContain(page.base64.slice(0, 64));
     expect(String(output["missing"])).toContain("field_not_found");
+    // A selector passed alone, as to page.locator, names no target, never the viewport.
+    expect(String(output["positional"])).toContain("field_not_found");
   } finally {
     await served.close();
     await site.close();
