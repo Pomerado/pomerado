@@ -597,14 +597,9 @@ export const makeRunFiles = (options: {
                   failed(download.ended);
                   continue;
                 }
-                if (download.size > limits.fileBytes) {
-                  failed("too_large");
-                  continue;
-                }
-                if (!(yield* fits(download.size))) {
-                  failed("run_limit");
-                  continue;
-                }
+                // Over a cap, the take fails as `collect` does, marking the cap it went over.
+                if (download.size > limits.fileBytes) return yield* refuseOverCap("too_large");
+                if (!(yield* fits(download.size))) return yield* refuseOverCap("run_limit");
                 const bytes = yield* download.read.pipe(Effect.option);
                 if (bytes._tag === "None" || bytes.value.byteLength !== download.size) {
                   failed("unavailable");

@@ -22,7 +22,6 @@ import {
   FileField,
   FileRefused,
   SiteFileLimits,
-  type CollectedDownload,
   type FileChannel,
   type FileRefusalReason,
   type ScriptFiles,
@@ -473,18 +472,13 @@ const callerFileReasons: ReadonlySet<string> = new Set([
   "not_accepted",
 ]);
 
-/** What a download over each of the host's size caps is, as a failure names it. */
-const downloadCapWording = {
-  too_large: "over the host's size limit for one file (too_large)",
-  run_limit: "over the host's limit for one run's files (run_limit)",
-} as const;
 /**
  * A download the host refused over its size caps, as the script's failure: the page made the
  * file, so it is the host's limit, never the caller's input, and the message names the cap.
  */
 export const downloadCapFailures: Partial<Record<FileRefusalReason, string>> = {
-  too_large: `The downloaded file is ${downloadCapWording.too_large}`,
-  run_limit: `The downloaded file is ${downloadCapWording.run_limit}`,
+  too_large: "The downloaded file is over the host's size limit for one file (too_large)",
+  run_limit: "The downloaded file is over the host's limit for one run's files (run_limit)",
 };
 
 /**
@@ -502,6 +496,18 @@ const fileFailure = (error: unknown, afterCalls = false) => {
     dispatch:
       afterCalls || refused === undefined || refused.dispatched === true ? "unknown" : "not_sent",
   });
+};
+
+/**
+ * A failed take of a trigger's downloads, by `files.collect` or `files.collectAll`: a download
+ * over the host's caps fails with the cap's own wording, which a build's host reads as its file
+ * cap; any other refusal as `fileFailure` after the trigger's calls.
+ */
+const collectFailure = (error: unknown) => {
+  const overCap = error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+  return overCap === undefined
+    ? fileFailure(error, true)
+    : new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
 };
 
 /**
@@ -580,11 +586,7 @@ const scriptFiles = (
       try {
         return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
-        const overCap =
-          error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
-        if (overCap !== undefined)
-          throw new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
-        throw fileFailure(error, true);
+        throw collectFailure(error);
       }
     },
     collectAll: async (trigger, collectOptions) => {
@@ -617,38 +619,15 @@ const scriptFiles = (
         collectOptions?.timeoutMs ?? downloadWaitMs,
         Math.max(0, options.deadline.remainingMs()),
       );
-      let downloads: readonly CollectedDownload[];
       try {
-        downloads = await settle(
+        return await settle(
           collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
         );
       } catch (error) {
-        throw fileFailure(error, true);
+        throw collectFailure(error);
       }
-      const overCap = downloadCapsExceeded(downloads);
-      if (overCap !== undefined) throw new OperationFailure(overCap, { dispatch: "unknown" });
-      return downloads;
     },
   };
-};
-
-/**
- * Why downloads `files.collectAll` saw are over the host's caps, naming each cap and which
- * downloads, by their place in the order they began; undefined when none is.
- */
-const downloadCapsExceeded = (downloads: readonly CollectedDownload[]) => {
-  const reasons = (["too_large", "run_limit"] as const).flatMap((reason) => {
-    const places = downloads.flatMap((download, index) =>
-      "failed" in download && download.failed === reason ? [index + 1] : [],
-    );
-    if (places.length === 0) return [];
-    const named =
-      places.length === 1
-        ? `Download ${places[0]} of ${downloads.length} is`
-        : `Downloads ${places.slice(0, -1).join(", ")} and ${places.at(-1)} of ${downloads.length} are`;
-    return [`${named} ${downloadCapWording[reason]}`];
-  });
-  return reasons.length === 0 ? undefined : `${reasons.join("; ")}, in the order they began`;
 };
 
 /**

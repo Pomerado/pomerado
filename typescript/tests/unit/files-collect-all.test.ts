@@ -9,7 +9,7 @@ import {
   type RunFiles,
 } from "../../src/runtime/file-transfer.js";
 import type { FileLimits } from "../../src/runtime/files.js";
-import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
+import { downloadCapFailures, type KernelExecuteClient } from "../../src/runtime/kernel-operation.js";
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 
@@ -168,7 +168,7 @@ describe("files.collectAll", () => {
     await Effect.runPromise(files.checkOutput(output));
   });
 
-  it("fails the run as the host's limit, naming the cap and which downloads are over it", async () => {
+  it("fails the run over the host's caps as files.collect does, marking the cap it went over", async () => {
     const overFile = await collectAll(
       fakeHost([
         finished("a.csv", csv),
@@ -177,20 +177,24 @@ describe("files.collectAll", () => {
       ]).hook,
       { limits: { fileBytes: csv.length * 2, runFiles: 10, runBytes: 1024 } },
     );
+    // The same failure a single download over the cap gives, so a build's host ends it as the
+    // host's file cap rather than as the script's own failure.
     expect(overFile.output).toEqual({
       failed: "OperationFailure",
-      message: expect.stringMatching(/2 and 3 of 3.*too_large/u),
+      message: downloadCapFailures["too_large"],
       dispatch: "unknown",
     });
+    expect(overFile.files.overCap?.()).toEqual({ limit: "file", maxBytes: csv.length * 2 });
     const overRun = await collectAll(
       fakeHost([finished("a.csv", csv), finished("b.csv", csv), finished("c.csv", csv)]).hook,
       { limits: { fileBytes: 1024, runFiles: 2, runBytes: 1024 } },
     );
     expect(overRun.output).toEqual({
       failed: "OperationFailure",
-      message: expect.stringMatching(/3 of 3.*run_limit/u),
+      message: downloadCapFailures["run_limit"],
       dispatch: "unknown",
     });
+    expect(overRun.files.overCap?.()).toEqual({ limit: "run", maxBytes: 1024, maxFiles: 2 });
   });
 
   it("takes at most max downloads and reports each one past it", async () => {

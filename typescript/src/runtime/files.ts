@@ -217,8 +217,6 @@ export const downloadUrlMaxLength = 2048;
  * - `canceled`: the browser canceled the download, or it failed before it finished.
  * - `unfinished`: the download had not finished when the wait ended; the host stops it.
  * - `over_max`: the download began after the call's `max` downloads.
- * - `too_large`, `run_limit`: the download is over the host's per-file cap, or over what the
- *   run's caps leave. A script never sees these: `files.collectAll` throws, naming the cap.
  * - `executable`: the download is a program.
  * - `unavailable`: the host could not read the downloaded file.
  */
@@ -226,8 +224,6 @@ export const DownloadFailureReason = Schema.Literal(
   "canceled",
   "unfinished",
   "over_max",
-  "too_large",
-  "run_limit",
   "executable",
   "unavailable",
 );
@@ -338,9 +334,8 @@ export interface ScriptFiles {
    * `https:` address when the browser reported one, for telling which item started it; never put
    * it in the output as the file. `max` bounds how many downloads it takes, by default what the
    * run's caps leave; each one past it is `over_max`. A download over the host's per-file cap,
-   * or over what the run's caps leave, throws an `OperationFailure` naming the cap and which
-   * downloads, by their place in that order, as `collect` throws. No download at all throws as
-   * `collect` does. A host that cannot take every download throws an `OperationFailure` before
+   * or over what the run's caps leave, throws the same `OperationFailure` naming the cap that
+   * `collect` throws. No download at all throws as `collect` does. A host that cannot take every download throws an `OperationFailure` before
    * the trigger runs.
    */
   readonly collectAll: (
