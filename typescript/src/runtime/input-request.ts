@@ -79,13 +79,23 @@ const Options = Schema.Array(InputOption).pipe(
 );
 
 const base = { id: QuestionId, prompt: Prompt };
-const choiceFields = { ...base, type: Schema.Literal("choice"), options: Options };
+/**
+ * The answer its asker recommends: the caller sees it, and an asker that goes on without an
+ * answer takes it. It is never the caller's answer, so it consents to nothing.
+ */
+const choiceFields = {
+  ...base,
+  type: Schema.Literal("choice"),
+  options: Options,
+  recommended: Schema.optional(OptionId),
+};
 const multiChoiceFields = {
   ...base,
   type: Schema.Literal("multi_choice"),
   options: Options,
   minSelections: Schema.Int.pipe(Schema.between(0, maximumOptions)),
   maxSelections: Schema.Int.pipe(Schema.between(1, maximumOptions)),
+  recommended: Schema.optional(Schema.Array(OptionId)),
 };
 const selectionsFitOptions = (question: {
   readonly minSelections: number;
@@ -95,6 +105,27 @@ const selectionsFitOptions = (question: {
   question.minSelections <= question.maxSelections &&
   question.maxSelections <= question.options.length;
 const selectionsMessage = { message: () => "selection bounds must fit the options" };
+/** A recommended choice names an offered option; a recommended multiple choice fits its bounds. */
+const recommendationOffered = (question: {
+  readonly options: readonly InputOption[];
+  readonly recommended?: string | readonly string[] | undefined;
+  readonly minSelections?: number | undefined;
+  readonly maxSelections?: number | undefined;
+}) => {
+  const { recommended } = question;
+  if (recommended === undefined) return true;
+  const picks = typeof recommended === "string" ? [recommended] : recommended;
+  return (
+    new Set(picks).size === picks.length &&
+    picks.every((id) => question.options.some((option) => option.id === id)) &&
+    (question.minSelections ?? 1) <= picks.length &&
+    picks.length <= (question.maxSelections ?? 1)
+  );
+};
+const recommendationMessage = {
+  message: () => "recommended must name offered options within the selection bounds",
+};
+
 /**
  * What the caller may write in their own words on a choice or a multiple choice. Every question
  * the minting agent asks allows both (`withOwnWords`); a script's choice allows its own text only
@@ -111,23 +142,33 @@ const ownWords = {
   /** The caller may add `note`, their own clarification, beside the options they pick. */
   allowNote: Schema.optional(Schema.Boolean),
 };
-export const ChoiceQuestion = Schema.Struct({ ...choiceFields, ...ownWords });
-export const MultiChoiceQuestion = Schema.Struct({ ...multiChoiceFields, ...ownWords }).pipe(
+const ChoiceFields = Schema.Struct({ ...choiceFields, ...ownWords });
+export const ChoiceQuestion = ChoiceFields.pipe(Schema.filter((question) => recommendationOffered(question), recommendationMessage));
+const MultiChoiceFields = Schema.Struct({ ...multiChoiceFields, ...ownWords });
+export const MultiChoiceQuestion = MultiChoiceFields.pipe(
   Schema.filter(selectionsFitOptions, selectionsMessage),
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
 );
 /**
  * A choice as the minting agent proposes it: whether the caller may answer in their own words is
  * the host's to say, never the agent's.
  */
-export const ProposedChoiceQuestion = Schema.Struct(choiceFields);
+const ProposedChoiceFields = Schema.Struct(choiceFields);
+export const ProposedChoiceQuestion = ProposedChoiceFields.pipe(
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
+);
 /** A multiple choice as the minting agent proposes it (see `ProposedChoiceQuestion`). */
-export const ProposedMultiChoiceQuestion = Schema.Struct(multiChoiceFields).pipe(
+const ProposedMultiChoiceFields = Schema.Struct(multiChoiceFields);
+export const ProposedMultiChoiceQuestion = ProposedMultiChoiceFields.pipe(
   Schema.filter(selectionsFitOptions, selectionsMessage),
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
 );
 export const TextQuestion = Schema.Struct({
   ...base,
   type: Schema.Literal("text"),
   maxLength: Schema.optional(Length),
+  /** The text its asker recommends (see `choiceFields`). */
+  recommended: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(maximumAnswerLength))),
 });
 export const ConfirmQuestion = Schema.Struct({
   ...base,

@@ -1958,6 +1958,18 @@ export const AgentRequest = Schema.Struct({
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
   /**
+   * Whether an answer would let the build act on the site for the caller. The host keeps it from
+   * the caller. A write repair whose host allows it hands back unanswered only a request of one
+   * question marked false, no confirm or secret one
+   * (`MintDependencies.handBackWriteRepairQuestions`).
+   */
+  asksConsent: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "true when an answer would let the build act on the site for the caller, such as submit, pay, send, book or delete; false when it only decides how the tool works, such as which field holds a value.",
+    }),
+  ),
+  /**
    * The id of the finding of Guardian's latest publication denial this request is about, such as
    * one that leaves the owner to choose between keeping a claim with its evidence or dropping it.
    * The host keeps it from the caller and gives the question review that finding.
@@ -2835,13 +2847,24 @@ export interface MintDependencies {
    */
   readonly websiteLoginPreAuthorized?: true;
   /**
-   * A read repair hands an unanswered question back to the minter as no answer even while it is
-   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * A read repair (`mode` `maintenance` with effect read: a failure repair or the owner's requested
+   * change) hands an unanswered question back to the minter as no answer even while it is signed
+   * in or holds a login. A read repair can't write, and no answer is still never consent.
    * Every other rule for an unanswered question stands. Without it, any question left unanswered
    * while the build is signed in or holds a login ends the build as before. A core without it
    * ignores it.
    */
   readonly handBackSignedInReadRepair?: true;
+  /**
+   * A write repair (`mode` `maintenance` with effect write: a failure repair or the owner's
+   * requested change) hands an unanswered request back to the minter as no answer, signed in or
+   * not, when it holds one question, neither confirm nor secret, the minter marked it
+   * `asksConsent: false`, and Guardian's question review allowed it under a rule that asks no
+   * consent (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
+   * repair as before: no answer is never consent. Every other rule for an unanswered question
+   * stands. A core without it ignores it.
+   */
+  readonly handBackWriteRepairQuestions?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**
