@@ -1,7 +1,18 @@
 import { Effect, Either } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { batchFetchCode, batchRead } from "../../src/browser/index.js";
-import type { BatchClock, SiteHttpRequest, SiteHttpResult, SiteHttpService } from "../../src/browser/index.js";
+import type {
+  BatchClock,
+  BatchReadResult,
+  HttpTransport,
+  SiteHttpRequest,
+  SiteHttpResult,
+  SiteHttpService,
+} from "../../src/browser/index.js";
+import { makeEffectJournal } from "../../src/runtime/context.js";
+import { Deadline } from "../../src/runtime/deadline.js";
+import { HttpFailure } from "../../src/runtime/site-http.js";
+import { makeSiteHttp } from "../../src/runtime/site-http-host.js";
 import { batchRateLimitResetMs, classifyBatchAnswer } from "../../src/runtime/batch-read.js";
 import { OperationFailure } from "../../src/runtime/operation-failure.js";
 
@@ -159,11 +170,81 @@ describe("batchRateLimitResetMs", () => {
   });
 });
 
+/** A transport the site never answers, which gives up once its request's time is spent. */
+const silentTransport: HttpTransport = {
+  name: "kernel-curl",
+  capabilities: ["buffered-response-v1"],
+  send: (_request, options) =>
+    new Promise((_resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new HttpFailure({ code: "deadline_exceeded", dispatch: "unknown" })),
+        options.timeoutMs,
+      );
+      options.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new HttpFailure({ code: "transport_failed", dispatch: "unknown" }));
+      });
+    }),
+};
+
+/** `batchRead` over `makeSiteHttp` on a silent site, in a run with 20 minutes left. */
+const silentBatch = async (requests: readonly SiteHttpRequest[]) => {
+  const journal = await Effect.runPromise(makeEffectJournal);
+  const http = makeSiteHttp({
+    transport: silentTransport,
+    context: {
+      journal,
+      deadline: Deadline.after(20 * 60_000, () => Date.now()),
+      capture: { start: Effect.void, finish: Effect.void },
+      events: { emit: () => Effect.void },
+    },
+    capture: () => Effect.void,
+  });
+  let result: BatchReadResult | undefined;
+  void Effect.runPromise(batchRead(http, requests)).then((value) => {
+    result = value;
+  });
+  return { result: () => result };
+};
+
 describe("batchRead", () => {
-  it("raises the batch size after clean batches, up to 16", async () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("sends up to 16 reads in its first batch", async () => {
+    const site = scriptedSite((url) => [json({ id: idOf(url) })]);
+    const { clock } = fakeClock();
+    const result = await Effect.runPromise(batchRead(site.http, reads(16), { clock }));
+    expect(result.batches).toEqual([16]);
+    expect(result.items.every((item) => item.ok)).toBe(true);
+  });
+
+  it("gives up on a read the site never answers within about 8 s, not a minute", async () => {
+    vi.useFakeTimers();
+    const batch = await silentBatch(reads(2));
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(batch.result()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(batch.result()?.items).toMatchObject([
+      { ok: false, reason: "failed", failure: { code: "deadline_exceeded" } },
+      { ok: false, reason: "failed", failure: { code: "deadline_exceeded" } },
+    ]);
+  });
+
+  it("keeps the time a read names itself", async () => {
+    vi.useFakeTimers();
+    const batch = await silentBatch(reads(1).map((read) => ({ ...read, timeoutMs: 30_000 })));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(batch.result()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(batch.result()?.items).toMatchObject([
+      { ok: false, reason: "failed", failure: { code: "deadline_exceeded" } },
+    ]);
+  });
+
+  it("raises the batch size after clean batches from a lower start, up to 16", async () => {
     const site = scriptedSite((url) => [json({ id: idOf(url) })]);
     const { clock, waits } = fakeClock();
-    const result = await Effect.runPromise(batchRead(site.http, reads(70), { clock }));
+    const result = await Effect.runPromise(batchRead(site.http, reads(70), { clock, start: 4 }));
     expect(result.batches).toEqual([4, 6, 9, 14, 16, 16, 5]);
     expect(site.mostInFlight()).toBe(16);
     expect(waits).toEqual([]);
@@ -177,7 +258,7 @@ describe("batchRead", () => {
         : [json({ id: idOf(url) })],
     );
     const { clock, waits } = fakeClock();
-    const result = await Effect.runPromise(batchRead(site.http, reads(12), { clock }));
+    const result = await Effect.runPromise(batchRead(site.http, reads(12), { clock, start: 4 }));
     expect(waits).toEqual([3000]);
     // 4 sent, one throttled: 2 next (the throttled one first), then growing by one at a time.
     expect(result.batches).toEqual([4, 2, 3, 4]);
@@ -201,7 +282,7 @@ describe("batchRead", () => {
     const site = scriptedSite((url, number) => (number <= 4 ? [json({ id: idOf(url) })] : [overloaded]));
     const { clock, waits } = fakeClock();
     const outcome = await Effect.runPromise(
-      Effect.either(batchRead(site.http, reads(20), { clock })),
+      Effect.either(batchRead(site.http, reads(20), { clock, start: 4 })),
     );
     expect(Either.isLeft(outcome)).toBe(true);
     if (Either.isLeft(outcome)) {
@@ -234,7 +315,7 @@ describe("batchRead", () => {
         : [json({ id: idOf(url) })],
     );
     const { clock, waits } = fakeClock();
-    const result = await Effect.runPromise(batchRead(site.http, reads(12), { clock }));
+    const result = await Effect.runPromise(batchRead(site.http, reads(12), { clock, start: 4 }));
     expect(waits).toEqual([2000]);
     expect(result.batches).toEqual([4, 2, 3, 3]);
     expect(bodies(result.items)).toEqual(Array.from({ length: 12 }, (_, id) => ({ id })));
@@ -248,7 +329,7 @@ describe("batchRead", () => {
     );
     const { clock, waits } = fakeClock();
     const outcome = await Effect.runPromise(
-      Effect.either(batchRead(site.http, reads(12), { clock })),
+      Effect.either(batchRead(site.http, reads(12), { clock, start: 4 })),
     );
     expect(Either.isLeft(outcome)).toBe(true);
     if (Either.isLeft(outcome))
@@ -277,7 +358,7 @@ describe("batchRead", () => {
     );
     const { clock } = fakeClock();
     const outcome = await Effect.runPromise(
-      Effect.either(batchRead(site.http, reads(30), { clock })),
+      Effect.either(batchRead(site.http, reads(30), { clock, start: 4 })),
     );
     expect(Either.isLeft(outcome)).toBe(true);
     if (Either.isLeft(outcome)) {
@@ -340,7 +421,29 @@ const runBatchFetch = async (requests: readonly unknown[], options: unknown = {}
 };
 
 describe("batchFetch in the page", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("gives up on a fetch the site never answers within about 8 s", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) =>
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+        ),
+    );
+    let answer: Awaited<ReturnType<typeof runBatchFetch>> | undefined;
+    void runBatchFetch([{ url: itemUrl(0) }]).then((value) => {
+      answer = value;
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(answer).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(answer?.results).toMatchObject([{ ok: false, error: "network" }]);
+  });
 
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {
     const site = scriptedSite((url) =>
@@ -349,7 +452,9 @@ describe("batchFetch in the page", () => {
         : [json({ id: idOf(url) })],
     );
     vi.stubGlobal("fetch", site.fetch);
-    const answer = await runBatchFetch(Array.from({ length: 20 }, (_, index) => ({ url: itemUrl(index) })));
+    const answer = await runBatchFetch(Array.from({ length: 20 }, (_, index) => ({ url: itemUrl(index) })), {
+      start: 4,
+    });
     expect(answer.stopped).toEqual({ reason: "blocked", index: 6 });
     expect(answer.batches).toEqual([4, 6]);
     expect(answer.results.map((result) => result.data ?? result.error)).toEqual([
@@ -366,7 +471,7 @@ describe("batchFetch in the page", () => {
     vi.stubGlobal("fetch", site.fetch);
     const answer = await runBatchFetch(
       Array.from({ length: 200 }, (_, index) => ({ url: itemUrl(index) })),
-      { backoffMs: 1 },
+      { backoffMs: 1, start: 4 },
     );
     expect(answer.stopped).toEqual({ reason: "rate_limited", index: 60 });
     // Grows to 16 while the site answers, halves after the batch where the 529s begin, then stops
@@ -385,7 +490,7 @@ describe("batchFetch in the page", () => {
     vi.stubGlobal("fetch", site.fetch);
     const answer = await runBatchFetch(
       Array.from({ length: 100 }, (_, index) => ({ url: itemUrl(index) })),
-      { backoffMs: 1 },
+      { backoffMs: 1, start: 4 },
     );
     // The site gave no wait, so the stop carries none.
     expect(answer.stopped).toEqual({ reason: "rate_limited", index: 0 });
@@ -406,7 +511,7 @@ describe("batchFetch in the page", () => {
       vi.stubGlobal("fetch", site.fetch);
       const answer = await runBatchFetch(
         Array.from({ length: 200 }, (_, index) => ({ url: itemUrl(index) })),
-        { backoffMs: 1 },
+        { backoffMs: 1, start: 4 },
       );
       expect(answer.stopped?.reason).toBe("rate_limited");
       // The rest of the batch in flight, then at most two halved batches: 6 to 24 sends here.
