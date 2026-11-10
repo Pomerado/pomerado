@@ -157,7 +157,7 @@ test("an MCP tool call uploads the caller's file and returns the downloaded stat
 test("an MCP tool call returns screenshots of the page and of one element as files", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "One native run that takes three screenshots through Chromium",
+    description: "One native run that takes four screenshots through Chromium",
   });
   const site = await startFileSite();
   const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
@@ -171,6 +171,7 @@ export default defineOperation({name:"send_receipt",input:Schema.Struct({}),outp
 async ({files}) => ({
   page: await files.screenshot({ fullPage: true }),
   link: await files.screenshot({ selector: "a" }),
+  viewport: await files.screenshot({ selector: undefined, fullPage: undefined }),
   missing: await files.screenshot({ selector: "#missing", timeoutMs: 500 }).then(() => null, (error) => error.message),
 }));`,
     },
@@ -197,6 +198,8 @@ async ({files}) => ({
     const page = await png(output["page"]);
     const link = await png(output["link"]);
     expect(link.width).toBeLessThan(page.width);
+    // An option a tool leaves undefined, such as an absent input passed on, is no option.
+    expect((await png(output["viewport"])).width).toBe(page.width);
     expect(JSON.stringify(result)).not.toContain(page.base64.slice(0, 64));
     expect(String(output["missing"])).toContain("field_not_found");
   } finally {

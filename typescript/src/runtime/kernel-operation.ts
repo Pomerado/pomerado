@@ -587,7 +587,10 @@ const scriptFiles = (
       if (files.screenshot === undefined)
         throw new OperationFailure("This run's host takes no screenshots", { dispatch: "not_sent" });
       // The target is data the host writes into its own locator; anything else names no element.
-      const target = Schema.decodeUnknownEither(ScreenshotTarget)(shot);
+      // An option left undefined, such as an absent input passed on, is no option.
+      const target = Schema.decodeUnknownEither(ScreenshotTarget)(
+        Object.fromEntries(Object.entries(shot).filter(([, value]) => value !== undefined)),
+      );
       if (Either.isLeft(target)) throw fileFailure(new FileRefused({ reason: "field_not_found" }));
       try {
         return await settle(
