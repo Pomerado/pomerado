@@ -424,7 +424,7 @@ it("tracks a write's source by content when it imports the host runtime, and ref
   for (const [path, text] of Object.entries({
     "src/book.mjs": sdkStep,
     "src/book-copy.mjs": sdkStep,
-    "src/book-changed.mjs": `${sdkStep}// Changed.\n`,
+    "src/book-changed.mjs": `${sdkStep}void "changed";\n`,
   }))
     await writeFile(join(root, path), text);
   const outcome = await f.run();

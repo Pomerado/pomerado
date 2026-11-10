@@ -143,7 +143,7 @@ test("types the caller's card into the checkout's fields, with handles only in r
     expect(step).toContain("Card number");
     expect(authorityOf(review!)["paymentFrameOrigins"]).toContain("https://js.stripe.com");
     expect(String(authorityOf(review!)["allowedEffects"])).toContain(
-      "Typing the caller's payment card into the card fields of the site's own checkout",
+      "Filling the caller's payment card or payment method into the card fields of the site's own checkout",
     );
     for (const shown of [number, "4242 4242 4242 4242"]) {
       expect(JSON.stringify(guardian.reviews)).not.toContain(shown);

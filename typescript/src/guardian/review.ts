@@ -374,6 +374,11 @@ export interface PendingExecution {
   /** Mints only: the screened intent as the owner submitted it. */
   readonly requestedIntent?: string;
   /**
+   * Mints only: the request's `otherExampleInputs`, screened as JSON text, when the caller sent
+   * more than one example input. Guardian reads them with the request.
+   */
+  readonly screenedOtherExampleInputs?: string;
+  /**
    * Mints only: the caller-confirmed updates to the task that the host accepted, oldest first.
    * The effective task is `screenedIntent` with each applied in order. Every review after an
    * update reads them, and `allowedOrigins` is already rebound to a changed site.
@@ -411,6 +416,11 @@ export interface PendingExecution {
    * authority. Absent means no write authority.
    */
   readonly writeAuthority?: boolean;
+  /**
+   * Execution reviews only: the most a card-fill step that names slots may pay, when the host that
+   * fills the caller's payment method has one. Absent, the review checks no limit.
+   */
+  readonly paymentLimit?: { readonly amount: string; readonly currency: string };
   /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.

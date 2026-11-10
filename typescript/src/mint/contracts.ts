@@ -27,6 +27,7 @@ import type {
 } from "../runtime/policy-metadata.js";
 import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
+import { cardFillFields } from "../runtime/script-card-fill.js";
 import { DownloadCap } from "../runtime/files.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
@@ -511,9 +512,9 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The registry stayed unavailable through the host's retries; publishing may be tried again. */
     | "registry_unavailable"
     | "example_output_unavailable"
-    /** A read's HTTP implementation never passed a live test; the minter is asked once. */
+    /** A read's HTTP implementation never passed a live test; a host may ask until it settles. */
     | "http_implementation_untested"
-    /** A read's HTTP implementation changed since its passing live test; asked once too. */
+    /** A read's HTTP implementation changed since its passing live test; asked the same way. */
     | "http_implementation_stale"
     /** A write session's composed script declares no `write.confirmation`. */
     | "confirmation_undeclared"
@@ -658,6 +659,13 @@ export const MintRequest = Schema.Struct({
   mode: Schema.Literal("mint", "maintenance"),
   intent: Schema.String.pipe(Schema.minLength(1)),
   businessInput: Schema.Unknown,
+  /**
+   * More example inputs the caller sent beside `businessInput`, in the caller's order. A read's
+   * example runs `businessInput` first; these are the caller's own values for its live tests and,
+   * once the tool refused `businessInput` with `InvalidInput`, for an example in its place. A
+   * write runs only `businessInput`. Absent when the caller sent one example.
+   */
+  otherExampleInputs: Schema.optional(Schema.Array(Schema.Unknown).pipe(Schema.maxItems(9))),
   observations: Schema.Unknown,
   siteOrigin: Schema.optional(Schema.String.pipe(Schema.maxLength(2048))),
   /**
@@ -908,22 +916,15 @@ export type SignInStep = typeof SignInStep.Type;
 
 /**
  * A host card-fill step: the payment card fields on the checkout showing now, each with the card
- * handle the host types into it. It clicks nothing. Each handle is a card answer's, named once.
+ * handle the host types into it, or each with its card slot and the checkout's total for a host
+ * that fills a payment method. It clicks nothing. Each handle is a card answer's, named once.
  */
-export const CardFillStep = Schema.Struct({
-  fields: Schema.Array(
-    Schema.Struct({
-      selector: SignInSelector,
-      handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
-    }),
-  ).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(4),
-    Schema.filter((fields) => new Set(fields.map((field) => field.handle)).size === fields.length, {
-      message: () => "name each card handle once",
-    }),
-  ),
-});
+export const CardFillStep = cardFillFields(
+  Schema.Struct({
+    selector: SignInSelector,
+    handle: Schema.String.pipe(Schema.pattern(/^\{\{secret\.s[1-9]\d*\}\}$/u)),
+  }),
+);
 export type CardFillStep = typeof CardFillStep.Type;
 
 /** A commit mark's name, as a script's `enteringCommit` takes it and its contract declares it. */
@@ -1096,6 +1097,13 @@ export interface LiveTestHost {
    */
   readonly caseTimeoutMs?: number;
   /**
+   * The longest a batch may ask each of its cases to run (`LiveTestsRequest.caseSeconds`), in
+   * milliseconds. The harness passes a longer request as the batch's `caseTimeoutMs`, cut to this;
+   * it passes none for a request no longer than `caseTimeoutMs`, for the reserve batch
+   * (`reservedCaseTimeoutMs`), or when less than that limit is left before the batch's deadline. Absent, every batch runs at `caseTimeoutMs`, whatever it asks for.
+   */
+  readonly maxCaseTimeoutMs?: number;
+  /**
    * How long one case may run in the one batch a host that caps its batches keeps in reserve past
    * its cap, in milliseconds, while that batch has not run; absent otherwise. Once no batch fits
    * under `caseTimeoutMs`, the harness still runs a batch whose every case is one a failure is
@@ -1132,6 +1140,13 @@ export interface LiveTestBatch {
   /** When the batch must end, in epoch milliseconds. */
   readonly deadlineAt: number;
   /**
+   * How long each case of this batch may run, in milliseconds, when the minter asked for longer
+   * than the host's `caseTimeoutMs`: at most its `maxCaseTimeoutMs`, and only while that much is
+   * left before `deadlineAt`. Absent, the host's own `caseTimeoutMs`. A host still runs no case past its own
+   * maximum, whatever this says.
+   */
+  readonly caseTimeoutMs?: number;
+  /**
    * The read signed in: run every case on the build's own signed-in browser, warm, never on a new
    * browser. The harness then asks for one worker.
    */
@@ -1156,6 +1171,8 @@ export type LiveTestBatchResult =
  * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
+ * `caseSeconds` asks for a longer limit on each case of the batch, which the harness cuts to the
+ * host's `LiveTestHost.maxCaseTimeoutMs`; null or absent, the host's own limit.
  */
 export const LiveTestsRequest = Schema.Struct({
   action: Schema.Literal("plan", "run"),
@@ -1166,6 +1183,9 @@ export const LiveTestsRequest = Schema.Struct({
     ),
   ),
   maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
+  caseSeconds: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 600))),
+  ),
 });
 export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 
@@ -1950,6 +1970,18 @@ export const AgentRequest = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /**
+   * Whether an answer would let the build act on the site for the caller. The host keeps it from
+   * the caller. A write repair whose host allows it hands back unanswered only a request of one
+   * question marked false, no confirm or secret one
+   * (`MintDependencies.handBackWriteRepairQuestions`).
+   */
+  asksConsent: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "true when an answer would let the build act on the site for the caller, such as submit, pay, send, book or delete; false when it only decides how the tool works, such as which field holds a value.",
+    }),
+  ),
   /**
    * The id of the finding of Guardian's latest publication denial this request is about, such as
    * one that leaves the owner to choose between keeping a claim with its evidence or dropping it.
@@ -2828,13 +2860,24 @@ export interface MintDependencies {
    */
   readonly websiteLoginPreAuthorized?: true;
   /**
-   * A read repair hands an unanswered question back to the minter as no answer even while it is
-   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * A read repair (`mode` `maintenance` with effect read: a failure repair or the owner's requested
+   * change) hands an unanswered question back to the minter as no answer even while it is signed
+   * in or holds a login. A read repair can't write, and no answer is still never consent.
    * Every other rule for an unanswered question stands. Without it, any question left unanswered
    * while the build is signed in or holds a login ends the build as before. A core without it
    * ignores it.
    */
   readonly handBackSignedInReadRepair?: true;
+  /**
+   * A write repair (`mode` `maintenance` with effect write: a failure repair or the owner's
+   * requested change) hands an unanswered request back to the minter as no answer, signed in or
+   * not, when it holds one question, neither confirm nor secret, the minter marked it
+   * `asksConsent: false`, and Guardian's question review allowed it under a rule that asks no
+   * consent (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
+   * repair as before: no answer is never consent. Every other rule for an unanswered question
+   * stands. A core without it ignores it.
+   */
+  readonly handBackWriteRepairQuestions?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**
@@ -3125,8 +3168,9 @@ export interface MintDependencies {
    * `session_not_kept` when the site accepted the login but the signed-in session did not survive
    * the page load after it. A blocked ending the report's checks accept while that sign-in is
    * unconfirmed, other than the owner's `owner_declined`, `question_unanswered` or `owner_ended`,
-   * ends the build as sign-in unavailable, worded by this answer. Absent, or undefined, the ending says the site
-   * could not be signed in.
+   * ends the build as sign-in unavailable, worded by this answer, even after an earlier sign-in
+   * confirmed. Absent, or undefined, an earlier confirmed sign-in that still stands keeps the
+   * report's own ending, and otherwise the ending says the site could not be signed in.
    */
   readonly signInSessionLoss?: () => SessionLoss | undefined;
   /**

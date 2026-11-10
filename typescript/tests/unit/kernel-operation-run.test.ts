@@ -12,6 +12,11 @@ import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js"
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { commitReportOf } from "../../src/runtime/run-outcome.js";
 import { defineOperation } from "../../src/runtime/operation.js";
+import {
+  makeScriptInput,
+  ScriptInput,
+  ScriptInputFailure,
+} from "../../src/runtime/script-input.js";
 import { offlineKernel } from "../support/offline-kernel.js";
 
 /** A browser that answers every call with success, without provider HTTP. */
@@ -291,5 +296,150 @@ describe("executeKernelOperation", () => {
       ),
     );
     expect(replaced.exit).toEqual(Exit.succeed("first:b"));
+  });
+});
+
+describe("a script's browser hand-off", () => {
+  const review = {
+    review: { type: "browser_handoff", prompt: "Check the saved address, then mark it done." },
+    note: { type: "text", prompt: "Anything to add?" },
+  } as const;
+  /** A write over two steps that saves the address, hands off, then reports its marks. */
+  const write = (handed: "review" | "note") =>
+    defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions: review,
+        write: { confirmation: "readback", commits: ["save-address", "place-order"] },
+      },
+      async ({ handOff, enteringCommit, verified }) => {
+        enteringCommit("save-address");
+        verified();
+        // A text question is not a hand-off; the runtime refuses it before anyone is asked.
+        await (handed === "review" ? handOff("review") : handOff(handed as "review"));
+        return "done";
+      },
+    );
+  const attempt = async (handed: "review" | "note", journalOf = makeEffectJournal) => {
+    const asked: string[] = [];
+    const journal = await Effect.runPromise(journalOf);
+    const scriptInput = makeScriptInput(review, (request) =>
+      Effect.sync(() => {
+        asked.push(...request.questions.map((question) => question.type));
+        return { review: { done: true } };
+      }),
+    );
+    const outcome = await run(
+      executeKernelOperation(write(handed), {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    return { ...outcome, asked, commits: await Effect.runPromise(journal.commits) };
+  };
+
+  it("keeps a confirmed step confirmed and marks every unsent one sent before it asks", async () => {
+    const handed = await attempt("review");
+    expect(handed.exit).toEqual(Exit.succeed("done"));
+    expect(handed.asked).toEqual(["browser_handoff"]);
+    expect(handed.commits).toEqual([
+      { name: "save-address", state: "confirmed" },
+      { name: "place-order", state: "sent" },
+    ]);
+  });
+
+  it("marks the steps once the host opens the hand-off, before the person answers", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const atOpen: unknown[] = [];
+    const scriptInput = makeScriptInput(review, (_request, opened) =>
+      Effect.gen(function* () {
+        atOpen.push(yield* journal.commits);
+        opened();
+        atOpen.push(yield* journal.commits);
+        return { review: { done: true } };
+      }),
+    );
+    await run(
+      executeKernelOperation(write("review"), {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(atOpen).toEqual([
+      [
+        { name: "save-address", state: "confirmed" },
+        { name: "place-order", state: "not_sent" },
+      ],
+      [
+        { name: "save-address", state: "confirmed" },
+        { name: "place-order", state: "sent" },
+      ],
+    ]);
+  });
+
+  it("marks nothing when the host refuses the hand-off before it opens", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const scriptInput = makeScriptInput(review, () =>
+      Effect.fail(new ScriptInputFailure({ code: "Unavailable" })),
+    );
+    const refused = await run(
+      executeKernelOperation(write("review"), {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(failureOf(refused.exit)).toEqual(
+      Option.some(expect.objectContaining({ _tag: "ScriptInputFailure", code: "Unavailable" })),
+    );
+    expect(await Effect.runPromise(journal.commits)).toContainEqual({
+      name: "place-order",
+      state: "not_sent",
+    });
+  });
+
+  it("keeps a write with no declared steps confirmed when it hands off after confirming", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const operation = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions: review,
+        write: { confirmation: "readback" },
+      },
+      async ({ handOff, verified }) => {
+        verified();
+        await handOff("review");
+        return "done";
+      },
+    );
+    const handed = await run(
+      executeKernelOperation(operation, {}, { kernel: answeringKernel, sessionId: "s" }).pipe(
+        Effect.provideService(
+          ScriptInput,
+          makeScriptInput(review, () => Effect.succeed({ review: { done: true } })),
+        ),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(handed.websiteEffect).toBe("verified");
+    expect(await Effect.runPromise(journal.confirmation)).toBe("readback");
+  });
+
+  it("leaves a step maintenance settled as it is", async () => {
+    const handed = await attempt(
+      "review",
+      makeEffectJournalWith({ settledCommits: ["place-order"] }),
+    );
+    expect(handed.commits).toContainEqual({ name: "place-order", state: "not_sent" });
+  });
+
+  it("refuses an id that is not a declared hand-off as Undeclared, asking nobody", async () => {
+    const refused = await attempt("note");
+    expect(failureOf(refused.exit)).toEqual(
+      Option.some(expect.objectContaining({ _tag: "ScriptInputFailure", code: "Undeclared" })),
+    );
+    expect(refused.asked).toEqual([]);
+    expect(refused.commits).toContainEqual({ name: "place-order", state: "not_sent" });
   });
 });

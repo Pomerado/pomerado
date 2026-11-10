@@ -1,4 +1,5 @@
 import { Cause, Effect, Option } from "effect";
+import { timeoutDefaults } from "./deadline.js";
 import { OperationFailure } from "./operation-failure.js";
 import { answer, described } from "./http-operation.js";
 import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } from "./site-http.js";
@@ -9,9 +10,12 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  * version's `SiteHttp`; `batchFetchCode` declares `batchFetch`, which sends them with the page's
  * own `fetch` inside one `evaluate`. Both run the same loop:
  *
- * - Requests go out in batches, `start` (4) at once. After a batch with no throttle or block,
- *   the next batch is half as large again, rounded up, up to `max` (16, which no option raises).
- *   Once the site has throttled, it grows by one per clean batch instead.
+ * - Requests go out in batches, `start` (16, as many as a host's relay sends at once) at once.
+ *   After a batch with no throttle or block, the next batch is half as large again, rounded up,
+ *   up to `max` (16, which no option raises). Once the site has throttled, it grows by one per
+ *   clean batch instead.
+ * - Each request that names no `timeoutMs` of its own gets `timeoutDefaults.httpRead` (8 s), so
+ *   one the site never answers holds its batch for seconds, not a minute.
  * - A throttle is a 429, a 503 or any other 5xx, such as a 529, or an answer whose rate-limit
  *   headers say no request remains: `RateLimit-Remaining: 0`, or a `RateLimit` header whose
  *   policy has `r=0`. A throttled batch never makes the next one larger: it halves the batch size
@@ -33,14 +37,14 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  */
 
 /** The batch size: where it starts, the most it reaches and the least it falls to. */
-export const batchReadConcurrency = { start: 4, max: 16, min: 1 } as const;
+export const batchReadConcurrency = { start: 16, max: 16, min: 1 } as const;
 
 /** The loop's defaults: tries per request, the longest wait, the first backoff, a fetch's limit. */
 export const batchReadDefaults = {
   maxAttempts: 3,
   maxWaitMs: 10_000,
   backoffMs: 1_000,
-  timeoutMs: 15_000,
+  timeoutMs: timeoutDefaults.httpRead,
 } as const;
 
 /** How the site answered one send, as the loop sorts it. */
@@ -324,7 +328,7 @@ const settingsOf = (options: BatchReadOptions, clock: BatchClock): BatchSettings
 export type BatchReadRequest = SiteHttpRequest & { readonly write?: boolean };
 
 export interface BatchReadOptions {
-  /** Requests in the first batch, from 1 to 16; 4 by default. */
+  /** Requests in the first batch, from 1 to 16; 16 by default. */
   readonly start?: number;
   /** The most in one batch, from 1 to 16; 16 by default. Lower it for a site that refuses more. */
   readonly max?: number;
@@ -399,7 +403,8 @@ export const batchRead = (
         async (index) => {
           const request = requests[index];
           if (request === undefined || signal.aborted) throw new Error("not sent");
-          const { write: _write, ...siteRequest } = request;
+          const { write: _write, ...named } = request;
+          const siteRequest = { ...named, timeoutMs: named.timeoutMs ?? timeoutDefaults.httpRead };
           const exit = await Effect.runPromiseExit(http.request(siteRequest), { signal });
           if (exit._tag === "Failure") {
             const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
@@ -488,7 +493,7 @@ export const batchRead = (
  *   `accept`) or `"text"`. A write refuses the whole batch with an `Error` named
  *   `BatchFetchRefused` before anything is sent.
  * - `options` takes `start`, `max`, `maxAttempts`, `maxWaitMs`, `backoffMs` and `timeoutMs` (each
- *   fetch's limit, 15 s by default), and `budgetMs`: pass the call's remaining time, less a
+ *   fetch's limit, 8 s by default), and `budgetMs`: pass the call's remaining time, less a
  *   margin, so it returns before the call's timeout with `not_sent` for what it kept back.
  * - `results` holds one entry per request, in input order: `{ ok: true, status, data }` (`data`
  *   the parsed JSON or the text), or `{ ok: false, status?, error, snippet? }` with `error` one

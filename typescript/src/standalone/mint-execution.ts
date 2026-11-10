@@ -65,6 +65,7 @@ import {
 import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
 import { sessionCardFill } from "./card-fill.js";
+import { localHandOffAsker, visibleBrowser } from "./hand-off.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
 /**
@@ -637,7 +638,9 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
-                ask: scriptAsk,
+                ask: localHandOffAsker(scriptAsk, {
+                  visible: live && visibleBrowser(state.session.options.browser),
+                }),
                 declaredQuestions: draftQuestionDeclarations(
                   execution.entrypoint,
                   entrypointSource,
