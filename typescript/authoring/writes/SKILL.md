@@ -77,13 +77,18 @@ Settle the whole path before the first `act` step, from the request and what rea
 exploration shows, such as the form's list of pages or steps: every step that saves or submits
 on the site, through to the outcome the request asks for, such as the quote or decline, the
 placed order or the confirmed booking; prefer not to end at a saved draft or a new account on
-the way to it. Publication judges the finished tool by the same rule
+the way to it. When the caller's example already shows the requested change done, ask the owner
+with `request_input` for one that does not. Publication judges the finished tool by the same rule
 (`reference/publication-review.md`). Declare it as `writePath` on the first `act` step: in
 `steps`, each step that saves or submits, in order, with the `commit` mark its helper will
-enter and what it saves (`does`); in `ends`, what the last step leaves the caller with.
+enter and what it saves (`does`); in `ends`, what the last step leaves the caller with. When the
+request ends before any save, `steps` is empty: never name a step that saves nothing. Mark
+`setup: true` on a step that only makes state the site creates by itself as the session starts,
+such as an empty cart when the menu opens, and saves nothing of the caller's, or leave that step
+out.
 Guardian reviews the path before anything is sent, and the host keeps it: the session is not
-over until every mark on it is entered, so a step that confirms earlier leaves the session
-open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
+over until every mark on it but a setup step's is entered, so a step that confirms earlier
+leaves the session open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
 path must change, such as a page the site skips or adds for this input, declare the revised
 path in `writePath` on the next `act` step, keeping every mark already entered. When no single
 session can reach the outcome, such as a step that waits for another person's approval, an
@@ -595,14 +600,15 @@ input, output, write: { confirmation: "readback", commits: ["place-order"] } }, 
 (or `"unverifiable"` when the site shows neither a confirmation nor the saved state),
 marking the same commit steps as the session. A script declared `unverifiable` cannot call
 `verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
-and one that declares a mark no `act` step of the session entered is refused as
-`commit_marks_unentered`. If the declaration names the wrong marks, correct it to
+unless, on a host that publishes on a read-back, its session's `writePath` has no steps and
+the named step read the filled form back, and one that declares a mark no `act` step of the
+session entered is refused as `commit_marks_unentered`. If the declaration names the wrong marks, correct it to
 match the marks the session actually entered. It declares every mark of the session's
 recorded `writePath`, in order: one that leaves a mark out is refused as
 `write_path_undeclared`, and a publication before the session entered every mark of the
 path as `write_path_unfinished`, which names the marks not yet settled while the session
-stays open. If the completed session entered no
-marks, it cannot publish: changing its source or entering a mark in a later read
+stays open. If the completed session sent its write without entering
+its marks, it cannot publish: changing its source or entering a mark in a later read
 cannot show that the earlier commit was marked. End the build and explain that
 the task completed but its commit steps were not marked; never repeat the write
 to add them.
@@ -665,8 +671,12 @@ is not the write. An unreadable step output never justifies a run either: the wr
 publishes with its output recorded as unavailable.
 
 In a write build, after a verified write, if the site does not offer one output the request
-asks for, prefer asking the caller once with `request_input` whether to publish the tool with
-that output null and a reason field, rather than ending blocked; never invent the value.
+asks for, or has no field for one input the request marks optional and the input the write
+session ran leaves unset, and lacks nothing else the request names, prefer asking the caller
+once with `request_input` whether to publish the tool with that output null and a reason field,
+or without that input and with the tool's description saying the site has no field for it,
+rather than ending blocked; never invent the value, and prefer finishing the write's read-back
+before you ask, so Guardian sees the verified write when it reviews the question.
 
 After a `not_published`, live `act` steps are open again while the write session is still
 open (a commit that recorded its confirmation stays done), on the same browser, still signed

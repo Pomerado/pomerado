@@ -378,7 +378,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // A value the request gave that the site does not offer goes to the owner before the build ends.
   [
     "workspace/AGENTS.md",
-    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. In maintenance, follow the intake screen instead. Give the evidence in `intent`",
+    "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
   // Only what the caller asked for decides whether a tool books or refuses, every listed option
   // gets read, a repair fixes a broken input but keeps a caller's documented design decision, a
@@ -448,6 +448,22 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "When the owner decides only whether to go on as asked or stop, prefer a `confirm` question whose no stops the build over a stop option in a `choice` question, so you can end it as `owner_declined` on their no.",
   ],
+  // A site can quietly stop answering the data request its results come from while its page shows
+  // its no-results message and another part of the page still shows results for the same inputs.
+  // The skills say what the publication review's "Wrong failure" rule finds, so the minter writes
+  // the failure Guardian expects rather than the empty list it denies.
+  [
+    "search",
+    "got the site's no-results message returns an empty list, never an error, unless other evidence on the same page contradicts it.",
+  ],
+  [
+    "search",
+    "that answer stands. An empty answer that other evidence on the same page contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that evidence shows.",
+  ],
+  [
+    "publication",
+    'a search or filter with no results returns the empty result, never a throw, unless other evidence on the same page contradicts it for the same inputs: then it throws `OperationFailure` naming what that evidence shows ("Wrong failure");',
+  ],
 ];
 
 /*
@@ -489,7 +505,7 @@ it("never tells the minter to run a write path's step that may have committed ag
     .find((line) => line.includes("`write_path_unfinished`"))
     ?.replace(/\s+/g, " ");
   expect(row).toContain(
-    "Read back first where a receipt says so; run only steps that never ran, or declare a revised path when the site skips one; never redo one that finished or may have.",
+    "Read back first where a receipt says so, which settles only marks a lost step entered; run only steps that never ran, or declare a revised path when the site skips a step or a step saves nothing; never redo one that finished or may have.",
   );
   expect(row).not.toMatch(/Run the steps `writePathMarks` names/);
 });
@@ -952,20 +968,22 @@ it("has a write confirm from its first matching read-back, never from state befo
  * requested output required and blocked as the only ending for one the site lacks, the build
  * ended with no tool although its one real write was done. After a verified write, it asks the
  * caller once whether to publish with that output null and a reason, and never fills it in.
+ * Another write saved a record whose request listed an optional input the site's form has no
+ * field for, and ended the same way; the same ask covers one such input, after the read-back.
  */
-it("has a write ask once to publish without an output the site does not offer, after its verified write", async () => {
+it("has a write ask once to publish without an output or optional input the site does not offer, after its verified write", async () => {
   const texts = await renderedTexts("typescript/authoring");
   expect((texts.get("writes") ?? "").replace(/\s+/g, " ")).toContain(
-    "In a write build, after a verified write, if the site does not offer one output the request asks for, prefer asking the caller once with `request_input` whether to publish the tool with that output null and a reason field, rather than ending blocked; never invent the value.",
+    "In a write build, after a verified write, if the site does not offer one output the request asks for, or has no field for one input the request marks optional and the input the write session ran leaves unset, and lacks nothing else the request names, prefer asking the caller once with `request_input` whether to publish the tool with that output null and a reason field, or without that input and with the tool's description saying the site has no field for it, rather than ending blocked; never invent the value, and prefer finishing the write's read-back before you ask, so Guardian sees the verified write when it reviews the question.",
   );
   // The blocked ending for a capability the site lacks points to that ask first.
   const guide = (texts.get("workspace/AGENTS.md") ?? "").replace(/\s+/g, " ");
   expect(guide).toContain(
-    "never invent a value or substitute a different field. After a verified write, when the site does not offer one output the request asks for, the writes skill's ask whether to publish without it comes first.",
+    "never invent a value or substitute a different field. After a verified write, when the site does not offer one output the request asks for, or has no field for one input the request marks optional and the input the write session ran leaves unset, the writes skill's ask whether to publish without it comes first.",
   );
-  // So does the rule that never offers to leave out an output the request names.
+  // So does the rule that never offers to leave out an input or output the request names.
   expect(guide).toContain(
-    "A field, input or output the request itself names is never such a capability: support it, or end with `report_blocked` saying why the site cannot; never offer to leave it out, except one output the site does not offer, after a verified write, where the writes skill's ask whether to publish without it comes first.",
+    "A field, input or output the request itself names is never such a capability: support it, or end with `report_blocked` saying why the site cannot; never offer to leave it out, except one output the site does not offer, or one input the request marks optional, the input the write session ran leaves unset, and the site has no field for, after a verified write, where the writes skill's ask whether to publish without it comes first.",
   );
 });
 
@@ -1335,17 +1353,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["2c56fe1cd69f0178126429542a8996a81141d3885a3f455ccebb2360915c00f3", "core"],
-    ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
+    ["46853780d1e2f874c890a898709a38d2a2fd2e1e55d586cc4f4cad1123aa6111", "core"],
+    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
-    ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
+    ["1e8b90e0cbf09ad4808cca0d726ef2f2c2943e22ed83fbce9488e6fdbf563bb1", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["a9c638308016ca41d7507048f7fda908687c6341c265f2eb35f977015314de10", "writes"],
-    ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
-    ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
-    ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
-    ["34ea9283866001cc4fca79128638f970cc0fdea87950eafd593091cc6d707d61", "workspace/AGENTS.md"],
+    ["00665d244ef97dedc3c646648cc6c734d08219dd6ec2ab54db84a713eaef55dd", "forms"],
+    ["0556688210661f366695bcc485f4077b11d97b20206473fea1a9b1ebc0f3fdee", "writes"],
+    ["1e8d18459b80eb0d3040fad7814908f7396fcc6f6cbf0ea0cf448c0ce1c99d3f", "cart"],
+    ["f3cc1624f6276ecf9e645072a6a9258d9a9eb43bd648056609d0252169750710", "caller-input"],
+    ["581331269ba679226d4a34b9966103fe47ccf3386f77f4c6f0ee8376cbc3d2c5", "publication"],
+    ["517edb6ec506e82006042d1a049daef1683002c7f77a2b7e3ae8d741cfe44506", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1465,8 +1483,8 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
-    ["3aa501213d21aec07d8af5729895521446b26e458c6cc0fc76f19a3f1580a5c9", "workspace/AGENTS.md"],
+    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
+    ["9d5d9eed8f91d38a1cf4b409f1a5dde85a564d0de7cca02033f514ca005d84db", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

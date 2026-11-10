@@ -23,6 +23,7 @@ const failureReasons = [
   "invalid_input",
   "input_not_applied",
   "location_not_applied",
+  "handoff_state_changed",
   "login_identity_conflict",
   "login_check_unavailable",
   "worker_lost",

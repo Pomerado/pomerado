@@ -189,6 +189,26 @@ class InputUnapplied extends Error {
   }
 }
 
+/** What a `HandoffStateChanged` says when its script gives no words of its own. */
+export const handoffStateChangedMessage =
+  "The page changed while a person had the browser, so the tool stopped without acting further.";
+
+/**
+ * After a browser hand-off, the page is neither the step the script handed over nor a result it
+ * can read, such as the site's confirmation, so the run stops without acting further. Scripts
+ * throw it as `errors.HandoffStateChanged`, with their own short message or none; it never quotes
+ * page text. The run fails as `handoff_state_changed`, and a write whose hand-off may have
+ * submitted it reports a possible commit, since the journal marks its commit steps sent before
+ * the hand-off opens.
+ */
+export class HandoffStateChanged extends Error {
+  override readonly name = "HandoffStateChanged";
+  readonly _tag = "HandoffStateChanged";
+  constructor(message: string = handoffStateChangedMessage) {
+    super((message.trim() === "" ? handoffStateChangedMessage : message).slice(0, 4096));
+  }
+}
+
 /** A site refused a sign-in value; its field kind contains no credential or page text. */
 export class CredentialsRejected extends Error {
   override readonly name = "CredentialsRejected";
@@ -247,6 +267,7 @@ export type ScriptFailure =
   | OperationFailure
   | InputRejected
   | InputUnapplied
+  | HandoffStateChanged
   | CredentialsRejected
   | BrowserActionTimeout
   | ChallengeFailure
@@ -259,6 +280,7 @@ const passThrough = (error: unknown): error is ScriptFailure =>
   error instanceof OperationFailure ||
   error instanceof InputRejected ||
   error instanceof InputUnapplied ||
+  error instanceof HandoffStateChanged ||
   error instanceof CredentialsRejected ||
   error instanceof ChallengeFailure ||
   error instanceof DialogFailure ||
@@ -291,4 +313,5 @@ export const operationErrors = {
   /** Deprecated: the same class as `InputNotApplied`, kept so published tools that throw it still run. */
   LocationNotApplied: InputUnapplied,
   CredentialsRejected,
+  HandoffStateChanged,
 } as const;

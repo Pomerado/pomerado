@@ -310,8 +310,8 @@ it("keeps a repair's caller-input question to invalid or real", async () => {
 // A write build's one real write was done and confirmed when it found the site offers one of the
 // requested outputs by email only. Outside maintenance nothing allowed a question about publishing
 // without it, so the build ended blocked with no tool. After a confirmed write only, that question
-// is the caller's decision.
-it("allows asking, after a confirmed write, whether to publish without an output the site does not offer", async () => {
+// is the caller's decision, and so is one about an optional input the site has no field for.
+it("allows asking, after a confirmed write, whether to publish without an output or optional input the site does not offer", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -321,7 +321,7 @@ it("allows asking, after a confirmed write, whether to publish without an output
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason; prefer allow.\n- question_review.blockedOutcome is true:",
+    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional, that neither submitted_call.input, trusted intent nor an earlier answer gives a value for, and the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
   );
 });
 
@@ -1023,4 +1023,56 @@ it("gives a review the owner's confirm answer beside a notice", async () => {
   expect(reviewed).toEqual([
     { id: "approve", question: "Do you approve the site's terms?", answer: { confirmed: true } },
   ]);
+});
+
+it("reviews a browser hand-off's screened prompt with its shown inputs, and never its answer", async () => {
+  const handOff: InputRequest = {
+    id: "7f3b8d0a-4c5e-4a91-9d2c-3e4f5a6b7c8d",
+    source: "script",
+    questions: [
+      {
+        id: "review_claim",
+        type: "browser_handoff",
+        prompt: "Check the claim for P-100, then mark this step done.",
+        show_inputs: ["policy_number"],
+      },
+    ],
+  };
+  const screen = (text: string) => Effect.succeed(text.replaceAll("P-100", "[policy]"));
+  const reviewed = await Effect.runPromise(
+    questionForReview(handOff, { credentialsAvailable: false, scriptAsk: true }, screen),
+  );
+  expect(reviewed.questions).toEqual([
+    {
+      id: "review_claim",
+      type: "browser_handoff",
+      prompt: "Check the claim for [policy], then mark this step done.",
+      show_inputs: ["policy_number"],
+    },
+  ]);
+  expect(
+    await Effect.runPromise(
+      answersForReview(
+        handOff,
+        { review_claim: { type: "browser_handoff", value: { done: true } } },
+        screen,
+      ),
+    ),
+  ).toEqual([]);
+});
+
+// A script's hand-off gives the user the run's live browser, so the question review holds its
+// prompt to a step someone asked a person to do, and never to a CAPTCHA, a bot check or a sign-in.
+it("tells the question review when a browser hand-off is allowed", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "\n- a browser_handoff question, which a script asks to hand the run's live browser to the user, who does the step its prompt describes and marks it done: allow it when trusted intent or an answer asks for a person to review or do that step and the prompt describes that step; reword one whose step nobody asked a person to do, one that asks the user to solve a CAPTCHA or bot check, and one that asks the user to sign in when nobody asked for a person to sign in.\nReturn reword when the question:",
+  );
 });
