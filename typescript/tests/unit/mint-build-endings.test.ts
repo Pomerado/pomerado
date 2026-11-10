@@ -295,6 +295,129 @@ it("ends a build whose site is temporarily down as site_unavailable", async () =
   expect(f.requests).toHaveLength(1);
 });
 
+// A site that refuses the build's own request volume, such as larger pages failing where smaller
+// ones pass, is limiting the build, not down. Its report keeps site_unavailable's handling and
+// marks the limit, so a host can tell its caller the site limited the requests.
+it("marks a site_unavailable report as rate limited, and refuses the mark on another reason", async () => {
+  const explanation = "The site refused the build's requests as too many, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_declined", explanation, rateLimited: true }, "first"),
+        call("report_blocked", { reason: "site_unavailable", explanation, rateLimited: true }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("rate_limited_not_unavailable");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation, rateLimited: true },
+    stopReason: "site_unavailable",
+  });
+});
+
+/** Guardian's review of a blocked report whose words the build's own evidence contradicts. */
+const contradicted = {
+  outcome: "reword" as const,
+  label: "misdescribed" as const,
+  rationale:
+    "The captured page holds populated list entries behind a closed overlay. Replace the report with: I couldn't finish the tool.",
+};
+
+// A site that was serving its data, whose page only looked blank after the build closed an
+// overlay, was reported down. Guardian saw the captured page contradict that, yet only asked for
+// other words, and the reworded report still ended the build as the site's fault. A site-fault
+// ending the evidence contradicts goes back to the build to keep working, before it may end.
+it.each(["site_unavailable", "site_lacks_capability", "site_declined"] as const)(
+  "keeps building after Guardian finds the evidence contradicts a %s report",
+  async (reason) => {
+    const reviews: string[] = [];
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("report_blocked", { reason, explanation: "The page is blank, so the site is down." }, "first"),
+          call("report_blocked", { reason, explanation: "I couldn't finish the tool." }, "second"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewQuestion: (candidate) =>
+          Effect.sync(() => {
+            reviews.push(JSON.stringify(candidate));
+            return reviews.length === 1
+              ? contradicted
+              : { outcome: "allow_business" as const, rationale: "Plain." };
+          }),
+      },
+    );
+    const outcome = await f.run();
+    const first = lastResult(f.requests[1]);
+    expect(first).toContain("report_contradicted");
+    expect(first).toContain("populated list entries");
+    // A report sent again before the build ran anything new stands on the same evidence.
+    expect(lastResult(f.requests[2])).toContain("report_contradicted");
+    // Only the first report was reviewed; the build then ended on its own final text.
+    expect(reviews.filter((review) => review.includes("couldn't finish"))).toEqual([]);
+    expect(outcome).not.toHaveProperty("blocked");
+  },
+);
+
+// The build goes back once: after it ran something new, a report the evidence still contradicts
+// gets Guardian's usual request for other words, and the reworded report ends the build.
+it("hands a contradicted site-fault report back only once in an attempt", async () => {
+  const explanation = "I couldn't finish the tool.";
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_unavailable", explanation: "The site is down." }, "first"),
+        call("execute", pureExample),
+        call("report_blocked", { reason: "site_unavailable", explanation: "Still down." }, "second"),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "third"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.sync(() =>
+          ++reviews <= 2 ? contradicted : { outcome: "allow_business" as const, rationale: "Plain." },
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("report_contradicted");
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation },
+    stopReason: "site_unavailable",
+  });
+});
+
+// Other words for a report the evidence doesn't contradict, or for an ending that isn't the
+// site's fault, still only ask for other words.
+it.each([
+  { reason: "site_unavailable", label: "unclear" },
+  { reason: "agent_declined", label: "misdescribed" },
+] as const)("only asks for other words for a $label review of $reason", async ({ reason, label }) => {
+  const explanation = "I couldn't finish the tool.";
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason, explanation: "Say it differently." }, "first"),
+        call("report_blocked", { reason, explanation }, "second"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.sync(() =>
+          ++reviews === 1
+            ? { ...contradicted, label }
+            : { outcome: "allow_business" as const, rationale: "Plain." },
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({ build: "incomplete", blocked: { reason, explanation } });
+});
+
 /** A request that orders a stop on contradictory facts, with the fact it names in its input. */
 const stopOnConflict = {
   intent:
