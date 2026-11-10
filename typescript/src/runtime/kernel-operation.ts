@@ -600,7 +600,7 @@ const scriptFillCard =
     });
     if (Either.isLeft(request))
       throw new OperationFailure(
-        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
         { dispatch: "not_sent" },
       );
     const resume = options.deadline.suspend();

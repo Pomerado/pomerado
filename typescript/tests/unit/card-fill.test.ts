@@ -158,6 +158,7 @@ const run = (
     readonly swappedActions?: readonly string[];
     readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => CardFillFields;
     readonly fillVia?: Parameters<typeof runCardFill>[0]["fillVia"];
+    readonly reviewDenies?: boolean;
   } = {},
 ) => {
   const { handles, handle } = issued();
@@ -166,21 +167,21 @@ const run = (
   const typed: string[] = [];
   const reviews: CardFillReview[] = [];
   const fenced: string[] = [];
+  // Every card answer the step reads, by handle.
+  const read: string[] = [];
   const outcome = Effect.runPromise(
     runCardFill({
       step,
-      // A host that fills a payment method never reads a card answer.
-      handles:
-        options.fillVia === undefined
-          ? handles
-          : {
-              kindOf: () => {
-                throw new Error("read a card answer");
-              },
-              cardValues: () => {
-                throw new Error("read a card answer");
-              },
-            },
+      handles: {
+        kindOf: (named) => {
+          read.push(named);
+          return handles.kindOf(named);
+        },
+        cardValues: (named) => {
+          read.push(...named);
+          return handles.cardValues(named);
+        },
+      },
       ...(options.fillVia === undefined ? {} : { fillVia: options.fillVia }),
       page,
       keyboard: {
@@ -194,14 +195,16 @@ const run = (
       review: (source) =>
         Effect.sync(() => {
           reviews.push(source);
-        }),
+        }).pipe(
+          Effect.zipRight(options.reviewDenies === true ? Effect.fail(new Error("denied")) : Effect.void),
+        ),
       beforeTyping: () =>
         Effect.sync(() => {
           fenced.push("before typing");
         }),
     }),
   );
-  return { outcome, typed, reviews, calls, fenced };
+  return { outcome, typed, reviews, calls, fenced, read };
 };
 
 describe("payment frame origins", () => {
@@ -445,8 +448,9 @@ describe("a card-fill step the host fills from a payment method", () => {
 
   it("hands the checked fields and the total to the host after review, reading no card answer", async () => {
     const { filledBy, fillVia } = hostFill();
-    const { outcome, typed, reviews, fenced } = run({ step: slotStep, fillVia });
+    const { outcome, typed, reviews, fenced, read } = run({ step: slotStep, fillVia });
     const result = await outcome;
+    expect(read).toEqual([]);
     expect(result.status).toBe("filled");
     expect(JSON.parse(result.observations)).toEqual({
       cardFill: "filled",
@@ -471,6 +475,22 @@ describe("a card-fill step the host fills from a payment method", () => {
     expect((await outcome).status).toBe("refused");
     expect(reviews).toEqual([]);
     expect(filledBy).toEqual([]);
+  });
+
+  it("still types the caller's card for a step that names handles, even with fillVia", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed } = run({ fillVia });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+    expect(filledBy).toEqual([]);
+  });
+
+  it("never has the host fill once the review denies the step", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, reviews, fenced } = run({ step: slotStep, fillVia, reviewDenies: true });
+    await expect(outcome).rejects.toThrow("denied");
+    expect(reviews).toHaveLength(1);
+    expect([fenced, filledBy]).toEqual([[], []]);
   });
 
   it("is refused by a host that doesn't fill payment methods", async () => {

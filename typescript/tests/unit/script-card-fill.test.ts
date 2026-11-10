@@ -194,7 +194,7 @@ describe("a script's card questions and fillCard", () => {
     );
     expect(called).toBe(false);
     expect(Either.isLeft(result) && result.left.message).toBe(
-      "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+      "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
     );
     const plain = booking.replace(`handle: answer.cvc`, `handle: answer.code`);
     const second = await run(plain, () =>
