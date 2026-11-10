@@ -6855,6 +6855,36 @@ it("hands the host a read's structured reason for having no HTTP version", async
   expect(outcome.build).toBe("published");
 });
 
+// A host that asks again after a passing test names the cases still waiting in its rationale,
+// so the minter knows what to run rather than reading only that no version passed.
+it("passes the host's rationale with its ask for an HTTP version", async () => {
+  const rationale = "Run these cases on src/tool-http.mjs: second-store.";
+  let answer: unknown;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answer = JSON.parse(yield* turn.actions.finish(publication));
+      }),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "http_implementation_untested",
+            review: { outcome: "deny", rationale },
+          }),
+        ),
+    },
+  );
+  await f.run();
+  expect(answer).toMatchObject({
+    status: "not_published",
+    reason: "http_implementation_untested",
+    review: { rationale },
+  });
+});
+
 it("refuses an HTTP version reason without a known signal before publication", async () => {
   let published = 0;
   const f = await fixture(

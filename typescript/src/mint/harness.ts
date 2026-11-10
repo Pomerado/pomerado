@@ -6878,7 +6878,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   return notPublished(
                     error.code,
                     error.reason,
-                    {},
+                    // A host's rationale names what it still waits on, such as the cases the
+                    // HTTP version has not run.
+                    review === undefined ? {} : { review },
                     (error.reason === "http_implementation_stale"
                       ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
                       : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once against the example and runs every case it ran on src/tool.mjs on it too. Then call finish_build again with the same executionId.") +
