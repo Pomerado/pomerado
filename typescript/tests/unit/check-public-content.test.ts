@@ -341,7 +341,8 @@ describe("public content scan command", () => {
   });
 });
 
-describe("GitHub pull request check", () => {
+// Its stand-in for the gh command is a POSIX shell script.
+describe.skipIf(process.platform === "win32")("GitHub pull request check", () => {
   const repository = "Pomerado/pomerado";
   const directories: string[] = [];
   afterEach(() => {

@@ -197,7 +197,8 @@ it("serves a read tool from a folder without keeping its jobs there or naming an
   }
 });
 
-it("serves a write tool from a folder it can't write, and refuses a keyed call there before it acts", async () => {
+// Windows ignores a folder's POSIX mode, so chmod can't make one unwritable there.
+it.skipIf(process.platform === "win32")("serves a write tool from a folder it can't write, and refuses a keyed call there before it acts", async () => {
   const folder = await mkdtemp(join(tmpdir(), "pomerado-read-only-tool-"));
   await chmod(folder, 0o500);
   try {

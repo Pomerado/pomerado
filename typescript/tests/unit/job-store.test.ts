@@ -332,7 +332,8 @@ describe("the local file store", () => {
     expect(await readFile(join(folder, saved.name), "utf8")).toBe("{not json");
   });
 
-  it("opens in a folder it can't write, and fails a keyed submission there before storing anything", async () => {
+  // Windows ignores a folder's POSIX mode, so chmod can't make one unwritable there.
+  it.skipIf(process.platform === "win32")("opens in a folder it can't write, and fails a keyed submission there before storing anything", async () => {
     const folder = await newFolder();
     await chmod(folder, 0o500);
     try {

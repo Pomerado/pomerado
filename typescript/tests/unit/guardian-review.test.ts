@@ -75,7 +75,8 @@ describe("Guardian modeled reviewer contract", () => {
       for (let index = 0; index < 100; index++) {
         const reading = Effect.runPromise(Effect.either(read("nested/operation.ts", 0)));
         await rename(nested, parked);
-        await symlink(outside, nested, "dir");
+        // A junction needs no privilege on Windows; elsewhere it is a symbolic link.
+        await symlink(outside, nested, "junction");
         const observed = await reading;
         if (observed._tag === "Right") {
           expect(observed.right).toContain("inside-source");
@@ -458,7 +459,10 @@ describe("scoped Guardian source reader", () => {
       `${source}\nconst password = "synthetic-private-password";`,
     );
     await writeFile(join(directory, "outside.ts"), "outside-scope-content");
-    await symlink(join(directory, "outside.ts"), join(root, "escape.ts"));
+    // Windows creates a file symbolic link only with administrator rights or Developer Mode, so
+    // there escape.ts is missing, which the read refuses too.
+    if (process.platform !== "win32")
+      await symlink(join(directory, "outside.ts"), join(root, "escape.ts"));
   });
   afterAll(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });

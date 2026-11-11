@@ -584,10 +584,52 @@ jobs:
           name: test-selection-report
           path: test-selection-report.json
           retention-days: 30
+  # Native Windows, on a GitHub-hosted runner: typecheck, build, every unit test and a browser smoke
+  # test that mints integrations through the MCP server against local fixture sites, with scripted
+  # model responses and an offline command in Git for Windows' sh, then serves and calls one. Git
+  # for Windows comes with the runner image. Package scripts run in cmd.exe there, as for a
+  # contributor on Windows. It runs on pull requests only and isn't in `CI`'s needs, so it informs
+  # a review without deciding it, and never delays a release, until it passes reliably.
+  windows:
+    name: Windows
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm typecheck
+      - run: corepack pnpm build
+      - run: corepack pnpm test
+      - run: corepack pnpm exec playwright install chromium
+      - name: Browser smoke test
+        run: |
+          corepack pnpm test:browser \
+            typescript/tests/browser/standalone-pomerado.spec.ts \
+            typescript/tests/browser/standalone-guardian-context.spec.ts \
+            --grep "MCP stdio discovers tools|MCP mint input continues once|a read build's reviews carry each step's own context|a command Guardian denies never runs" \
+            --workers=2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: test-results-windows
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`. The
-  # exceptions are repeat-changed, which skips when a run changes no tests, and test selection's
-  # record jobs, which never decide a run.
+  # exceptions are repeat-changed, which skips when a run changes no tests, test selection's
+  # record jobs, which never decide a run, and the windows job until it passes reliably.
   ci:
     name: CI
     if: always()

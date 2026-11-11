@@ -12,7 +12,13 @@ import { describe, expect, it } from "vitest";
 
 const workflows = fileURLToPath(new URL("../../../.github/workflows/", import.meta.url));
 const repository = "Pomerado/pomerado";
+/** The runner a routed job falls back to when its run isn't a listed maintainer's. */
 const githubHosted = "ubuntu-latest";
+/** GitHub's own runners. The Windows job always runs on one, never on a routed runner. */
+const githubHostedRunners = new Set([githubHosted, "windows-latest"]);
+/** The runners in `runners` that GitHub doesn't host. */
+const notGitHubHosted = (runners: ReadonlySet<string>) =>
+  [...runners].filter((runner) => !githubHostedRunners.has(runner));
 const fallback = "blacksmith-4vcpu-ubuntu-2404";
 const variables = {
   CI_RUNNER_MAINTAINER: "maintainer-runner",
@@ -148,9 +154,9 @@ describe("CI runner routing", () => {
   it("runs every job of a fork's pull request on a GitHub-hosted runner, whoever opened it", () => {
     for (const association of associations) {
       for (const vars of [variables, {}]) {
-        expect(
+        expect(notGitHubHosted(
           runnersFor({ event: "pull_request", headRepository: "someone/pomerado", association, vars }),
-        ).toEqual(new Set([githubHosted]));
+        )).toEqual([]);
       }
     }
   });
@@ -159,7 +165,7 @@ describe("CI runner routing", () => {
     // An owner or member who isn't listed included: a self-hosted maintainer runner admits only
     // the accounts its own configuration lists.
     for (const association of associations) {
-      expect(runnersFor({ event: "pull_request", association })).toEqual(new Set([githubHosted]));
+      expect(notGitHubHosted(runnersFor({ event: "pull_request", association }))).toEqual([]);
     }
   });
 
@@ -169,17 +175,17 @@ describe("CI runner routing", () => {
       { triggeringActor: "someone" },
       { actor: "someone", triggeringActor: "listed-maintainer" },
     ]) {
-      expect(
+      expect(notGitHubHosted(
         runnersFor({ event: "pull_request", association: "OWNER", login: "listed-maintainer", ...run }),
-      ).toEqual(new Set([githubHosted]));
+      )).toEqual([]);
     }
   });
 
   it("runs every job of a listed maintainer's pull request from a fork on a GitHub-hosted runner", () => {
     for (const association of associations) {
-      expect(
+      expect(notGitHubHosted(
         runnersFor({ event: "pull_request", headRepository: "listed-maintainer/pomerado", association, login: "listed-maintainer" }),
-      ).toEqual(new Set([githubHosted]));
+      )).toEqual([]);
     }
   });
 
@@ -223,13 +229,13 @@ describe("CI runner routing", () => {
   });
 
   it("runs a push to another branch, a merge queue run and any run of another repository on a GitHub-hosted runner", () => {
-    expect(runnersFor({ event: "push", ref: "refs/heads/feature" })).toEqual(new Set([githubHosted]));
+    expect(notGitHubHosted(runnersFor({ event: "push", ref: "refs/heads/feature" }))).toEqual([]);
     // A merge queue has no route of its own yet, so it gets no self-hosted runner.
-    expect(runnersFor({ event: "merge_group" })).toEqual(new Set([githubHosted]));
+    expect(notGitHubHosted(runnersFor({ event: "merge_group" }))).toEqual([]);
     for (const event of ["push", "merge_group", "pull_request"]) {
-      expect(
+      expect(notGitHubHosted(
         runnersFor({ repository: "someone/pomerado", event, headRepository: "someone/pomerado", association: "OWNER" }),
-      ).toEqual(new Set([githubHosted]));
+      )).toEqual([]);
     }
   });
 
@@ -241,7 +247,7 @@ describe("CI runner routing", () => {
       { event: "workflow_dispatch" },
       { event: "pull_request", association: "OWNER" },
     ]) {
-      expect(runnersFor(run, withSecrets)).toEqual(new Set([githubHosted]));
+      expect(notGitHubHosted(runnersFor(run, withSecrets))).toEqual([]);
     }
   });
 

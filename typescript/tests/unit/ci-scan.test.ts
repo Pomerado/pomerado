@@ -25,7 +25,8 @@ interface Event {
   readonly PATH?: string;
 }
 
-describe("CI scan steps", () => {
+// CI runs these scans in bash on Linux, and their stand-ins here are POSIX shell scripts.
+describe.skipIf(process.platform === "win32")("CI scan steps", () => {
   const directories: string[] = [];
   afterEach(() => {
     for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
