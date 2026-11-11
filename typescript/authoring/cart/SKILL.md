@@ -26,7 +26,7 @@ the cart's lines and totals.
 A tool that fills the cart and places the order in the same run may use the site's guest
 checkout when the site offers one and the build holds no login. Prefer either to creating an
 account. Decide before you sign in, since a build that sent a login keeps it. Take the guest's
-contact details as inputs and the card as the caller-input skill says.
+contact details as inputs, and fill the card as the caller-input skill says.
 
 ## Take the product as the site's tools do
 

@@ -160,7 +160,6 @@ export interface KernelOperationContext<
    * declared with its type and prompt in the contract's `questions`. The browser stays open and
    * the deadline pauses while the caller decides; the next call gets the answers written into
    * its code. It throws `ScriptInputFailure` when no usable answer comes, such as `NoResponse`.
-   * A card question's answer is a card handle for `fillCard`, never the card itself.
    */
   readonly ask: ScriptAsk<Questions>;
   /** Asks one declared question and returns its answer itself, not one answer per id. */
@@ -181,16 +180,14 @@ export interface KernelOperationContext<
    */
   readonly handOff: ScriptHandOff<Questions>;
   /**
-   * Types the caller's payment card into the card fields of the site's own checkout, the way the
-   * host types a password. Ask for every part of the card in one `ask`, with a declared secret
-   * question for each part whose secretKind is card_number, card_expiry, card_cvc or
-   * billing_postal_code; `ask` returns a card handle for each, never the card. Pass each field's
-   * own selector, even inside a payment processor's frame, with its handle: one to four fields,
-   * each handle once. The host types only when the page's top document is on this site and each
-   * field is on the site or in a frame on an allowlisted payment processor's origin. It clicks
-   * nothing: submit the payment in a later call, under the write's commit rules. It returns each
-   * field's part and status, and throws `OperationFailure`, with no value in it, when it typed
-   * nothing or not every field.
+   * Fills the caller's payment method into the card fields of the site's own checkout, on a host
+   * that fills the card from a payment method. Pass each field's own selector, even inside a
+   * payment processor's frame, with its slot (card_number, card_expiry or card_cvc), each slot
+   * once, and the order total the checkout shows. The host fills only when the page's top document
+   * is on this site and each field is on the site or in a frame on an allowlisted payment
+   * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
+   * commit rules. It returns each field's part and status, and throws `OperationFailure`, with no
+   * value in it, when it filled nothing or not every field.
    */
   readonly fillCard: (
     step: ScriptCardFillRequest,
