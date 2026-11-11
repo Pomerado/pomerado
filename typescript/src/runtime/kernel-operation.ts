@@ -186,12 +186,13 @@ export interface KernelOperationContext<
    * once, and the order total the checkout shows. The host fills only when the page's top document
    * is on this site and each field is on the site or in a frame on an allowlisted payment
    * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
-   * commit rules. It returns each field's part and status, and throws `OperationFailure`, with no
-   * value in it, when it filled nothing or not every field.
+   * commit rules. It returns `outcome: "filled"` with each field's part and status, and throws
+   * `OperationFailure`, with no value in it, when it filled nothing or not every field.
    */
-  readonly fillCard: (
-    step: ScriptCardFillRequest,
-  ) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
+  readonly fillCard: (step: ScriptCardFillRequest) => Promise<{
+    readonly outcome: "filled";
+    readonly fields: readonly { readonly slot: string; readonly status: string }[];
+  }>;
   /**
    * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
    * polling `ready`, a code body that returns true once the page is usable. It throws
@@ -690,7 +691,7 @@ const scriptFillCard =
       );
       const typed = answer.outcome === "filled" || answer.typed;
       if (typed && options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
-      if (answer.outcome === "filled") return { fields: answer.fields };
+      if (answer.outcome === "filled") return { outcome: answer.outcome, fields: answer.fields };
       throw new OperationFailure(answer.message, { dispatch: typed ? "unknown" : "not_sent" });
     } finally {
       resume();

@@ -118,6 +118,7 @@ describe("a script's card questions and fillCard", () => {
     expect(result.right.output).toEqual({
       answer: { card: "{{card.c1}}", cvc: "{{card.c2}}", code: "551204" },
       filled: {
+        outcome: "filled",
         fields: [
           { slot: "card_number", status: "filled" },
           { slot: "card_cvc", status: "filled" },
@@ -230,6 +231,7 @@ describe("a script's card questions and fillCard", () => {
     );
     if (Either.isLeft(result)) throw result.left;
     expect(result.right.output).toEqual({
+      outcome: "filled",
       fields: [
         { slot: "card_number", status: "filled" },
         { slot: "card_cvc", status: "filled" },
