@@ -160,7 +160,6 @@ export interface KernelOperationContext<
    * declared with its type and prompt in the contract's `questions`. The browser stays open and
    * the deadline pauses while the caller decides; the next call gets the answers written into
    * its code. It throws `ScriptInputFailure` when no usable answer comes, such as `NoResponse`.
-   * A card question's answer is a card handle for `fillCard`, never the card itself.
    */
   readonly ask: ScriptAsk<Questions>;
   /** Asks one declared question and returns its answer itself, not one answer per id. */
@@ -181,16 +180,14 @@ export interface KernelOperationContext<
    */
   readonly handOff: ScriptHandOff<Questions>;
   /**
-   * Types the caller's payment card into the card fields of the site's own checkout, the way the
-   * host types a password. Ask for every part of the card in one `ask`, with a declared secret
-   * question for each part whose secretKind is card_number, card_expiry, card_cvc or
-   * billing_postal_code; `ask` returns a card handle for each, never the card. Pass each field's
-   * own selector, even inside a payment processor's frame, with its handle: one to four fields,
-   * each handle once. The host types only when the page's top document is on this site and each
-   * field is on the site or in a frame on an allowlisted payment processor's origin. It clicks
-   * nothing: submit the payment in a later call, under the write's commit rules. It returns each
-   * field's part and status, and throws `OperationFailure`, with no value in it, when it typed
-   * nothing or not every field.
+   * Fills the caller's payment method into the card fields of the site's own checkout, on a host
+   * that fills the card from a payment method. Pass each field's own selector, even inside a
+   * payment processor's frame, with its slot (card_number, card_expiry or card_cvc), each slot
+   * once, and the order total the checkout shows. The host fills only when the page's top document
+   * is on this site and each field is on the site or in a frame on an allowlisted payment
+   * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
+   * commit rules. It returns each field's part and status, and throws `OperationFailure`, with no
+   * value in it, when it filled nothing or not every field.
    */
   readonly fillCard: (
     step: ScriptCardFillRequest,
@@ -276,9 +273,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts, `screenshot` a picture of the page. The bytes stay with
-   * the host. A run without the host's file service, such as an offline run, throws
-   * `OperationFailure` on each.
+   * captures a download the page starts, `collectAll` every download a trigger starts and
+   * `screenshot` a picture of the page. The bytes stay with the host. A run without the host's
+   * file service, such as an offline run, throws `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -500,6 +497,18 @@ const fileFailure = (error: unknown, afterCalls = false) => {
 };
 
 /**
+ * A failed take of a trigger's downloads, by `files.collect` or `files.collectAll`: a download
+ * over the host's caps fails with the cap's own wording, which a build's host reads as its file
+ * cap; any other refusal as `fileFailure` after the trigger's calls.
+ */
+const collectFailure = (error: unknown) => {
+  const overCap = error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+  return overCap === undefined
+    ? fileFailure(error, true)
+    : new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
+};
+
+/**
  * The context's `files` over the host's channel. A live run marks a possible dispatch once a
  * placement set the file input, or may have, as an execute call does; a refusal before that
  * reached no page. Collecting only reads what the trigger's own calls made the page download.
@@ -575,11 +584,45 @@ const scriptFiles = (
       try {
         return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
-        const overCap =
-          error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
-        if (overCap !== undefined)
-          throw new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
-        throw fileFailure(error, true);
+        throw collectFailure(error);
+      }
+    },
+    collectAll: async (trigger, collectOptions) => {
+      const files = channel();
+      const collectAll = files.collectAll;
+      if (collectAll === undefined)
+        throw new OperationFailure(
+          "This host cannot collect every download a trigger starts (files.collectAll); use files.collect for one download",
+          { dispatch: "not_sent" },
+        );
+      const max = collectOptions?.max;
+      if (max !== undefined && !(Number.isSafeInteger(max) && max >= 1))
+        throw new OperationFailure("files.collectAll takes max as a positive whole number", {
+          dispatch: "not_sent",
+        });
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(collectAll({ slot, timeoutMs: 0, max: 1 })));
+        throw error;
+      }
+      const timeoutMs = Math.min(
+        collectOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      try {
+        return await settle(
+          collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
+        );
+      } catch (error) {
+        throw collectFailure(error);
       }
     },
     screenshot: async (shot = {}) => {
