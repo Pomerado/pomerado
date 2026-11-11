@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Effect } from "effect";
 import {
   localError,
@@ -12,6 +12,7 @@ import {
   localSourceBundleLimit,
   localSourceFileLimit,
 } from "./local-path.js";
+import { hostPlatform, removalRetries, type LocalPlatform } from "./local-platform.js";
 import { localRuntimeAssets } from "./local-runtime-assets.js";
 import type { LocalOperationOptions } from "./local-operation.js";
 
@@ -39,19 +40,26 @@ const runtimeEntry = new URL(
 );
 
 /**
+ * Links a staged folder to `target`, an absolute path. Windows creates a symbolic link only with
+ * administrator rights or Developer Mode, so there it makes a junction, which needs neither.
+ */
+const linkFolder = (platform: LocalPlatform, target: string, path: string) =>
+  localPromise(() => symlink(target, path, platform.windows ? "junction" : "dir"));
+
+/**
  * The staged `node_modules`: the installed dependencies, and in place of any installed `pomerado`
  * a package that exports only `./runtime`, which re-exports the running package's runtime. A tool
  * imports `pomerado/runtime` as the same modules the host runs, wherever the package is installed,
  * and an import of the package's internal modules fails to resolve.
  */
-const stageDependencies = (directory: string) =>
+const stageDependencies = (directory: string, platform: LocalPlatform) =>
   Effect.gen(function* () {
     const dependencies = yield* installedDependencies;
     const modules = join(directory, "node_modules");
     yield* localPromise(() => mkdir(modules));
     for (const name of yield* localPromise(() => readdir(dependencies)))
       if (name !== "pomerado")
-        yield* localPromise(() => symlink(join(dependencies, name), join(modules, name), "dir"));
+        yield* linkFolder(platform, join(dependencies, name), join(modules, name));
     const pomerado = join(modules, "pomerado");
     yield* localPromise(() => mkdir(pomerado));
     const manifest = { name: "pomerado", type: "module", exports: { "./runtime": "./runtime.js" } };
@@ -82,9 +90,12 @@ const reserved = new Set([
 
 export const stageSources = (options: LocalOperationOptions) =>
   Effect.gen(function* () {
+    const platform = options.platform ?? hostPlatform;
     const directory = yield* localPromise(() => mkdtemp(join(tmpdir(), "pomerado-operation-")));
     yield* Effect.addFinalizer(() =>
-      localPromise(() => rm(directory, { recursive: true, force: true })).pipe(Effect.orDie),
+      localPromise(() =>
+        rm(directory, { recursive: true, force: true, ...removalRetries(platform) }),
+      ).pipe(Effect.orDie),
     );
     const seen = new Set<string>();
     let total = 0;
@@ -121,9 +132,15 @@ export const stageSources = (options: LocalOperationOptions) =>
         yield* localPromise(() => writeFile(destination, text, { flag: "wx", mode: 0o400 }));
       else {
         // Realpaths keep authored error classes identical to the child runner's installed SDK.
+        // Without file symbolic links on Windows, a module that re-exports the installed one does.
         const installed = import.meta.url.endsWith(".ts") ? path.replace(/\.js$/, ".ts") : path;
         const trusted = fileURLToPath(new URL(`../${installed}`, import.meta.url));
-        yield* localPromise(() => symlink(trusted, destination, "file"));
+        const reexport = `export * from ${JSON.stringify(pathToFileURL(trusted).href)};\n`;
+        yield* localPromise(() =>
+          platform.windows
+            ? writeFile(destination, reexport, { flag: "wx", mode: 0o400 })
+            : symlink(trusted, destination, "file"),
+        );
       }
     }
     yield* localPromise(() =>
@@ -133,16 +150,24 @@ export const stageSources = (options: LocalOperationOptions) =>
       }),
     );
     // Dependencies stay in the installed package; authored source bytes are copied unchanged.
-    yield* stageDependencies(directory);
+    yield* stageDependencies(directory, platform);
     // Source saved when authored files sat beside the SDK reaches it and node_modules one level up
     // from src/, and finds package.json in its working folder. The same entries appear in
     // operation/, so those paths load the same modules and read the same file.
+    // Windows' junctions name absolute targets, and its copy of package.json holds the same text.
     const sdk = assets.map(([path]) => path.split("/")[0] ?? path);
     for (const shared of new Set([...sdk, "node_modules"]))
-      yield* localPromise(() => symlink(join("..", shared), join(operation, shared), "dir"));
+      yield* platform.windows
+        ? linkFolder(platform, join(directory, shared), join(operation, shared))
+        : localPromise(() => symlink(join("..", shared), join(operation, shared), "dir"));
     if (!seen.has("package.json"))
       yield* localPromise(() =>
-        symlink(join("..", "package.json"), join(operation, "package.json"), "file"),
+        platform.windows
+          ? writeFile(join(operation, "package.json"), '{"type":"module"}', {
+              flag: "wx",
+              mode: 0o400,
+            })
+          : symlink(join("..", "package.json"), join(operation, "package.json"), "file"),
       );
     // The child runs from the authored root, so relative file paths resolve as they did before.
     return { directory: operation, entrypoint: join(operation, entrypoint) };

@@ -17,6 +17,7 @@ import { applyDiff, type Editor } from "@openai/agents";
 import { Manifest, type Entry, type SandboxSession } from "@openai/agents/sandbox";
 import { Effect, Either, type Scope } from "effect";
 import { createLocalProcess, type LocalProcess } from "./local-process.js";
+import { hostPlatform, removalRetries } from "./local-platform.js";
 import {
   localError,
   localFilePath,
@@ -410,7 +411,11 @@ export const createLocalWorkspace = (
         }),
       ),
       Effect.zipRight(
-        temporary ? localPromise(() => rm(root, { recursive: true, force: true })) : Effect.void,
+        temporary
+          ? localPromise(() =>
+              rm(root, { recursive: true, force: true, ...removalRetries(hostPlatform) }),
+            )
+          : Effect.void,
       ),
     );
     yield* Effect.addFinalizer(() => close.pipe(Effect.orDie));
