@@ -106,8 +106,19 @@ the branch only when the request or input names or clearly implies it, otherwise
 Pick a sign-in method in this order: the one the request or caller names, the password, then a
 code or approval; when several channels remain and nothing names one, ask the caller which, and
 never prefer one yourself. Never list or pick a passkey, security key or biometric option, even
-when the caller asks: the host cannot use one. When a passkey is the only way in, end with
-`report_blocked` `site_lacks_capability`.
+when the caller asks: the host cannot use one.
+
+A screen that says two-factor or additional authentication is required, or an account or
+workspace entry whose text shows a passkey button among other words, is a step-up to complete,
+not a missing capability. Open the entry by its own control, never a separate passkey button,
+then read the screen it leads to. A passkey is the only way in only when the site offers no other route after
+you tried each one the screens show: another method link ("Try another way", "Use a different
+method"), a password, a code sent by email or text or shown in an authenticator app, and a single
+sign-on or "Authenticate" link for the account or its organization. Open each such route in an
+`explore` and read where it leads. When the routes split and nothing says which this account uses,
+ask the owner with `request_input` which one they sign in with. Only when every route you tried
+ends at a screen whose only way on starts a passkey or security-key prompt, or the owner says a
+passkey is how they sign in, end with `report_blocked` `site_lacks_capability`.
 
 # One screen at a time
 
