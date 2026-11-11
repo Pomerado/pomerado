@@ -410,7 +410,8 @@ describe("map building", () => {
   });
 });
 
-describe("trace preload", () => {
+// CI builds the test map on Linux runners.
+describe.skipIf(process.platform === "win32")("trace preload", () => {
   it("records what processes and threads load, read, list and copy, without changing results", () => {
     const root = temporary();
     const out = temporary();
@@ -506,7 +507,8 @@ console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout,
   });
 });
 
-describe("select and guard commands", () => {
+// The select and guard commands are bash scripts that CI runs on Linux.
+describe.skipIf(process.platform === "win32")("select and guard commands", () => {
   it("select a change's tests from git, and guard rejects an empty selection for code", () => {
     const repo = temporary();
     // The host's own git configuration, such as commit signing, stays out of the scenario.

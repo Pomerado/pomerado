@@ -322,7 +322,8 @@ it("keeps a keyed run's outcome and commit marks, and answers them after a resta
   }
 });
 
-it("runs calls without a key from a folder it can't write, and refuses a keyed call there before running it", async () => {
+// Windows ignores a folder's POSIX mode, so chmod can't make one unwritable there.
+it.skipIf(process.platform === "win32")("runs calls without a key from a folder it can't write, and refuses a keyed call there before running it", async () => {
   const folder = await mkdtemp(join(tmpdir(), "pomerado-mcp-jobs-"));
   await chmod(folder, 0o500);
   try {

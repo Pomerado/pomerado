@@ -36,15 +36,37 @@ it.each([0, 1, 1024])(
   },
 );
 
-it("preserves complete bounded reads and rejects oversized files, traversal and symlinks", async () => {
+it("preserves complete bounded reads and rejects oversized files and traversal", async () => {
   const root = await directory();
   await writeFile(join(root, "source.bin"), new Uint8Array([1, 2, 3, 4]));
   expect(await readScopedFile(root, "source.bin", 4)).toEqual(new Uint8Array([1, 2, 3, 4]));
   await expect(readScopedFile(root, "source.bin", 3)).rejects.toThrow("type_or_size");
   await expect(readScopedFile(root, "../source.bin")).rejects.toThrow("scope");
-  await symlink(join(root, "source.bin"), join(root, "linked.bin"));
-  await expect(readScopedFile(root, "linked.bin")).rejects.toThrow("ELOOP");
 });
+
+/** The code of a failed filesystem call, such as `EPERM`. */
+const codeOf = (error: unknown) =>
+  error instanceof Error && "code" in error ? error.code : undefined;
+
+it("rejects a symlinked file", async (context) => {
+  const root = await directory();
+  await writeFile(join(root, "source.bin"), new Uint8Array([1, 2, 3, 4]));
+  try {
+    await symlink(join(root, "source.bin"), join(root, "linked.bin"));
+  } catch (error) {
+    // Windows creates a file symbolic link only with administrator rights or Developer Mode.
+    if (codeOf(error) === "EPERM") return context.skip();
+    throw error;
+  }
+  // Windows opens through the link, and the read refuses the file it opened, which isn't it.
+  await expect(readScopedFile(root, "linked.bin")).rejects.toThrow(
+    process.platform === "win32" ? "scope" : "ELOOP",
+  );
+});
+
+// A junction is Windows' folder link that needs no privilege; elsewhere it is a symbolic link.
+// Windows opens through it, and the read refuses the folder it opened, which isn't the link.
+const linkedFolderRefusal = process.platform === "win32" ? /scope/ : /ELOOP|ENOTDIR/;
 
 it("reads nested files but rejects a symlinked directory anywhere in the path", async () => {
   const root = await directory();
@@ -53,10 +75,10 @@ it("reads nested files but rejects a symlinked directory anywhere in the path", 
   await writeFile(join(root, "a", "b", "source.bin"), new Uint8Array([7]));
   await writeFile(join(outside, "source.bin"), new Uint8Array([9]));
   expect(await readScopedFile(root, "a/b/source.bin")).toEqual(new Uint8Array([7]));
-  await symlink(outside, join(root, "escape"));
-  await symlink(join(root, "a"), join(root, "inner"));
-  await expect(readScopedFile(root, "escape/source.bin")).rejects.toThrow(/ELOOP|ENOTDIR/);
-  await expect(readScopedFile(root, "inner/b/source.bin")).rejects.toThrow(/ELOOP|ENOTDIR/);
+  await symlink(outside, join(root, "escape"), "junction");
+  await symlink(join(root, "a"), join(root, "inner"), "junction");
+  await expect(readScopedFile(root, "escape/source.bin")).rejects.toThrow(linkedFolderRefusal);
+  await expect(readScopedFile(root, "inner/b/source.bin")).rejects.toThrow(linkedFolderRefusal);
   await expect(readScopedFile(root, "a/b")).rejects.toThrow("type_or_size");
 });
 

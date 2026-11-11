@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, readdir, rm, symlink, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1123,7 +1123,9 @@ test("MCP mint input continues once into saved launcher and fresh business MCP",
       "Real original SDK mint, stdio child processes and a caller wait beyond the injected active budget",
   });
   test.setTimeout(60_000);
-  const directory = await mkdtemp(join(tmpdir(), "pomerado-mcp-mint-"));
+  // The integration names its real path, which differs from tmpdir's where that holds a link or,
+  // on Windows, a short name such as RUNNER~1.
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pomerado-mcp-mint-")));
   const server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html");
     response.end("<h1>Public fixture</h1>");
