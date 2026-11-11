@@ -240,7 +240,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["auth", "Sign-in pages are often slow, and the next screen can take a while to show."],
   [
     "auth",
-    "A passkey is the only way in only when the site offers no other route after you tried each one the screens show",
+    "A passkey is the only way in only when the site offers no other route after you looked for each one the screens show",
   ],
   [
     "auth",
@@ -1339,7 +1339,7 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["67421ce3120e12e1e616f45c0e5dcc2d6e27186bb0483511e9a15eef045fd825", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
-    ["8a732ab6755c177ac7591612c5396e9c5ca40a580d3fd9029692ace52f6fcc34", "auth"],
+    ["a2abaeb2a507c2f2c0741327e535a0757766b073052758a1971f76f2cf3d2751", "auth"],
     ["ba424a37559d905aad3b11bae66ccdf30f630fa939597e2a00e6cf1ad8d28686", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f6df7357d40ef13863b642d19b162e268e7258bdecfcc4fb42b72499a1475c36", "forms"],

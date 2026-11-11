@@ -2043,6 +2043,8 @@ it("ends a site_declined report as sign-in unavailable while the site did not ke
   expect(outcome.summary).toContain(
     "accepted the login each time, but the signed-in session did not survive the page load",
   );
+  // The lost session, not the minter's report, is the sign-in's cause.
+  expect(outcome).not.toHaveProperty("signInBlockedReason");
   // The report ended the build at once, with no further model call.
   expect(f.requests).toHaveLength(3);
 });

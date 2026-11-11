@@ -1585,7 +1585,9 @@ export const BuildBlocked = Schema.Struct({
 /**
  * A blocked report's reason the harness may end as sign-in unavailable, which it then records as
  * the sign-in's cause (`MintOutcome.signInBlockedReason`): an owner's or caller's own ending keeps
- * its reason instead.
+ * its reason instead. A checkpoint's terminal keeps it, so a value added here later fails an older
+ * worker's decode of a checkpoint that holds it: add one only with a host protocol change, or
+ * keep a new reason out of this field.
  */
 export const SignInBlockedReason = Schema.Literal(
   "site_lacks_capability",

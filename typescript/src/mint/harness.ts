@@ -7759,10 +7759,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           ? yield* reviewedStopExplanation(explanation)
                           : undefined;
                       // The minter's own report is the sign-in's recorded cause: the last thing
-                      // that stopped it, not an earlier step it got past.
-                      const signInBlockedReason = isSignInBlockedReason(ending.reason)
-                        ? ending.reason
-                        : undefined;
+                      // that stopped it, not an earlier step it got past. A session the host saw
+                      // the site lose is the cause instead, as the summary says.
+                      const signInBlockedReason =
+                        sessionLoss === undefined && isSignInBlockedReason(ending.reason)
+                          ? ending.reason
+                          : undefined;
                       terminal ??= {
                         build: "incomplete",
                         recoveryReason: "sign_in_unavailable",
