@@ -180,6 +180,17 @@ it("refuses a password slot only on a control its markup names a one-time code, 
     "label",
   );
   expect(password({ ariaLabel: "Two-factor code" })?.evidence).toBe("label");
+  // A one-time passcode is a code: "passcode" names the account's own secret only outside a code's
+  // own words, and a name that also names a code counts only a password or PIN word against it.
+  const passcodes: Attributes[] = [
+    { label: "Enter your one-time passcode", autocomplete: "one-time-code" },
+    { label: "One-time passcode" },
+    { placeholder: "6-digit passcode", autocomplete: "one-time-code" },
+    { name: "passcode_otp" },
+    { name: "otpPasscode", autocomplete: "one-time-code" },
+    { label: "Verification code", name: "otp_pass" },
+  ];
+  for (const attributes of passcodes) expect(password(attributes)?.control).toBe("code");
   // Never a code by itself: a numeric PIN box, a masked box, a card's security code, a promo box,
   // a passcode, or a name that also names a password.
   const neverCodes: Attributes[] = [

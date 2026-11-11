@@ -51,6 +51,8 @@ interface SiteScript {
   readonly signedInPages?: readonly string[];
   /** The text each page's elements show, by page name and selector. */
   readonly texts?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** A field's own label, by selector; "Field" when none. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /** A scripted site and the run's trace on it: page loads, fills and the owner's questions. */
@@ -107,7 +109,7 @@ const scriptedSite = (script: SiteScript) => {
               id: null,
               autocomplete: null,
               inputmode: null,
-              label: "Field",
+              label: script.labels?.[field.selector] ?? "Field",
               placeholder: null,
               ariaLabel: null,
               text: null,
@@ -782,6 +784,30 @@ it.each([
   const { result, prompts } = await signIn(recipe(methodStep, codeStep), fake, { method });
   expect(result).toEqual(Either.right({ alreadySignedIn: false }));
   expect(steps(fake).at(-2)).toBe("ask:code");
+  expect(prompts.at(-1)).toBe(prompt);
+});
+
+// A code field whose own words name an authenticator app decides where its code comes from only
+// while no method is in force: a texted method the owner picked keeps the sent-code wording.
+it.each([
+  ["option_0", "Enter the sign-in code example.test sent you."],
+  ["option_1", "Enter the code from your authenticator app for example.test."],
+  [undefined, "Enter the code from your authenticator app for example.test."],
+] as const)("asks for a code by the method picked as %s before the field's own words", async (method, prompt) => {
+  const fake = scriptedSite({
+    entry: method === undefined ? "code" : "method",
+    screens: { method: ["#by-text", "#by-app"], code: ["#code", "#verify"], account: [] },
+    labels: { "#code": "Code from your authenticator app" },
+    fill: (page, values) =>
+      page === "method" ? { next: "code" } : { next: "account", signIn: values[0] === code },
+  });
+  const steps = method === undefined ? [codeStep] : [methodStep, codeStep];
+  const { result, prompts } = await signIn(
+    recipe(...steps),
+    fake,
+    method === undefined ? {} : { method },
+  );
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
   expect(prompts.at(-1)).toBe(prompt);
 });
 

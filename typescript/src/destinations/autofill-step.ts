@@ -1176,14 +1176,22 @@ const nameWords = (text: string | null) =>
     .filter((word) => word !== "");
 /** Words of a name or id that alone name a one-time code. */
 const codeNameWords = new Set(["otp", "totp", "mfa", "2fa"]);
-/** Words of a name or id that name the account's own secret: a password, passcode or PIN. */
-const passwordNameWords = new Set(["password", "passwd", "pwd", "pass", "passcode", "pin"]);
+/**
+ * Words of a name or id that name the account's own secret, a password or PIN, even beside
+ * `codeNameWords`, as in `mfa-password`.
+ */
+const strictPasswordNameWords = new Set(["password", "passwd", "pwd", "pin"]);
+/**
+ * Words of a name or id that name the account's own secret only in a name that names no code: a
+ * one-time passcode's box may be named `otp_pass` or `otpPasscode`.
+ */
+const passwordNameWords = new Set([...strictPasswordNameWords, "pass", "passcode"]);
 /**
  * Words of a name or id that name another kind of value, which win over `codeNameWords`, so a
- * field such as `otp-email` is never read as a code.
+ * field such as `otp-email` or `mfa-password` is never read as a code.
  */
 const otherNameWords = new Set([
-  ...passwordNameWords,
+  ...strictPasswordNameWords,
   "email",
   "username",
   "phone",
@@ -1199,18 +1207,23 @@ const otherNameWords = new Set([
 ]);
 /**
  * A control's own words that name a one-time code: a one-time, verification, authentication,
- * authenticator, two-factor or two-step code, or an authenticator app. A security code (a card's),
- * a passcode or a PIN never is.
+ * authenticator, two-factor or two-step code or passcode, or an authenticator app. A security code
+ * (a card's), a sign-in or login passcode, a passcode alone or a PIN never is.
  */
-const codeLabel = new RegExp(
-  [
-    String.raw`\b(?:one[- ]?time|verification|authentication|authenticator|2fa`,
-    String.raw`|(?:two|2)[- ](?:factor|step))\s+code\b|\bauthenticator app\b`,
-  ].join(""),
-  "iu",
-);
-/** A control's own words that name the account's own secret: a password, passcode or PIN. */
-const passwordLabel = /\bpass(?:word|phrase|code)s?\b|\bpin\b/iu;
+const codePhrase = [
+  String.raw`\b(?:one[- ]?time|verification|authentication|authenticator|2fa`,
+  String.raw`|(?:two|2)[- ](?:factor|step))\s+(?:pass)?code\b|\bauthenticator app\b`,
+].join("");
+const codeLabel = new RegExp(codePhrase, "iu");
+const codePhrases = new RegExp(codePhrase, "giu");
+/**
+ * A control's own words that name the account's own secret, outside a code's own words
+ * (`codePhrases`): a password, passphrase or PIN, or a passcode on a control that no
+ * `one-time-code` autocomplete marks, as "Login passcode" is. So "Password or one-time code" names
+ * a password, and "One-time passcode" or a one-time-code box's "6-digit passcode" does not.
+ */
+const passwordLabel = /\bpass(?:word|phrase)s?\b|\bpin\b/iu;
+const passcodeLabel = /\bpasscodes?\b/iu;
 /** The `autocomplete` tokens that mark a control as the account's password. */
 const passwordTokens = new Set(["current-password", "new-password"]);
 const autocompleteTokens = (control: { readonly autocomplete: string | null }) =>
@@ -1238,15 +1251,24 @@ export const oneTimeCodeEvidence = (control: ControlWords): SlotControlEvidence 
 
 /**
  * Whether a control's own markup names the account's own secret: an `autocomplete` of
- * `current-password` or `new-password`, a name or id word such as `password` or `pin`, or a label,
- * aria-label or placeholder naming a password, passcode or PIN.
+ * `current-password` or `new-password`, a name or id word such as `password` or `pin`
+ * (`passwordNameWords`, or only `strictPasswordNameWords` in a name that names a code), or a
+ * label, aria-label or placeholder naming one outside a code's own words (`passwordLabel`).
  */
-const passwordControl = (control: ControlWords) =>
-  autocompleteTokens(control).some((token) => passwordTokens.has(token)) ||
-  [...nameWords(control.name), ...nameWords(control.id)].some((word) =>
-    passwordNameWords.has(word),
-  ) ||
-  ownTexts(control).some((text) => passwordLabel.test(text));
+const passwordControl = (control: ControlWords) => {
+  const tokens = autocompleteTokens(control);
+  if (tokens.some((token) => passwordTokens.has(token))) return true;
+  const words = [...nameWords(control.name), ...nameWords(control.id)];
+  const names = words.some((word) => codeNameWords.has(word))
+    ? strictPasswordNameWords
+    : passwordNameWords;
+  if (words.some((word) => names.has(word))) return true;
+  const oneTimeCode = tokens.includes("one-time-code");
+  return ownTexts(control).some((text) => {
+    const outside = text.replace(codePhrases, " ");
+    return passwordLabel.test(outside) || (!oneTimeCode && passcodeLabel.test(outside));
+  });
+};
 
 /**
  * A step that gives a field a credential slot its control contradicts: a refusal before anything
