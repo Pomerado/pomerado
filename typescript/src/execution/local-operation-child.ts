@@ -279,6 +279,11 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
                   ),
                   Effect.mapError((error) => fileRefusal(localError(error))),
                 ),
+              screenshot: (request) =>
+                call({ kind: "file_screenshot", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
             },
           }
         : {}),

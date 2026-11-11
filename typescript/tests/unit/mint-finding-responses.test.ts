@@ -2,6 +2,8 @@ import { makeMintContinuationFixture, portableJobSession } from "../support/mint
 import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { MintFailure, type PublicationRequest } from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
@@ -218,6 +220,42 @@ it("refuses an answer sent again unchanged after the review ruled on it", async 
   await f.run();
   expect(reviews).toBe(2);
   expect(resultOf(f.requests[4], "unchanged")).toMatchObject({ reason: "unchanged_since_denial" });
+});
+
+// A denial's finding can sit in a schema's description, such as a real person's details written
+// there. A resubmission whose only edit is that description is a new submission, which the host
+// reviews again, though the live tests' digest ignores descriptions.
+it("reviews again a resubmission whose only edit is a schema description", async () => {
+  const described = (description: string) =>
+    `import { Schema } from "effect";\nexport const input = Schema.String.annotations({ description: ${JSON.stringify(description)} });\nexport default {};\n`;
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) => {
+      // Between the denial and the next finish_build, the minter rewords only the description.
+      if (index === 2)
+        writeFileSync(join(f.workspace.root, "src/tool.ts"), described("The account's city."));
+      return (
+        [
+          example,
+          call("finish_build", finishBuild, "first"),
+          call("finish_build", finishBuild, "reworded"),
+        ][index] ?? prose("Stopping.")
+      );
+    },
+    {
+      publish: () =>
+        Effect.suspend(() => {
+          reviews++;
+          return Effect.fail(denial([untestedFilter]));
+        }),
+    },
+  );
+  writeFileSync(join(f.workspace.root, "src/tool.ts"), described("Jane Roe's city, Springfield."));
+  await f.run();
+  expect(resultOf(f.requests[3], "reworded")).not.toMatchObject({
+    reason: "unchanged_since_denial",
+  });
+  expect(reviews).toBe(2);
 });
 
 // An answer could cite a file the minter wrote itself as its evidence. Only the host's own record,

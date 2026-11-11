@@ -5391,27 +5391,32 @@ it("ends a signed-in build as no_response when the minter's question goes unansw
   });
 });
 
-// A read repair can't write, so a host may let it hear no answer while signed in. The flag reaches
-// no write repair and no build.
+// A read repair can't write, so a host may let it hear no answer while signed in, a failure repair
+// or the owner's requested change alike. The flag reaches no write repair and no build.
 it("hands a signed-in read repair's unanswered question back when its host allows it", async () => {
   const signedIn = { websiteCredentialsAvailable: true, handBackSignedInReadRepair: true } as const;
-  const f = await fixture(
-    (turn) =>
-      Effect.gen(function* () {
-        expect(
-          JSON.parse(yield* turn.actions.requestInput(textQuestion("May the email be empty?"))),
-        ).toMatchObject({ status: "no_answer", userInputRequired: false });
-        expect(turn.isComplete()).toBe(false);
-        yield* turn.actions.execute(execution);
-        expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
-          status: "published",
-        });
-      }),
+  for (const host of [
     signedIn,
-  );
-  const outcome = await f.run({ ...request, mode: "maintenance", effect: "read" });
-  expect(outcome).toMatchObject({ build: "published" });
-  expect(outcome).not.toHaveProperty("noResponse");
+    { ...signedIn, taskUpdateConfirmer: () => Effect.succeed("owner_request" as const) },
+  ]) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(
+            JSON.parse(yield* turn.actions.requestInput(textQuestion("May the email be empty?"))),
+          ).toMatchObject({ status: "no_answer", userInputRequired: false });
+          expect(turn.isComplete()).toBe(false);
+          yield* turn.actions.execute(execution);
+          expect(JSON.parse(yield* turn.actions.finish(publication))).toMatchObject({
+            status: "published",
+          });
+        }),
+      host,
+    );
+    const outcome = await f.run({ ...request, mode: "maintenance", effect: "read" });
+    expect(outcome).toMatchObject({ build: "published" });
+    expect(outcome).not.toHaveProperty("noResponse");
+  }
   for (const run of [
     { ...request, mode: "maintenance", effect: "write" },
     { ...request, effect: "read" },
@@ -5427,6 +5432,129 @@ it("hands a signed-in read repair's unanswered question back when its host allow
     );
     expect(await ended.run(run)).toMatchObject({ build: "incomplete", noResponse: {} });
   }
+});
+
+/** A request_input call with one choice question the minter recommends an answer to. */
+const fieldQuestion = (asksConsent?: boolean) => ({
+  ...(asksConsent === undefined ? {} : { asksConsent }),
+  questions: [
+    {
+      id: "phone_field",
+      type: "choice" as const,
+      prompt: "Which field holds the phone number?",
+      options: [
+        { id: "contact", label: "Contact number" },
+        { id: "mobile", label: "Mobile" },
+      ],
+      recommended: "contact",
+    },
+  ],
+});
+
+// A write repair's question that asks no consent, such as which field holds a value, goes back as
+// no answer when its host allows it, signed in too, with the answer the minter recommended. A
+// question that asks consent, or carries no mark, still ends the repair: no answer is never consent.
+/** Guardian's question review with the rule it names. */
+const reviewedAs = (label: "ambiguous_request" | "owner_confirmation") => () =>
+  Effect.succeed({
+    outcome: "allow_business" as const,
+    rationale: "Synthetic question review.",
+    label,
+  });
+
+it("hands a write repair's unanswered question that asks no consent back with its recommendation", async () => {
+  const signedIn = {
+    websiteCredentialsAvailable: true,
+    handBackWriteRepairQuestions: true,
+    reviewQuestion: reviewedAs("ambiguous_request"),
+  } as const;
+  const writeRepair = { ...request, mode: "maintenance", effect: "write" };
+  const shown: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        expect(JSON.parse(yield* turn.actions.requestInput(fieldQuestion(false)))).toEqual({
+          status: "no_answer",
+          recommended: { phone_field: "contact" },
+          userInputRequired: false,
+          instruction: expect.any(String),
+        });
+        expect(turn.isComplete()).toBe(false);
+      }),
+    {
+      ...signedIn,
+      askInput: (asked) =>
+        Effect.sync(() => {
+          shown.push(asked);
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+    },
+  );
+  expect(await f.run(writeRepair)).not.toHaveProperty("noResponse");
+  // The caller sees the recommendation, never the consent mark.
+  expect(shown).toEqual([
+    expect.objectContaining({
+      questions: [expect.objectContaining({ id: "phone_field", recommended: "contact" })],
+    }),
+  ]);
+  expect(shown[0]).not.toHaveProperty("asksConsent");
+  const consent = {
+    asksConsent: false,
+    questions: [{ id: "place", type: "confirm" as const, prompt: "May it place the order again?" }],
+  };
+  // Guardian's review names one rule for the whole request, which vouches for one question only.
+  const twoQuestions = {
+    ...fieldQuestion(false),
+    questions: [
+      ...fieldQuestion(false).questions,
+      { id: "extras", type: "text" as const, prompt: "Which extras should it add?" },
+    ],
+  };
+  for (const [asked, host] of [
+    [fieldQuestion(true), signedIn],
+    [fieldQuestion(), signedIn],
+    [consent, signedIn],
+    [twoQuestions, signedIn],
+    // Guardian reads it as asking the owner's confirmation, whatever the minter marked.
+    [fieldQuestion(false), { ...signedIn, reviewQuestion: reviewedAs("owner_confirmation") }],
+    [fieldQuestion(false), { websiteCredentialsAvailable: true }],
+  ] as const) {
+    const ended = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          expect(JSON.parse(yield* turn.actions.requestInput(asked))).toMatchObject({
+            status: "no_response",
+          });
+        }),
+      host,
+    );
+    expect(await ended.run(writeRepair)).toMatchObject({ build: "incomplete", noResponse: {} });
+  }
+});
+
+it("refuses a recommended answer its question does not offer, and asks nobody", async () => {
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const unoffered = fieldQuestion(false);
+        expect(
+          JSON.parse(
+            yield* turn.actions.requestInput({
+              ...unoffered,
+              questions: [{ ...unoffered.questions[0], recommended: "fax" }],
+            }),
+          ),
+        ).toMatchObject({ status: "question_invalid" });
+      }),
+    {
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+        }).pipe(Effect.zipRight(Effect.fail(unanswered()))),
+    },
+  );
+  await f.run();
+  expect(asked).toBe(0);
 });
 
 it("ends a signed-in build as no_response when its example's script question goes unanswered", async () => {
@@ -6853,6 +6981,36 @@ it("hands the host a read's structured reason for having no HTTP version", async
   ]);
   expect(candidates.map((candidate) => candidate.httpVersion)).toEqual([undefined, httpVersion]);
   expect(outcome.build).toBe("published");
+});
+
+// A host that asks again after a passing test names the cases still waiting in its rationale,
+// so the minter knows what to run rather than reading only that no version passed.
+it("passes the host's rationale with its ask for an HTTP version", async () => {
+  const rationale = "Run these cases on src/tool-http.mjs: second-store.";
+  let answer: unknown;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answer = JSON.parse(yield* turn.actions.finish(publication));
+      }),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "http_implementation_untested",
+            review: { outcome: "deny", rationale },
+          }),
+        ),
+    },
+  );
+  await f.run();
+  expect(answer).toMatchObject({
+    status: "not_published",
+    reason: "http_implementation_untested",
+    review: { rationale },
+  });
 });
 
 it("refuses an HTTP version reason without a known signal before publication", async () => {

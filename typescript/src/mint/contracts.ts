@@ -347,6 +347,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    * already showed the request's end state publishes. Absent otherwise.
    */
   readonly publishesOnReadBack?: true;
+  /**
+   * On a publication refusal, the other refusals the host found in the same submission, each one
+   * the minter fixes in its source or metadata. A host that runs every check before answering
+   * lists them here, so the minter fixes them in one round instead of meeting one per round.
+   */
+  readonly alsoRefused?: readonly MintFailure[];
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
   /**
@@ -506,9 +512,9 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** The registry stayed unavailable through the host's retries; publishing may be tried again. */
     | "registry_unavailable"
     | "example_output_unavailable"
-    /** A read's HTTP implementation never passed a live test; the minter is asked once. */
+    /** A read's HTTP implementation never passed a live test; a host may ask until it settles. */
     | "http_implementation_untested"
-    /** A read's HTTP implementation changed since its passing live test; asked once too. */
+    /** A read's HTTP implementation changed since its passing live test; asked the same way. */
     | "http_implementation_stale"
     /** A write session's composed script declares no `write.confirmation`. */
     | "confirmation_undeclared"
@@ -653,6 +659,13 @@ export const MintRequest = Schema.Struct({
   mode: Schema.Literal("mint", "maintenance"),
   intent: Schema.String.pipe(Schema.minLength(1)),
   businessInput: Schema.Unknown,
+  /**
+   * More example inputs the caller sent beside `businessInput`, in the caller's order. A read's
+   * example runs `businessInput` first; these are the caller's own values for its live tests and,
+   * once the tool refused `businessInput` with `InvalidInput`, for an example in its place. A
+   * write runs only `businessInput`. Absent when the caller sent one example.
+   */
+  otherExampleInputs: Schema.optional(Schema.Array(Schema.Unknown).pipe(Schema.maxItems(9))),
   observations: Schema.Unknown,
   siteOrigin: Schema.optional(Schema.String.pipe(Schema.maxLength(2048))),
   /**
@@ -1084,6 +1097,13 @@ export interface LiveTestHost {
    */
   readonly caseTimeoutMs?: number;
   /**
+   * The longest a batch may ask each of its cases to run (`LiveTestsRequest.caseSeconds`), in
+   * milliseconds. The harness passes a longer request as the batch's `caseTimeoutMs`, cut to this;
+   * it passes none for a request no longer than `caseTimeoutMs`, for the reserve batch
+   * (`reservedCaseTimeoutMs`), or when less than that limit is left before the batch's deadline. Absent, every batch runs at `caseTimeoutMs`, whatever it asks for.
+   */
+  readonly maxCaseTimeoutMs?: number;
+  /**
    * How long one case may run in the one batch a host that caps its batches keeps in reserve past
    * its cap, in milliseconds, while that batch has not run; absent otherwise. Once no batch fits
    * under `caseTimeoutMs`, the harness still runs a batch whose every case is one a failure is
@@ -1120,6 +1140,13 @@ export interface LiveTestBatch {
   /** When the batch must end, in epoch milliseconds. */
   readonly deadlineAt: number;
   /**
+   * How long each case of this batch may run, in milliseconds, when the minter asked for longer
+   * than the host's `caseTimeoutMs`: at most its `maxCaseTimeoutMs`, and only while that much is
+   * left before `deadlineAt`. Absent, the host's own `caseTimeoutMs`. A host still runs no case past its own
+   * maximum, whatever this says.
+   */
+  readonly caseTimeoutMs?: number;
+  /**
    * The read signed in: run every case on the build's own signed-in browser, warm, never on a new
    * browser. The harness then asks for one worker.
    */
@@ -1144,6 +1171,8 @@ export type LiveTestBatchResult =
  * that holds it; `run` runs the named cases, or every case when `cases` is null, as one batch
  * after one Guardian review, on separate browsers where the host has them. A host may run cases on
  * up to its own `maxWorkers` browsers at once, whatever the request's `maxWorkers` says.
+ * `caseSeconds` asks for a longer limit on each case of the batch, which the harness cuts to the
+ * host's `LiveTestHost.maxCaseTimeoutMs`; null or absent, the host's own limit.
  */
 export const LiveTestsRequest = Schema.Struct({
   action: Schema.Literal("plan", "run"),
@@ -1154,6 +1183,9 @@ export const LiveTestsRequest = Schema.Struct({
     ),
   ),
   maxWorkers: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 3))),
+  caseSeconds: Schema.optional(
+    Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(1, 600))),
+  ),
 });
 export type LiveTestsRequest = typeof LiveTestsRequest.Type;
 
@@ -1480,7 +1512,11 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   retry later. Such a page that appears only after the site already served its pages, or after
  *   a bot check the build got past, is reported the same way; since sites sometimes throttle a
  *   browser's network address this way, a host may give the build a new browser on another
- *   address and ask it to try the failing step once more before it ends the build.
+ *   address and ask it to try the failing step once more before it ends the build. A site that
+ *   fails only under the build's own request volume is limiting the build, not down: its report
+ *   sets `rateLimited`. A page that looks blank only after the build closed an overlay is no
+ *   outage, and Guardian finding the build's evidence contradicts a report that the site is at
+ *   fault hands it back to the build to keep working, once in the attempt.
  * - `policy`: Guardian refused an execution with refusal `final`, or refused a publication for a
  *   reason no correction gets past (`publicationRefusalUnfixable`), in this attempt, and nothing
  *   within authority gets past it. An execution refusal Guardian marked `correctable` is never one.
@@ -1586,13 +1622,24 @@ export const BlockedReport = Schema.Struct({
         "site_declined only: when the site says it takes the request again, as an ISO 8601 date-time with its UTC offset; omit it when the site states no time",
     }),
   ),
+  /**
+   * A `site_unavailable` report only: the site is limiting how many requests the build sends,
+   * not down. Optional: a host that ignores it reads a site temporarily unavailable.
+   */
+  rateLimited: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "site_unavailable only: true when the site fails only under this build's own request volume, such as requests it refuses as too many or larger pages failing where smaller ones pass, rather than being down",
+    }),
+  ),
 });
 /**
  * A blocked build as recorded and shown: its reason, and its screened explanation only when
  * Guardian's question review allowed the caller to read it. `new_mint_recommended` is the ending of
  * a `mint_update` whose change belongs in a new build: the reviewed summary of the change and the
  * request the caller could submit for that build. A temporary `site_declined` ending keeps
- * `temporary` and, when the site said when, `availableAt`.
+ * `temporary` and, when the site said when, `availableAt`; a `site_unavailable` ending the site's
+ * limit on the build's requests caused keeps `rateLimited`.
  */
 const BuildBlockedOutcome = Schema.Union(
   Schema.Struct({
@@ -1600,6 +1647,7 @@ const BuildBlockedOutcome = Schema.Union(
     explanation: Schema.optionalWith(BuildBlocked.fields.explanation, { exact: true }),
     temporary: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     availableAt: Schema.optionalWith(AvailableAt, { exact: true }),
+    rateLimited: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   }),
   Schema.Struct({
     reason: Schema.Literal("new_mint_recommended"),
@@ -1938,6 +1986,18 @@ export const AgentRequest = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(8)),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /**
+   * Whether an answer would let the build act on the site for the caller. The host keeps it from
+   * the caller. A write repair whose host allows it hands back unanswered only a request of one
+   * question marked false, no confirm or secret one
+   * (`MintDependencies.handBackWriteRepairQuestions`).
+   */
+  asksConsent: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "true when an answer would let the build act on the site for the caller, such as submit, pay, send, book or delete; false when it only decides how the tool works, such as which field holds a value.",
+    }),
+  ),
   /**
    * The id of the finding of Guardian's latest publication denial this request is about, such as
    * one that leaves the owner to choose between keeping a claim with its evidence or dropping it.
@@ -2816,13 +2876,24 @@ export interface MintDependencies {
    */
   readonly websiteLoginPreAuthorized?: true;
   /**
-   * A read repair hands an unanswered question back to the minter as no answer even while it is
-   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * A read repair (`mode` `maintenance` with effect read: a failure repair or the owner's requested
+   * change) hands an unanswered question back to the minter as no answer even while it is signed
+   * in or holds a login. A read repair can't write, and no answer is still never consent.
    * Every other rule for an unanswered question stands. Without it, any question left unanswered
    * while the build is signed in or holds a login ends the build as before. A core without it
    * ignores it.
    */
   readonly handBackSignedInReadRepair?: true;
+  /**
+   * A write repair (`mode` `maintenance` with effect write: a failure repair or the owner's
+   * requested change) hands an unanswered request back to the minter as no answer, signed in or
+   * not, when it holds one question, neither confirm nor secret, the minter marked it
+   * `asksConsent: false`, and Guardian's question review allowed it under a rule that asks no
+   * consent (`noConsentQuestionLabels`). A request that asks consent, or carries no mark, still ends the
+   * repair as before: no answer is never consent. Every other rule for an unanswered question
+   * stands. A core without it ignores it.
+   */
+  readonly handBackWriteRepairQuestions?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**

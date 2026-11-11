@@ -321,19 +321,24 @@ When Guardian sends a question back with `question_rejected`, reword it as the r
 ask again once, with the same question ids. Drop it when the result's `questionNeeded` is false,
 or when the rationale says plainly that no question is needed.
 
-When nobody answers before the question expires, `request_input` returns `no_answer`. Decide
-how to go on without it: continue with a sensible default and list it in `finish_build`
-`assumptions`, narrow the tool so it does not need the answer, or end with `report_blocked`,
-reason `question_unanswered`, when only the caller's answer would let the build go on. No answer is never
-consent: it authorizes no write, sign-in or change of task, and `confirmedBy` never names it. Ask
-again only when the answer is essential: after two questions have gone unanswered, the next one
-left unanswered ends the build.
+When nobody answers before the question expires, `request_input` returns `no_answer`, with the
+answers you recommended in `recommended`. Go on with your recommended answer and list it in
+`finish_build` `assumptions`. For a question without one, decide how to go on without it:
+continue with a sensible default and list it in `finish_build` `assumptions`, narrow the tool so
+it does not need the answer, or end with `report_blocked`, reason `question_unanswered`, when
+only the caller's answer would let the build go on. No answer is never consent, and neither is
+your recommendation: it authorizes no write, sign-in or change of task, and `confirmedBy` never
+names it. Ask again only when the answer is essential: after two questions have gone unanswered,
+the next one left unanswered ends the build.
 Once the build is signed in or holds a login, a question left unanswered then ends the build,
 though one left unanswered before the build signed in went back to you. That is no reason to
-narrow the tool without asking. A read repair may still get `no_answer` while signed in: go on as
-above. Ask design questions early, while exploring and
-before signing in where you can, and state in each the choice you recommend, so the owner can
-accept it in one step.
+narrow the tool without asking. A read repair may still get `no_answer` while signed in, and so
+may a write repair for a question that asks no consent: go on as above. Ask design questions
+early, while exploring and before signing in where you can, and give each choice, multiple choice
+and text question your recommended answer in `recommended`, so the owner can accept it in one
+step; never recommend an answer to a question that asks consent. Set `asksConsent` true when an
+answer would let the build act on the site for the caller, such as submit, pay, send, book or
+delete, and false when it only decides how the tool works, such as which field holds a value.
 
 The caller may answer every choice and multi_choice in their own words: their own text instead
 of an option, or a note beside the options they pick. The host always allows it, so never add an
@@ -578,13 +583,18 @@ finally-style block, so the revert runs on every path, errors and timeouts inclu
 during exploration too, not only in the published tool. A filter the site does not save stays
 part of the read.
 
+The request's `otherExampleInputs`, when present, are more inputs the caller gave as examples
+after `businessInput`, in their order. A read's example runs `businessInput` first, and its live
+tests keep a case on each of the others (testing skill). A write runs only `businessInput`.
+
 A read's example record from the caller that the site can't serve, such as a link that moved or
 lost its ID, a record the site says it doesn't have, or a value it refuses, doesn't block the
 build. Have the tool refuse it with `InvalidInput` naming the field, in the site's words
 (caller-input skill), and run the example on it once: that refusal is the tool's error case for
-that input. Then prove the tool on another record of the same kind: one the site lists, passed
-as `exampleInput` on the example, or, only when you find none on the site, one the caller gives
-through `request_input`. Keep a live test case on the caller's input that expects
+that input. Then prove the tool on another record of the same kind, passed as `exampleInput` on
+the example: the first of the caller's `otherExampleInputs` the site serves, else one the site
+lists, or, only when you find none on the site, one the caller gives through `request_input`.
+Keep a live test case on the caller's input that expects
 `invalid_input`, and publish against the example that passed. When neither the site nor the
 caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
 and the site's answer. A write runs the caller's input as it is.
@@ -666,7 +676,13 @@ never with final text, which the host treats as unfinished work:
   network address this way, so a host may give the build a new browser on another address and ask
   you to try the failing step once more before it ends the build; on a signed-in build that
   browser starts signed out. Try the step again within your usual rules, and report
-  `site_unavailable` again if the page stays. A page for the example's own record that says the
+  `site_unavailable` again if the page stays. A page that looks blank or broken right after you
+  closed an overlay, popup or dialog is not an outage: read the data the page already holds,
+  reload it, or reach the same data through the site's other route before you report the site
+  down. A site that fails only under this build's own request volume, such as requests it refuses
+  as too many, or larger pages failing where smaller ones pass, on a fresh network address too, is
+  limiting the build, not down: set `rateLimited` on the `site_unavailable` report. A page for the
+  example's own record that says the
   site can't offer it right now, or comes back blank, while the site serves its other records, is
   the site's answer for that record, not an outage: prefer having the tool return it as an
   explicit state with the site's words and no items over a complete empty list, prove the tool on

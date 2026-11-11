@@ -295,6 +295,129 @@ it("ends a build whose site is temporarily down as site_unavailable", async () =
   expect(f.requests).toHaveLength(1);
 });
 
+// A site that refuses the build's own request volume, such as larger pages failing where smaller
+// ones pass, is limiting the build, not down. Its report keeps site_unavailable's handling and
+// marks the limit, so a host can tell its caller the site limited the requests.
+it("marks a site_unavailable report as rate limited, and refuses the mark on another reason", async () => {
+  const explanation = "The site refused the build's requests as too many, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_declined", explanation, rateLimited: true }, "first"),
+        call("report_blocked", { reason: "site_unavailable", explanation, rateLimited: true }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("rate_limited_not_unavailable");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation, rateLimited: true },
+    stopReason: "site_unavailable",
+  });
+});
+
+/** Guardian's review of a blocked report whose words the build's own evidence contradicts. */
+const contradicted = {
+  outcome: "reword" as const,
+  label: "misdescribed" as const,
+  rationale:
+    "The captured page holds populated list entries behind a closed overlay. Replace the report with: I couldn't finish the tool.",
+};
+
+// A site that was serving its data, whose page only looked blank after the build closed an
+// overlay, was reported down. Guardian saw the captured page contradict that, yet only asked for
+// other words, and the reworded report still ended the build as the site's fault. A site-fault
+// ending the evidence contradicts goes back to the build to keep working, before it may end.
+it.each(["site_unavailable", "site_lacks_capability", "site_declined"] as const)(
+  "keeps building after Guardian finds the evidence contradicts a %s report",
+  async (reason) => {
+    const reviews: string[] = [];
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("report_blocked", { reason, explanation: "The page is blank, so the site is down." }, "first"),
+          call("report_blocked", { reason, explanation: "I couldn't finish the tool." }, "second"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewQuestion: (candidate) =>
+          Effect.sync(() => {
+            reviews.push(JSON.stringify(candidate));
+            return reviews.length === 1
+              ? contradicted
+              : { outcome: "allow_business" as const, rationale: "Plain." };
+          }),
+      },
+    );
+    const outcome = await f.run();
+    const first = lastResult(f.requests[1]);
+    expect(first).toContain("report_contradicted");
+    expect(first).toContain("populated list entries");
+    // A report sent again before the build ran anything new stands on the same evidence.
+    expect(lastResult(f.requests[2])).toContain("report_contradicted");
+    // Only the first report was reviewed; the build then ended on its own final text.
+    expect(reviews.filter((review) => review.includes("couldn't finish"))).toEqual([]);
+    expect(outcome).not.toHaveProperty("blocked");
+  },
+);
+
+// The build goes back once: after it ran something new, a report the evidence still contradicts
+// gets Guardian's usual request for other words, and the reworded report ends the build.
+it("hands a contradicted site-fault report back only once in an attempt", async () => {
+  const explanation = "I couldn't finish the tool.";
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason: "site_unavailable", explanation: "The site is down." }, "first"),
+        call("execute", pureExample),
+        call("report_blocked", { reason: "site_unavailable", explanation: "Still down." }, "second"),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "third"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.sync(() =>
+          ++reviews <= 2 ? contradicted : { outcome: "allow_business" as const, rationale: "Plain." },
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("report_contradicted");
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation },
+    stopReason: "site_unavailable",
+  });
+});
+
+// Other words for a report the evidence doesn't contradict, or for an ending that isn't the
+// site's fault, still only ask for other words.
+it.each([
+  { reason: "site_unavailable", label: "unclear" },
+  { reason: "agent_declined", label: "misdescribed" },
+] as const)("only asks for other words for a $label review of $reason", async ({ reason, label }) => {
+  const explanation = "I couldn't finish the tool.";
+  let reviews = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("report_blocked", { reason, explanation: "Say it differently." }, "first"),
+        call("report_blocked", { reason, explanation }, "second"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewQuestion: () =>
+        Effect.sync(() =>
+          ++reviews === 1
+            ? { ...contradicted, label }
+            : { outcome: "allow_business" as const, rationale: "Plain." },
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[1])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({ build: "incomplete", blocked: { reason, explanation } });
+});
+
 /** A request that orders a stop on contradictory facts, with the fact it names in its input. */
 const stopOnConflict = {
   intent:
@@ -525,7 +648,7 @@ const hostCheckRefused = new MintFailure({
   code: "PublicationUnavailable",
   reason: "autofill_recipe_not_verified",
 });
-const guardianCorrection = new MintFailure({
+const guardianDenialArgs = {
   code: "ReviewDenied",
   review: {
     outcome: "deny",
@@ -534,7 +657,8 @@ const guardianCorrection = new MintFailure({
     rationale: "Read the price from the result row.",
     findings: [],
   },
-});
+} as const;
+const guardianCorrection = new MintFailure(guardianDenialArgs);
 const publicationOutage = new MintFailure({
   code: "PublicationUnavailable",
   reason: "registry_unavailable",
@@ -544,7 +668,7 @@ const oneTimeLoginUrl = new MintFailure({
   code: "PublicationUnavailable",
   reason: "login_url_one_time",
 });
-/** Advice the host gives once: finishing again, or passing httpVersion, publishes the read. */
+/** An ask the minter always settles: a passing live test of the HTTP version, or httpVersion. */
 const httpUntested = new MintFailure({
   code: "PublicationUnavailable",
   reason: "http_implementation_untested",
@@ -963,6 +1087,77 @@ it("refuses host_refused once a later finish_build got past the host's refusal t
   });
 });
 
+/** A secret handle in published source, which the minter replaces with a run-time question. */
+const secretHandle = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "secret_handle",
+  screening: { category: "authored_source", path: "src/tool.ts", replacements: 0 },
+});
+
+// A host that runs every check on a submission before it answers returns every refusal it found
+// at once: the minter reads each one's reason and instruction in that one finish_build result, so
+// it fixes them all in one round. A later result names only its own refusals.
+it.each([
+  {
+    basis: "beside another host refusal",
+    refusal: { code: "PublicationUnavailable", reason: "variants_unsupported" } as const,
+  },
+  {
+    basis: "beside Guardian's denial",
+    refusal: guardianDenialArgs,
+  },
+])("returns every refusal the host found in one submission $basis", async ({ refusal }) => {
+  const refusals = [
+    new MintFailure({
+      ...refusal,
+      alsoRefused: [
+        secretHandle,
+        new MintFailure({ code: "PublicationUnavailable", reason: "file_readback" }),
+        noMatchUntested,
+      ],
+    }),
+    variantsUnsupported,
+  ];
+  let published = 0;
+  const f = await fixture(
+    (_request, index) =>
+      [call("execute", pureExample), finishAs(0), finishAs(1), finishAs(2)][index] ??
+      prose("Stopping."),
+    {
+      publish: () => {
+        const next = refusals[published++];
+        return next === undefined
+          ? Effect.succeed({ publicationRef: "published_revision", diagnostics: [] })
+          : Effect.fail(next);
+      },
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "published" });
+  const first = resultOf(f.requests[2], "finish_0") as Record<string, unknown>;
+  expect(first).toMatchObject({
+    status: "not_published",
+    code: refusal.code,
+    instruction: expect.stringContaining("alsoRefused"),
+  });
+  expect(first.alsoRefused).toEqual([
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "secret_handle",
+      path: "src/tool.ts",
+      instruction: expect.stringContaining("src/tool.ts holds a {{secret.…}} handle"),
+    }),
+    expect.objectContaining({
+      code: "PublicationUnavailable",
+      reason: "file_readback",
+      instruction: expect.stringContaining("outside the host's file service"),
+    }),
+    // A host's own reason core has no text for says what to do in its rationale.
+    { code: "PublicationUnavailable", reason: "no_match_case_untested", instruction: noMatchRationale },
+  ]);
+  expect(resultOf(f.requests[3], "finish_1")).not.toHaveProperty("alsoRefused");
+});
+
 /** A host check's refusal that carries a review of its own, as a host may attach to one. */
 const reviewedHostRefusal = new MintFailure({
   code: "PublicationUnavailable",
@@ -980,6 +1175,10 @@ it.each([
     publish: [variantsUnsupported, guardianCorrection, hostCheckRefused],
   },
   { basis: "with a review of its own", publish: [reviewedHostRefusal] },
+  {
+    basis: "beside Guardian's denial of the same submission",
+    publish: [new MintFailure({ ...guardianDenialArgs, alsoRefused: [hostCheckRefused] })],
+  },
   {
     basis: "with a review of its own after a finish_build got past the first",
     publish: [variantsUnsupported, guardianCorrection, reviewedHostRefusal],
@@ -1022,6 +1221,13 @@ const noMatchUntested = new MintFailure({
   reason: "no_match_case_untested" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: noMatchRationale },
 });
+const listLimitRationale =
+  "Add live test cases that set limit below and above the default page, run them on each version, then call finish_build again.";
+const listLimitUntested = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "list_limit_untested" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: listLimitRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1031,6 +1237,7 @@ const noMatchUntested = new MintFailure({
 it.each([
   {
     refusal: variantsUnsupported,
+    reason: "variants_unsupported",
     step: {
       refusalInstruction: expect.stringContaining(
         "Either remove supportedVariants from the tool's metadata",
@@ -1040,12 +1247,36 @@ it.each([
   },
   {
     refusal: noMatchUntested,
+    reason: "no_match_case_untested",
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
+  // A host refusal listed beside Guardian's denial of the same submission names its fix too.
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
+    reason: "variants_unsupported",
+    step: {
+      refusalInstruction: expect.stringContaining(
+        "Either remove supportedVariants from the tool's metadata",
+      ),
+    },
+    absent: "refusalRationale",
+  },
+  {
+    refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [noMatchUntested] }),
+    reason: "no_match_case_untested",
+    step: { refusalRationale: noMatchRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: listLimitUntested,
+    reason: "list_limit_untested",
+    step: { refusalRationale: listLimitRationale },
+    absent: "refusalInstruction",
+  },
 ])(
-  "refuses the first host_refused after $refusal.reason, which names its fix, and accepts a second",
-  async ({ refusal, step, absent }) => {
+  "refuses the first host_refused after a $refusal.code naming $reason, which names its fix, and accepts a second",
+  async ({ refusal, reason, step, absent }) => {
     const explanation = "A Pomerado check refused publication, so no tool was published.";
     const f = await fixture(
       (_request, index) =>
@@ -1062,7 +1293,7 @@ it.each([
     expect(first).toEqual({
       status: "blocked_refused",
       reason: "host_refusal_names_step",
-      refusedReason: refusal.reason,
+      refusedReason: reason,
       ...step,
       userInputRequired: false,
       instruction: hostRefusalNamesStep,
@@ -1074,7 +1305,7 @@ it.each([
       stopReason: "host_refused",
     });
     expect(blockedRecord(outcome)).toMatchObject({
-      hostRefusals: [{ source: "publication", reason: refusal.reason }],
+      hostRefusals: [{ source: "publication", reason }],
     });
   },
 );

@@ -59,6 +59,16 @@ const readAtMost = async (path: string, size: number) => {
   }
 };
 
+/** A file the host's own page code saved at `path`, unless it holds more than `maxBytes`. */
+const readSaved = (path: string, maxBytes: number) =>
+  Effect.gen(function* () {
+    // The host reads only the path it chose, never one the page named.
+    const status = yield* localPromise(() => lstat(path));
+    if (!status.isFile()) return yield* Effect.fail(new Error("The saved file is not a file"));
+    if (status.size > maxBytes) return { tooLarge: true as const };
+    return yield* localPromise(() => readAtMost(path, status.size));
+  });
+
 /** The regular file a local reference names, with the type its name implies. */
 export const openLocalFile = (reference: string): Effect.Effect<SourceFile, Error> =>
   Effect.gen(function* () {
@@ -265,14 +275,12 @@ export const makeLocalFileHook = (options: {
             Effect.mapError(localError),
           );
           if (!saved.saved) return undefined;
-          // The host reads only the path it chose, never one the page named.
           const path = join(directory, "0");
-          const status = yield* localPromise(() => lstat(path));
-          if (!status.isFile()) return yield* Effect.fail(new Error("Download is not a file"));
-          if (status.size > maxBytes) return { tooLarge: true as const };
+          const bytes = yield* readSaved(path, maxBytes);
+          if (!(bytes instanceof Uint8Array)) return bytes;
           return {
             name: saved.name,
-            bytes: yield* localPromise(() => readAtMost(path, status.size)),
+            bytes,
             ...(saved.contentType === undefined ? {} : { media_type: saved.contentType }),
           };
         }),
@@ -306,6 +314,12 @@ export const makeLocalFileHook = (options: {
             });
           }
           return captured;
+        }),
+      // The native browser's page calls return 1 MiB at most, so a screenshot is saved here.
+      screenshotFile: () =>
+        Effect.map(fresh("screenshots"), (directory) => {
+          const path = join(directory, "screenshot.png");
+          return { path, read: (maxBytes: number) => readSaved(path, maxBytes) };
         }),
       keep: (file) =>
         options.downloads === undefined

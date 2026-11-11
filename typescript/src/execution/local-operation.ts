@@ -237,7 +237,8 @@ const handleRequest = (
       message.kind === "file_place" ||
       message.kind === "file_arm" ||
       message.kind === "file_collect" ||
-      message.kind === "file_collect_all"
+      message.kind === "file_collect_all" ||
+      message.kind === "file_screenshot"
     ) {
       const files = options.files;
       if (files === undefined || options.mode === "contract" || options.target === "pureFiles")
@@ -249,9 +250,12 @@ const handleRequest = (
             ? files.arm()
             : message.kind === "file_collect"
               ? files.collect(message)
-              : files.collectAll === undefined
-                ? Effect.fail(new FileRefused({ reason: "unavailable" }))
-                : files.collectAll(message);
+              : message.kind === "file_collect_all"
+                ? files.collectAll === undefined
+                  ? Effect.fail(new FileRefused({ reason: "unavailable" }))
+                  : files.collectAll(message)
+                : (files.screenshot?.(message) ??
+                  Effect.fail(new FileRefused({ reason: "unavailable" })));
       // The refusal's reason crosses to the script as its code; nothing of the file does.
       return answer.pipe(
         Effect.mapError((refused) =>
