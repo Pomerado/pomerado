@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { test, expect } from "@playwright/test";
 import { chromium } from "playwright";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { makePlaywrightExecutor } from "../../src/execution/playwright-execute.js";
 import type {
   PlaywrightExecutor,
@@ -497,6 +497,142 @@ test("an invalid calls-at-once count is refused before a browser starts", async 
       native(() => Promise.resolve(), { callsAtOnce, endpoint: "ws://127.0.0.1:9/never" }),
     ).rejects.toThrow("callsAtOnce must be an integer from 1 to 64");
 });
+
+/**
+ * A local site whose `/hold/<name>` requests wait until released and `/mark/<name>` requests answer
+ * at once. It records each request's name with how many held requests were still open when it came,
+ * so a call that marks while another call's request is held shows that the two shared the page.
+ */
+const holdSite = async () => {
+  const seen: { name: string; open: number }[] = [];
+  const held = new Map<string, () => void>();
+  const server = createServer((request, response) => {
+    response.setHeader("content-type", "text/html");
+    const [, kind, name = ""] = (request.url ?? "/").split("/");
+    if (kind !== "hold" && kind !== "mark") return void response.end("<title>Hold</title>");
+    seen.push({ name, open: held.size });
+    if (kind === "mark") return void response.end(name);
+    held.set(name, () => {
+      held.delete(name);
+      response.end(name);
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Fixture address missing");
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    seen: () => [...seen],
+    release: (name: string) => held.get(name)?.(),
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+};
+const fetchCode = (kind: "hold" | "mark", name: string) =>
+  `return await page.evaluate(() => fetch('/${kind}/${name}').then((response) => response.text()));`;
+
+test("a call that must run alone goes before plain calls sent after it", async () => {
+  const site = await holdSite();
+  try {
+    await native(
+      async (executor) => {
+        await Effect.runPromise(executor.execute(`await page.goto('${site.origin}/');`, 10));
+        const first = Effect.runPromise(executor.execute(fetchCode("hold", "first"), 10));
+        await expect.poll(site.seen).toEqual([{ name: "first", open: 0 }]);
+        // The watch needs the place the first call holds; the plain call is sent after it.
+        const watched = Effect.runPromise(
+          executor.watchTyping(["111111"], () => true).executeResponse(fetchCode("mark", "watch"), 10),
+        );
+        const plain = Effect.runPromise(executor.execute(fetchCode("mark", "plain"), 10));
+        site.release("first");
+        expect(await first).toBe("first");
+        expect((await watched).result).toBe("watch");
+        expect(await plain).toBe("plain");
+        expect(site.seen()).toEqual([
+          { name: "first", open: 0 },
+          { name: "watch", open: 0 },
+          { name: "plain", open: 0 },
+        ]);
+      },
+      { callsAtOnce: 2 },
+    );
+  } finally {
+    await site.close();
+  }
+});
+
+test("a typing watch keeps the page to itself when several calls may run at once", async () => {
+  const site = await holdSite();
+  try {
+    await native(
+      async (executor) => {
+        await Effect.runPromise(executor.execute(`await page.goto('${site.origin}/');`, 10));
+        const watched = Effect.runPromise(
+          executor.watchTyping(["111111"], () => true).executeResponse(fetchCode("hold", "watch"), 10),
+        );
+        await expect.poll(site.seen).toEqual([{ name: "watch", open: 0 }]);
+        const plain = Effect.runPromise(executor.execute(fetchCode("mark", "plain"), 10));
+        site.release("watch");
+        expect((await watched).result).toBe("watch");
+        expect(await plain).toBe("plain");
+        expect(site.seen()).toEqual([
+          { name: "watch", open: 0 },
+          { name: "plain", open: 0 },
+        ]);
+      },
+      { callsAtOnce: 2 },
+    );
+  } finally {
+    await site.close();
+  }
+});
+
+for (const [title, ending] of [
+  ["times out", "timed out"],
+  ["is cancelled", "was cancelled"],
+] as const)
+  test(`when one of two calls on the page ${title}, both fail as uncertain and later calls are refused`, async () => {
+    const site = await holdSite();
+    try {
+      await native(
+        async (executor) => {
+          await Effect.runPromise(executor.execute(`await page.goto('${site.origin}/');`, 10));
+          const other = Effect.runPromise(executor.execute(fetchCode("hold", "other"), 60)).then(
+            () => new Error("The other call completed"),
+            (error: unknown) => error,
+          );
+          await expect.poll(site.seen).toEqual([{ name: "other", open: 0 }]);
+          const stopping = Effect.runFork(executor.execute(fetchCode("hold", "ending"), 1));
+          await expect.poll(site.seen).toEqual([
+            { name: "other", open: 0 },
+            { name: "ending", open: 1 },
+          ]);
+          if (ending === "was cancelled") await Effect.runPromise(Fiber.interrupt(stopping));
+          else
+            await expect(Effect.runPromise(Fiber.join(stopping))).rejects.toThrow(
+              "Native browser execution timed out; completion uncertain; call was not replayed",
+            );
+          expect(String(await other)).toContain(
+            `Native browser execution stopped because another call ${ending}; completion uncertain; call was not replayed`,
+          );
+          await expect(
+            Effect.runPromise(executor.execute(fetchCode("mark", "later"), 10)),
+          ).rejects.toThrow("Native executor invalidated; execution was not replayed");
+          // Neither call was sent again, and the later one never reached the page.
+          expect(site.seen()).toEqual([
+            { name: "other", open: 0 },
+            { name: "ending", open: 1 },
+          ]);
+        },
+        { callsAtOnce: 2 },
+      );
+    } finally {
+      await site.close();
+    }
+  });
 
 test("popup and frame actions preserve the original selected page across calls", async () => {
   await native(async (executor) => {

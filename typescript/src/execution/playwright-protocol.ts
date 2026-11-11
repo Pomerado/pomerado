@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 /** A field's one-use binding, as the keyboard's `CredentialTarget` names it. */
 const CredentialTarget = Schema.Struct({
@@ -57,6 +57,27 @@ export const runsAlone = (request: {
   readonly kind: "execute" | "credential";
   readonly watch?: readonly string[] | undefined;
 }) => request.kind !== "execute" || request.watch !== undefined;
+
+/**
+ * Admits calls to the page: plain calls `callsAtOnce` at a time, and a call that runs alone once
+ * every place is free. Calls take their places in turn. One that runs alone keeps the turn until it
+ * has every place, so a plain call sent after it waits behind it instead of passing it while the
+ * calls ahead finish. A call interrupted while it waits gives back its turn and places.
+ */
+export const makeCallGate = (callsAtOnce: number) =>
+  Effect.gen(function* () {
+    const places = yield* Effect.makeSemaphore(callsAtOnce);
+    const turn = yield* Effect.makeSemaphore(1);
+    return (request: Parameters<typeof runsAlone>[0]) =>
+      <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
+        const needed = runsAlone(request) ? callsAtOnce : 1;
+        return Effect.uninterruptibleMask((restore) =>
+          restore(places.take(needed).pipe(turn.withPermits(1))).pipe(
+            Effect.flatMap(() => restore(call).pipe(Effect.ensuring(places.release(needed)))),
+          ),
+        );
+      };
+  });
 
 export const NativeWorkerOptions = Schema.Struct({
   endpoint: Schema.String,

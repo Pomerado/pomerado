@@ -31,7 +31,7 @@ if (import.meta.url.endsWith(".ts"))
         : nextLoad(url, context),
   });
 const { makeCredentialKeyboard } = await import("../destinations/credential-keyboard.js");
-const { NativeWorkerOptions, NativeWorkerRequest, runsAlone } = await import(
+const { NativeWorkerOptions, NativeWorkerRequest, makeCallGate } = await import(
   "./playwright-protocol.js"
 );
 
@@ -455,8 +455,7 @@ await Effect.runPromise(
       targetId: target.targetId,
       ...(attached === undefined ? { contextId: target.browserContextId } : {}),
     });
-    const callsAtOnce = options.callsAtOnce ?? 1;
-    const semaphore = yield* Effect.makeSemaphore(callsAtOnce);
+    const gate = yield* makeCallGate(options.callsAtOnce ?? 1);
     port.on("message", (value: unknown) => {
       const handle = Effect.gen(function* () {
         const request = yield* Schema.decodeUnknown(NativeWorkerRequest)(value).pipe(
@@ -488,7 +487,7 @@ await Effect.runPromise(
                       : response.left.message,
                 },
           );
-        }).pipe(semaphore.withPermits(runsAlone(request) ? callsAtOnce : 1));
+        }).pipe(gate(request));
       });
       Effect.runCallback(handle, {
         onExit: (exit) => {
