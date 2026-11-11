@@ -142,11 +142,22 @@ During the session:
   throws `InvalidInput` with that field and the site's message. A
   report of the form's fields, its validation messages or the options to pick from is a
   refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's
-  output. While building, a limit the session meets is the
-  owner's to settle first: ask them to revise or stop, and end with `report_blocked` when they
-  stop, as the cart skill's "Minimums and refusals" says. When they stop, or the session cannot
-  reach the task's end, end with `report_blocked` (`site_declined` when the site refused this
-  example). A build whose session never reached the end publishes nothing.
+  output.
+- While building, when the site says no to the example's valid input before any save step, as
+  "The session" below describes, or shows a record already past the state the action needs when
+  the request says to stop and report it, prefer publishing the tool with that no as the
+  example's answer over asking the owner to revise or stop or ending the build with
+  `report_blocked`. The act step that meets the no, the session's first when exploring already
+  showed it, returns it right after reading it, without leaving the page and before entering any
+  commit mark, as a refusal its output schema declares (below). Run no other act step after it.
+  Compose the whole path `writePath` declares from the caller's input, returning the same
+  refusal at each point where the site may say no. List every save step in `write.commits` and
+  again in `write.commitsUnproven`, and call `finish_build` with that step's `executionId`.
+  Prefer keeping the caller's facts as given over changing them to get past the no. Any other
+  limit the session meets is the owner's to settle first: ask them to revise or stop, as the
+  cart skill's "Minimums and refusals" says. End with `report_blocked` when they stop, when the
+  session cannot reach the task's end, or when the site's no rules out every input the tool
+  could take (`site_declined`).
 - When the caller's own task asks for whatever the site ends up with, such as the product a
   quote ended up on, follow the site's preselected substitute and return the value the site
   used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an

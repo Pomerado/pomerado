@@ -49,7 +49,11 @@ import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
 import { readBackFirst, sessionEnteredMarks, writePathRemaining } from "../mint/write-session.js";
-import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
+import {
+  commitEvidenceOf,
+  returnedRefusal,
+  type CommitEvidence,
+} from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
@@ -260,7 +264,8 @@ const scriptQuestions = (
  * only once a later step confirms. Only a failed step Guardian labelled a write asks the minter
  * to read back before writing again (`readBackFirst`). Marks showing no commit step entered
  * skip the ask only while the step made no browser call: this host records no requests that
- * would show a write the page sent before any mark was entered.
+ * would show a write the page sent before any mark was entered. A completed step that returned a
+ * refusal its output schema declares before any mark (`returnedRefusal`) records it as `refused`.
  */
 const actOutcome = (
   executed: Either.Either<LocalOperationOutput, Error>,
@@ -278,6 +283,14 @@ const actOutcome = (
     .filter((mark) => mark.state !== "not_sent")
     .map(({ name }) => name);
   const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
+  const refused = Either.isRight(executed)
+    ? returnedRefusal({
+        outputSchema: executed.right.schemas.output,
+        output: executed.right.output,
+        commits: commit,
+        runnerEffect: journal.effect,
+      })
+    : undefined;
   return {
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
@@ -285,6 +298,7 @@ const actOutcome = (
       possiblySent: journal.effect !== "not_sent",
       enteredMarks: reported ? entered : [],
       ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
+      ...(refused === undefined ? {} : { refused }),
     },
     writeSession:
       failure !== undefined && action === "write"
@@ -293,6 +307,22 @@ const actOutcome = (
           )
         : undefined,
   };
+};
+
+/**
+ * The session's last act step when it is `executionId` and no earlier act step made a browser
+ * call, so a site's no that step returned may stand as the session's outcome: this host records no
+ * requests that would show a save such an earlier step sent without entering a mark.
+ */
+export const refusalEndingStep = (
+  steps: MintState["writeSession"]["steps"],
+  executionId: string,
+) => {
+  const last = steps.at(-1);
+  return last?.executionId === executionId &&
+    steps.slice(0, -1).every((earlier) => earlier.possiblySent === false)
+    ? last
+    : undefined;
 };
 
 /**
@@ -685,9 +715,11 @@ const authoredExecution = (
           );
         if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
         // The marks of the session's recorded path not yet settled: until none is left, a
-        // confirmation does not close the session.
+        // confirmation does not close the session. A declared refusal that ends the session
+        // leaves none, since no step runs after it.
         const pathLeft =
-          act === undefined
+          act === undefined ||
+          (act.marks.refused !== undefined && refusalEndingStep(writeSession.steps, id) !== undefined)
             ? []
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")
