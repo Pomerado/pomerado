@@ -129,10 +129,12 @@ export const prepareIntegration = (options: {
           mcpServers: { [deployment.name]: { command: process.execPath, args } },
         };
         const command = [process.execPath, ...args].map(quoteFor(platform.windows)).join(" ");
-        // Inside WSL, a client on the Windows side starts the same server through wsl.exe.
+        // Inside WSL, a client on the Windows side starts the same server through wsl.exe. A
+        // distribution's name is letters, digits, dots, dashes and underscores; any other value
+        // isn't one, so no entry names it.
         const distro = platform.windows ? undefined : platform.environment["WSL_DISTRO_NAME"];
         const windowsEntry =
-          distro === undefined || distro === ""
+          distro === undefined || !/^[A-Za-z0-9._-]+$/.test(distro)
             ? undefined
             : {
                 command: "wsl.exe",

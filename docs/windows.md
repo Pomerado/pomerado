@@ -25,24 +25,25 @@ Claude Code, Codex or Gemini CLI running inside the distribution, and VS Code co
 
 ### Clients on the Windows side
 
-Claude Desktop, Cursor, VS Code and other clients that run on Windows start the server through `wsl.exe`. Replace `Ubuntu` with your distribution's name, which `wsl.exe --list` shows.
+Claude Desktop, Cursor, VS Code and other clients that run on Windows start the server through `wsl.exe`, which runs the command with no shell. Replace `Ubuntu` with your distribution's name, which `wsl.exe --list` shows, and `/home/you` with your home folder in it.
 
 ```json
 {
   "mcpServers": {
     "pomerado": {
       "command": "wsl.exe",
-      "args": ["--distribution", "Ubuntu", "--exec", "bash", "-lc", "exec npx -y -p pomerado pomerado-mcp mint --root ~/pomerado-integrations"]
+      "args": ["--distribution", "Ubuntu", "--exec", "env", "PATH=/home/you/.nvm/versions/node/v24.22.1/bin:/usr/local/bin:/usr/bin:/bin", "npx", "-y", "-p", "pomerado", "pomerado-mcp", "mint", "--root", "/home/you/pomerado-integrations"]
     }
   }
 }
 ```
 
-- `bash -lc` starts a login shell, so the server finds the Node you installed in the distribution.
-- `wsl.exe` passes the server only the Windows variables that `WSLENV` names. To pass the key, add `"env": { "WSLENV": "OPENAI_API_KEY/u" }` to the entry and make `OPENAI_API_KEY` available to the client as the client's settings describe. Or export it in the distribution's `~/.profile`, which the login shell reads. Either way, keep the key out of shared files.
+- `PATH` starts with the folder that holds your Node. Inside the distribution, `dirname "$(command -v node)"` prints it. A per-user install, such as one made with nvm, is found only this way, since neither `wsl.exe` nor a login shell loads nvm. With Node installed for the whole system in `/usr/bin`, leave out `env` and the `PATH` argument.
+- With no shell, nothing expands `~`, so name the integrations folder in full.
+- `wsl.exe` passes the server only the Windows variables that `WSLENV` names. To pass the key, add `"env": { "WSLENV": "OPENAI_API_KEY/u" }` to the entry and make `OPENAI_API_KEY` available to the client as the client's settings describe. Keep the key out of shared files.
 - The first start after the distribution was stopped takes a few extra seconds. Raise the client's startup timeout if it gives up.
 
-An integration you build inside WSL also gets `mcp.windows.json` beside its `mcp.json`. It holds the same server entry, started through `wsl.exe`, for clients on the Windows side. The server writes it when its environment names the distribution in `WSL_DISTRO_NAME`, as WSL sets for every process it starts. Some clients start servers with a reduced environment, as Codex does. If the file is missing, write the entry yourself from `mcp.json`: the command is `wsl.exe`, and the arguments are `--distribution`, your distribution's name, `--exec`, then the command and arguments from `mcp.json`.
+An integration you build inside WSL also gets `mcp.windows.json` beside its `mcp.json`. It holds the same server entry, started through `wsl.exe`, for clients on the Windows side. The server writes it when its environment names the distribution in `WSL_DISTRO_NAME`, as WSL sets for every process it starts, and the name holds only letters, digits, dots, dashes and underscores. Some clients start servers with a reduced environment, as Codex does. If the file is missing, write the entry yourself from `mcp.json`: the command is `wsl.exe`, and the arguments are `--distribution`, your distribution's name, `--exec`, then the command and arguments from `mcp.json`.
 
 ### Files and the browser
 
@@ -55,7 +56,7 @@ Prerequisites, beside those in [Getting started](getting-started.md#prerequisite
 
 - Windows 11, or Windows Server 2019 or later, as Playwright requires.
 - Node 24.21 or a later Node 24 release for Windows.
-- To build integrations, [Git for Windows](https://git-scm.com/download/win). The minter's offline commands run in the POSIX shell it installs, `bin\sh.exe`, which also brings the usual Unix tools. Pomerado finds it from the `git` on your PATH, or in Git's default install folders. Running an integration you already built needs neither Git nor a shell.
+- To build integrations, [Git for Windows](https://git-scm.com/download/win). The minter's offline commands run in the POSIX shell it installs, `bin\sh.exe`, which also brings the usual Unix tools. Pomerado looks for it in Git's default install folder, then beside each `git.exe` on your PATH, then in the folder of a per-user install. It runs no program to find it. Running an integration you already built needs neither Git nor a shell.
 - Recommended for building integrations: [ripgrep](https://github.com/BurntSushi/ripgrep), which the minter's instructions mention. Install it with `winget install BurntSushi.ripgrep.MSVC`. Without it, a command that calls `rg` fails, and the minter still has `grep` from Git.
 
 Install Pomerado and Chromium in PowerShell, with the commands in [Getting started](getting-started.md#install).

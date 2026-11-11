@@ -675,10 +675,12 @@ it("adds a wsl.exe server entry for Windows clients when built inside WSL", asyn
       "takes the entry from mcp.windows.json instead. It starts the same server inside the Ubuntu-24.04 distribution through wsl.exe.",
     );
 
-    await rm(directory, { recursive: true, force: true });
-    const outside = await publishedReadme(root, { ...wsl, environment: {} });
-    expect(await readdir(directory)).not.toContain("mcp.windows.json");
-    expect(outside).not.toContain("wsl.exe");
+    for (const environment of [{}, { WSL_DISTRO_NAME: "Ubuntu\" --exec sh" }]) {
+      await rm(directory, { recursive: true, force: true });
+      const outside = await publishedReadme(root, { ...wsl, environment });
+      expect(await readdir(directory)).not.toContain("mcp.windows.json");
+      expect(outside).not.toContain("wsl.exe");
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
