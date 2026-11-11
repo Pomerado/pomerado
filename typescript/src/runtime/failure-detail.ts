@@ -617,7 +617,9 @@ export const FailureDetailSchema = Schema.Struct({
 });
 
 const absolutePath =
-  /(?:file:\/\/)?(?:[A-Za-z]:)?(?:\/[^\s():/]+)*?\/((?:typescript\/src|typescript\/tests|dist|node_modules)\/[^\s():]+)/g;
+  /(?:file:\/\/\/?)?(?:[A-Za-z]:)?(?:\/[^\s():/]+)*?\/((?:typescript\/src|typescript\/tests|dist|node_modules)\/[^\s():]+)/g;
+/** A Windows path such as `C:\Users\name\app\dist\x.js:1:2`, which a frame names with backslashes. */
+const windowsPath = /[A-Za-z]:\\[^\s()]*/g;
 
 /**
  * The lines after a stack's leading `Name: message` block. That block can quote input over
@@ -648,9 +650,13 @@ const boundedStack = (
         line
           .trim()
           .replace(/^at\s+/, "")
+          .replace(windowsPath, (path) => path.replaceAll("\\", "/"))
           .replace(absolutePath, "$1")
           // Any remaining absolute path keeps only its file name.
-          .replace(/(^|[\s(])(?:\/[^\s():/]+)+\/([^\s():/]+)/g, "$1…/$2")
+          .replace(
+            /(^|[\s(])(?:file:\/\/\/(?=[A-Za-z]:))?(?:[A-Za-z]:)?(?:\/[^\s():/]+)+\/([^\s():/]+)/g,
+            "$1…/$2",
+          )
           // A frame can name an eval'd URL or data string.
           .replace(/^[\s\S]*$/, (frame) => redactDiagnosticText(frame, bounds.frameLength)),
         bounds.frameLength,

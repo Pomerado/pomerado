@@ -1,6 +1,7 @@
 import { mkdir, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Effect, Schema } from "effect";
+import { hostPlatform, type LocalPlatform } from "../execution/local-platform.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import {
   localFilePath,
@@ -17,7 +18,12 @@ if (!runtime) throw new Error('Start this integration with the command and argum
 const { startMcpCli } = await import(runtime);
 startMcpCli(['serve', '--artifact', fileURLToPath(new URL('.', import.meta.url))]);
 `;
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+/**
+ * Quotes one argument of the README's commands for the shell a user runs them in: POSIX sh, or
+ * PowerShell on Windows, where a single quote inside quotes is doubled.
+ */
+const quoteFor = (windows: boolean) => (value: string) =>
+  windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
 /**
  * Top-level names authored source may not use, compared in lower case. They cover the packaging
  * files, the sign-in recipe, the TOML that 0.1.2 wrote and its docs told users to copy into Codex,
@@ -46,8 +52,12 @@ export const prepareIntegration = (options: {
   readonly name: string;
   readonly request: PomeradoRequest;
   readonly description?: string;
+  /** The operating system the README's commands are written for, the host's own when absent. */
+  readonly platform?: LocalPlatform;
 }) =>
   Effect.gen(function* () {
+    const platform = options.platform ?? hostPlatform;
+    const shell = platform.windows ? "powershell" : "sh";
     const deployment = yield* Schema.decodeUnknown(Deployment)({
       name: options.name,
       description: options.description ?? options.request.intent,
@@ -114,7 +124,7 @@ export const prepareIntegration = (options: {
         const configuration = {
           mcpServers: { [deployment.name]: { command: process.execPath, args } },
         };
-        const command = [process.execPath, ...args].map(shellQuote).join(" ");
+        const command = [process.execPath, ...args].map(quoteFor(platform.windows)).join(" ");
         yield* workspace.write("deployment.json", `${JSON.stringify(deployed, null, 2)}\n`);
         yield* workspace.write("mcp.mjs", launcher);
         yield* workspace.write("mcp.json", `${JSON.stringify(configuration, null, 2)}\n`);
@@ -130,19 +140,19 @@ launcher and your installed Pomerado runtime.
 
 - Claude Code
 
-  \`\`\`sh
+  \`\`\`${shell}
   claude mcp add ${deployment.name} -- ${command}
   \`\`\`
 
 - Codex
 
-  \`\`\`sh
+  \`\`\`${shell}
   codex mcp add ${deployment.name} -- ${command}
   \`\`\`
 
 - Gemini CLI
 
-  \`\`\`sh
+  \`\`\`${shell}
   gemini mcp add ${deployment.name} ${command}
   \`\`\`
 

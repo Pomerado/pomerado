@@ -442,6 +442,25 @@ describe("failure detail", () => {
     expect(JSON.stringify(detail).length).toBeLessThanOrEqual(failureDetailBounds.serialized);
   });
 
+  // Windows names a frame's file as C:\... or file:///C:/..., and the user's folder must not
+  // leave the machine either way.
+  it("keeps repository-relative locations of Windows frames and drops their folders", () => {
+    const error = new Error("windows");
+    error.stack = [
+      "Error: windows",
+      "    at step (C:\\Users\\alice\\pomerado\\typescript\\src\\example.ts:3:7)",
+      "    at load (file:///C:/Users/alice/AppData/Local/npm-cache/_npx/1/node_modules/pomerado/dist/typescript/src/x.js:1:2)",
+      "    at run (C:\\Users\\alice\\tools\\helper.js:9:4)",
+      "    at open (file:///D:/work/alice/other.mjs:5:1)",
+    ].join("\n");
+    expect(describeError(error).stack).toEqual([
+      "step (typescript/src/example.ts:3:7)",
+      "load (node_modules/pomerado/dist/typescript/src/x.js:1:2)",
+      "run (…/helper.js:9:4)",
+      "open (…/other.mjs:5:1)",
+    ]);
+  });
+
   it("names the underlying error source: pg SQLSTATE, AWS name, Node code, Effect tag", () => {
     const pg = Object.assign(new Error("canceling statement due to statement timeout"), {
       code: "57014",
