@@ -71,10 +71,13 @@ export const makeCallGate = (callsAtOnce: number) =>
     return (request: Parameters<typeof runsAlone>[0]) =>
       <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
         const needed = runsAlone(request) ? callsAtOnce : 1;
+        // Each wait is interruptible, and each release is attached as soon as its take returns.
         return Effect.uninterruptibleMask((restore) =>
-          restore(places.take(needed).pipe(turn.withPermits(1))).pipe(
-            Effect.flatMap(() => restore(call).pipe(Effect.ensuring(places.release(needed)))),
-          ),
+          Effect.gen(function* () {
+            yield* restore(turn.take(1));
+            yield* restore(places.take(needed)).pipe(Effect.ensuring(turn.release(1)));
+            return yield* restore(call).pipe(Effect.ensuring(places.release(needed)));
+          }),
         );
       };
   });

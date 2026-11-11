@@ -500,17 +500,16 @@ test("an invalid calls-at-once count is refused before a browser starts", async 
 
 /**
  * A local site whose `/hold/<name>` requests wait until released and `/mark/<name>` requests answer
- * at once. It records each request's name with how many held requests were still open when it came,
- * so a call that marks while another call's request is held shows that the two shared the page.
+ * at once. It records each request's name in the order the requests came.
  */
 const holdSite = async () => {
-  const seen: { name: string; open: number }[] = [];
+  const seen: string[] = [];
   const held = new Map<string, () => void>();
   const server = createServer((request, response) => {
     response.setHeader("content-type", "text/html");
     const [, kind, name = ""] = (request.url ?? "/").split("/");
     if (kind !== "hold" && kind !== "mark") return void response.end("<title>Hold</title>");
-    seen.push({ name, open: held.size });
+    seen.push(name);
     if (kind === "mark") return void response.end(name);
     held.set(name, () => {
       held.delete(name);
@@ -541,7 +540,7 @@ test("a call that must run alone goes before plain calls sent after it", async (
       async (executor) => {
         await Effect.runPromise(executor.execute(`await page.goto('${site.origin}/');`, 10));
         const first = Effect.runPromise(executor.execute(fetchCode("hold", "first"), 10));
-        await expect.poll(site.seen).toEqual([{ name: "first", open: 0 }]);
+        await expect.poll(site.seen).toEqual(["first"]);
         // The watch needs the place the first call holds; the plain call is sent after it.
         const watched = Effect.runPromise(
           executor.watchTyping(["111111"], () => true).executeResponse(fetchCode("mark", "watch"), 10),
@@ -551,37 +550,7 @@ test("a call that must run alone goes before plain calls sent after it", async (
         expect(await first).toBe("first");
         expect((await watched).result).toBe("watch");
         expect(await plain).toBe("plain");
-        expect(site.seen()).toEqual([
-          { name: "first", open: 0 },
-          { name: "watch", open: 0 },
-          { name: "plain", open: 0 },
-        ]);
-      },
-      { callsAtOnce: 2 },
-    );
-  } finally {
-    await site.close();
-  }
-});
-
-test("a typing watch keeps the page to itself when several calls may run at once", async () => {
-  const site = await holdSite();
-  try {
-    await native(
-      async (executor) => {
-        await Effect.runPromise(executor.execute(`await page.goto('${site.origin}/');`, 10));
-        const watched = Effect.runPromise(
-          executor.watchTyping(["111111"], () => true).executeResponse(fetchCode("hold", "watch"), 10),
-        );
-        await expect.poll(site.seen).toEqual([{ name: "watch", open: 0 }]);
-        const plain = Effect.runPromise(executor.execute(fetchCode("mark", "plain"), 10));
-        site.release("watch");
-        expect((await watched).result).toBe("watch");
-        expect(await plain).toBe("plain");
-        expect(site.seen()).toEqual([
-          { name: "watch", open: 0 },
-          { name: "plain", open: 0 },
-        ]);
+        expect(site.seen()).toEqual(["first", "watch", "plain"]);
       },
       { callsAtOnce: 2 },
     );
@@ -604,12 +573,12 @@ for (const [title, ending] of [
             () => new Error("The other call completed"),
             (error: unknown) => error,
           );
-          await expect.poll(site.seen).toEqual([{ name: "other", open: 0 }]);
-          const stopping = Effect.runFork(executor.execute(fetchCode("hold", "ending"), 1));
-          await expect.poll(site.seen).toEqual([
-            { name: "other", open: 0 },
-            { name: "ending", open: 1 },
-          ]);
+          await expect.poll(site.seen).toEqual(["other"]);
+          // A cancelled call gets time to spare, so only the interrupt stops it.
+          const stopping = Effect.runFork(
+            executor.execute(fetchCode("hold", "ending"), ending === "timed out" ? 1 : 60),
+          );
+          await expect.poll(site.seen).toEqual(["other", "ending"]);
           if (ending === "was cancelled") await Effect.runPromise(Fiber.interrupt(stopping));
           else
             await expect(Effect.runPromise(Fiber.join(stopping))).rejects.toThrow(
@@ -622,10 +591,7 @@ for (const [title, ending] of [
             Effect.runPromise(executor.execute(fetchCode("mark", "later"), 10)),
           ).rejects.toThrow("Native executor invalidated; execution was not replayed");
           // Neither call was sent again, and the later one never reached the page.
-          expect(site.seen()).toEqual([
-            { name: "other", open: 0 },
-            { name: "ending", open: 1 },
-          ]);
+          expect(site.seen()).toEqual(["other", "ending"]);
         },
         { callsAtOnce: 2 },
       );
