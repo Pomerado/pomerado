@@ -12,7 +12,7 @@ import { MintFailure, type SignInStep } from "../../src/mint/contracts.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
 import type { InputAsker, InputRequest } from "../../src/runtime/input-request.js";
-import { makeSignInBrowser } from "../../src/standalone/authentication.js";
+import { localSignInLogin, makeSignInBrowser } from "../../src/standalone/authentication.js";
 
 const site = "example.test";
 const origin = "https://www.example.test";
@@ -72,6 +72,8 @@ interface Options {
   readonly codeBoxes?: number;
   /** The `id` and `name` of the element each selector finds; none by default. */
   readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
+  /** The local host's own login, which asks the owner, in place of the scripted one. */
+  readonly localLogin?: boolean;
   /** What the markup of the element each selector finds says beyond the defaults. */
   readonly controls?: Readonly<
     Record<string, Partial<Record<Exclude<keyof typeof described, "tag">, string | null>>>
@@ -165,31 +167,35 @@ const harness = (options: Options = {}) => {
       return Object.fromEntries(
         request.questions.map((question) => [
           question.id,
-          question.type === "confirm"
-            ? { type: "confirm" as const, value: { confirmed: options.approve ?? true } }
-            : {
-                type: question.type === "text" ? ("text" as const) : ("secret" as const),
-                value: answers[question.id]?.shift() ?? "",
-              },
+          question.type === "credential"
+            ? { type: "credential" as const, value: { ...account, saveLogin: false } }
+            : question.type === "confirm"
+              ? { type: "confirm" as const, value: { confirmed: options.approve ?? true } }
+              : {
+                  type: question.type === "text" ? ("text" as const) : ("secret" as const),
+                  value: answers[question.id]?.shift() ?? "",
+                },
         ]),
       );
     });
   const recorder = makeSignInRecorder({
     browser,
-    login: {
-      held: () => current,
-      values: Effect.sync(() => {
-        logins.push("missing_credentials");
-        current = account;
-        return account;
-      }),
-      correct: (field, held, triesLeft) =>
-        Effect.sync(() => {
-          logins.push(`invalid_credentials:${field}:${triesLeft}`);
-          current = corrections.shift() ?? held;
-          return current;
-        }),
-    },
+    login: options.localLogin
+      ? localSignInLogin({ ask, register: () => {}, siteOrigin: origin })
+      : {
+          held: () => current,
+          values: Effect.sync(() => {
+            logins.push("missing_credentials");
+            current = account;
+            return account;
+          }),
+          correct: (field, held, triesLeft) =>
+            Effect.sync(() => {
+              logins.push(`invalid_credentials:${field}:${triesLeft}`);
+              current = corrections.shift() ?? held;
+              return current;
+            }),
+        },
     ask,
     secrets: { register: () => {}, assertAbsent: () => Effect.void },
     review: (step) =>
@@ -1076,6 +1082,29 @@ it("refuses a code step that names only some of the screen's one-character boxes
   expect(result.result["nextStep"]).toContain("splits its code across 6 one-character boxes");
   expect(host.asked).toEqual([]);
   expect(host.filled).toHaveLength(1);
+});
+
+// The local host asks for the login when a screen first needs it, and the question says what that
+// screen asks for, so the owner knows a password is wanted, not a code.
+it("asks for the login naming what the screen that needs it asks for", async () => {
+  const prompts = async (step: SignInStep) => {
+    const host = harness({ localLogin: true });
+    await host.run((recorder) => recorder.step(step, undefined, Effect.void));
+    return host.asked.map((request) => request.questions[0]?.prompt);
+  };
+  expect(await prompts(identifierAndPassword)).toEqual([
+    "The website's sign-in screen asks for your username and your password. Sign in to the website so this request can continue.",
+  ]);
+  const [login] = await prompts({
+    fields: [
+      { selector: "#email", accepts: ["email", "phone"] },
+      { selector: "#code", slot: "code" },
+    ],
+    submit: "#next",
+  });
+  expect(login).toBe(
+    "The website's sign-in screen asks for your email address or phone number and a sign-in code. Sign in to the website so this request can continue.",
+  );
 });
 
 // A second-factor screen whose one field is a masked one-time code box: a step that names it the

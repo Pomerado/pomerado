@@ -19,7 +19,11 @@ import type { CredentialKeyboard } from "../destinations/credential-keyboard.js"
 import type { SignInBrowser, SignInLogin } from "../destinations/sign-in-recipe.js";
 import { MintFailure } from "../mint/contracts.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
-import { credentialMessage, credentialPrompt } from "../runtime/credential-prompts.js";
+import {
+  type AskingScreen,
+  credentialMessage,
+  credentialPrompt,
+} from "../runtime/credential-prompts.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { primaryPageCode } from "../runtime/host-execute.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
@@ -231,6 +235,7 @@ export const localSignInLogin = (options: {
     reason: "missing_credentials" | "invalid_credentials",
     username?: string,
     triesLeft?: number,
+    screen?: AskingScreen,
   ) =>
     Effect.gen(function* () {
       const answers = yield* options
@@ -242,7 +247,7 @@ export const localSignInLogin = (options: {
             {
               id: "login",
               type: "credential",
-              prompt: credentialPrompt(reason, triesLeft),
+              prompt: credentialPrompt(reason, triesLeft, screen),
               fields: "username_password",
               reason,
               allowSave: false,
@@ -272,6 +277,12 @@ export const localSignInLogin = (options: {
     values: Effect.suspend(() =>
       held === undefined ? askLogin("missing_credentials") : Effect.succeed(held),
     ),
+    valuesFor: (screen) =>
+      Effect.suspend(() =>
+        held === undefined
+          ? askLogin("missing_credentials", undefined, undefined, screen)
+          : Effect.succeed(held),
+      ),
     correct: (_field, rejected, triesLeft) =>
       askLogin("invalid_credentials", rejected.username, triesLeft),
   };

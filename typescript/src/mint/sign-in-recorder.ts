@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { recipeStep } from "../destinations/autofill-recipe.js";
+import { askingScreen } from "../runtime/credential-prompts.js";
 import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import {
@@ -595,7 +596,7 @@ export const makeSignInRecorder = (input: {
         return shown(result(identifierUnobserved));
       yield* dispatch;
       if (held === undefined && step.fields.length > 0) {
-        held = yield* login.values;
+        held = yield* (login.valuesFor?.(askingScreen(step)) ?? login.values);
         step = values.resolve(request, held);
       }
       const valued =
