@@ -1366,8 +1366,8 @@ const recordedChallengeVisible = async (fields) => {
  * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`. Both come
  * after `popups` and default to none, so a caller that passes no challenge fields gets no
  * challenge check. A page the primary page opened that is still open on one of `popups`' origins
- * answers `signInPopupOpen` while it shows a password field or one of `popupFields` (by
- * selector); otherwise its frames on the site count for the indicator too.
+ * answers `signInPopupOpen` while it shows one of `popupFields` (by selector), or any password
+ * field when they are none; otherwise its frames on the site count for the indicator too.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -1447,13 +1447,14 @@ const signInPasswordVisible = async (selectors) => {
 const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
 const challengeFields = ${JSON.stringify(challengeFields)};
+const popupFields = ${JSON.stringify(popupFields)};
 // A sign-in pop-up still open that still asks is a sign-in under way; otherwise its frames on the
 // site show the indicator as the primary page's do. One that closes as the host reads it shows
 // nothing.
 let popupIndicator = false;
 for (const popup of openPopups) {
   try {
-    for (const fieldSelector of [password, ...${JSON.stringify(popupFields)}])
+    for (const fieldSelector of popupFields.length === 0 ? [password] : popupFields)
       if (await visibleIn(fieldSelector, popup.frames()))
         return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false, signInPopupOpen: true };
     if (selector !== null && await visibleIn(selector, popup.frames().filter(onSite))) popupIndicator = true;

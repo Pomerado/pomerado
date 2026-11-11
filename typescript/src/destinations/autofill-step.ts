@@ -1207,8 +1207,8 @@ export type AutofillScreens = readonly {
  * before checking completion. Another form's password field does not count unless a recorded
  * selector matches in it. Screens with no field leave any visible password field failing it. A
  * sign-in pop-up the page opened that is still open fails it as `sign_in_popup_open` while it
- * shows a password field or one of its screens' fields; otherwise the indicator counts in its
- * frames on the site too.
+ * shows one of its screens' fields, or any password field when they recorded none; otherwise the
+ * indicator counts in its frames on the site too.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
