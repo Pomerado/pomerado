@@ -146,19 +146,18 @@ During the session:
 - While building, when the site says no to the example's valid input before any save step, as
   "The session" below describes, or shows a record already past the state the action needs when
   the request says to stop and report it, prefer publishing the tool with that no as the
-  example's answer over ending the build with `report_blocked`. The act step that meets the no
-  returns it right after reading it, without leaving the page and before entering any commit
-  mark, as a refusal its output schema declares (below), quoting the site in `site_message`. Run
-  no other act step after it. Compose the whole path the request asks for, the one `writePath`
-  declares, from the caller's input, returning the same refusal at each point where the site may
-  say no. List every save step in `write.commits` and again in `write.commitsUnproven`, since
-  the session reached none of them, and call `finish_build` with that step's `executionId`.
-  Leave the save steps unrun rather than running one only to prove it, and keep the caller's
-  facts as given rather than changing them to get past the no. Any other limit the session
-  meets is the owner's to settle first: ask them to revise or stop, as the cart skill's
-  "Minimums and refusals" says. End with `report_blocked` when they stop, when the session
-  cannot reach the task's end, or when the site's no rules out every input the tool could take
-  (`site_declined`).
+  example's answer over asking the owner to revise or stop or ending the build with
+  `report_blocked`. The act step that meets the no, the session's first when exploring already
+  showed it, returns it right after reading it, without leaving the page and before entering any
+  commit mark, as a refusal its output schema declares (below). Run no other act step after it.
+  Compose the whole path `writePath` declares from the caller's input, returning the same
+  refusal at each point where the site may say no. List every save step in `write.commits` and
+  again in `write.commitsUnproven`, and call `finish_build` with that step's `executionId`.
+  Prefer keeping the caller's facts as given over changing them to get past the no. Any other
+  limit the session meets is the owner's to settle first: ask them to revise or stop, as the
+  cart skill's "Minimums and refusals" says. End with `report_blocked` when they stop, when the
+  session cannot reach the task's end, or when the site's no rules out every input the tool
+  could take (`site_declined`).
 - When the caller's own task asks for whatever the site ends up with, such as the product a
   quote ended up on, follow the site's preselected substitute and return the value the site
   used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an

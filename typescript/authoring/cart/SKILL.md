@@ -96,7 +96,7 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 completed the write, so it never publishes.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
-refusal for the item, and you ask the caller with `request_input` which item to use instead.
+refusal for the item, and the build publishes on it as the writes skill says.
 
 ## Description
 

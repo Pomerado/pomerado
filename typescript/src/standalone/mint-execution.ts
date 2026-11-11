@@ -310,6 +310,22 @@ const actOutcome = (
 };
 
 /**
+ * The session's last act step when it is `executionId` and no earlier act step made a browser
+ * call, so a site's no that step returned may stand as the session's outcome: this host records no
+ * requests that would show a save such an earlier step sent without entering a mark.
+ */
+export const refusalEndingStep = (
+  steps: MintState["writeSession"]["steps"],
+  executionId: string,
+) => {
+  const last = steps.at(-1);
+  return last?.executionId === executionId &&
+    steps.slice(0, -1).every((earlier) => earlier.possiblySent === false)
+    ? last
+    : undefined;
+};
+
+/**
  * What a build step's failure says when its output held a `$file` that is not exactly a file the
  * step collected, which the local operation refuses with the code `FileRefused`, as it refuses a
  * run's result, so the minter fixes the output before it publishes.
@@ -699,9 +715,11 @@ const authoredExecution = (
           );
         if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
         // The marks of the session's recorded path not yet settled: until none is left, a
-        // confirmation does not close the session.
+        // confirmation does not close the session. A declared refusal that ends the session
+        // leaves none, since no step runs after it.
         const pathLeft =
-          act === undefined
+          act === undefined ||
+          (act.marks.refused !== undefined && refusalEndingStep(writeSession.steps, id) !== undefined)
             ? []
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")

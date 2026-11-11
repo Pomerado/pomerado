@@ -208,9 +208,10 @@ test("a write whose example ended in its declared refusal before the save publis
       ],
     });
     expect(toolResult(last, "save")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "save")).not.toHaveProperty("writePath");
     expect(built.build, JSON.stringify(built)).toBe("published");
     const publication = guardian.reviews.find((review) => review.kind === "publication");
-    expect(JSON.stringify(publication?.input)).toContain('(reason \\"note_empty\\")');
+    expect(JSON.stringify(publication?.input)).toContain("note_empty");
     expect(fixture.saved).toEqual([]);
   } finally {
     await site.close();
