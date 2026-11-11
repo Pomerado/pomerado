@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import { urlOrigin } from "../../src/destinations/autofill-refusal.js";
-import { codeBoxesRefusal, untrustedTarget } from "../../src/destinations/autofill-step.js";
+import {
+  codeBoxesRefusal,
+  slotControlRefusal,
+  untrustedTarget,
+} from "../../src/destinations/autofill-step.js";
 
 // Page code can put any text in an opaque URL, its scheme included, so refusal evidence names one
 // only from a fixed set.
@@ -126,4 +130,77 @@ it("sends back a code step that names part of its screen's one-character boxes, 
       screen([{ box: 1, of: 2 }, { box: 2, of: 2 }]),
     ),
   ).toMatchObject({ target: 1, codeBoxes: { boxes: 2, named: [2] } });
+});
+
+// A slot the step gives a field is checked against what the control's own markup says it takes.
+// The check reads only strong evidence, so a PIN that stands in for a password, a card's security
+// code or a promo box is never taken for a one-time code, and a masked or numeric box proves
+// nothing by itself.
+it("refuses a password slot only on a control its markup names a one-time code, and a code slot only on a marked password", () => {
+  type Named = "type" | "name" | "id" | "autocomplete" | "inputmode" | "label" | "placeholder";
+  type Attributes = Partial<Record<Named | "ariaLabel", string>> & {
+    readonly codeBox?: { readonly box: number; readonly of: number };
+  };
+  const control = (attributes: Attributes) => ({
+    tag: "input",
+    role: null,
+    formMethod: "post",
+    type: "text",
+    name: null,
+    id: null,
+    autocomplete: null,
+    inputmode: null,
+    label: null,
+    placeholder: null,
+    ariaLabel: null,
+    text: null,
+    slot: "password" as const,
+    ...attributes,
+  });
+  const check = (slot: "password" | "code", attributes: Attributes) =>
+    slotControlRefusal(
+      { fields: [{ selector: "#field", slot }] },
+      {
+        screen: {
+          origin: "https://www.example.test",
+          fields: [control(attributes)],
+          submit: null,
+          buttons: [],
+        },
+      },
+    )?.slotControl;
+  const password = (attributes: Attributes) => check("password", attributes);
+  expect(password({ type: "password", autocomplete: "one-time-code" })).toEqual({
+    slot: "password",
+    control: "code",
+    evidence: "autocomplete",
+  });
+  expect(password({ codeBox: { box: 1, of: 6 } })?.evidence).toBe("code_boxes");
+  expect(password({ name: "totpToken" })?.evidence).toBe("name");
+  expect(password({ id: "mfa_code" })?.evidence).toBe("name");
+  expect(password({ type: "password", label: "Authentication code" })?.evidence).toBe("label");
+  expect(password({ placeholder: "Enter the code from your authenticator app" })?.evidence).toBe(
+    "label",
+  );
+  expect(password({ ariaLabel: "Two-factor code" })?.evidence).toBe("label");
+  // Never a code by itself: a numeric PIN box, a masked box, a card's security code, a promo box,
+  // a passcode, or a name that also names a password.
+  const neverCodes: Attributes[] = [
+    { type: "password", inputmode: "numeric", name: "pin", label: "PIN" },
+    { type: "password", label: "Passcode" },
+    { label: "Security code", name: "cvc" },
+    { name: "promo-code", label: "Promo code" },
+    { name: "mfa-password", label: "Password" },
+    { type: "password", autocomplete: "current-password", label: "Password" },
+  ];
+  for (const attributes of neverCodes) expect(password(attributes)).toBeUndefined();
+  // A code slot is refused only on a control marked as the account's password.
+  expect(check("code", { type: "password", autocomplete: "current-password" })).toEqual({
+    slot: "code",
+    control: "password",
+    evidence: "autocomplete",
+  });
+  expect(check("code", { autocomplete: "section-login new-password" })?.control).toBe("password");
+  expect(check("code", { type: "password", label: "Verification code" })).toBeUndefined();
+  expect(check("code", { autocomplete: "one-time-code" })).toBeUndefined();
 });

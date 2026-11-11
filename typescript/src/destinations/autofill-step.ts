@@ -469,6 +469,7 @@ export type AutofillRefusal = {
     | "popup_missing"
     | "popup_ambiguous"
     | "code_boxes_incomplete"
+    | "slot_control_mismatch"
     | "dismiss_refused";
   /** The field (by its index in the step) or the submit control the refusal is about. */
   readonly target?: number | "submit" | "popup" | "dismiss";
@@ -477,6 +478,16 @@ export type AutofillRefusal = {
    * each box the step's code fields named, in the step's order. Counts only, never a value.
    */
   readonly codeBoxes?: { readonly boxes: number; readonly named: readonly number[] };
+  /**
+   * `slot_control_mismatch`: the slot the step gave the field (`target`), the kind of value its
+   * control's own markup says it takes, and the evidence that says so (`SlotControlEvidence`).
+   * Never a value.
+   */
+  readonly slotControl?: {
+    readonly slot: "password" | "code";
+    readonly control: "code" | "password";
+    readonly evidence: SlotControlEvidence;
+  };
   /**
    * Host diagnostics only, never a value: the failed call's own error, or which check refused
    * (its `phase`) with origins and counts as evidence (`withCheck`).
@@ -1147,6 +1158,122 @@ export const codeBoxesRefusal = (
     }),
     codeBoxes: { boxes, named: named.map(({ box }) => box) },
   };
+};
+
+/**
+ * What says a control takes another kind of value than the slot a step gave it: its `autocomplete`
+ * token, its place among the screen's one-character code boxes (`code_boxes`), words in its own
+ * name or id (`name`), or its own label, aria-label or placeholder (`label`).
+ */
+export type SlotControlEvidence = "autocomplete" | "code_boxes" | "name" | "label";
+
+/** The words of a control's name or id: split at anything but letters and digits, and at case. */
+const nameWords = (text: string | null) =>
+  (text ?? "")
+    .replaceAll(/([a-z])([A-Z])/gu, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter((word) => word !== "");
+/** Words of a name or id that alone name a one-time code. */
+const codeNameWords = new Set(["otp", "totp", "mfa", "2fa"]);
+/**
+ * Words of a name or id that name another kind of value, which win over `codeNameWords`, so a
+ * field such as `mfa-password` or `otp-email` is never read as a code.
+ */
+const otherNameWords = new Set([
+  "password",
+  "passwd",
+  "pwd",
+  "pass",
+  "pin",
+  "email",
+  "username",
+  "phone",
+  "recovery",
+  "backup",
+  "promo",
+  "coupon",
+  "voucher",
+  "captcha",
+  "card",
+  "cvv",
+  "cvc",
+]);
+/**
+ * A control's own words that name a one-time code: one-time, verification, authentication,
+ * authenticator, sign-in, login, two-factor or two-step code, or an authenticator app. A security
+ * code (a card's), a passcode or a PIN alone never is.
+ */
+const codeLabel = new RegExp(
+  [
+    String.raw`\b(?:one[- ]?time|verification|authentication|authenticator|sign[- ]?in|log[- ]?in`,
+    String.raw`|2fa|(?:two|2)[- ](?:factor|step))\s+(?:pass)?code\b|\bauthenticator app\b`,
+  ].join(""),
+  "iu",
+);
+/** The `autocomplete` tokens that mark a control as the account's password. */
+const passwordTokens = new Set(["current-password", "new-password"]);
+const autocompleteTokens = (control: { readonly autocomplete: string | null }) =>
+  (control.autocomplete ?? "").toLowerCase().split(/\s+/u);
+
+/**
+ * What says a control, as the inspection read it, is a one-time code field, by the strongest
+ * evidence first; undefined when nothing does. It reads the markup alone: a numeric box, a short
+ * one or a masked one is no code by itself, as a PIN that stands in for a password is all three.
+ */
+export const oneTimeCodeEvidence = (
+  control: Pick<
+    typeof Described.Type,
+    "autocomplete" | "name" | "id" | "label" | "ariaLabel" | "placeholder" | "codeBox"
+  >,
+): SlotControlEvidence | undefined => {
+  if (autocompleteTokens(control).includes("one-time-code")) return "autocomplete";
+  if (control.codeBox !== undefined) return "code_boxes";
+  const words = [...nameWords(control.name), ...nameWords(control.id)];
+  const named = words.some((word) => codeNameWords.has(word));
+  if (named && !words.some((word) => otherNameWords.has(word))) return "name";
+  return [control.label, control.ariaLabel, control.placeholder].some(
+    (text) => text !== null && codeLabel.test(text),
+  )
+    ? "label"
+    : undefined;
+};
+
+/**
+ * A step that gives a field a credential slot its control contradicts: a refusal before anything
+ * is typed, reviewed or asked, naming the field (`target`), its slot, what its control takes and
+ * the evidence (`slotControl`), so the step can be sent again with the slot the control takes. A
+ * `password` field whose control is a one-time code field (`oneTimeCodeEvidence`) would type the
+ * login's password into a code box, or ask the owner for a password the screen never wants; a
+ * `code` field whose `autocomplete` marks the account's password (`current-password` or
+ * `new-password`) would ask the owner for a code the screen never sends. Undefined when every
+ * field's slot agrees with its control, or its control says nothing either way.
+ */
+export const slotControlRefusal = (
+  step: Pick<AutofillStep, "fields">,
+  inspection: Pick<AutofillInspection, "screen">,
+): AutofillRefusal | undefined => {
+  for (const [index, field] of step.fields.entries()) {
+    const control = inspection.screen.fields[index];
+    if (control === undefined) continue;
+    const evidence =
+      field.slot === "password"
+        ? oneTimeCodeEvidence(control)
+        : field.slot === "code" &&
+            autocompleteTokens(control).some((token) => passwordTokens.has(token))
+          ? ("autocomplete" as const)
+          : undefined;
+    if (evidence === undefined) continue;
+    const slotControl =
+      field.slot === "password"
+        ? { slot: "password" as const, control: "code" as const, evidence }
+        : { slot: "code" as const, control: "password" as const, evidence };
+    return {
+      ...withCheck(refused("slot_control_mismatch", index), "slot_control", slotControl),
+      slotControl,
+    };
+  }
+  return undefined;
 };
 
 /** The site's registrable domain, or its host where it has none, for the marker's frames. */

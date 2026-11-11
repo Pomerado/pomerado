@@ -72,6 +72,10 @@ interface Options {
   readonly codeBoxes?: number;
   /** The `id` and `name` of the element each selector finds; none by default. */
   readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
+  /** What the markup of the element each selector finds says beyond the defaults. */
+  readonly controls?: Readonly<
+    Record<string, Partial<Record<Exclude<keyof typeof described, "tag">, string | null>>>
+  >;
 }
 
 /** A recorder over a synthetic site, with what it asked, filled, reviewed and checked. */
@@ -106,6 +110,7 @@ const harness = (options: Options = {}) => {
           fields: step.fields.map((field) => ({
             ...described,
             ...options.named?.[field.selector],
+            ...options.controls?.[field.selector],
             slot: field.slot,
             ...(field.slot === "private_answer" && questions.length > 0
               ? { questionText: questions.shift() ?? "" }
@@ -1071,6 +1076,74 @@ it("refuses a code step that names only some of the screen's one-character boxes
   expect(result.result["nextStep"]).toContain("splits its code across 6 one-character boxes");
   expect(host.asked).toEqual([]);
   expect(host.filled).toHaveLength(1);
+});
+
+// A second-factor screen whose one field is a masked one-time code box: a step that names it the
+// password slot would type the login's password into it, so the host sends the step back before
+// anyone reviews it or is asked, and the corrected step asks the owner for the code instead.
+it("refuses a password slot on a one-time code control, typing and asking nothing, then asks for the code once the step names it", async () => {
+  const host = harness({
+    held: account,
+    answers: { code: ["482913"] },
+    controls: {
+      "#second-factor": {
+        type: "password",
+        autocomplete: "one-time-code",
+        label: "Authentication code",
+      },
+    },
+  });
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      const refused = yield* recorder.step(
+        { fields: [{ selector: "#second-factor", slot: "password" }], submit: "#verify" },
+        undefined,
+        Effect.void,
+      );
+      const corrected = yield* recorder.step(
+        { fields: [{ selector: "#second-factor", slot: "code" }], submit: "#verify" },
+        undefined,
+        Effect.void,
+      );
+      return { refused, corrected };
+    }),
+  );
+  expect(result.refused.report).toMatchObject({
+    outcome: "refused",
+    reason: "slot_control_mismatch",
+    target: 0,
+    slotControl: { slot: "password", control: "code", evidence: "autocomplete" },
+  });
+  expect(result.refused.result["nextStep"]).toContain('slot "code"');
+  expect(host.reviewed).toHaveLength(2);
+  expect(host.filled.map(({ values }) => values)).toEqual([["ada-owner"], ["482913"]]);
+  expect(host.asked.map((request) => request.questions[0])).toEqual([
+    expect.objectContaining({ id: "code", type: "secret" }),
+  ]);
+});
+
+// The converse: a field the page marks as the account's password is never a code field.
+it("refuses a code slot on a control the page marks as the account's password", async () => {
+  const host = harness({
+    held: account,
+    controls: { "#secret": { type: "password", autocomplete: "current-password" } },
+  });
+  const result = await host.run((recorder) =>
+    recorder.step(
+      { fields: [{ selector: "#secret", slot: "code" }], submit: "#sign-in" },
+      undefined,
+      Effect.void,
+    ),
+  );
+  expect(result.report).toMatchObject({
+    outcome: "refused",
+    reason: "slot_control_mismatch",
+    slotControl: { slot: "code", control: "password", evidence: "autocomplete" },
+  });
+  expect(result.result["nextStep"]).toContain('slot "password"');
+  expect(host.asked).toEqual([]);
+  expect(host.filled).toEqual([]);
 });
 
 it("asks a code screen of one-character boxes for its code once, types a character in each, and verifies once its page sent it", async () => {

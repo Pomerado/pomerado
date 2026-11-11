@@ -5,7 +5,9 @@ import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import {
   codeBoxesRefusal,
+  slotControlRefusal,
   type AutofillInspection,
+  type AutofillRefusal,
   type AutofillScreens,
   type AutofillSignedIn,
   type AutofillStep,
@@ -129,6 +131,29 @@ const shown = (answer: ReturnType<typeof result>): SignInStepResult => ({
   result: Schema.decodeUnknownSync(Shown)(new TextDecoder().decode(answer.result)).output.value,
 });
 
+/** What says a control takes another value than its slot, in the minter's words. */
+const slotControlEvidence = {
+  autocomplete: "its autocomplete attribute",
+  code_boxes: "it is one of the screen's one-character code boxes",
+  name: "its name or id",
+  label: "its own label, aria-label or placeholder",
+} as const;
+
+/**
+ * After a step the host refused because a field's slot contradicts its control
+ * (`slot_control_mismatch`): which field, what its control takes and how to send it again.
+ */
+const slotControlNotice = (
+  target: AutofillRefusal["target"],
+  mismatch: NonNullable<AutofillRefusal["slotControl"]>,
+) => {
+  const field = typeof target === "number" ? `field ${target} (counted from 0)` : "a field";
+  const lead = `The host typed and clicked nothing, so nothing reached the site and nobody was asked: the step's ${field} has slot "${mismatch.slot}", but its control is a ${mismatch.control === "code" ? "one-time code" : "password"} field by ${slotControlEvidence[mismatch.evidence]}.`;
+  return mismatch.control === "code"
+    ? `${lead} A second-factor or verification screen asks for a code the site sent or an authenticator app shows, never the account's password. Send the step again with slot "code" on that field; the host asks the owner for the code then, saying where it comes from.`
+    : `${lead} Send the step again with slot "password" on that field when the screen asks for the account's password; a code field is one whose control asks for a one-time code.`;
+};
+
 /**
  * What the minter does after a screen the host inspected and maybe filled, with the values the
  * fill typed (`typed`), which name a changed phone's calling code or show it written in
@@ -145,6 +170,8 @@ const notice = (
       typed?.[changed],
       step !== undefined && takesLocalNumber(report, step, changed),
     );
+  if (report.outcome === "refused" && report.slotControl !== undefined)
+    return slotControlNotice(report.target, report.slotControl);
   return report.outcome === "refused" && report.codeBoxes !== undefined
     ? `This screen splits its code across ${report.codeBoxes.boxes} one-character boxes, and the step's code fields named only the boxes at places ${report.codeBoxes.named.join(", ")}, in that order (codeBoxes.named, counted from 1). The host typed and clicked nothing, so nothing reached the site, no code was asked for and no sign-in was spent. Send the step again with one code field per box, all ${report.codeBoxes.boxes} of them in order from the first box to the last; the host asks for the code once and types one character into each box.`
     : stepNotice(report, step);
@@ -548,6 +575,12 @@ export const makeSignInRecorder = (input: {
       noteInspection(step, inspected);
       if ("outcome" in inspected)
         return { report: inspected, result: { nextStep: notice(inspected) } };
+      // A field whose slot its control contradicts, such as a password slot on a one-time code
+      // box, would type or ask for the wrong value, so it is sent back before Guardian or the
+      // owner sees it.
+      const mismatch = slotControlRefusal(step, inspected);
+      if (mismatch !== undefined)
+        return { report: mismatch, result: { nextStep: notice(mismatch) } };
       // A code split across one-character boxes goes out whole only when the step names every
       // box, so a step that names part of them is sent back before Guardian or the owner sees it.
       const partial = codeBoxesRefusal(step, inspected);
