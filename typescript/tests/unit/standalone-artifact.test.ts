@@ -5,6 +5,7 @@ import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import { signInRecipe, type RecordedSignInStep } from "../../src/destinations/sign-in-recipe.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
+import { hostPlatform, type LocalPlatform } from "../../src/execution/local-platform.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
 import * as pomerado from "../../src/standalone/index.js";
@@ -606,6 +607,51 @@ it.each([
     }
   },
 );
+
+/** Publishes a minimal integration under `root` for `platform` and returns its README. */
+const publishedReadme = async (root: string, platform: LocalPlatform) => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const publish = yield* prepareIntegration({
+          root,
+          name: "example_reader",
+          request: { url: "https://example.test", intent: "Read page", effect: "read" },
+          platform,
+        });
+        return yield* publish({
+          entrypoint: "src/main.mjs",
+          files: [{ path: "src/main.mjs", content: "export default {};" }],
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+        });
+      }),
+    ),
+  );
+  return readFile(join(await realpath(root), "example_reader", "README.md"), "utf8");
+};
+
+// The README's add commands run in a terminal: sh on macOS and Linux, PowerShell on Windows. A
+// path with a single quote, such as a user folder named O'Brien, must stay one argument in each.
+it("quotes the README's add commands for sh, and for PowerShell on Windows", async () => {
+  // ’ (U+2019) is a single quote to PowerShell too.
+  const root = await mkdtemp(join(tmpdir(), "pomerado-o'brien-o\u2019neil-"));
+  try {
+    const launcher = join(await realpath(root), "example_reader", "mcp.mjs");
+    const posix = await publishedReadme(root, { ...hostPlatform, windows: false });
+    expect(posix).toContain("```sh\n");
+    expect(posix).toContain(` '${launcher.replaceAll("'", "'\\''")}' `);
+    await rm(join(root, "example_reader"), { recursive: true, force: true });
+    const windows = await publishedReadme(root, { ...hostPlatform, windows: true });
+    expect(windows).toContain("```powershell\n");
+    expect(windows).not.toContain("```sh");
+    expect(windows).toContain(
+      ` '${launcher.replaceAll("'", "''").replaceAll("\u2019", "\u2019\u2019")}' `,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it("packages a client-neutral MCP server entry that holds no key", async () => {
   const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));

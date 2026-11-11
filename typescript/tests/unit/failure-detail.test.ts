@@ -442,6 +442,43 @@ describe("failure detail", () => {
     expect(JSON.stringify(detail).length).toBeLessThanOrEqual(failureDetailBounds.serialized);
   });
 
+  // Windows names a frame's file as C:\..., \\?\C:\..., file:///C:/... or a share, and the
+  // user's folder must not leave the machine in any of them, even with spaces in it.
+  it("keeps repository-relative locations of Windows frames and drops their folders", () => {
+    const error = new Error("windows");
+    error.stack = [
+      "Error: windows",
+      "    at step (C:\\Users\\alice\\pomerado\\typescript\\src\\example.ts:3:7)",
+      "    at load (file:///C:/Users/alice/AppData/Local/npm-cache/_npx/1/node_modules/pomerado/dist/typescript/src/x.js:1:2)",
+      "    at run (C:\\Users\\alice\\tools\\helper.js:9:4)",
+      "    at open (file:///D:/work/alice/other.mjs:5:1)",
+      "    at spaced (C:\\Users\\John Smith\\pomerado\\typescript\\src\\x.ts:3:7)",
+      "    at C:\\Users\\John Smith\\Program Files (x86)\\tool\\helper.js:1:1",
+      "    at long (\\\\?\\C:\\Users\\John Smith\\pomerado\\dist\\typescript\\src\\y.js:2:2)",
+      "    at share (\\\\server\\share\\John Smith\\tool.js:2:3)",
+      "    at wsl (\\\\wsl.localhost\\Ubuntu\\home\\alice\\pomerado\\typescript\\src\\z.ts:4:5)",
+      "    at async file:///C:/Users/alice/h.mjs:1:2",
+      "    at async C:\\Users\\John Smith\\h.js:1:2",
+      "    at slashed (C:/Users/alice/h.js:1:2)",
+    ].join("\n");
+    const stack = describeError(error).stack;
+    expect(stack).toEqual([
+      "step (typescript/src/example.ts:3:7)",
+      "load (node_modules/pomerado/dist/typescript/src/x.js:1:2)",
+      "run (…/helper.js:9:4)",
+      "open (…/other.mjs:5:1)",
+      "spaced (typescript/src/x.ts:3:7)",
+      "…/helper.js:1:1",
+      "long (dist/typescript/src/y.js:2:2)",
+      "share (…/tool.js:2:3)",
+      "wsl (typescript/src/z.ts:4:5)",
+      "async …/h.mjs:1:2",
+      "async …/h.js:1:2",
+      "slashed (…/h.js:1:2)",
+    ]);
+    expect(JSON.stringify(stack)).not.toMatch(/alice|John|Smith|server/);
+  });
+
   it("names the underlying error source: pg SQLSTATE, AWS name, Node code, Effect tag", () => {
     const pg = Object.assign(new Error("canceling statement due to statement timeout"), {
       code: "57014",
