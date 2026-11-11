@@ -617,9 +617,28 @@ export const FailureDetailSchema = Schema.Struct({
 });
 
 const absolutePath =
-  /(?:file:\/\/\/?)?(?:[A-Za-z]:)?(?:\/[^\s():/]+)*?\/((?:typescript\/src|typescript\/tests|dist|node_modules)\/[^\s():]+)/g;
-/** A Windows path such as `C:\Users\name\app\dist\x.js:1:2`, which a frame names with backslashes. */
-const windowsPath = /[A-Za-z]:\\[^\s()]*/g;
+  /(?:file:\/\/)?(?:[A-Za-z]:)?(?:\/[^\s():/]+)*?\/((?:typescript\/src|typescript\/tests|dist|node_modules)\/[^\s():]+)/g;
+
+/**
+ * A frame's Windows location, which may hold spaces and parentheses: from the frame's start or its
+ * opening parenthesis to its `:line:column`. It is a drive path (`C:\...`, `\\?\C:\...` or
+ * `file:///C:/...`) or a share (`\\server\share\...`, such as `\\wsl.localhost\Ubuntu\...`).
+ */
+const windowsLocation =
+  /(^|\()((?:file:\/\/\/[A-Za-z]:\/|[A-Za-z]:\\|\\\\)[\s\S]*?)(:\d+:\d+)?(\)?)$/;
+const repositoryFolder = /\/(?:typescript\/src|typescript\/tests|dist|node_modules)\//;
+
+/** A Windows location from its repository folder on, or else its file name alone. */
+const trimWindowsLocation = (location: string) => {
+  const path = location
+    .replace(/^file:\/\/\//, "")
+    .replace(/^\\\\\?\\/, "")
+    .replaceAll("\\", "/");
+  const repository = repositoryFolder.exec(path);
+  return repository === null
+    ? `…/${path.slice(path.lastIndexOf("/") + 1)}`
+    : path.slice(repository.index + 1);
+};
 
 /**
  * The lines after a stack's leading `Name: message` block. That block can quote input over
@@ -636,6 +655,19 @@ const linesAfterMessage = (stack: string, message: string) => {
         .slice(1);
 };
 
+/** A frame with its locations trimmed to the repository, as a Windows or a POSIX path. */
+const trimLocations = (frame: string) =>
+  windowsLocation.test(frame)
+    ? frame.replace(
+        windowsLocation,
+        (_frame, start: string, location: string, position = "", end: string) =>
+          `${start}${trimWindowsLocation(location)}${position}${end}`,
+      )
+    : frame
+        .replace(absolutePath, "$1")
+        // Any remaining absolute path keeps only its file name.
+        .replace(/(^|[\s(])(?:\/[^\s():/]+)+\/([^\s():/]+)/g, "$1…/$2");
+
 /** Frames keep function names and repository-relative locations; absolute prefixes are removed. */
 const boundedStack = (
   stack: string | undefined,
@@ -650,13 +682,7 @@ const boundedStack = (
         line
           .trim()
           .replace(/^at\s+/, "")
-          .replace(windowsPath, (path) => path.replaceAll("\\", "/"))
-          .replace(absolutePath, "$1")
-          // Any remaining absolute path keeps only its file name.
-          .replace(
-            /(^|[\s(])(?:file:\/\/\/(?=[A-Za-z]:))?(?:[A-Za-z]:)?(?:\/[^\s():/]+)+\/([^\s():/]+)/g,
-            "$1…/$2",
-          )
+          .replace(/^[\s\S]*$/, trimLocations)
           // A frame can name an eval'd URL or data string.
           .replace(/^[\s\S]*$/, (frame) => redactDiagnosticText(frame, bounds.frameLength)),
         bounds.frameLength,

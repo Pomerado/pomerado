@@ -634,7 +634,8 @@ const publishedReadme = async (root: string, platform: LocalPlatform) => {
 // The README's add commands run in a terminal: sh on macOS and Linux, PowerShell on Windows. A
 // path with a single quote, such as a user folder named O'Brien, must stay one argument in each.
 it("quotes the README's add commands for sh, and for PowerShell on Windows", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pomerado-o'brien-"));
+  // ’ (U+2019) is a single quote to PowerShell too.
+  const root = await mkdtemp(join(tmpdir(), "pomerado-o'brien-o\u2019neil-"));
   try {
     const launcher = join(await realpath(root), "example_reader", "mcp.mjs");
     const posix = await publishedReadme(root, { ...hostPlatform, windows: false });
@@ -644,7 +645,9 @@ it("quotes the README's add commands for sh, and for PowerShell on Windows", asy
     const windows = await publishedReadme(root, { ...hostPlatform, windows: true });
     expect(windows).toContain("```powershell\n");
     expect(windows).not.toContain("```sh");
-    expect(windows).toContain(` '${launcher.replaceAll("'", "''")}' `);
+    expect(windows).toContain(
+      ` '${launcher.replaceAll("'", "''").replaceAll("\u2019", "\u2019\u2019")}' `,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -20,10 +20,13 @@ startMcpCli(['serve', '--artifact', fileURLToPath(new URL('.', import.meta.url))
 `;
 /**
  * Quotes one argument of the README's commands for the shell a user runs them in: POSIX sh, or
- * PowerShell on Windows, where a single quote inside quotes is doubled.
+ * PowerShell on Windows, where a single quote inside quotes is doubled. PowerShell also reads the
+ * typographic quotes U+2018 to U+201B, such as ’, as single quotes.
  */
 const quoteFor = (windows: boolean) => (value: string) =>
-  windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
+  windows
+    ? `'${value.replace(/['\u2018-\u201B]/gu, (quote) => quote + quote)}'`
+    : `'${value.replaceAll("'", "'\\''")}'`;
 /**
  * Top-level names authored source may not use, compared in lower case. They cover the packaging
  * files, the sign-in recipe, the TOML that 0.1.2 wrote and its docs told users to copy into Codex,
