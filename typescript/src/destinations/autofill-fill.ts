@@ -1487,8 +1487,9 @@ const dismissNotice = (
  * or one around it in `aria-controls` or `aria-owns`, or when the outermost element around it that
  * does not hold the field sits in the field's form, its top edge within 8 pixels under the field.
  * Only then does the call press Escape in the field, once, and it answers `closed` when the field
- * still holds what it held, compared in the page's isolated world, and nothing the field opened
- * covers the submit any more. Only that answer leaves the page.
+ * still holds what it held, compared in the page's isolated world, which then drops its copy, and
+ * the submit itself is the element at its centre again: a notice still over it, or a dialog that
+ * Escape closed with the submit in it, is no closed list. Only that answer leaves the page.
  */
 const closeFieldListCode = (input: CallInput, index: number) => `${autofillPageCode(
   input.page.targetId,
@@ -1523,8 +1524,19 @@ if (!(await field.locator.evaluate(opened, [submit.handle], read))) return { clo
 const key = ${JSON.stringify(`__pomerado_list_${randomUUID()}`)};
 await field.locator.evaluate((element, key) => { element[key] = element.value; }, key, read, true);
 await field.locator.press("Escape", read);
-const unchanged = await field.locator.evaluate((element, key) => element.value === element[key], key, read, true);
-return { closed: unchanged && !(await field.locator.evaluate(opened, [submit.handle], read)) };`;
+const unchanged = await field.locator.evaluate((element, key) => {
+  const same = element.value === element[key];
+  delete element[key];
+  return same;
+}, key, read, true);
+const clear = await submit.handle.evaluate((element) => {
+  const box = element.getBoundingClientRect();
+  const root = element.getRootNode();
+  const hit = (typeof root.elementFromPoint === "function" ? root : element.ownerDocument)
+    .elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return hit !== null && (hit === element || element.contains(hit));
+});
+return { closed: unchanged && clear };`;
 
 /**
  * Closes a list the step's field the host typed last opened over its submit

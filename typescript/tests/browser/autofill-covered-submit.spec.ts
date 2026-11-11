@@ -153,16 +153,16 @@ test("an empty overlay beside a modal dialog in one portal catches the host's cl
   expect(received).toEqual([]);
 });
 
-test("an email field's own suggestion list, opened by typing, covers Continue: the fill closes it with Escape in the field and clicks Continue once, the recipe records closeFieldList as version 15, and a fresh browser replays it", async ({
+test("an email field's own suggestion list, opened by typing, covers Continue: the fill closes it with Escape in the field and clicks Continue once, the recipe records closeFieldList as version 15, and a fresh browser replays it; a banner over Continue that Escape leaves open stays blocked", async ({
   page,
   browser,
 }) => {
-  // The first fill waits out Playwright's 5 s click timeout once.
+  // The first fill and the banner's each wait out Playwright's 5 s click timeout once.
   test.setTimeout(30_000);
   const email = "synthetic.member@example.test";
   const step: AutofillStep = { fields: [{ selector: "#email", slot: "email" }], submit: "#continue" };
   // An unlabelled list, drawn right under the field on input and closed by Escape, over Continue.
-  const open = async (target: Page) => {
+  const open = async (target: Page, script = "") => {
     const received: string[] = [];
     await target.route(`${site}/**`, async (route) => {
       if (route.request().method() === "POST") {
@@ -177,8 +177,10 @@ test("an email field's own suggestion list, opened by typing, covers Continue: t
 <button id="continue">Continue</button></form>
 <script>const field = document.getElementById("email");
 const list = document.getElementById("list");
-field.addEventListener("input", () => { list.hidden = false; });
-field.addEventListener("keydown", (event) => { if (event.key === "Escape") list.hidden = true; });</script>`,
+const show = (shown) => { list.hidden = !shown; field.setAttribute("aria-expanded", String(shown)); };
+field.addEventListener("input", () => show(true));
+field.addEventListener("keydown", (event) => { if (event.key === "Escape") show(false); });
+${script}</script>`,
         });
     });
     await target.goto(`${site}/login`);
@@ -204,6 +206,14 @@ field.addEventListener("keydown", (event) => { if (event.key === "Escape") list.
   });
   await expect(page.locator("#password-screen")).toBeVisible();
   expect(received).toEqual([new URLSearchParams({ email }).toString()]);
+  // A banner over Continue, which Escape leaves open, is no closed list: the fill stays blocked.
+  const bannered = await page.context().newPage();
+  const unsent = await open(
+    bannered,
+    `document.body.insertAdjacentHTML("beforeend", '<div style="position:fixed;top:32px;left:0;right:0;height:60px;z-index:1;background:#eee"><button type="button">Accept</button></div>');`,
+  );
+  expect(await run(bannered, step)).toMatchObject({ outcome: "filled", submit: "blocked", blockedBy: { tag: "div" } });
+  expect(unsent).toEqual([]);
 
   const text = signInRecipeText(
     signInRecipe(
