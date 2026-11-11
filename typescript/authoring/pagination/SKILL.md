@@ -6,10 +6,10 @@ description: Read before settling the schema of any tool that returns a list: pa
 # Return a page and a way to the next
 
 Any tool that returns a list the site can run past one page, such as search results, orders,
-statements, messages or reviews, returns one page per call and a cursor for the next. A caller
-that wants more calls again with the same inputs and that cursor. No browser stays open between
-calls: each call is a fresh run that rebuilds its position from the cursor alone, signed in or
-not.
+statements, messages or reviews, returns one page per call and a cursor for the next, even when
+the request asks for the whole list in one result. A caller that wants more calls again with the
+same inputs and that cursor. No browser stays open between calls: each call is a fresh run that
+rebuilds its position from the cursor alone, signed in or not.
 
 ## The contract
 

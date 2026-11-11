@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
+import { accessibleNames } from "./accessible-name.js";
 import { maximumCodeBoxes, type AutofillPopup, type DateOfBirthFormat } from "./autofill-contracts.js";
 import { elementReadMs, locateCode, questionTextCode } from "./autofill-locate-code.js";
 import { clipCode, controlNamingCode } from "./control-naming-code.js";
@@ -148,9 +149,13 @@ return {
  * One call of a step's fill, after its inspection. None carries a value but a date's: the host
  * types every other value itself over its own DevTools socket, into the field `focus` left focused. `check` names the field the host typed just before, which must now hold
  * something, so typing that went to another element never leads to a click.
- * - `focus`: empties the field when it holds something and focuses it, then reads that the field
+ * - `focus`: empties the field when it holds something and focuses it, or clicks it with the
+ *   pointer as the first box of a row the host types through it (`row`), then reads that the field
  *   itself holds the focus, inside a shadow root too (`holdsFocusCode`), and names the tag of the
- *   element that holds it otherwise.
+ *   element that holds it otherwise. A field that takes no typing, as a code box the page has not
+ *   switched on yet, it neither empties nor focuses, and says so (`editable: false`). Nor does it
+ *   touch the box an earlier screen of the sign-in typed this same value into while that box still
+ *   holds something (`kept`).
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
  *   own options, so this call's code holds the date (`iso`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
@@ -160,12 +165,16 @@ return {
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
  *   as judged, and how each field's secret is found by value, if it is one), reads the page's
  *   alert text when the host counts new alerts (`alertsBefore`), clicks the submit (or, for a step
- *   with a submit key, presses that key in its last field, which stands as the submit), or presses
- *   Enter on the submit itself once focus landed on it, when another element caught a click the
- *   host may press past (`pressCovered`) or the step says to (`submitVia`), waits for the page to
+ *   with a submit key, presses that key in its last field, which stands as the submit, and for a
+ *   method chosen from a native select, chooses the step's `option` there), clicks the
+ *   submit's centre with the mouse when the element there is the site's own control over the
+ *   submit with its name (`clickLayerCode`), on a click another element caught or first when the
+ *   step says to (`submitVia`), or presses Enter on the submit itself once focus landed on it, when
+ *   another element caught a click the host may press past (`pressCovered`) or the step says to
+ *   (`submitVia`), waits for the page to
  *   settle and reads its controls (`pageControlsCode`), with how many of their alerts did not show
- *   before the click (`newAlerts`) when it read them. A disabled submit it never clicks: it says so
- *   and does nothing, and the host calls again while the page may still enable it.
+ *   before the click (`newAlerts`) when it read them. A disabled or inert submit it never clicks:
+ *   it says so and does nothing, and the host calls again while the page may still enable it.
  */
 export type AutofillFillCall =
   | {
@@ -190,6 +199,25 @@ export type AutofillFillCall =
        * types the fresh code.
        */
       readonly emptyBoxes?: readonly number[];
+      /**
+       * The rest of a row of code boxes the host types through this, its first box: each box's
+       * field index and the key its binding goes under. The call clicks the field with the
+       * pointer, as a person does, where it would focus it, and once the field holds the focus
+       * binds each of these boxes too, holding the focus or not, so the host can type each key of
+       * the code into its own box as the page moves the focus on.
+       */
+      readonly row?: readonly { readonly index: number; readonly bindingKey: string }[];
+      /**
+       * Once the field takes the focus, the call leaves this mark on it in its isolated world,
+       * never as an attribute, holding the field's document: the sign-in's record of the box.
+       */
+      readonly mark?: string;
+      /**
+       * The mark an earlier screen's focus call left on the box the host typed this same value
+       * into: when the field is that node, in that document, and still holds something, the call
+       * neither empties nor focuses it and answers `kept`. Lengths only, never a value.
+       */
+      readonly kept?: string;
     }
   | {
       readonly kind: "date";
@@ -237,7 +265,8 @@ export type AutofillFillCall =
       /**
        * When another element catches the click, press the submit from the keyboard instead, once
        * focus lands on it: only on the host's click again of a `blocked` screen. Without it, such a
-       * click is `blocked`, so a covering notice is dismissed first.
+       * click is `blocked`, so a covering notice is dismissed first, unless the element is the
+       * site's own control over the submit with its name, which any call clicks as the submit.
        */
       readonly pressCovered?: true;
     };
@@ -399,12 +428,30 @@ const allEmptied = async () => {
   return true;
 };`;
 
+/** The most of a covering element's own controls page code reads (`CoveringElement.controls`). */
+export const coveringControlsLimit = 5;
+/**
+ * The longest name of a covering element's control page code reads. A longer name is left out
+ * whole, never cut: a cut could keep the start of a typed value that screening for the whole value
+ * misses.
+ */
+export const coveringControlNameLimit = 120;
+
 /**
  * Page code: the element at the centre of `element`, a submit whose click failed, when it is
  * neither the submit, inside it nor around it: the outermost element over the submit that holds it,
  * as a notice holds its own buttons, by its tag and role attribute, each cut short, never anything
- * else of it (`coveringElement` keeps those on its lists). Null when the submit has no box or
- * nothing else sits over it.
+ * else of it (`coveringElement` keeps those on its lists), and its own buttons and links a person
+ * sees, in page order and then its open shadow roots', at most `coveringControlsLimit`, each by
+ * role and accessible name (`accessibleNames`), as the page has it: a name longer than
+ * `coveringControlNameLimit` is left out, and a control with no name comes with an empty name as
+ * `iconOnly`. Over the limit, those and controls named close, dismiss, reject, decline or accept
+ * are kept first, still in page order. Null when the submit has no box or nothing else sits over it.
+ *
+ * A modal dialog a person sees (`dialog[open]`, the `dialog` or `alertdialog` role, or
+ * `aria-modal="true"`) that is that element or sits in it, as beside an empty overlay in the same
+ * portal, makes the role `dialog`, or `alertdialog` for that role, and its own controls the ones
+ * read.
  */
 const coveringCode = `(element) => {
   const box = element.getBoundingClientRect();
@@ -423,7 +470,66 @@ const coveringCode = `(element) => {
   const page = [element.ownerDocument.body, element.ownerDocument.documentElement];
   while (cover.parentElement !== null && !page.includes(cover.parentElement) && !cover.parentElement.contains(element))
     cover = cover.parentElement;
-  return { tag: String(cover.tagName).slice(0, 40), role: cover.getAttribute("role")?.slice(0, 40) ?? null };
+  const shown = (node) => {
+    const area = node.getBoundingClientRect();
+    return area.width > 0 && area.height > 0 && node.checkVisibility({ visibilityProperty: true });
+  };
+  const modals = 'dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]';
+  const modal = [cover, ...cover.querySelectorAll(modals)].find((node) => node.matches(modals) && shown(node)) ?? null;
+  const name = (${String(accessibleNames)})();
+  const found = [];
+  const roots = [modal ?? cover];
+  for (const scope of roots) {
+    for (const control of scope.querySelectorAll("*")) {
+      if (control.shadowRoot !== null) roots.push(control.shadowRoot);
+      if (!control.matches('button, a[href], input[type="button"], input[type="submit"], [role~="button"], [role~="link"]')) continue;
+      if (!shown(control)) continue;
+      let named = null;
+      try {
+        named = name(control);
+      } catch {}
+      if (typeof named !== "string" || named.length > ${coveringControlNameLimit}) continue;
+      const own = (control.getAttribute("role") ?? "").trim().split(/\\s+/)[0];
+      const kind = own === "link" || (own !== "button" && control.localName === "a") ? "link" : "button";
+      found.push(named.trim() === "" ? { role: kind, name: "", iconOnly: true } : { role: kind, name: named });
+    }
+  }
+  const first = (control) => control.iconOnly === true || /\\b(?:close|dismiss|reject|decline|accept)\\b/i.test(control.name);
+  const kept = new Set([...found.filter(first), ...found.filter((control) => !first(control))].slice(0, ${coveringControlsLimit}));
+  const role = modal === null ? cover.getAttribute("role")?.slice(0, 40) ?? null : modal.matches('[role~="alertdialog"]') ? "alertdialog" : "dialog";
+  return { tag: String(cover.tagName).slice(0, 40), role, controls: found.filter((control) => kept.has(control)) };
+}`;
+
+/**
+ * Page code: whether the element at the centre of `element`, a submit whose click another element
+ * caught, is the site's own click layer for it, as a site lays a control over its submit to take
+ * a person's click there. It is when that element, or the nearest button, link or `button` role
+ * around it, is neither the submit nor around it, sits in the submit's own closest form or dialog,
+ * holds no field, and carries the submit's own accessible name, trimmed and ignoring case. Only
+ * that answer leaves the page, never a name.
+ */
+const clickLayerCode = `(element) => {
+  const box = element.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return false;
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  const root = element.getRootNode();
+  let hit = (typeof root.elementFromPoint === "function" ? root : element.ownerDocument).elementFromPoint(x, y);
+  while (hit?.shadowRoot) {
+    const inner = hit.shadowRoot.elementFromPoint(x, y);
+    if (inner === null || inner === hit) break;
+    hit = inner;
+  }
+  const layer = hit?.closest('button, a, [role~="button"]');
+  if (!layer || layer === element || element.contains(layer) || layer.contains(element)) return false;
+  const scope = (node) => node.closest('form, dialog, [role~="dialog"], [role~="alertdialog"]');
+  const shared = scope(element);
+  if (shared === null || scope(layer) !== shared) return false;
+  if (layer.querySelector("input, select, textarea") !== null) return false;
+  const name = (${String(accessibleNames)})();
+  const named = (node) => name(node).trim().replace(/\\s+/g, " ").toLowerCase();
+  const own = named(element);
+  return own !== "" && named(layer) === own;
 }`;
 
 /**
@@ -674,8 +780,19 @@ const fillCallBody = (call: AutofillFillCall) => {
     return `const field = fields[${call.index}].locator;
 const fieldLocated = located.fields[${call.index}];
 const question = fields[${call.index}].question;
+// A code box the page has not switched on yet takes no typing: the call empties and focuses
+// nothing, and the host calls again while the page may still switch it on.
+if (!fields[${call.index}].target.editable)
+  return { focused: false, unfocused: { editable: false }, located: fieldLocated, url: primary.url() };
 try {
-  // A row of code boxes that still holds a refused code is emptied first, last box first, by each
+${
+  call.kept === undefined
+    ? ""
+    : `  // The box an earlier screen of this sign-in typed this same value into, still holding it.
+  if (await field.evaluate((element, mark) => element[mark] === element.ownerDocument && typeof element.value === "string" && element.value.length > 0, ${JSON.stringify(call.kept)}, { timeout: ${elementReadMs} }, true))
+    return { kept: true, located: fieldLocated, url: primary.url(), document: await documentStart() };
+`
+}  // A row of code boxes that still holds a refused code is emptied first, last box first, by each
   // input's own value setter and an input event: no focus and no key a widget moves the focus on.
   // Lengths only, never a value.
   for (const box of ${JSON.stringify([...(call.emptyBoxes ?? [])].reverse())})
@@ -687,11 +804,11 @@ try {
   // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
   if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0, undefined, { timeout: ${elementReadMs} }))
     await field.fill("", { timeout: 5000 });
-  await field.focus({ timeout: 5000 });
+  ${call.row === undefined ? "await field.focus({ timeout: 5000 });" : "await field.click({ timeout: 5000 });"}
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does: the deepest one, read
   // through open shadow roots; a closed root shows only its host.
-  const activeTag = await field.evaluate((element, [key, questionRequired]) => {
+  const activeTag = await field.evaluate((element, [key, questionRequired, mark]) => {
     const holdsFocus = ${holdsFocusCode};
     if (!holdsFocus(element)) {
       let active = element.ownerDocument.activeElement;
@@ -700,11 +817,22 @@ try {
     }
     const binding = { document: element.ownerDocument, frame: element.ownerDocument.defaultView, questionRequired };
     Object.defineProperty(element, key, { value: binding, configurable: true });
+    if (mark !== null) Object.defineProperty(element, mark, { value: element.ownerDocument, configurable: true });
     // Transfer the guard through this frame's isolated world; no value is involved.
     if (questionRequired) Object.defineProperty(element.ownerDocument.defaultView, key, { value: binding, configurable: true });
     element.setAttribute(key, "");
     return null;
-  }, [${JSON.stringify(call.bindingKey)}, question !== undefined], { timeout: ${elementReadMs} }, true);
+  }, [${JSON.stringify(call.bindingKey)}, question !== undefined, ${JSON.stringify(call.mark ?? null)}], { timeout: ${elementReadMs} }, true);
+  // The row's other boxes, each bound as the first was, but whether or not it holds the focus.
+  if (activeTag === null)
+    for (const { index, bindingKey } of ${JSON.stringify(call.row ?? [])})
+      await fields[index].locator.evaluate((element, key) => {
+        Object.defineProperty(element, key, {
+          value: { document: element.ownerDocument, frame: element.ownerDocument.defaultView, questionRequired: false },
+          configurable: true,
+        });
+        element.setAttribute(key, "");
+      }, bindingKey, { timeout: ${elementReadMs} }, true);
   if (activeTag === null && question !== undefined) {
     await question.locator.evaluate((element, { key, text }) => {
       const scope = element.ownerDocument.defaultView;
@@ -735,8 +863,10 @@ try {
   return { dated: false, url: primary.url() };
 }`;
   return `${call.look === true ? "return { submit: \"none\", url: primary.url() };\n" : ""}if (submit === null) return { submit: "none", url: primary.url() };
-// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer.
-if (await submit.locator.isDisabled({ timeout: 5000 })) return { submit: "disabled", url: primary.url() };
+// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer,
+// or inert, which a page may lift once the fields hold input as it may enable a disabled one.
+if (submit.inert || (await submit.locator.isDisabled({ timeout: 5000 })))
+  return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
@@ -827,7 +957,8 @@ primary.on("request", noteHop);
 primary.on("framenavigated", noteCommit);
 let late = false;
 // "keyboard" once the host pressed Enter on the submit itself, which activates it as a click does
-// and which no element over it can catch.
+// and which no element over it can catch; "click_layer" once it clicked the site's own control
+// over the submit as the submit.
 let via = null;
 // Presses the submit from the keyboard only once focus landed on that same element; false, having
 // pressed nothing, when focus went anywhere else.
@@ -846,10 +977,34 @@ const pressSubmit = async () => {
   await submitHandle.press("Enter", { timeout: 5000 });
   return true;
 };
+// Clicks the submit's centre as a person's pointer does, only when the site's own control with the
+// submit's name sits there, in the submit's form or dialog (clickLayerCode); false, having
+// clicked nothing, otherwise. Only a submit in the main frame: the check reads the submit's own
+// frame, and a parent page's element over that frame would take a mouse click there instead.
+const clickLayer = async () => {
+  if (submitFrame !== primary.mainFrame()) return false;
+  await submitHandle.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  const layered = await submitHandle.evaluate(${clickLayerCode}).catch(() => false);
+  const box = layered ? await submitHandle.boundingBox().catch(() => null) : null;
+  if (box === null) return false;
+  via = "click_layer";
+  navigated = nextNavigation();
+  await primary.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  return true;
+};
 try {
+  // A method chosen from a native select: the browser's own select action, which fires the page's
+  // change handler.
+  if (submitOption !== null) await submit.locator.selectOption({ value: submitOption }, { timeout: 5000 });
   // A submit key goes to the last field, which stands as the submit and submits its own form.
-  if (submitKey !== null) await submit.locator.press(submitKey, { timeout: 5000 });
-  else if (!(submitVia === "keyboard" && (await pressSubmit()))) await submit.locator.click({ timeout: 5000 });
+  else if (submitKey !== null) await submit.locator.press(submitKey, { timeout: 5000 });
+  else if (
+    !(
+      (submitVia === "keyboard" && (await pressSubmit())) ||
+      (submitVia === "click_layer" && (await clickLayer()))
+    )
+  )
+    await submit.locator.click({ timeout: 5000 });
 } catch (error) {
   // Playwright's click waits, inside its own timeout, for the navigation it started to commit, which
   // a slow chain of redirects can outlast. One whose request for the main frame went out reached
@@ -864,10 +1019,15 @@ try {
       ? await submit.locator.evaluate(${coveringCode}, undefined, { timeout: ${elementReadMs} }).catch(() => null)
       : null;
     if (blockedBy === null) return unwatched({ submit: "failed", url: primary.url() });
-    // On a click again, the covered submit is pressed from the keyboard instead; the element over
-    // it is never clicked. Any other call reports it blocked, so a covering notice is dismissed first.
+    // The site's own control over the submit, with its name, in its form or dialog, is clicked as
+    // the submit on any call. Otherwise, on a click again, the covered submit is pressed from the
+    // keyboard instead, and the element over it is never clicked. Any other call reports it
+    // blocked, so a covering notice is dismissed first.
     try {
-      if (!${JSON.stringify(call.pressCovered === true)} || !(await pressSubmit()))
+      if (
+        !(await clickLayer()) &&
+        (!${JSON.stringify(call.pressCovered === true)} || !(await pressSubmit()))
+      )
         return unwatched({ submit: "blocked", blockedBy, url: primary.url() });
     } catch {
       if (!requested) return unwatched({ submit: "failed", url: primary.url() });
@@ -1017,6 +1177,7 @@ export const autofillStepCode = (
     readonly submit?: string | undefined;
     readonly submitKey?: string | undefined;
     readonly submitVia?: string | undefined;
+    readonly option?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
   },
   observed: string,
@@ -1049,6 +1210,7 @@ const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "co
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
+const submitOption = ${JSON.stringify(step.option ?? null)};
 // Every control is found first, then read in one pass (readControls). A control that is not found
 // ends the call at once, after the no-wait read of the ones found before it (checkReads).
 const foundFields = [];
@@ -1077,10 +1239,15 @@ const submit =
     : foundSubmit === null
       ? null
       : readFound[foundFields.length];
-// An inert submit takes no interaction at all, so nothing is typed for it. A disabled one may be
-// enabled once the fields hold input; the submit call never clicks it while it is disabled.
-if (submit !== null && submit.inert)
-  return { error: "not_editable", target: "submit", located: submit.located, url: primary.url() };
+// A method chosen from a native select: the select must list its option, or nothing is chosen.
+if (
+  submitOption !== null &&
+  submit !== null &&
+  !(await submit.locator
+    .evaluate((element, value) => element instanceof HTMLSelectElement && Array.from(element.options).some((option) => option.value === value), submitOption, { timeout: ${elementReadMs} })
+    .catch(() => false))
+)
+  return { error: "not_found", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
 

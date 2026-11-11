@@ -73,3 +73,51 @@ export default defineOperation(
     return input;
   },
 );
+
+// An observed calendar picker: its date box shows a typed date at once but takes it only on Enter
+// or once focus leaves, and its calendar button's label then names the date it kept, as in
+// "Choose start date, selected date is Nov 14, 2026". So `fillDate` presses Enter, then Tab, and
+// reads that label back with `committed`.
+export const setStartDate = defineOperation(
+  {
+    name: "set_start_date",
+    input: Schema.Struct({
+      date: CalendarDate.annotations({ description: "Start date, YYYY-MM-DD", examples: ["2026-11-14"] }),
+    }),
+    output: Schema.Struct({
+      date: CalendarDate.annotations({ description: "Start date the picker now holds, YYYY-MM-DD" }),
+    }),
+  },
+  async ({ kernel, sessionId, input, errors }) => {
+    const answer = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 60,
+      code: `
+        ${formControlsCode}
+        try {
+          await fillDate(page.getByRole("textbox", { name: "Start date", exact: true }), ${JSON.stringify(input.date)}, "MM/DD/YYYY", {
+            commit: "keyboard",
+            blur: "tab",
+            committed: page.getByRole("button", { name: /^Choose start date/ }),
+          });
+        } catch (error) {
+          if (error.name === "FormControlFailure") return { failure: error.message };
+          throw error;
+        }
+        return { set: true };
+      `,
+    });
+    if (!answer.success)
+      throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+    const result = Schema.decodeUnknownSync(
+      Schema.Union(
+        Schema.Struct({ set: Schema.Literal(true) }),
+        Schema.Struct({ failure: Schema.Literal(...failures) }),
+      ),
+    )(answer.result);
+    if ("failure" in result)
+      throw new errors.OperationFailure(result.failure, {
+        dispatch: result.failure === "not_committed" ? "sent" : "not_sent",
+      });
+    return input;
+  },
+);

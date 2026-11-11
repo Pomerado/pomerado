@@ -84,6 +84,36 @@ Known limits:
 - A dispatch evaluates many commits in one run, so it isn't serialized with the runs for each commit. If a review lands while a dispatch runs, the dispatch can post a verdict that is seconds old. The next event on that pull request, or another dispatch, corrects it.
 - The gate doesn't handle `merge_group` events, so a merge queue's commits get no `Approval`. Before `main` adopts a merge queue, the gate needs a `merge_group` path, or the ruleset needs to stop requiring `Approval` on queue commits. Every pull request in a queue has already passed the gate at its head commit.
 
+## CI runners
+
+The [Check workflow](../.github/workflows/check.yml) picks each job's runner from facts GitHub sets about the run, and `typescript/tests/unit/ci-runner-routing.test.ts` checks every route:
+
+| Run | `check` job | Browser jobs | Every other job |
+| --- | --- | --- | --- |
+| A pull request from a fork | GitHub-hosted | GitHub-hosted | GitHub-hosted |
+| A pull request from a branch here by a maintainer | `vars.CI_RUNNER_MAINTAINER` | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
+| A pull request from a branch here by anyone else, such as a bot | GitHub-hosted | GitHub-hosted | GitHub-hosted |
+| A push to `main`, through the Release workflow | GitHub-hosted | `vars.CI_RUNNER_TRUSTED` | GitHub-hosted |
+| A run in another repository that calls `check.yml` | GitHub-hosted | GitHub-hosted | GitHub-hosted |
+
+- **Maintainers.** A maintainer is a login the `CI_MAINTAINERS` variable lists, as a JSON array such as `["octocat"]`. A pull request takes the maintainer route only when its author, the account whose push started the run (`github.actor`) and the account that started this attempt, a re-run included (`github.triggering_actor`), are all listed. Organization membership alone doesn't count: a self-hosted maintainer runner admits only the accounts its own configuration lists, so the route uses a list too, and a run that runner would refuse goes to a GitHub-hosted runner instead of failing there. An unset variable sends every pull request to GitHub-hosted runners. The value must be a JSON array: an invalid one fails the Check workflow for every pull request from a branch here. This is narrower than the approval gate's maintainer, anyone with write access, so another writer's pull requests pass the gate at once but run on GitHub-hosted runners until listed. Keep the list and each self-hosted maintainer runner's own list the same.
+- **Switching.** An unset runner variable falls back to a Blacksmith runner. Set a variable to a runner label with 4 vCPUs, as the browser job's `--workers=4` expects, to move those jobs, and delete it to move them back. Deleting a variable doesn't move jobs already waiting for a runner, so cancel and re-run those. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs.
+- **The published tarball.** On a push to `main`, the `check` job builds and tests the tarball the canary publishes, so it runs on a GitHub-hosted runner. It packs, hashes and uploads the tarball before its clean-project install, which resolves packages from the registry without a lockfile, so no such package runs before the bytes are fixed. It records the artifact's ID and the tarball's SHA-256, and the canary job downloads that artifact by ID and refuses to publish any other bytes. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, also always run on GitHub-hosted runners, which give every job a fresh machine.
+- **Merge queues.** A merge queue gets no Check run yet. The change that adds a `merge_group` trigger also decides its route.
+
+This routing is not a security boundary. A fork's pull request runs its own copy of the workflow, so it can name any runner label, and so can anyone with write access in a branch. Every outside contributor's runs wait for a maintainer's approval, and the maintainer checks changes to `.github/`, `package.json` and the lockfile before approving. A self-hosted runner that either variable names must enforce its route on its own side:
+
+- **A job-started hook** in the runner's image, set through `ACTIONS_RUNNER_HOOK_JOB_STARTED` in the runner's own environment, reads the event GitHub delivers in `GITHUB_EVENT_PATH` and refuses the job before any step runs unless it is one the runner takes. It refuses anything it can't read, and fails on a timeout.
+  - It goes by `GITHUB_EVENT_NAME`, not the payload's shape: `pull_request_review` and `pull_request_target` payloads carry the same pull request fields.
+  - It compares names exactly, with case, since GitHub's expressions compare strings without case and git refs have it.
+  - A maintainer runner takes only a `pull_request` whose head repository is this repository and not a fork, and whose author, sender (the account whose push started it) and triggering actor (the account that started this attempt, since a re-run keeps the first attempt's payload) are all maintainers. The hook can't read repository variables, so the runner's own configuration lists the maintainers, preferably by user ID, since a login can change hands.
+  - A trusted runner takes only a push to `refs/heads/main` whose `GITHUB_WORKFLOW_REF` is this repository's `release.yml` on `refs/heads/main`.
+- **Separate runners.** The trusted runner and the maintainer runner use separate machines, namespaces and registration credentials, and no runner can read any registration credential. Whoever holds the trusted runner's credential can take its jobs.
+- **A fresh, unprivileged job.** One job per runner, no Docker daemon, no privilege escalation, no service account token or cloud credentials, and no route to the cluster's API, cloud metadata services or private networks. No volume, package store or cache is shared between the two runners. The image is pinned by digest.
+- **Registration.** The maintainer runner registers to this repository only, or to an organization runner group limited to it with "Allow public repositories" on. The trusted runner needs an organization runner group: limited to this repository, with "Allow public repositories" on, and with workflow access limited to `Pomerado/pomerado/.github/workflows/check.yml@refs/heads/main`. A group's workflow list names the workflow that defines the jobs, here the called `check.yml`.
+- **The image** already holds Node, pnpm and Chromium with its system libraries, built from public sources only. Where it can't install packages, as root or through `sudo`, the browser job installs Chromium without system libraries.
+- **A sandboxed kernel.** A maintainer runner may run its jobs under a user-space kernel such as gVisor, so the tests must pass there too. File-confinement code must not depend on Linux behavior gVisor doesn't share, such as `O_NOFOLLOW` with `O_DIRECTORY`.
+
 ## Changes and versions
 
 Record user-facing changes in [CHANGELOG.md](../CHANGELOG.md) in the pull request that makes them. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.

@@ -61,7 +61,8 @@ write build with `mint_update` and `recommend: "new_mint"`.
 ## Before the session
 
 Sign in first when the site needs it, and for a cart or checkout as .agents/cart/SKILL.md
-says, with the auth skill: read-only `explore` to find the login, then
+says (a tool that fills a cart and returns its quote in one run may use the site's guest cart),
+with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, and set the session's delivery or
 pickup location as a read (above), with `pickValue` and the site's own confirm control in one
@@ -74,13 +75,18 @@ Settle the whole path before the first `act` step, from the request and what rea
 exploration shows, such as the form's list of pages or steps: every step that saves or submits
 on the site, through to the outcome the request asks for, such as the quote or decline, the
 placed order or the confirmed booking; prefer not to end at a saved draft or a new account on
-the way to it. Publication judges the finished tool by the same rule
+the way to it. When the caller's example already shows the requested change done, ask the owner
+with `request_input` for one that does not. Publication judges the finished tool by the same rule
 (`reference/publication-review.md`). Declare it as `writePath` on the first `act` step: in
 `steps`, each step that saves or submits, in order, with the `commit` mark its helper will
-enter and what it saves (`does`); in `ends`, what the last step leaves the caller with.
+enter and what it saves (`does`); in `ends`, what the last step leaves the caller with. When the
+request ends before any save, `steps` is empty: never name a step that saves nothing. Mark
+`setup: true` on a step that only makes state the site creates by itself as the session starts,
+such as an empty cart when the menu opens, and saves nothing of the caller's, or leave that step
+out.
 Guardian reviews the path before anything is sent, and the host keeps it: the session is not
-over until every mark on it is entered, so a step that confirms earlier leaves the session
-open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
+over until every mark on it but a setup step's is entered, so a step that confirms earlier
+leaves the session open, and its receipt's `writePath` lists the marks not yet settled. When the page shows the
 path must change, such as a page the site skips or adds for this input, declare the revised
 path in `writePath` on the next `act` step, keeping every mark already entered. When no single
 session can reach the outcome, such as a step that waits for another person's approval, an
@@ -157,14 +163,17 @@ During the session:
   after the step's first click, the click saved nothing but a field it flagged is one no
   site-field question may ask, such as a card or bank field: call `notCommitted` for the step,
   then throw `InvalidInput` that names the field by its label, and don't click again.
-- On a write saved across several pages, when the site's own option lists for a later page can
-  be read before the first save and do not depend on what an earlier page saves, such as the
-  form definitions or option data an earlier page loads, prefer reading them and checking every
-  caller value for those fields against them before the first commit mark, in the session and
-  on every run of the composed script. Match each value by the site's option value as well as
-  its label (forms skill), and refuse with `InvalidInput` and `available` before anything is
-  saved when a value matches neither. A refusal after an earlier save leaves a half-made record
-  and an outcome the caller can't know.
+- Before the first commit mark, prefer looking up every existing entry the caller names, each item
+  and option included, with read-only steps, in the session and on every run of the composed
+  script. On a write saved across several pages, when the site's own option lists for a later page
+  can be read before the first save and do not depend on what an earlier page saves, such as the
+  form definitions or option data an earlier page loads, prefer reading them too and checking
+  every caller value for those fields against them. Match each value by the site's option value as
+  well as its label (forms skill), and count matching items by the site's own item id where the
+  page shows one, so an item listed in more than one place is one match, not an ambiguous one.
+  Refuse with `InvalidInput` and `available` before anything is saved when a value matches
+  nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller
+  can't know.
 - A pop-up, banner or interstitial on the path, such as an upsell, is conditional unless the
   page always opens it in answer to an action: handle it as the forms skill says, so the tool
   still works for a caller who never sees it.
@@ -176,6 +185,9 @@ During the session:
   Prefer running this check before the step's commit mark, so a mismatch stops the step before
   it sends anything. A free-text value the page rewrote is kept, as the next bullet says. Never
   read back a field filled with a secret handle.
+  Prefer confirming a pick from the site's own selected state, or from a shorter display read as
+  the whole-word start of the whole option, over comparing it with a piece the script cut from
+  the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
   offered exactly one suggestion for it, take the site's version, as you would a picked
@@ -319,7 +331,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `unaskable` (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
   throwing `InvalidInput` with the site's words when it flags one or more fields and every one
   holds the caller's own value, since the caller can fix it, and `OperationFailure` with the site's
-  words otherwise, since the tool filled or left one of them wrong.
+  words otherwise, since the tool filled or left one of them wrong. When the page shows the site's
+  own refusal of that write, or the site answered the commit with an error that is not a server
+  error and a fresh read of the same view you read before the mark shows each field whose sent
+  value differs from that read unchanged, prefer the same put-back and ending as above; never on
+  silence or a missing element.
 - A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
   the commit, for example while the step waits for review. Prefer having the commit step reload
   or re-select it right before its mark, so the site issues a fresh one, and check that one
@@ -357,10 +373,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   through, with the new record's id, already proves it. Return the tool's whole output from the
   step that confirms the write, read from the commit's response or the page it left: the caller
   or the site may cancel, refund or delete the record soon after, and a later read-back then
-  shows less. When a commit
-  step returned without calling `verified()` and its `stateChangingRequests` list the commit
-  request with a 2xx or 3xx status, prefer confirming it in the next step from the page as
-  it stands. Make no execute
+  shows less. In the same call as the click, read a success message that disappears on its
+  own. When a commit step returned without calling `verified()` and its `stateChangingRequests`
+  list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from
+  that response, with no error in its body or on the page as it stands, over waiting for a
+  message that may be gone. Make no execute
   call after `verified()`: a later call reopens the effect. After the confirming step,
   further `act` steps are refused.
 - Prefer confirming the final commit with `confirmCommit(answer, page)`: import
@@ -386,9 +403,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   completed. A session in which any step recorded a confirmation is never
   `unverifiable`; publish against the confirming step.
 - After a commit, the site may open a dialog or cover the page, such as an added-to-cart panel.
-  Prefer confirming the commit from its own response, and prefer closing such a dialog with its
-  own control (core skill), or going to the address in the site's own link, before clicking
-  anything behind it.
+  Prefer confirming the commit from its own response, and prefer waiting with `waitForOutcome` for
+  every answer the site can give to the click, its own added page, panel or cart change included,
+  over waiting only for the page the session saw. Prefer closing such a dialog with its own
+  control (core skill), or going to the address in the site's own link, before clicking anything
+  behind it.
 - When one run repeats a commit for several items, such as adding items to a cart, prefer
   confirming each item from its own commit response and reading the saved state once after the
   last item, over reloading the page after every item. When a commit answers a 429, a bot
@@ -536,7 +555,12 @@ note.
   call `verified()` then, even when a value differs. Run the before-and-after comparison after
   it, over the reads the call already made, and report a difference it finds in the output, in
   a field the output schema declares for it, never by throwing. A throw after a confirmed save
-  fails the run: the caller gets an error in place of the output, though the write landed.
+  fails the run: the caller gets an error in place of the output, though the write landed. In
+  that read-back, prefer needing only what proves the change, the record's identity and the
+  values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
+  `optional`. After `verified()`, return a field the request doesn't need as null when it read
+  nothing, and throw `OperationFailure` naming a value the request needs (core skill), so the run
+  fails as applied.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
@@ -574,14 +598,15 @@ input, output, write: { confirmation: "readback", commits: ["place-order"] } }, 
 (or `"unverifiable"` when the site shows neither a confirmation nor the saved state),
 marking the same commit steps as the session. A script declared `unverifiable` cannot call
 `verified`. One that declares no commit marks is refused as `commit_marks_undeclared`,
-and one that declares a mark no `act` step of the session entered is refused as
-`commit_marks_unentered`. If the declaration names the wrong marks, correct it to
+unless, on a host that publishes on a read-back, its session's `writePath` has no steps and
+the named step read the filled form back, and one that declares a mark no `act` step of the
+session entered is refused as `commit_marks_unentered`. If the declaration names the wrong marks, correct it to
 match the marks the session actually entered. It declares every mark of the session's
 recorded `writePath`, in order: one that leaves a mark out is refused as
 `write_path_undeclared`, and a publication before the session entered every mark of the
 path as `write_path_unfinished`, which names the marks not yet settled while the session
-stays open. If the completed session entered no
-marks, it cannot publish: changing its source or entering a mark in a later read
+stays open. If the completed session sent its write without entering
+its marks, it cannot publish: changing its source or entering a mark in a later read
 cannot show that the earlier commit was marked. End the build and explain that
 the task completed but its commit steps were not marked; never repeat the write
 to add them.
@@ -644,8 +669,12 @@ is not the write. An unreadable step output never justifies a run either: the wr
 publishes with its output recorded as unavailable.
 
 In a write build, after a verified write, if the site does not offer one output the request
-asks for, prefer asking the caller once with `request_input` whether to publish the tool with
-that output null and a reason field, rather than ending blocked; never invent the value.
+asks for, or has no field for one input the request marks optional and the input the write
+session ran leaves unset, and lacks nothing else the request names, prefer asking the caller
+once with `request_input` whether to publish the tool with that output null and a reason field,
+or without that input and with the tool's description saying the site has no field for it,
+rather than ending blocked; never invent the value, and prefer finishing the write's read-back
+before you ask, so Guardian sees the verified write when it reviews the question.
 
 After a `not_published`, live `act` steps are open again while the write session is still
 open (a commit that recorded its confirmation stays done), on the same browser, still signed

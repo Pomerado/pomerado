@@ -112,15 +112,17 @@ const controlShapeCode = String.raw`(element) => {
   }`;
 
 /**
- * The messages of the React toolkit's placeholder form actions, `javascript:throw new Error(...)`,
- * which it writes on a form or submit whose action is its own function: as its server rendering
- * writes it, then as its client rendering does.
+ * The messages of the React toolkit's placeholder form actions, `javascript:throw new Error(...)`:
+ * the two it writes on a form or submit whose action is its own function, as its server rendering
+ * writes it, then as its client rendering does; and the one it writes in place of an action that
+ * is a script of the app's own, such as `javascript:void(0)`, so that script never runs.
  */
 const reactFormActionMessages = [
   "React form unexpectedly submitted.",
   "A React form was unexpectedly submitted. If you called form.submit() manually, consider using " +
     "form.requestSubmit() instead. If you're trying to use event.stopPropagation() in a submit " +
     "event handler, consider also calling event.preventDefault().",
+  "React has blocked a javascript: URL as a security precaution.",
 ];
 
 /**
@@ -141,10 +143,12 @@ const reactFormActionStrings = reactFormActionMessages
  * Page code: whether an address is a script that does nothing, the only script action a sign-in
  * form may have: `javascript:`, `javascript:;`, `javascript:void(0)` or `javascript:void 0`, with
  * or without a closing semicolon, read as the browser runs it (the address as parsed, its body
- * percent-decoded). As a form's own action (`formAction`), the React toolkit's placeholders on a
- * form whose submit its own code handles count too: `javascript:throw new Error('React form
- * unexpectedly submitted.')`, as its server rendering writes it, and the longer message its client
- * rendering writes (`reactFormActionMessages`), each in single or double quotes, which only throw.
+ * percent-decoded). As a form's own action (`formAction`), the React toolkit's placeholders count
+ * too (`reactFormActionMessages`), each in single or double quotes, which only throw: on a form
+ * whose submit its own code handles, `javascript:throw new Error('React form unexpectedly
+ * submitted.')`, as its server rendering writes it, and the longer message its client rendering
+ * writes; and `javascript:throw new Error('React has blocked a javascript: URL as a security
+ * precaution.')`, which it writes in place of a form action that is a script of the app's own.
  * A link's address never counts them. The scheme may be in any case, and whitespace may stand only
  * between the body's words and signs, where script reads it as whitespace: one inside `void` could
  * split it into two statements, the second a call of the page's own function, and a line break
@@ -178,8 +182,9 @@ export const noOpScriptCode = String.raw`(address, formAction = false) => {
  * Page code: what a step call reads of one control it found (`readControls`): every form action
  * and method it could submit with, its form's own action first, whether that action is a script
  * that does nothing (`scriptAction`, `noOpScriptCode`), its link destination and whether that is a
- * script that does nothing (`scriptHref`), whether it is disabled, inert or editable, whether it is
- * empty, its shape and the words that label it, never its value.
+ * script that does nothing (`scriptHref`), the code of its first script destination other than
+ * those (`scriptCode`), whether it is disabled, inert or editable, whether it is empty, its shape
+ * and the words that label it, never its value.
  */
 const controlReadCode = `(element) => {
   const associated =
@@ -214,6 +219,23 @@ const controlReadCode = `(element) => {
     if (method !== null) methods.push(method.toLowerCase());
     if (method !== null && method.trim().toLowerCase() === "get") explicitGet = true;
   }
+  // For a refusal's evidence alone, which no check judges: the code of its first script destination
+  // other than one that does nothing, as the browser runs it, cut short. The host screens it.
+  const script = actions.find(
+    (action, index) =>
+      /^javascript:/i.test(action) &&
+      !(index === 0 && scriptAction) &&
+      !(href !== null && index === (associated ? 1 : 0) && scriptHref),
+  );
+  const decoded = (body) => {
+    try {
+      return decodeURIComponent(body);
+    } catch {
+      return body;
+    }
+  };
+  const scriptCode =
+    script === undefined ? undefined : decoded(script.slice("javascript:".length)).slice(0, 2000);
   // The method a submission with it as the submitter goes by, as the browser reads it: a submit
   // button's own formmethod, else its form's. Another control's, such as a "Forgot password"
   // button's, says nothing of it.
@@ -225,9 +247,9 @@ const controlReadCode = `(element) => {
       ? element.formMethod
       : formProperty("method")
     : null;
-  // Disabled, which a page may undo once the fields hold input, and inert, which takes no
-  // interaction at all, as an inactive or background form does. Page code can redefine what
-  // these read, so the submit call reads whether the submit is disabled again through Playwright.
+  // Disabled or inert, which a page may undo once the fields hold input; an inert field, as in an
+  // inactive or background form, takes no typing. Page code can redefine what these read, so the
+  // submit call reads whether the submit is disabled again through Playwright.
   const disabled = element.matches(":disabled") || element.closest('[aria-disabled="true"]') !== null;
   const inert = element.closest("[inert]") !== null;
   const editable =
@@ -243,7 +265,7 @@ const controlReadCode = `(element) => {
     disabled,
     inert,
     shape: (${controlShapeCode})(element),
-    target: { documentOrigin: self.origin, actions, scriptAction, scriptHref, methods, explicitGet, submitMethod, editable, empty },
+    target: { documentOrigin: self.origin, actions, scriptAction, scriptHref, scriptCode, methods, explicitGet, submitMethod, editable, empty },
     described: {
       role: element.getAttribute("role"),
       formMethod: methods.join(",") || null,

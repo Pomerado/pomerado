@@ -53,6 +53,10 @@ const reasonMessages = new Map([
     "entry_page_unavailable",
     "The sign-in page didn't load, so the run stopped before the tool ran. Check that the website is reachable, then run the tool again.",
   ],
+  [
+    "sign_in_choice_not_allowed",
+    "The website asked to sign out another device or session, or to trust this browser, to finish signing in. This run doesn't allow that, so it stopped before confirming and changed nothing on the account.",
+  ],
 ]);
 
 /** Why a run could not sign in, value-free. The run fails with it and never runs signed out. */

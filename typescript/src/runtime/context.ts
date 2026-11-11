@@ -61,7 +61,12 @@ export interface CommitMark {
 
 /** What a script says about a `notCommitted` call. */
 export interface NotCommittedOptions {
-  /** The site's own answer refused the step's click as a whole, with nothing created. */
+  /**
+   * The site's own answer refused the step's click as a whole, with nothing created: its commit
+   * response or its page refused that write, or it answered with an error that is not a server
+   * error and a fresh read of the same view the script read before the mark shows each field whose
+   * sent value differs from that read unchanged.
+   */
   readonly siteRefused?: true;
 }
 
@@ -83,7 +88,8 @@ export interface EffectJournal {
   readonly enteringCommit: (name: string) => Effect.Effect<void, CommitAlreadySent>;
   /**
    * The page proved that the named step's latest click saved nothing, such as one that left the
-   * same step showing with a required field flagged empty: the mark reads `not_sent` again, as
+   * same step showing with a required field flagged empty, or that a person a browser hand-off
+   * marked it sent for left the same form unsubmitted: the mark reads `not_sent` again, as
    * before that `enteringCommit`. A step goes back once a run, and only when this run entered it
    * from `not_sent` with no confirmation since; any other call for an entered step, a second call
    * for the same step, or, once `declareCommits` named any step, a call for one it did not name

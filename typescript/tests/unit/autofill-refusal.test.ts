@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { urlOrigin } from "../../src/destinations/autofill-refusal.js";
-import { codeBoxesRefusal } from "../../src/destinations/autofill-step.js";
+import { codeBoxesRefusal, untrustedTarget } from "../../src/destinations/autofill-step.js";
 
 // Page code can put any text in an opaque URL, its scheme included, so refusal evidence names one
 // only from a fixed set.
@@ -31,6 +31,40 @@ it("names an opaque frame's URL from a fixed set, never by text the page put in 
     "other",
     "https://login.example.test:8443",
   ]);
+});
+
+// Every script destination's origin reads `javascript:`, so a refusal's evidence also keeps the
+// code of the script it refused, screened and cut short, to tell one script from another.
+it("keeps the code of a refused form's script action in its evidence", () => {
+  const site = "https://www.shop.example";
+  const refusal = untrustedTarget(
+    {
+      fields: [
+        {
+          ownerUrl: site,
+          documentOrigin: site,
+          actions: ["javascript:"],
+          scriptAction: false,
+          scriptCode: "throw new Error('x')",
+          methods: ["get"],
+          editable: true,
+          control: "text",
+        },
+      ],
+      submit: null,
+    },
+    { fields: [{ selector: "#password", slot: "password" }] },
+    { siteOrigin: site, authenticationOrigins: [] },
+    0,
+  );
+  expect(refusal?.failureDetail?.context).toEqual({
+    check: "destination",
+    part: "form_action",
+    frameOrigin: site,
+    documentOrigin: site,
+    actionOrigins: "javascript:",
+    actionScript: "throw new Error('x')",
+  });
 });
 
 // A code split across one-character boxes takes one character in each, so a code step reaches

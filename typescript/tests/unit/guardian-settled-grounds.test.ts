@@ -4,6 +4,8 @@
 // the host's pushback lets a second write or an unrelated read through; and a refusal that
 // keeps resting on a settled fact ends the build as a policy block. An act step whose own authority
 // grants the write is refused for lacking write authority, as an earlier read-only step lacked it.
+// A read the step's own allowed effects grant is held for the owner's confirmation, so the build
+// waits on a question no caller needs to answer.
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
@@ -13,6 +15,7 @@ import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
 import type { PendingExecution } from "../../src/guardian/review.js";
 import { makeSourceInspector } from "../../src/guardian/source.js";
+import { explorationAllowedEffect } from "../../src/mint/review-context.js";
 
 afterEach(() => setDefaultModelProvider(new OpenAIProvider()));
 
@@ -121,6 +124,15 @@ const exploreWithoutAuthority: PendingExecution = {
   allowedOrigins: ["https://quotes.example.test"],
   allowedEffects: ["Read the quote form's pages; no writes"],
   mintContext: { ...context, currentExecution: { purpose: "explore", target: "liveBrowser" } },
+};
+
+/** A read build's explore step, whose own allowed effects are the host's read grant. */
+const exploreWithReadGrant: PendingExecution = {
+  ...exploreWithoutAuthority,
+  screenedIntent: "List the synthetic catalog's items in a category",
+  screenedInput: '{"category":"lamps"}',
+  allowedOrigins: ["https://catalog.example.test"],
+  allowedEffects: [explorationAllowedEffect],
 };
 
 const reader = makeSourceInspector(
@@ -433,4 +445,41 @@ it("keeps a missing-write-authority refusal final on a step without write author
     });
     expect(requests).toHaveLength(1);
   }
+});
+
+it("sends back once a hold for the owner's confirmation of a read the step's own allowed effects grant, and binds no confirm question to it", async () => {
+  const asksOwner = decision({
+    outcome: "escalate",
+    rationale: "This step's allowed effects grant no website read; get authorization first.",
+    action: "read",
+    refusal: "correctable",
+    refusalGround: "owner_confirmation",
+  });
+  const requests = scripted([
+    asksOwner,
+    asksOwner,
+    decision({ outcome: "allow_business", rationale: "Only the owner decides." }),
+  ]);
+  const g = guardian();
+  const held = await Effect.runPromise(g.review(exploreWithReadGrant, reader));
+  expect(held.decision).toEqual({
+    outcome: "escalate",
+    rationale: "This step's allowed effects grant no website read; get authorization first.",
+    action: "read",
+    refusal: "correctable",
+  });
+  expect(requests).toHaveLength(2);
+  expect(JSON.stringify(requests[1]?.input)).toContain("needs no owner confirmation");
+  await Effect.runPromise(
+    g.reviewQuestion(
+      { ...exploreWithReadGrant, entrypoint: "question" },
+      {
+        questions: [{ id: "look", type: "confirm", prompt: "May I read the page now open?" }],
+        credentialsAvailable: false,
+        confirms: [{ questionId: "look", reviewId: held.reviewId }],
+      },
+      reader,
+    ),
+  );
+  expect(JSON.stringify(requests[2]?.input)).not.toContain('confirmsHeldSteps\\"');
 });

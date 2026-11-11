@@ -68,6 +68,7 @@ import {
   type AnsweredQuestion,
   type HostConfirmation,
   type HostConfirmationChange,
+  noConsentQuestionLabels,
   questionNotNeededLabels,
   type QuestionFinding,
 } from "../guardian/question.js";
@@ -92,8 +93,8 @@ import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { isCardSlot } from "../destinations/payment-frames.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
 import { isSecretHandle } from "./secret-handles.js";
-import { fileReadbackRule } from "./file-readback.js";
-import { cardReadbackRule } from "./card-readback.js";
+import { fileReadbackRule, isFileReadbackRefusal } from "./file-readback.js";
+import { cardReadbackRule, isCardReadbackRefusal } from "./card-readback.js";
 import { citesCallerRequest, citesConfirmedUpdate } from "./caller-citation.js";
 import type {
   AcceptedTaskUpdate,
@@ -125,8 +126,15 @@ import {
   minterHistory,
 } from "./outcome-review.js";
 import { readImportClosure } from "./operation-source.js";
-import { boundedResult, digestResult, resultDigestPath } from "./result-digest.js";
-import { contentDigest } from "./step-checks.js";
+import {
+  boundedResult,
+  byteLength,
+  digestResult,
+  resultDigestPath,
+  resultDigestThresholdBytes,
+} from "./result-digest.js";
+import { codeContentDigest } from "./code-digest.js";
+import { sourceDigest as exactTextDigest } from "./step-checks.js";
 import { writePathNotice } from "./write-session.js";
 import {
   caseDigest,
@@ -330,8 +338,29 @@ const callerVisibleQuestion = (
       },
     };
   }
+  if (question.type === "text" && question.recommended !== undefined)
+    return { ...question, prompt, recommended: redact(question.recommended) };
   return { ...question, prompt };
 };
+/**
+ * Whether the agent's request asks the caller's consent to act on the site: unless the agent
+ * marked it `asksConsent: false`, and always for a confirm or a secret question. Guardian's
+ * question review names one rule for the whole request, which vouches for one question only, so a
+ * request of several questions counts as asking it too.
+ */
+const asksConsent = (request: typeof AgentRequest.Type) =>
+  request.asksConsent !== false ||
+  request.questions.length > 1 ||
+  request.questions.some((question) => question.type === "confirm" || question.type === "secret");
+/** The answers the agent recommends in its request, by question id. */
+const recommendedAnswers = (request: typeof AgentRequest.Type): Readonly<Record<string, unknown>> =>
+  Object.fromEntries(
+    request.questions.flatMap((question) =>
+      "recommended" in question && question.recommended !== undefined
+        ? [[question.id, question.recommended]]
+        : [],
+    ),
+  );
 /** The agent's request as its caller reads it: its notice and every question. */
 const callerVisibleRequest = <R extends typeof AgentRequest.Type>(
   request: R,
@@ -502,13 +531,18 @@ const newObservationReasons: ReadonlySet<string> = new Set([
   "live_test_cases_failing",
 ]);
 /**
- * Publication refusals the host asks about only once in an attempt: finishing again, or passing
- * `httpVersion` for an HTTP version, publishes. They are advice, not a host check refusing a step.
+ * Publication refusals the host asks about only once in an attempt: finishing again publishes.
+ * They are advice, not a host check refusing a step.
  */
-const askedOnceReasons: ReadonlySet<string> = new Set([
+const askedOnceReasons: ReadonlySet<string> = new Set(["login_url_one_time"]);
+/**
+ * The ask to test an HTTP version, which a host may repeat at every `finish_build` until a live
+ * test of the current file passes or `httpVersion` names why it can't port. The minter can always
+ * settle it, so it is never a host check refusing a step that a `host_refused` report stands on.
+ */
+const httpVersionAskReasons: ReadonlySet<string> = new Set([
   "http_implementation_untested",
   "http_implementation_stale",
-  "login_url_one_time",
 ]);
 /**
  * The host's publication refusals whose instruction here names a step that fixes them within the
@@ -544,7 +578,10 @@ const namedStepReasons: ReadonlySet<string> = new Set([
  * host names the step in the refusal's review rationale. One names its step only when it carries
  * a rationale, and only then is a `host_refused` report sent back to it.
  */
-const rationaleStepReasons: ReadonlySet<string> = new Set(["no_match_case_untested"]);
+const rationaleStepReasons: ReadonlySet<string> = new Set([
+  "no_match_case_untested",
+  "list_limit_untested",
+]);
 /** How many host-refused submissions an attempt remembers, the latest kept, to tell a repeat. */
 const rememberedRefusedSubmissions = 8;
 /** An execution request for a sign-in step, read before it decodes. */
@@ -596,6 +633,30 @@ const hostSignInRefusalCode = (
     : undefined;
 };
 const hostSignInRefusal = (error: MintFailure) => hostSignInRefusalCode(error) !== undefined;
+/**
+ * The blocked endings that put the fault on the site: Guardian finding the build's own evidence
+ * contradicts one hands it back to the minter to keep building, not only for other words.
+ */
+const siteFaultReasons: ReadonlySet<string> = new Set([
+  "site_unavailable",
+  "site_lacks_capability",
+  "site_declined",
+]);
+/**
+ * What the minter hears when Guardian found the build's own evidence contradicts its site-fault
+ * report: the build goes on, and a report before any new step stands on the same evidence.
+ * `rationale` is Guardian's, screened; absent when the report repeats one already handed back.
+ */
+const reportContradictedAnswer = (reported: string, rationale: string | undefined) =>
+  JSON.stringify({
+    status: "blocked_refused",
+    reason: "report_contradicted",
+    reported,
+    ...(rationale === undefined ? {} : { rationale }),
+    userInputRequired: false,
+    instruction:
+      "Guardian found that this build's own evidence contradicts the report, so the build has not ended. Keep building from what the rationale names: what the report says is missing or down may already be on the page. For example, a page that looks blank or broken right after an overlay, popup or dialog closed is not an outage: read the data the page already holds, reload the page, or reach the same data through the site's other route. Report again only once a new step shows the site is at fault; a report before any new step is refused the same way.",
+  });
 /** A task update refusal's reason as a closed code: one core names, else `other`. */
 const taskUpdateRefusalCode = (
   reason: string,
@@ -606,6 +667,24 @@ const taskUpdateRefusalCode = (
   reason === "change_unsupported"
     ? reason
     : "other";
+/**
+ * The host source rule that refused an execution before it ran, read from its `unsupported`
+ * reason as core's own check gives it: a placed or downloaded file's bytes stay with the host
+ * (`fileReadbackRefusal`), or a typed card does (`cardReadbackRefusal`). No source the build
+ * writes gets those bytes past it. A file refusal that names the file API to use instead, and any
+ * other unsupported answer, such as a refused preflight, a handle the minter misplaced or a reason
+ * the host words itself, names none.
+ */
+const hostSourceRule = (
+  evidence: ExecutionEvidence,
+): Extract<HostRefusalSource, { source: "source_rule" }>["rule"] | undefined =>
+  evidence.status !== "unsupported"
+    ? undefined
+    : isFileReadbackRefusal(evidence.observations)
+      ? "file_readback"
+      : isCardReadbackRefusal(evidence.observations)
+        ? "card_readback"
+        : undefined;
 /**
  * The standing host refusals a checkpoint kept (`MintHarnessSnapshot.hostRefusalSources`), read
  * entry by entry: a source this worker cannot decode, such as one a later release added, reads as
@@ -629,8 +708,9 @@ const restoredHostRefusals = (kept: unknown) => {
  * Whether a host refusal a `host_refused` report stands on is apart from an unconfirmed sign-in,
  * so the report keeps its reason: a sign-in screen the host refused at its destination check,
  * which a later password or code screen that passes clears; a sign-in step the host refused with
- * no login sent since (`beforeSignIn` false); and a task update the host refused. A publication or
- * live tests refused while the sign-in never confirmed may be its consequence, such as a recipe
+ * no login sent since (`beforeSignIn` false); a task update the host refused; and a step whose
+ * source a host source rule refused, which no sign-in causes or clears. A publication or live
+ * tests refused while the sign-in never confirmed may be its consequence, such as a recipe
  * nothing verified, as may a refused refill, and a refusal an older checkpoint kept without its
  * source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
  * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
@@ -639,7 +719,16 @@ const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boo
   refusal.source === "sign_in_destination" ||
   refusal.source === "task_update" ||
   refusal.source === "file_cap" ||
+  refusal.source === "source_rule" ||
   (refusal.source === "sign_in_step" && !beforeSignIn);
+/**
+ * Whether a failed sign-in left the site signed out, as its own result tells the agent: the site
+ * rejected the login, or the failure says the site is not signed in. Unknown otherwise.
+ */
+const signInLeftSignedOut = (error: MintFailure) =>
+  error.code === "CredentialsRejected" ||
+  (error.authentication !== undefined &&
+    signInFailureFeedback(error.authentication).signInOutcome === "signed_out");
 /**
  * A failure's code as diagnostics and publication evidence name it. A review whose outcome
  * Guardian kept refusing fails as `ReviewUnavailable`, but it is a verdict that did not form, not
@@ -787,7 +876,7 @@ const scriptQuestionInstruction: Readonly<
 
 /** What the minter reads when its own question expired unanswered. */
 const noAnswerInstruction =
-  "No answer was given before the question expired. Decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
+  "No answer was given before the question expired. Go on with the answer you recommended for each question in recommended, and list it in finish_build assumptions. For a question without one, decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent, and neither is your recommendation: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
 
 /**
  * How many unanswered questions go back to the minter in one build, the minter's own and its
@@ -896,6 +985,27 @@ const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
     ),
   );
 
+/**
+ * Whether every answered question a sign-in step cites (`confirmedBy`) is one this build holds an
+ * answer to, `answered`, by id, and none is a confirm the owner declined. A question from another
+ * build or one left unanswered has no answer here. Guardian judges whether an answer allowed the
+ * step's dismiss.
+ */
+const citesAnswers = (
+  submitted: ExecutionRequest,
+  answered: ReadonlyMap<string, AnsweredQuestion>,
+) => {
+  const step = submitted.purpose === "authenticate" ? submitted.signInStep : undefined;
+  const cited = step !== undefined && "fields" in step ? (step.confirmedBy ?? []) : [];
+  return cited.every((id) => {
+    const answer = answered.get(id)?.answer;
+    return (
+      answer !== undefined &&
+      (typeof answer === "string" || !("confirmed" in answer) || answer.confirmed)
+    );
+  });
+};
+
 const diagnosticUnavailable = (error: unknown) =>
   new MintFailure({
     code: "Unavailable",
@@ -1003,6 +1113,9 @@ const loginRequestInstruction = (login: "held" | "supplied" | "inspect" | "unava
       ? "This asks for a website login, which only the host requests, and this build cannot be given one. Do not ask for it again; continue without it or end the attempt and say why."
       : "This asks for a website login, which only the host requests. The host now holds a login for this site: call execute purpose authenticate with target liveBrowser. Never ask for passwords, usernames or logins yourself.";
 
+/** Added to a refusal whose submission the host refused for other reasons too. */
+const alsoRefusedInstruction =
+  " alsoRefused lists the other problems the host found in this same submission, each with its reason and instruction. Fix all of them, and this one, before you call finish_build again.";
 /**
  * What a minter hears, on a host that publishes on the site's own no (`publishOnRefusal`), when
  * its write session has not yet shown a write: that no to the example's valid inputs is the
@@ -1010,6 +1123,45 @@ const loginRequestInstruction = (login: "held" | "supplied" | "inspect" | "unava
  */
 const siteRefusalPublication =
   "If the site said in its own words that it declines the example's valid inputs before any save (not a field error on your fill, a failed page or a challenge), such as a product it does not offer for these facts, that no is the example's answer: the act step returns it right after reading it, before entering any commit mark, as a refusal its output schema declares (`status` `\"refused\"`, a listed `reason` and `site_message`). Compose the whole path the request asks for, with that refusal in its output schema, list every save step in write.commits and again in write.commitsUnproven each one the session never reached, and call finish_build naming that act step. Keep the caller's facts as given.";
+
+/**
+ * What a minter hears, on a host that publishes on a read-back (`publishOnReadBack`), about a save
+ * step the session never reached because the page already showed the request's end state. It names
+ * only a step that saves: one that saves nothing leaves the path instead.
+ */
+const readBackPublication =
+  "A step that saves on the site, after those the session entered, and never ran because the page already showed the request's end state, stays in writePath and write.commits and goes in write.commitsUnproven too; then call finish_build naming the act step whose read-back confirmed that state.";
+
+/**
+ * What a `write_path_unfinished` refusal asks of the minter. A read-back that confirms the write
+ * settles only the marks a lost step streamed, so marks no step entered or streamed
+ * (`writePathUnreached`) are named apart with the ways out that remain. When each of them comes
+ * after the session's entered marks on a host that publishes on a read-back (`publishesOnReadBack`),
+ * it says too how they stand when the page already showed the request's end state. The other
+ * marks, all of them when the refusal does not say, keep the read-back advice.
+ */
+const writePathUnfinishedInstruction = (
+  error: Pick<MintFailure, "writePathMarks" | "writePathUnreached" | "publishesOnReadBack">,
+) => {
+  const unreached = error.writePathUnreached ?? [];
+  const lost =
+    unreached.length === 0 || (error.writePathMarks ?? []).some((mark) => !unreached.includes(mark));
+  return [
+    `Not published: the write session has not settled every commit mark of its recorded write path; writePathMarks names the ones not yet settled${unreached.length === 0 ? " (a step that lost its result may have entered them)" : ""}. The session stays open until they are.`,
+    ...(lost
+      ? [
+          "Read back first where a receipt says so: a read-back that confirms the write settles the marks a lost step entered.",
+        ]
+      : []),
+    ...(unreached.length === 0
+      ? []
+      : [
+          `No step is recorded entering ${unreached.join(", ")}, so no read-back settles ${unreached.length === 1 ? "it" : "them"}.`,
+          ...(error.publishesOnReadBack === true ? [readBackPublication] : []),
+        ]),
+    "Then run only steps that never ran, on the page as it stands, and call finish_build naming the step that confirmed the path's end. Never redo a step that finished or may have. When the page shows the path must change, such as a step the site skips for this input or one that saves nothing, declare the revised path in writePath on the next act step. When the site refuses to go on, or nothing can settle a mark, end with report_blocked.",
+  ].join(" ");
+};
 
 /** One coding flow. Durable dispatch claims, leases, authority and cleanup belong to the host. */
 export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure, MintServices> =>
@@ -1174,8 +1326,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         updates: [],
       };
       // The build's effect and read authority. A `mint_update` the caller confirmed may turn a
-      // read build into a write build mid-build, which switches both in place.
-      let buildEffect = taskState.effect === "write" ? ("write" as const) : request.effect;
+      // read build into a write build mid-build, or a write build that sent nothing into a read
+      // build, which switches both in place. A takeover restores either from the effective task.
+      let buildEffect =
+        taskState.effect === "write"
+          ? ("write" as const)
+          : request.effect === "write"
+            ? ("read" as const)
+            : request.effect;
       let repeatableRead = buildEffect !== "write" && dependencies.repeatableRead === true;
       /** The caller's answers this build may cite as confirmation, by question id. */
       const answeredQuestions = new Map<string, AnsweredQuestion>(
@@ -1187,8 +1345,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const confirmAsks = new Map<string, string>();
       /**
-       * The ids of questions Guardian already sent back once for other words. Each is asked again
-       * at most once: after a second rewording, the minter goes on without it.
+       * The ids of questions Guardian already sent back once for other words. Sent back again, one
+       * is asked again only while the latest review's label says a question is still needed.
        */
       const rewordedQuestions = new Set<string>();
       /**
@@ -1287,12 +1445,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             }
           : notice;
       };
-      const changedEntryNotice = (): { readonly hostEntryNavigation?: object } => {
+      /** The host's entry state now, as a key that changes whenever its notice would. */
+      const entryState = () => {
         const current = dependencies.entryNavigation?.();
-        const state =
-          current === undefined
-            ? undefined
-            : `${current.state}:${"outcome" in current ? current.outcome : ""}:${"reason" in current ? current.reason : ""}:${"page" in current ? (current.page ?? "") : ""}:${"instruction" in current ? (current.instruction ?? "") : ""}`;
+        return current === undefined
+          ? undefined
+          : `${current.state}:${"outcome" in current ? current.outcome : ""}:${"reason" in current ? current.reason : ""}:${"page" in current ? (current.page ?? "") : ""}:${"instruction" in current ? (current.instruction ?? "") : ""}`;
+      };
+      const changedEntryNotice = (): { readonly hostEntryNavigation?: object } => {
+        const state = entryState();
         if (state === undefined || state === shownEntryState) return {};
         const notice = entryNotice();
         shownEntryState = state;
@@ -1346,19 +1507,40 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       let signInUnconfirmed = recovered?.signInUnconfirmed === true;
       /**
-       * Updates `signInUnconfirmed` once an authenticate ends, by what it did; a confirmed sign-in
-       * also clears `signInRefusalOnly`.
+       * A sign-in on the build's current site confirmed in this attempt, and nothing since showed
+       * the site signed out: no signed-in check that did not confirm, no marker check that found
+       * the site not signed in, and no sign-in the site rejected or that failed leaving it signed
+       * out. While it holds, a later sign-in that never confirmed leaves the build counted as
+       * signed in. A move to another site, a login change and a browser the host replaced clear
+       * it, and a takeover starts without it.
+       */
+      let confirmedSignInStands = false;
+      /**
+       * Updates `signInUnconfirmed` and `confirmedSignInStands` once an authenticate ends, by what
+       * it did and which sign-in `step` it ran; a confirmed sign-in also clears
+       * `signInRefusalOnly`.
        */
       const noteSignIn = (
         exit: Exit.Exit<ExecutionEvidence, MintFailure>,
         crossedDispatch: boolean,
+        step: ExecutionRequest["signInStep"],
       ) => {
         if (Exit.isSuccess(exit)) {
           const { authentication, effect } = exit.value;
           if (authentication?.state === "authenticated") {
             signInUnconfirmed = false;
             signInRefusalOnly = false;
-          } else if (effect !== "not_sent") {
+            confirmedSignInStands = true;
+            return;
+          }
+          // A signed-in check that did not confirm, a rejected login, or a failed sign-in the
+          // host verified shows the site signed out.
+          if (
+            authentication?.effect === "verified" ||
+            (step !== undefined && ("signedIn" in step || "rejected" in step))
+          )
+            confirmedSignInStands = false;
+          if (effect !== "not_sent") {
             signInUnconfirmed = true;
             loginSentSinceHostRefusals();
           }
@@ -1375,6 +1557,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           failure?.execution?.dispatch !== "not_sent"
         ) {
           signInUnconfirmed = true;
+          // A login the site rejected, or any sign-in that failed leaving the site signed out.
+          if (failure !== undefined && signInLeftSignedOut(failure)) confirmedSignInStands = false;
           // The host's own refusal of this authenticate is no later login sent after it.
           if (!(failure !== undefined && hostSignInRefusal(failure))) loginSentSinceHostRefusals();
         }
@@ -1427,6 +1611,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let invalidOutcomes = recovered?.invalidOutcomes ?? 0;
       /** The pending review outage is a blocked explanation's, which report_blocked resubmits. */
       let blockedReviewUnavailable = recovered?.blockedReviewUnavailable === true;
+      /**
+       * The site-fault report (`siteFaultReasons`) Guardian found the build's own evidence
+       * contradicts, handed back to the minter to keep building once in the attempt, with how many
+       * executions the build had then: a report before a new one stands on the same evidence.
+       */
+      let contradictedReport: { readonly executions: number } | undefined;
       const reviewCompleted = Effect.sync(() => {
         reviewOutageStartedAt = undefined;
         blockedReviewUnavailable = false;
@@ -1458,10 +1648,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let actRefusalsInRow = 0;
       /**
        * A host check refused a step the build needs in this attempt: a publication its checks
-       * refused, a sign-in the host refused, a task update the host refused, or a download over
-       * its file caps, until a later example or act step settles without one. A `host_refused`
-       * block stands on it. A later finish_build that gets past the host's checks to Guardian's
-       * review clears it, setting `hostRefusalPassed`.
+       * refused, a sign-in the host refused, a task update the host refused, a step a host source
+       * rule refused before it ran, or a download over its file caps, until a later example or
+       * act step settles without one. A `host_refused` block stands on it. A later finish_build
+       * that gets past the host's checks to Guardian's review clears it, setting
+       * `hostRefusalPassed`.
        */
       let hostRefused = recovered?.hostRefused === true;
       /**
@@ -1611,6 +1802,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let inputFeedbackReview = recovered?.inputFeedbackReview;
       /** Guardian's finite reason when the latest publication was a completed denial. */
       let publicationDenial = recovered?.publicationDenial;
+      /**
+       * The latest judged live test batch held a case the site blocked, or challenged past the
+       * host's gate, and no finish_build since: the attempt's latest stop on record is the site's,
+       * on a browser the host opened, so a `caller_input` report is refused as
+       * `caller_input_site_block`. In memory: a takeover starts without it.
+       */
+      let testBrowserBlocked = false;
       const destinationEvidenceInstruction = {
         no_route_evidence:
           "This example recorded no route of its own, so there is no route evidence to publish with.",
@@ -2188,6 +2386,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             (evidence.status === "completed" || evidence.status === "failed")
           )
             dropFileCapRefusals();
+          // A step a host source rule refused before it ran, such as one that reads a file's
+          // bytes back, is a host check's refusal: a host_refused report stands on it.
+          const sourceRule = hostSourceRule(evidence);
+          if (sourceRule !== undefined) refuseByHost({ source: "source_rule", rule: sourceRule });
           const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
           if (handedBack) yield* questionHandedBack();
           const receipt = yield* visible(evidence, purpose, handedBack);
@@ -2199,8 +2401,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             };
           // The owner never answered the example's question. The minter decides how to go on,
           // with the execution's `scriptQuestion` saying so, unless the question could gate a
-          // write repair's write, the build is signed in or holds a login, or it already handed
-          // back its limit: then the build ends as no_response.
+          // write repair's write, the build is signed in or holds a login outside a read repair
+          // whose host allows it, or it already handed back its limit: then the build ends as
+          // no_response.
           if (evidence.noResponse !== undefined && !handedBack && !stopUnavailableHost()) {
             const asked = evidence.scriptQuestion?.requestId;
             yield* suspendUnanswered({
@@ -2456,6 +2659,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             .map((update) => update.revision),
         );
       /**
+       * Whether this build may have sent a write: its write session started, the host reports the
+       * build's claim from an earlier attempt, or a step Guardian labelled a write may have reached
+       * the site. An offline example's claim in this attempt sends nothing.
+       */
+      const writeSent = () =>
+        dependencies.exampleClaimed === true ||
+        writeSession !== "none" ||
+        reviewer.tracked().some((write) => write.effect !== "not_sent");
+      /**
        * Why the host refuses a task update before review, as its reason and the agent's next step,
        * or undefined. A recommended new build is never refused here: it changes nothing.
        */
@@ -2495,7 +2707,43 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             instruction: `Removing ${unexplained.field} takes away a value the tool's callers receive, so it needs a reason, and nothing changed. If the site still shows the value, keep the field and fix the extraction instead. Otherwise add reason to that change: why the field must go, from what the site shows now and where you looked, which Guardian checks against the captures. Then call mint_update again.`,
           };
         if (submitted.recommend === "new_mint") return undefined;
-        if (settings.has("effect")) {
+        const effects = new Set(
+          submitted.changes.flatMap((change) =>
+            change.setting === "effect" ? [change.effect] : [],
+          ),
+        );
+        if (effects.size > 1)
+          return {
+            reason: "effect_conflict",
+            instruction:
+              "This update changes the effect both ways, so nothing changed. Name one effect change, then call mint_update again.",
+          };
+        if (effects.has("read")) {
+          if (buildEffect !== "write")
+            return {
+              reason: "already_read",
+              instruction: "This build is already a read build. Nothing changed.",
+            };
+          if (dependencies.lowersEffect !== true)
+            return {
+              reason: "effect_lowering_unsupported",
+              instruction:
+                "This host can't turn a write build into a read build, so nothing changed. Go on with the write, or call mint_update with recommend new_mint and a suggestedRequest for a read build.",
+            };
+          if (writeSent())
+            return {
+              reason: "write_sent",
+              instruction:
+                "This build already started its write on the site, so it stays a write build and nothing changed. Tell the caller with request_input that changes may already have been made on the site, so the build can't become a read now, and list what it did so far. Ask, in a confirm question with endsBuild set, whether to end this build so they can start a read build; a no means finishing the write.",
+            };
+          // Publication needs a live read example, so the build must still be able to run one.
+          if (executionClosed)
+            return {
+              reason: "no_live_example_left",
+              instruction:
+                "This build can no longer run a live example, so a read could not be proven, and nothing changed. Go on with the write, or call mint_update with recommend new_mint and a suggestedRequest for a read build.",
+            };
+        } else if (settings.has("effect")) {
           if (buildEffect === "write")
             return {
               reason: "already_write",
@@ -2596,14 +2844,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * how the build goes on, decided for each question when it goes unanswered. Not when the
        * question decides what the build may do: the read-or-write and capability questions, any
        * question in a write repair, which could gate its write, and any asked while the build is
-       * signed in or holds a login, which acts as the account's owner. Nor once the build handed
-       * back `noAnswerHandBackLimit` questions.
+       * signed in or holds a login, which acts as the account's owner, unless it is a read repair
+       * whose host sets `handBackSignedInReadRepair`. A write repair whose host sets
+       * `handBackWriteRepairQuestions` hands back, signed in or not, a question that asks no
+       * consent (`asksConsent`); a script's question and a takeover's rejoined one count as asking
+       * it. Nor once the build handed back `noAnswerHandBackLimit` questions.
        */
-      const handsBackNoAnswer = () =>
+      const handsBackNoAnswer = (asksConsent = true) =>
         request.effect !== "ask" &&
         dependencies.capabilityQuestion === undefined &&
-        !(request.mode === "maintenance" && buildEffect === "write") &&
-        !signedInOrHoldsLogin() &&
+        (request.mode === "maintenance" && buildEffect === "write"
+          ? dependencies.handBackWriteRepairQuestions === true && !asksConsent
+          : !signedInOrHoldsLogin() ||
+            (dependencies.handBackSignedInReadRepair === true &&
+              request.mode === "maintenance" &&
+              buildEffect === "read")) &&
         noAnswerHandBacks < noAnswerHandBackLimit;
       /**
        * The minter's latest question handed back as no answer, while no other question was asked
@@ -2636,11 +2891,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * The minter's question went unanswered and the build goes on. It stays unanswered: no
        * `mint_update` can cite it, and no review reads an answer from it.
        */
-      const noAnswer = (requestId: string | undefined) =>
+      const noAnswer = (requestId: string | undefined, recommended: Readonly<Record<string, unknown>>) =>
         questionHandedBack(requestId).pipe(
           Effect.as(
             JSON.stringify({
               status: "no_answer",
+              ...(Object.keys(recommended).length === 0 ? {} : { recommended }),
               userInputRequired: false,
               instruction: noAnswerInstruction,
             }),
@@ -2703,6 +2959,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       /** The id of the question the minter is asking, while it waits for the answer. */
       let askingId: string | undefined;
+      /** Whether that question asks consent (`asksConsent`), and the answers it recommends. */
+      let askingConsent = true;
+      let askingRecommended: Readonly<Record<string, unknown>> = {};
       /**
        * Whether that question asks whether to end the build (`endsBuild`). Its later answer could
        * not keep that mark through a rejoined report, so such a question is never offered to
@@ -2744,9 +3003,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error: MintFailure,
         requestId: string | undefined,
         endsBuild: boolean,
+        asked: { readonly consent: boolean; readonly recommended: Readonly<Record<string, unknown>> },
       ) =>
-        error.ownerCancelled !== true && handsBackNoAnswer()
-          ? noAnswer(endsBuild ? undefined : requestId)
+        error.ownerCancelled !== true && handsBackNoAnswer(asked.consent)
+          ? noAnswer(endsBuild ? undefined : requestId, asked.recommended)
           : unanswered(error, "asking a question", {
               step: "question",
               ...(requestId === undefined ? {} : { requestId }),
@@ -3027,8 +3287,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * backoff; the agent may resubmit while reviews have been unavailable for less than the
        * outage budget, and any completed review starts the budget again. A review whose evidence
        * could not be retained is such an outage too. Past the budget, `exhausted` ends the attempt,
-       * as it does at once for a request over Guardian's model input limit (`InputTooLarge`), which
-       * fails the same way when resubmitted.
+       * as it does at once for a request the provider refused as over Guardian's model input limit,
+       * or for an encrypted item it could not decrypt (`InputTooLarge`), which fails the same way
+       * when resubmitted.
        */
       const reviewUnavailableRetry =
         (
@@ -3079,13 +3340,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           "Nothing changed. Submit the same mint_update again for a fresh review; the task stays as it was until an update applies.",
       };
       const reviewUnavailableFeedback = (error: MintFailure) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           terminal = {
             build: "incomplete",
             hostFailure: "review_unavailable",
             summary:
               "Guardian review could not complete. No review approval was obtained; recorded effects and claimed examples remain preserved.",
           };
+          // The outcome names why: the review's failure code, and the model provider's own code and
+          // HTTP status when it refused the review's request.
+          const context = error.failureDetail?.context;
+          yield* diagnose({
+            phase: "review",
+            reason: "review_unavailable",
+            code: error.reviewFailure,
+            providerCode: context?.["providerCode"],
+            httpStatus: context?.["httpStatus"],
+          });
           return reviewUnavailableAnswer(
             error,
             "Review did not complete; this is not a Guardian deny or escalation decision. End this attempt without publication. Do not change site code to repair review infrastructure or automatically retry execution. Preserve prior effects and claimed examples; reconcile possibly executed operations before any further effect. Missing user authority or credentials has not been established.",
@@ -3106,6 +3377,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             error.reason === "schema_screening")) ||
         (error.code === "Unavailable" && error.reason === undefined);
       /**
+       * The other refusals the host found in the latest finish_build's submission, beside the one
+       * it answers with, as the minter reads them.
+       */
+      let alsoRefusedReplies: readonly object[] = [];
+      /**
        * A publication refusal the minter can act on: `details` names what was refused, and
        * `instruction` follows what live execution is still available.
        */
@@ -3121,10 +3397,255 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           code,
           reason,
           ...details,
+          ...(alsoRefusedReplies.length === 0 ? {} : { alsoRefused: alsoRefusedReplies }),
           ...availabilityMetadata(),
           userInputRequired: false,
-          instruction: availabilityInstruction() + instruction,
+          instruction:
+            availabilityInstruction() +
+            instruction +
+            // A refusal that ends the attempt asks for no further finish_build.
+            (alsoRefusedReplies.length === 0 || terminal !== undefined
+              ? ""
+              : alsoRefusedInstruction),
         });
+      /**
+       * The reply to a host refusal the minter fixes in its source or metadata, by reason, or
+       * undefined for any other: `reply` shapes it, as the finish_build result or as one entry of
+       * another refusal's `alsoRefused`.
+       */
+      const fixableRefusal = <R>(
+        error: MintFailure,
+        reply: (
+          code: MintFailure["code"],
+          reason: string | undefined,
+          details: object,
+          instruction: string,
+        ) => R,
+        review?: object,
+      ): R | undefined => {
+        // Deterministic, before any review: the minter fixes the extraction, or the owner
+        // confirms a contract change. It is neither a review nor an outage.
+        if (error.reason === "output_obligation_weakened")
+          return reply(
+            error.code,
+            error.reason,
+            { weakenedOutputs: error.weakenedOutputs ?? [] },
+            `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
+              buildEffect === "write"
+                ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
+                : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
+            } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
+          );
+        // A host's own comparison with the published tool's inputs: exactly its fixed
+        // instruction, with each broken input as data.
+        if (error.reason === "input_contract_changed")
+          return reply(
+            error.code,
+            error.reason,
+            { brokenInputs: error.brokenInputs ?? [] },
+            inputContractChangedInstruction(buildEffect === "write"),
+          );
+        if (error.reason === "tool_name_taken")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published and not reviewed: ${registryRefusal("tool_name_taken").instruction}`,
+          );
+        if (error.reason === "site_metadata_required")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
+          );
+        if (error.reason === "output_checks_blocked")
+          return reply(
+            error.code,
+            error.reason,
+            { outputFindings: error.outputFindings ?? [] },
+            outputChecksRefusal(error.outputFindings ?? []),
+          );
+        if (error.reason === "variants_unsupported")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: this Kernel script declares supportedVariants, and only Effect runs dispatch variants, so every call would fail with InvalidOutput. Either remove supportedVariants from the tool's metadata (keep one script that handles the variation itself) and call finish_build again with the same executionId; the recorded example and result stay valid and nothing needs to run again. Or, if variants are essential, make it an offline tool: execute a new example with target pureFiles, then call finish_build with that new executionId. The same executionId is refused again while its receipt is a Kernel script.",
+          );
+        if (
+          error.reason === "http_implementation_untested" ||
+          error.reason === "http_implementation_stale"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            // A host's rationale names what it still waits on, such as the cases the
+            // HTTP version has not run.
+            review === undefined ? {} : { review },
+            (error.reason === "http_implementation_stale"
+              ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
+              : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once against the example and runs every case it ran on src/tool.mjs on it too. Then call finish_build again with the same executionId.") +
+              " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host may ask again at every finish_build until one of these holds: calling again unchanged, or deleting the file, does not answer it.",
+          );
+        if (error.reason === "login_url_one_time")
+          return reply(
+            error.code,
+            error.reason,
+            { ...error.publicationFeedback },
+            "Not published yet: the login URL this tool would publish (the loginUrl you passed to authenticate, or the page the browser was on when you passed none) is one authorization request or one browser's session: an identity provider's authorize URL, a URL carrying one-time authorization values, or one carrying a device or session identifier the site put in the link for this browser (oneTimeParameters names the authorize path and those parameters, never their values). They are spent once this sign-in ends or belong to this browser, so later runs that reopen it would start from stale values or another browser's session. The host changed nothing. Navigate the browser to the site's stable sign-in entry, the page a person would bookmark or the site's own login link before it redirected, run authenticate again with that page's address as loginUrl, then call finish_build again with the same executionId. If no stable entry exists, call finish_build again and the host publishes the URL as it is, flagged. The host asks only once.",
+          );
+        if (
+          error.reason === "login_url_contains_credential" ||
+          error.reason === "metadata_contains_credential"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            { ...error.publicationFeedback },
+            "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
+          );
+        if (error.reason === "sign_in_version_refused")
+          return reply(
+            error.code,
+            error.reason,
+            { signInFindings: error.publicationFeedback?.signInFindings ?? [] },
+            "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
+          );
+        if (error.reason === "definition_login_reference") {
+          const section = error.screening?.section;
+          return reply(
+            error.code,
+            error.reason,
+            { section },
+            `Not published: the tool's ${section ?? "definition"} quotes this build's account reference, an opaque value the host gave this build to identify its login (such as an inspection's accountScope). It means nothing to a caller and is never published. ${definitionFix(section)} The existing example and result remain recorded.`,
+          );
+        }
+        if (error.reason === "secret_handle") {
+          const path = error.screening?.path ?? "the source";
+          return reply(
+            error.code,
+            error.reason,
+            { path: error.screening?.path },
+            `Not published: ${path} holds a {{secret.…}} handle. A handle works only in this build's own executions, where the host fills in the caller's answer; published code never holds a handle or a value. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then call finish_build again.`,
+          );
+        }
+        if (error.reason === "file_handle")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: the source holds a {{file.…}} handle, which names a caller's file only in this build. A tool takes each file from its input: type the field as FileInput and pass the input's value to files.place. Remove the handle from the source, then call finish_build again.",
+          );
+        if (error.reason === "file_readback")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: the source moves or reads a file outside the host's file service. Rule: ${fileReadbackRule}. Remove that code, then call finish_build again.`,
+          );
+        if (error.reason === "card_readback")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: the source fills a card and could read it back. Rule: ${cardReadbackRule}. Remove that code, then call finish_build again.`,
+          );
+        if (
+          error.reason === "session_token_literal" ||
+          error.reason === "session_token_placeholder"
+        ) {
+          const path = error.screening?.path ?? "the source";
+          const placeholder = error.reason === "session_token_placeholder";
+          return reply(
+            error.code,
+            error.reason,
+            { path: error.screening?.path, section: error.screening?.section },
+            placeholder
+              ? `Not published: ${path} still reads [session token withheld] where an earlier release withheld a live token, so it no longer matches what ran. Do not paste a token back in: edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded.`
+              : error.screening?.section === "loginUrl"
+                ? "Not published: the login URL holds a literal session token observed during sign-in. Run authenticate again with the site's stable sign-in page URL, without the token, then call finish_build again with the same executionId. The host keeps the URL unchanged for your HTTP work and does not end this build."
+                : `Not published: ${path} holds a literal session token from captures/session-tokens.json. Published code never contains a token. Edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded. Your workspace keeps the token for your own HTTP work. If the file is src/tool-http.mjs, run its live test again first, because the edit invalidates the last one.`,
+          );
+        }
+        if (error.reason === "confirm_action_unmatched")
+          return reply(
+            error.code,
+            error.reason,
+            { confirmActionIds: error.confirmActionIds ?? [] },
+            "Not published: the session accepted confirm popups reported to decideDialog under these step names, and the composed script does not report them under the same names. Reuse each step literal exactly, for example by importing the step's helper, so runs accept the same popups without asking; then call finish_build again with the same executionId. Never run the write again.",
+          );
+        if (error.reason === "write_not_submitted")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, or the site already shows the requested change done, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
+          );
+        if (error.reason === "write_path_unfinished")
+          return reply(
+            error.code,
+            error.reason,
+            { writePathMarks: error.writePathMarks ?? [] },
+            writePathUnfinishedInstruction(error),
+          );
+        if (error.reason === "write_path_undeclared")
+          return reply(
+            error.code,
+            error.reason,
+            { writePathMarks: error.writePathMarks ?? [] },
+            "Not published: the composed script leaves out commit marks of the session's recorded write path from write.commits; writePathMarks names them. Run every step of the path in the composed script, marked by the same helper the session used, declare every mark in order, and call finish_build again with the same executionId. Never run the write again.",
+          );
+        if (error.reason === "refusal_unreadable")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
+          );
+        if (
+          error.reason === "confirmation_undeclared" ||
+          error.reason === "commit_marks_undeclared" ||
+          error.reason === "commit_marks_unentered" ||
+          error.reason === "confirmation_unrecorded" ||
+          error.reason === "contract_input_mismatch" ||
+          error.reason === "contract_output_mismatch"
+        )
+          return reply(
+            error.code,
+            error.reason,
+            error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
+              ? { inputIssues: error.inputIssues }
+              : error.reason === "contract_output_mismatch" &&
+                  error.outputIssues !== undefined &&
+                  error.outputIssues.length > 0
+                ? { outputIssues: boundedOutputIssues(error.outputIssues) }
+                : {},
+            (error.reason === "confirmation_undeclared"
+              ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
+              : error.reason === "commit_marks_undeclared"
+                ? "Not published: the composed script names none of its commit steps. List every step that can change the site (an autosave, a saved form step, the final submit) in order as write.commits, such as commits: ['save-address', 'place-order'], using short lowercase hyphenated names, and mark each with the context's enteringCommit(name) right before the execute call that can send it (an HTTP implementation calls journal.enteringCommit(name) before that request). Opening a form and typing into its fields are not commit steps unless the site's requests show they save the caller's change; a lookup, suggestion, validation or analytics request saves nothing. Then call finish_build again with the same executionId."
+                : error.reason === "commit_marks_unentered"
+                  ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnReadBack === true ? `${readBackPublication} ` : ""}${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : error.publishesOnReadBack === true ? "If the session's steps entered none for any other reason, it cannot publish" : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
+                  : error.reason === "confirmation_unrecorded"
+                    ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
+                    : error.reason === "contract_input_mismatch"
+                      ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty or in place of one the tool refused (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
+                      : request.mode === "maintenance" && buildEffect !== "write"
+                        ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
+                        : request.mode === "maintenance"
+                          ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
+                          : buildEffect === "write"
+                            ? "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId."
+                            : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
+              (error.reason === "contract_output_mismatch" &&
+              request.mode === "maintenance" &&
+              buildEffect !== "write"
+                ? ""
+                : " The host extracts the contract offline; never run the write or the example again for this."),
+          );
+        return undefined;
+      };
       /**
        * A registry refusal of a reviewed publication. A check the minter's metadata or source
        * decides goes back to it to fix, with no cap; any other refusal ends the attempt with its
@@ -3406,10 +3927,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /** The caller's accepted answers and approved changes, in order, for the outcome reviewer. */
       const acceptedAnswers: unknown[] = [];
       /**
-       * The digest of what `entrypoint`'s import closure holds in the workspace now, without
-       * paths; undefined when it cannot be read, and a failed read is reported to the host.
+       * The digest of what `entrypoint`'s import closure's code does in the workspace now, without
+       * paths, comments, formatting or schema annotations (`codeContentDigest`), so a live test's
+       * result stays current through an edit that only rewords what a schema tells readers, on
+       * either version; undefined when it cannot be read, and a failed read is reported to the host.
        */
-      const stepDigest = (entrypoint: string) =>
+      const stepDigest = (
+        entrypoint: string,
+        digest: (files: ReadonlyMap<string, string>) => string = codeContentDigest,
+      ) =>
         Effect.tryPromise({
           try: async () => {
             const files = await readImportClosure(async (path) => {
@@ -3417,7 +3943,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const text: unknown = await session.readFile?.({ path });
               return typeof text === "string" ? text : undefined;
             }, entrypoint);
-            return files.size === 0 ? undefined : contentDigest(files);
+            return files.size === 0 ? undefined : digest(files);
           },
           catch: (error) => error,
         }).pipe(
@@ -3847,6 +4373,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             { reservedFor, failedOnSource },
           );
         }
+        // A site block on a live test's browser is the site's stop, not the caller's, even when
+        // the request says to stop on blocks: that rule is about the tool's own runs. The case
+        // counts neither way toward review.
+        if (reason === "caller_input" && testBrowserBlocked)
+          return refused(
+            "caller_input_site_block",
+            "A site block on a browser the host opened for testing is not caller_input, even when the request says to stop on blocks. That case counts neither way toward review: prefer finish_build with the gap in coverage.",
+          );
         // A caller_input ending stands on its intent citing the caller's own request: a field the
         // task's input holds, or words of the request's instruction. A task update the owner
         // confirmed in an answer is that request too, as the effective task every later review
@@ -3998,8 +4532,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           rationale:
                             "Guardian returned no decision a question review allows, so it neither allowed nor reworded the explanation. Make it plain and consistent with the evidence.",
                         };
-                  // A spent quota, a request over the model's input limit or an outage past its
-                  // budget still ends blocked: the caller reads the reason alone.
+                  // A spent quota, a request the provider refused for good (`InputTooLarge`) or an
+                  // outage past its budget still ends blocked: the caller reads the reason alone.
                   if (
                     error.code !== "ReviewUnavailable" ||
                     error.modelOutage === "quota_exhausted" ||
@@ -4138,7 +4672,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 `The task now runs signed out: never call execute purpose authenticate again. ${buildEffect === "write" ? signedOutWrite : "Explore, run the example and live tests, and publish without signing in, from the part of the request the site shows signed out"}.`,
               ]
             : []),
-          ...(settings.has("effect")
+          ...(settings.has("effect") && buildEffect !== "write"
+            ? [
+                "This build is now a read build: it sends no write, and it proves its tool with a live example and live tests as a read does, from the page as it stands.",
+              ]
+            : []),
+          ...(settings.has("effect") && buildEffect === "write"
             ? [
                 "This build is now a write build, and every later execution is reviewed under write authority. Read .agents/writes/SKILL.md, and .agents/forms/SKILL.md for a form, before the next step. The write is the whole task the request asks for, done once through purpose act steps; it may take several steps, and drafts, autosaves and step saves along the way are part of it. Before the first act step, ask with request_input for any value the task needs that the input does not settle. The first act step starts with navigation to the site origin (keeping the browser's cookies and site storage), so it must navigate to any deeper task page it needs; what you observed so far stays valid evidence. From now on a live example or live test is refused, and so is a live explore once the session starts.",
               ]
@@ -4352,7 +4891,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 "The host cannot apply this update to this build, so nothing changed. Continue under the current task, or call mint_update with recommend new_mint if the caller's change needs a new build.",
             });
           }
-          const effectChanged = next.effect === "write" && buildEffect !== "write";
+          const effectChanged = next.effect !== (buildEffect === "write" ? "write" : "read");
           const siteChanged = next.siteOrigin !== taskState.siteOrigin;
           taskState = next;
           // The caller's confirmed update applied, so the host waits for no confirmation now.
@@ -4361,11 +4900,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           if (siteChanged) {
             signInUnconfirmed = false;
             signInRefusalOnly = false;
+            confirmedSignInStands = false;
           }
           // The task now runs signed out: a failed sign-in no longer holds anything back, and no
           // sign-in runs until a later update asks for one, which the owner then confirmed.
           for (const change of accepted.changes)
             if (change.setting === "login") {
+              // Another login, or none, is no longer the one that confirmed.
+              confirmedSignInStands = false;
               if (change.change === "signed_out") {
                 signInAbandoned = true;
                 unresolvedSignIn = undefined;
@@ -4378,13 +4920,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           yield* reviewer.taskUpdated(
             `The caller confirmed a task update (revision ${next.revision}): ${accepted.summary}`,
           );
-          if (effectChanged) {
+          if (effectChanged && next.effect === "write") {
             buildEffect = "write";
             repeatableRead = false;
             // A read example's claim was the read's, and a read ran no write session: the write
             // session takes its own claim.
             exampleClaimed = false;
             writeSession = "none";
+          } else if (effectChanged) {
+            // A write build lowers only before its write session started, so any claim it holds
+            // is an offline example's: the read's live example takes its own claim.
+            buildEffect = "read";
+            repeatableRead = dependencies.repeatableRead === true;
+            exampleClaimed = false;
           }
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.task_updated", {
@@ -4705,6 +5253,89 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const emptyCases: LiveTestCasesFile = { cases: [] };
       /** What a signed-in read designs, in place of a read signed out's suite. */
       const signedInPlanInstruction = `This read signed in, so it runs live tests on at most ${signedInTestInputLimit} distinct inputs beyond its example, as the testing skill says: one combined case in ${liveTestCasesPath} that sets every optional input and filter the example left unset, with values the site shows (a picker's options, or values in the example's own rows, never a person's or record's name, number or email). Choose each value so at least one example row fails it while some rows still pass every filter, since a value every example row already satisfies passes even when the tool ignores it, and name in purpose the row each value excludes. Set next_page true when the tool pages. Add a second case only for inputs that cannot be set with the others, and one no-match case, a made-up key for an input that takes a record's own id, key or URL, else a query or filter the site has no results for (testing skill). Then run it with live_tests action run and check that every row it returns satisfies each input it set, that the excluded rows are gone, and that page two holds new rows. Running it again after a fix, or on src/tool-http.mjs, is free.`;
+      /**
+       * The outputs one plan shows for the cases it names, as a host returns an execution's
+       * result: each whole while it fits `resultDigestThresholdBytes`, else saved whole through
+       * `saveResult` as a workspace file and shown as its digest. Together they take at most
+       * `planOutputBytes`; a case past that shows only where its output is saved. A host without
+       * `saveResult`, or a save that fails, shows the output's first part when it fits.
+       */
+      const planOutputBytes = 32 * 1024;
+      const planOutputs = (entrypoint: string, ids: readonly string[]) =>
+        Effect.gen(function* () {
+          const shown = new Map<string, Readonly<Record<string, unknown>>>();
+          let room = planOutputBytes;
+          const fits = (text: string) => byteLength(text) <= room;
+          for (const id of ids) {
+            const key = outputKey(entrypoint, id);
+            if (shown.has(id) || !liveTestOutputs.has(key)) continue;
+            const output = liveTestOutputs.get(key);
+            const text = JSON.stringify(output) ?? "null";
+            const totalBytes = byteLength(text);
+            // The path keeps only some characters of the id, so a hash of the whole id keeps two
+            // ids that differ elsewhere, such as "a.b" and "a_b", in files of their own.
+            const idHash = createHash("sha256").update(id, "utf8").digest("hex").slice(0, 12);
+            const path = resultDigestPath(
+              `live-test-${liveTestVersion(entrypoint)}-${id.slice(0, 64)}-${idHash}`,
+            );
+            let saveFailed = false;
+            const save = (file: string) =>
+              Effect.gen(function* () {
+                const saveResult = dependencies.saveResult;
+                if (saveResult === undefined || saveFailed) return false;
+                const saved = yield* Effect.either(
+                  Effect.suspend(() => saveResult(path, file)).pipe(
+                    Effect.catchAllDefect(() => Effect.fail(new MintFailure({ code: "Unavailable" }))),
+                  ),
+                );
+                saveFailed = Either.isLeft(saved);
+                return Either.isRight(saved);
+              });
+            let view: Readonly<Record<string, unknown>> | undefined;
+            if (totalBytes <= resultDigestThresholdBytes) {
+              if (fits(text)) view = { output };
+            } else {
+              const digest = Either.getOrUndefined(
+                Either.try(() => digestResult(text, { path, failed: false })),
+              );
+              if (
+                digest !== undefined &&
+                "file" in digest &&
+                fits(digest.text) &&
+                (yield* save(digest.file))
+              )
+                view = { outputDigest: JSON.parse(digest.text) as unknown };
+            }
+            if (view === undefined) {
+              if (yield* save(`${JSON.stringify(output, null, 2)}\n`))
+                view = {
+                  outputDigest: {
+                    kind: "result_saved",
+                    totalBytes,
+                    path,
+                    instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show, so it is saved whole in ${path}: read it with read_source (offset and limit) or search it with rg in exec_command, or name fewer cases.`,
+                  },
+                };
+              else {
+                const bounded = boundedResult(text);
+                view = !fits(bounded)
+                  ? {
+                      outputDigest: {
+                        kind: "result_omitted",
+                        totalBytes,
+                        instruction: `This output is ${totalBytes} bytes, more than this plan has room left to show. Name fewer cases to see its first part.`,
+                      },
+                    }
+                  : bounded === text
+                    ? { output }
+                    : { outputDigest: JSON.parse(bounded) as unknown };
+              }
+            }
+            room -= byteLength(JSON.stringify(view));
+            shown.set(id, view);
+          }
+          return shown;
+        });
       /** What the agent reads about its tests: its cases and their results. */
       const liveTestPlanView = (
         entrypoint: string,
@@ -4714,12 +5345,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const read = yield* readCasesFile;
           const file = Either.isRight(read) ? read.right : emptyCases;
           const digest = yield* stepDigest(entrypoint);
+          const outputs = yield* planOutputs(
+            entrypoint,
+            file.cases
+              .map((testCase) => testCase.id)
+              .filter((id) => options.show?.includes(id) === true),
+          );
           const cases = file.cases.map((testCase) => ({
             ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest),
-            ...(options.show?.includes(testCase.id) &&
-            liveTestOutputs.has(outputKey(entrypoint, testCase.id))
-              ? { output: liveTestOutputs.get(outputKey(entrypoint, testCase.id)) }
-              : {}),
+            ...outputs.get(testCase.id),
           }));
           const shown =
             options.ran === undefined
@@ -4770,6 +5404,34 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           Clock.currentTimeMillis,
           (now) => deadlineAt - now >= (host.caseTimeoutMs ?? defaultLiveTestCaseMs),
         );
+      /**
+       * How long one case of a batch runs on `host` by its own limit: `caseTimeoutMs`, or, past a
+       * capped host's last batch, its reserve's (`LiveTestHost.reservedCaseTimeoutMs`).
+       */
+      const ownCaseMs = (host: LiveTestHost) => {
+        const limit = host.caseTimeoutMs ?? defaultLiveTestCaseMs;
+        return Number.isFinite(limit) ? limit : (host.reservedCaseTimeoutMs ?? defaultLiveTestCaseMs);
+      };
+      /**
+       * How long each case of a batch ending at `deadlineAt` may run on `host` when the request
+       * asks for `caseSeconds` (`LiveTestHost.maxCaseTimeoutMs`): the request cut to the host's
+       * maximum, in whole seconds; undefined when that is no longer than the host's own limit, the
+       * host takes no longer one, the batch is the host's reserve (`reservedCaseTimeoutMs`), or
+       * less than that is left before the deadline, since a host starts no case that cannot end in
+       * time and its own limit still lets the shorter cases run.
+       */
+      const batchCaseMs = (
+        host: LiveTestHost,
+        deadlineAt: number,
+        caseSeconds: number | null | undefined,
+      ) =>
+        Effect.map(Clock.currentTimeMillis, (now) => {
+          const most = host.maxCaseTimeoutMs;
+          const reserve = !Number.isFinite(host.caseTimeoutMs ?? defaultLiveTestCaseMs);
+          if (caseSeconds == null || most === undefined || reserve) return undefined;
+          const ms = Math.floor(Math.min(caseSeconds * 1_000, most) / 1_000) * 1_000;
+          return ms > ownCaseMs(host) && ms <= deadlineAt - now ? ms : undefined;
+        });
       /**
        * The cases a batch on the host's reserve may run once no batch fits
        * (`LiveTestHost.reservedCaseTimeoutMs`): those a failure is pending on, when a batch ending
@@ -4928,6 +5590,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               });
             }
           }
+          const caseMs = yield* batchCaseMs(host, deadlineAt, request.caseSeconds);
+          // Read before the batch runs, which may move the host's limits.
+          const ranWithMs = caseMs ?? ownCaseMs(host);
           // A signed-in read's cases run on the build's own signed-in browser, one at a time.
           const workers = signedInBatch
             ? 1
@@ -4943,6 +5608,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             })),
             workers,
             deadlineAt,
+            ...(caseMs === undefined ? {} : { caseTimeoutMs: caseMs }),
           }).pipe(
             // The host's gate refused the batch, such as a cap on live runs.
             Effect.tapError((error) =>
@@ -5109,6 +5775,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(run.start === undefined ? {} : { start: run.start }),
             })),
           });
+          testBrowserBlocked = judgedRuns.some(
+            ({ judged }) =>
+              judged.verdict === "inconclusive" &&
+              (judged.got === "site_block" || judged.got === "challenge"),
+          );
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.live_tests", {
               cases: selected.length,
@@ -5127,6 +5798,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             status: "ran",
             ...(result.reviewId === undefined ? {} : { reviewId: result.reviewId }),
             lanes: result.lanes,
+            // The limit each case ran with, once the request asked for one.
+            ...(request.caseSeconds == null
+              ? {}
+              : {
+                  caseSeconds: ranWithMs / 1_000,
+                }),
             ...(sourceDigest === digest
               ? {}
               : {
@@ -5315,8 +5992,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           };
         },
       );
+      /**
+       * A submission's identity for `unchanged_since_denial`, on its files' exact text
+       * (`exactTextDigest`), not the live tests' digest: a review's finding can sit in a comment or a
+       * schema's description, and an edit there alone is a new submission to review.
+       */
       const submissionKey = (proposed: PublicationRequest, paths: readonly string[]) =>
-        Effect.forEach(paths, stepDigest).pipe(
+        Effect.forEach(paths, (path) => stepDigest(path, exactTextDigest)).pipe(
           Effect.map((digests) =>
             JSON.stringify({
               proposed,
@@ -5488,6 +6170,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               });
               if (submitted.target === "liveBrowser" && submitted.maxWorkers !== 1)
                 return yield* new MintFailure({ code: "InvalidRequest" });
+              if (!citesAnswers(submitted, answeredQuestions))
+                return yield* new MintFailure({ code: "InvalidRequest" });
               if (submitted.purpose === "example" && exampleClaimed && !repeatableRead)
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
               if (
@@ -5588,8 +6272,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       )
                         actRefusalsInRow++;
                     }
+                    // A browser the host replaced since the minter last heard of it starts on a
+                    // new, empty profile; a sign-in this step confirmed on it still counts.
+                    if (
+                      dependencies.entryNavigation?.()?.state === "replaced" &&
+                      entryState() !== shownEntryState
+                    )
+                      confirmedSignInStands = false;
+                    // A step apart from authenticate whose failure says a sign-in left the site
+                    // signed out, such as the host's own sign-in again after it found the page
+                    // signed out.
+                    if (
+                      submitted.purpose !== "authenticate" &&
+                      Exit.isFailure(result) &&
+                      Cause.isFailType(result.cause) &&
+                      (signInLeftSignedOut(result.cause.error) ||
+                        result.cause.error.failureDetail?.phase === "automatic_sign_in")
+                    )
+                      confirmedSignInStands = false;
                     if (submitted.purpose === "authenticate") {
-                      noteSignIn(result, crossedDispatchBoundary);
+                      noteSignIn(result, crossedDispatchBoundary, submitted.signInStep);
                       // A screen the host refused at its destination check comes back as the
                       // step's result, so the host's own record is the basis, read as it stands
                       // after this sign-in step.
@@ -5614,11 +6316,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
                     // The host stopped after the dispatch fence but before anything reached the
-                    // site, such as a sandbox copy of the source that did not match the review:
-                    // no write went out, so none is tracked, fenced or reconciled.
+                    // site, such as a sandbox copy of the source that did not match the review,
+                    // or a host check that says so with `nothingSent`: no write went out, so none
+                    // is tracked, fenced or reconciled. A failure that describes the execution or
+                    // its runner speaks for itself, so the flag never overrides it.
                     const hostNotSent =
                       Cause.isFailType(result.cause) &&
-                      result.cause.error.execution?.dispatch === "not_sent";
+                      (result.cause.error.execution?.dispatch === "not_sent" ||
+                        (result.cause.error.nothingSent === true &&
+                          result.cause.error.execution === undefined &&
+                          result.cause.error.runnerFailure === undefined));
                     const ran = crossedDispatchBoundary && !hostNotSent;
                     const lost: ExecutionEvidence = {
                       executionId: `unresolved_${randomUUID()}`,
@@ -5640,10 +6347,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                               // Possible only while the sign-in's outcome is unknown.
                               effect:
                                 Cause.isFailType(result.cause) &&
-                                (result.cause.error.code === "CredentialsRejected" ||
-                                  (result.cause.error.authentication !== undefined &&
-                                    signInFailureFeedback(result.cause.error.authentication)
-                                      .signInOutcome === "signed_out"))
+                                signInLeftSignedOut(result.cause.error)
                                   ? ("verified" as const)
                                   : ("possible" as const),
                             },
@@ -5754,6 +6458,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               if (questionOnly) return yield* new MintFailure({ code: "ScopeDenied" });
               yield* active("publication");
               hostRefusalRepeated = false;
+              alsoRefusedReplies = [];
+              // Whatever finish_build answers is the attempt's latest stop now, not a test
+              // browser's site block.
+              testBrowserBlocked = false;
               const write = buildEffect === "write";
               const proposed = yield* decode(PublicationRequest, input).pipe(
                 Effect.tapError(() =>
@@ -5825,8 +6533,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     : ranAt < latestRevisionChanging("effect")
                       ? ({
                           reason: "example_before_effect_change",
-                          instruction:
-                            "This execution ran while the build was a read, so it is not the write the task now asks for. Perform the write through purpose act steps, then call finish_build with the step that confirmed it.",
+                          instruction: write
+                            ? "This execution ran while the build was a read, so it is not the write the task now asks for. Perform the write through purpose act steps, then call finish_build with the step that confirmed it."
+                            : "This execution ran before the build's effect last changed, so it does not prove the read the task now asks for. Run a fresh live example, then call finish_build with that new executionId.",
                         } as const)
                       : undefined;
               if (stale !== undefined) {
@@ -6139,15 +6848,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               };
               // The host's own publication checks refused it, as a sign-in that fails on a new
               // browser: neither Guardian's decision nor an outage. An output the example could not
-              // make available is an infrastructure gap, and a refusal the host asks only once,
-              // such as a one-time login URL or an untested HTTP version, is advice: finishing
-              // again publishes.
-              const hostChecksRefused =
-                publication._tag === "Left" &&
-                publication.left.code === "PublicationUnavailable" &&
-                !publicationOutage(publication.left) &&
-                publication.left.reason !== "example_output_unavailable" &&
-                !askedOnceReasons.has(publication.left.reason ?? "");
+              // make available is an infrastructure gap, a refusal the host asks only once, such
+              // as a one-time login URL, is advice: finishing again publishes, and the ask to test
+              // an HTTP version is one the minter always settles itself.
+              // A Guardian denial may carry host refusals of the same submission in alsoRefused:
+              // the build then did not get past the host's checks either.
+              const hostRefusal =
+                publication._tag === "Right"
+                  ? undefined
+                  : [publication.left, ...(publication.left.alsoRefused ?? [])].find(
+                      (refusal) =>
+                        refusal.code === "PublicationUnavailable" &&
+                        !publicationOutage(refusal) &&
+                        refusal.reason !== "example_output_unavailable" &&
+                        !askedOnceReasons.has(refusal.reason ?? "") &&
+                        !httpVersionAskReasons.has(refusal.reason ?? ""),
+                    );
+              const hostChecksRefused = hostRefusal !== undefined;
               // A submission the host already refused, sent again with nothing changed after a
               // later finish_build got past that refusal, is refused the same way again: no new
               // host refusal, so a minter cannot make a basis for host_refused by repeating one.
@@ -6164,13 +6881,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 hostRefusedSubmissions = [...hostRefusedSubmissions, refusedSubmission].slice(
                   -rememberedRefusedSubmissions,
                 );
-              if (hostChecksRefused && !hostRefusalRepeated)
+              if (hostRefusal !== undefined && !hostRefusalRepeated)
                 refuseByHost({
                   source: "publication",
-                  code: publication.left.code,
-                  ...(publication.left.reason === undefined
-                    ? {}
-                    : { reason: publication.left.reason }),
+                  code: "PublicationUnavailable",
+                  ...(hostRefusal.reason === undefined ? {} : { reason: hostRefusal.reason }),
                 });
               if (publication._tag === "Right" || reviewDecided(publication.left)) {
                 yield* reviewCompleted;
@@ -6245,6 +6960,47 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               if (publication._tag === "Left") {
                 const error = publication.left;
+                // Every other refusal the host found in this submission goes back with this one,
+                // so one revision fixes them all. A host's own reason core has no text for says
+                // what to do in its review rationale, screened like any other.
+                alsoRefusedReplies = yield* Effect.forEach(
+                  error.alsoRefused ?? [],
+                  (other): Effect.Effect<object> =>
+                    Effect.gen(function* () {
+                      const known = fixableRefusal(
+                        other,
+                        (code, reason, details, instruction) => ({
+                          reply: { code, reason, ...details, instruction },
+                          instruction,
+                        }),
+                        other.review === undefined ? undefined : yield* minterReview(other.review),
+                      );
+                      // A listed refusal that names its fix keeps that fix on record as the
+                      // refusal it answers with does, for a host_refused report on it.
+                      if (known !== undefined) {
+                        if (other.reason !== undefined && namedStepReasons.has(other.reason)) {
+                          const told = yield* screenMintText(dependencies, known.instruction).pipe(
+                            Effect.map((screened) =>
+                              capped(screened.trim(), ledgerBounds.instructionChars),
+                            ),
+                            Effect.orElseSucceed(() => ""),
+                          );
+                          if (told === "") namedStepInstructions.delete(other.reason);
+                          else namedStepInstructions.set(other.reason, told);
+                        }
+                        return known.reply;
+                      }
+                      if (other.review?.rationale === undefined)
+                        return { code: other.code, reason: other.reason };
+                      const instruction = capped(
+                        (yield* screenRationale(other.review.rationale)).trim(),
+                        ledgerBounds.instructionChars,
+                      );
+                      if (other.reason !== undefined && rationaleStepReasons.has(other.reason))
+                        namedStepRationales.set(other.reason, instruction);
+                      return { code: other.code, reason: other.reason, instruction };
+                    }),
+                );
                 const outputUnavailable =
                   error.code === "PublicationUnavailable" &&
                   error.reason === "example_output_unavailable";
@@ -6472,225 +7228,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       "Not published: the source this repair would publish is byte for byte the registered revision's, so there is nothing to publish. A new name or description alone is not a repair. The registered revision stays current and this repair ends here; do not call finish_build again.",
                   });
                 }
-                // Deterministic, before any review: the minter fixes the extraction, or the owner
-                // confirms a contract change. It is neither a review nor an outage.
-                if (error.reason === "output_obligation_weakened")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { weakenedOutputs: error.weakenedOutputs ?? [] },
-                    `Not published and not reviewed: this repair loosens the registered tool's output contract${weakenedOutputsText(error.weakenedOutputs ?? [])}. A repair keeps every output the registered tool returns, at least as required and as strictly typed; it may add or tighten fields. ${
-                      buildEffect === "write"
-                        ? "Keep the schema as registered and fix the extraction from what the session already read, then call finish_build again with the same executionId; never run the write again for this."
-                        : "Keep the schema as registered and fix the extraction so it returns each value, then run the example again and call finish_build with that new executionId."
-                    } If the site no longer shows a value, propose mint_update with an output change for that field, which the tool's owner must confirm, and a reason when it removes the field; once it is updated, call finish_build again with the same executionId. Otherwise end with report_blocked, reason site_lacks_capability, naming the field.`,
-                  );
-                // A host's own comparison with the published tool's inputs: exactly its fixed
-                // instruction, with each broken input as data.
-                if (error.reason === "input_contract_changed")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { brokenInputs: error.brokenInputs ?? [] },
-                    inputContractChangedInstruction(buildEffect === "write"),
-                  );
-                if (error.reason === "tool_name_taken")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published and not reviewed: ${registryRefusal("tool_name_taken").instruction}`,
-                  );
-                if (error.reason === "site_metadata_required")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published and not reviewed: this is the first tool of this site's integration, which takes its name from this publication. Add siteName, the site's everyday name as people say it (such as Example Flights, 1 to 60 characters), and siteSummary, one sentence on what the site is, not what this tool does (1 to 160 characters), to finish_build's metadata, and call finish_build again with the same executionId. Both are public: write them from what the site shows anyone, never from this account or session.",
-                  );
-                if (error.reason === "output_checks_blocked")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { outputFindings: error.outputFindings ?? [] },
-                    outputChecksRefusal(error.outputFindings ?? []),
-                  );
-                if (error.reason === "variants_unsupported")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: this Kernel script declares supportedVariants, and only Effect runs dispatch variants, so every call would fail with InvalidOutput. Either remove supportedVariants from the tool's metadata (keep one script that handles the variation itself) and call finish_build again with the same executionId; the recorded example and result stay valid and nothing needs to run again. Or, if variants are essential, make it an offline tool: execute a new example with target pureFiles, then call finish_build with that new executionId. The same executionId is refused again while its receipt is a Kernel script.",
-                  );
-                if (
-                  error.reason === "http_implementation_untested" ||
-                  error.reason === "http_implementation_stale"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    (error.reason === "http_implementation_stale"
-                      ? "Not published yet: src/tool-http.mjs changed since its last passing live test, and a test counts only for the source it ran. Run execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs on the current file, or restore the version that passed, then call finish_build again with the same executionId."
-                      : "Not published yet: this read has no HTTP version that passed a live test. Read .agents/http-mcp/SKILL.md from the top, find where the example's data comes from (step 1), write src/tool-http.mjs and test it live with execute purpose test, target liveBrowser, entrypoint src/tool-http.mjs. Fix and test again until its output matches the example's; a request refused before sending never counts. A read signed out then runs its cases as a batch on it with live_tests, as on src/tool.mjs (testing skill); a signed-in read checks it once, against the example. Then call finish_build again with the same executionId.") +
-                      " If it can't port, call finish_build again with httpVersion naming the signal from the skill's \"When it can't port\", the requestId it rests on and a short note; don't write or run a stub. The host asks only once.",
-                  );
-                if (error.reason === "login_url_one_time")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { ...error.publicationFeedback },
-                    "Not published yet: the login URL this tool would publish (the loginUrl you passed to authenticate, or the page the browser was on when you passed none) is one authorization request or one browser's session: an identity provider's authorize URL, a URL carrying one-time authorization values, or one carrying a device or session identifier the site put in the link for this browser (oneTimeParameters names the authorize path and those parameters, never their values). They are spent once this sign-in ends or belong to this browser, so later runs that reopen it would start from stale values or another browser's session. The host changed nothing. Navigate the browser to the site's stable sign-in entry, the page a person would bookmark or the site's own login link before it redirected, run authenticate again with that page's address as loginUrl, then call finish_build again with the same executionId. If no stable entry exists, call finish_build again and the host publishes the URL as it is, flagged. The host asks only once.",
-                  );
-                if (
-                  error.reason === "login_url_contains_credential" ||
-                  error.reason === "metadata_contains_credential"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { ...error.publicationFeedback },
-                    "Not published: each part named in parts holds a registered credential (credentialKinds names the kind, never the value). A published tool never carries one, and the host changes nothing itself. For loginUrl, run authenticate again with a login URL that has no credential in it, the site's plain sign-in page. For name, description, siteName or siteSummary, rewrite the text without it. Then call finish_build again with the same executionId. The host refuses every time until the credential is gone; the build is not over.",
-                  );
-                if (error.reason === "sign_in_version_refused")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { signInFindings: error.publicationFeedback?.signInFindings ?? [] },
-                    "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
-                  );
-                if (error.reason === "definition_login_reference") {
-                  const section = error.screening?.section;
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { section },
-                    `Not published: the tool's ${section ?? "definition"} quotes this build's account reference, an opaque value the host gave this build to identify its login (such as an inspection's accountScope). It means nothing to a caller and is never published. ${definitionFix(section)} The existing example and result remain recorded.`,
-                  );
-                }
-                if (error.reason === "secret_handle") {
-                  const path = error.screening?.path ?? "the source";
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { path: error.screening?.path },
-                    `Not published: ${path} holds a {{secret.…}} handle. A handle works only in this build's own executions, where the host fills in the caller's answer; published code never holds a handle or a value. Declare the value as a secret question in the operation's questions and read it with ask at run time, as .agents/caller-input/SKILL.md shows, then call finish_build again.`,
-                  );
-                }
-                if (error.reason === "file_handle")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: the source holds a {{file.…}} handle, which names a caller's file only in this build. A tool takes each file from its input: type the field as FileInput and pass the input's value to files.place. Remove the handle from the source, then call finish_build again.",
-                  );
-                if (error.reason === "file_readback")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: the source moves or reads a file outside the host's file service. Rule: ${fileReadbackRule}. Remove that code, then call finish_build again.`,
-                  );
-                if (error.reason === "card_readback")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: the source fills a card and could read it back. Rule: ${cardReadbackRule}. Remove that code, then call finish_build again.`,
-                  );
-                if (
-                  error.reason === "session_token_literal" ||
-                  error.reason === "session_token_placeholder"
-                ) {
-                  const path = error.screening?.path ?? "the source";
-                  const placeholder = error.reason === "session_token_placeholder";
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { path: error.screening?.path, section: error.screening?.section },
-                    placeholder
-                      ? `Not published: ${path} still reads [session token withheld] where an earlier release withheld a live token, so it no longer matches what ran. Do not paste a token back in: edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded.`
-                      : error.screening?.section === "loginUrl"
-                        ? "Not published: the login URL holds a literal session token observed during sign-in. Run authenticate again with the site's stable sign-in page URL, without the token, then call finish_build again with the same executionId. The host keeps the URL unchanged for your HTTP work and does not end this build."
-                        : `Not published: ${path} holds a literal session token from captures/session-tokens.json. Published code never contains a token. Edit the source to read the token at run time from the response, cookie or page that issues it, then call finish_build again; the existing example and result remain recorded. Your workspace keeps the token for your own HTTP work. If the file is src/tool-http.mjs, run its live test again first, because the edit invalidates the last one.`,
-                  );
-                }
-                if (error.reason === "confirm_action_unmatched")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { confirmActionIds: error.confirmActionIds ?? [] },
-                    "Not published: the session accepted confirm popups reported to decideDialog under these step names, and the composed script does not report them under the same names. Reuse each step literal exactly, for example by importing the step's helper, so runs accept the same popups without asking; then call finish_build again with the same executionId. Never run the write again.",
-                  );
-                if (error.reason === "write_not_submitted")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
-                  );
-                if (error.reason === "write_path_unfinished")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { writePathMarks: error.writePathMarks ?? [] },
-                    "Not published: the write session has not settled every commit mark of its recorded write path; writePathMarks names the ones not yet settled (a step that lost its result may have entered them). The session stays open until they are. Read back first where a receipt says so: a read-back that confirms the write settles the marks a lost step entered. Then run only steps that never ran, on the page as it stands, and call finish_build naming the step that confirmed the path's end. Never redo a step that finished or may have. When the page shows the path must change, such as a step the site skips for this input, declare the revised path in writePath on the next act step. When the site refuses to go on, or nothing can settle a mark, end with report_blocked.",
-                  );
-                if (error.reason === "write_path_undeclared")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    { writePathMarks: error.writePathMarks ?? [] },
-                    "Not published: the composed script leaves out commit marks of the session's recorded write path from write.commits; writePathMarks names them. Run every step of the path in the composed script, marked by the same helper the session used, declare every mark in order, and call finish_build again with the same executionId. Never run the write again.",
-                  );
-                if (error.reason === "refusal_unreadable")
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    {},
-                    "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
-                  );
-                if (
-                  error.reason === "confirmation_undeclared" ||
-                  error.reason === "commit_marks_undeclared" ||
-                  error.reason === "commit_marks_unentered" ||
-                  error.reason === "confirmation_unrecorded" ||
-                  error.reason === "contract_input_mismatch" ||
-                  error.reason === "contract_output_mismatch"
-                )
-                  return notPublished(
-                    error.code,
-                    error.reason,
-                    error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
-                      ? { inputIssues: error.inputIssues }
-                      : error.reason === "contract_output_mismatch" &&
-                          error.outputIssues !== undefined &&
-                          error.outputIssues.length > 0
-                        ? { outputIssues: boundedOutputIssues(error.outputIssues) }
-                        : {},
-                    (error.reason === "confirmation_undeclared"
-                      ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
-                      : error.reason === "commit_marks_undeclared"
-                        ? "Not published: the composed script names none of its commit steps. List every step that can change the site (an autosave, a saved form step, the final submit) in order as write.commits, such as commits: ['save-address', 'place-order'], using short lowercase hyphenated names, and mark each with the context's enteringCommit(name) right before the execute call that can send it (an HTTP implementation calls journal.enteringCommit(name) before that request). Opening a form and typing into its fields are not commit steps unless the site's requests show they save the caller's change; a lookup, suggestion, validation or analytics request saves nothing. Then call finish_build again with the same executionId."
-                        : error.reason === "commit_marks_unentered"
-                          ? `Not published: the composed script declares a commit step that no act step of the session entered, so nothing shows its marks follow the real commit. Declare exactly the marks the session's act steps entered, marked by the same helper the composed script uses, and call finish_build again with the same executionId. If the session stopped before later save steps because the caller's facts ran out, declare those steps in commitsUnproven; publication records them as unproven until a run reaches them. Keep them in commits too, after the entered ones. ${error.publishesOnRefusal === true ? `If the session's steps entered none because the site said no to the example's valid inputs before any save, the act step named for publication must return that no as a refusal its output schema declares, and every commit step goes in commitsUnproven as well as in commits; then call finish_build again with the same executionId. If they entered none for any other reason, it cannot publish` : "If the session's steps entered none, it cannot publish"}: never run the write again for this; end the build and say its commit steps were not marked.`
-                          : error.reason === "confirmation_unrecorded"
-                            ? "Not published: the declared write confirmation does not match the session. Name the act step that recorded the declared confirmation, or declare what the session actually read; a session that recorded a confirmation is never unverifiable. Then call finish_build again."
-                            : error.reason === "contract_input_mismatch"
-                              ? `Not published: the script's input schema rejects the input the example or session ran: the caller's own, or the exampleInput you passed when the caller's was empty (in maintenance, the original invocation's).${inputIssueText(error.inputIssues)} Correct the schema, or the code that reads that input, so this input decodes, then call finish_build again with the same executionId. Keep each input the tool needs required; make one optional only when the tool can work without it.`
-                              : request.mode === "maintenance" && buildEffect !== "write"
-                                ? "Not published: the script's output schema rejects the output this repair's example returned. A field the registered tool returns stays in the schema as registered. Fix the extraction so it returns that field, then run the example again and call finish_build with that new executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
-                                : request.mode === "maintenance"
-                                  ? "Not published: the script's output schema rejects the output this repair's write session returned. A field the registered tool returns stays in the schema as registered. Fix the extraction from what the session already read, then call finish_build again with the same executionId. If the site no longer shows the field, propose mint_update with an output change for it, which the tool's owner must confirm, and a reason when it removes the field, or end with report_blocked, reason site_lacks_capability, naming the field."
-                                  : buildEffect === "write"
-                                    ? "Not published: the script's output schema rejects the output this write's confirming step returned. Correct the schema so that output decodes, such as a status value the site returned that its enum lacks. Return each missing field from the step that confirms the write, read from the commit's response or the page it left. If the commit's own response or page showed the write went through but the record was later cancelled, refunded or deleted, so a field can no longer be read, make that field optional so the tool can publish, and say why in its description. Then call finish_build again with the same executionId."
-                                    : "Not published: the script's output schema rejects the output this read's example returned. Correct the schema so that output decodes: a field the example did not return must be optional or removed. Then call finish_build again with the same executionId.") +
-                      (error.reason === "contract_output_mismatch" &&
-                      request.mode === "maintenance" &&
-                      buildEffect !== "write"
-                        ? ""
-                        : " The host extracts the contract offline; never run the write or the example again for this."),
-                  );
+                const fixable = fixableRefusal(error, notPublished, review);
+                if (fixable !== undefined) return fixable;
                 if (error.reason === "destination_validation") {
                   // Publication uses the route evidence the host recorded while the example ran.
                   // Source edits and another finish_build on the same receipt cannot change it,
@@ -6815,7 +7354,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   instruction:
                     "finding names the id of a finding in Guardian's latest publication denial, and answerable lists them. Set it to one of those, or leave it out, and ask again.",
                 });
-              const { finding: _finding, ...unmarked } = decoded;
+              const { finding: _finding, asksConsent: _consent, ...unmarked } = decoded;
               const proposed = callerVisibleRequest(
                 {
                   ...unmarked,
@@ -6851,6 +7390,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // request the agent writes, the effect question included, is reviewed before the
               // caller sees it: the caller may answer any of its choices in their own words.
               let reviewId: string | undefined;
+              // Guardian's own reading of the question: one it allows only as deciding how the
+              // tool works asks no consent, whatever the minter marked.
+              let reviewedNoConsent = false;
               // One id from proposal on: its review, the request the caller sees and its end.
               const requestId = randomUUID();
               if (dependencies.capabilityQuestion === undefined) {
@@ -6869,6 +7411,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 });
                 yield* reviewCompleted;
                 reviewId = review.reviewId;
+                reviewedNoConsent =
+                  review.outcome === "allow_business" &&
+                  review.label !== undefined &&
+                  noConsentQuestionLabels.includes(review.label);
                 // When the question came relative to the work before it, without reading the
                 // model's reasoning: how much ran first and whether sign-in was tried.
                 const priorPurposes = [...purposes.values()];
@@ -6954,17 +7500,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // The read-or-write question is the turn's only move, so it is never withdrawn.
                 // Any other is asked again in other words unless Guardian found none needed.
                 if (review.outcome !== "allow_business") {
-                  // A question already reworded once is not asked again in other words.
+                  // The latest review's label decides, even for a question reworded before: one
+                  // still needed is asked again, and the attempt's model calls bound the rounds. A
+                  // question reworded before whose latest label names no rule is not asked again.
                   const ids = submitted.questions.map((question) => question.id);
                   const rewordedBefore = ids.some((id) => rewordedQuestions.has(id));
                   if (!effectQuestion) for (const id of ids) rewordedQuestions.add(id);
+                  const unlabelled = review.label === undefined || review.label === "other";
                   const questionNeeded = effectQuestion
                     ? undefined
-                    : rewordedBefore
-                      ? false
-                      : review.label === undefined || review.label === "other"
-                        ? undefined
-                        : !questionNotNeededLabels.includes(review.label);
+                    : unlabelled
+                      ? rewordedBefore
+                        ? false
+                        : undefined
+                      : !questionNotNeededLabels.includes(review.label);
                   return JSON.stringify({
                     status: "question_rejected",
                     rationale,
@@ -6974,7 +7523,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "Reword the question using the rationale and call request_input again. This read-or-write question is required, and no other tool opens until the person answers it. The host sets its two answer labels, so change only the prompt."
                       : questionNeeded === true
                         ? "Guardian wants this question in other words: the owner still needs to answer it. Call request_input again, once, with the question reworded as the rationale says and the same question ids; do not drop it. The reworded question is reviewed again."
-                        : rewordedBefore
+                        : rewordedBefore && unlabelled
                           ? "Guardian sent this question back again after it was reworded once, so it is not asked again. Go on without asking it, using what the rationale says, and do not ask it again in other words."
                           : questionNeeded === false
                             ? "Guardian found no question needed: the rationale says why, such as an answer you already have or the default the step keeps. Continue without asking it, and do not ask it again in other words."
@@ -6985,6 +7534,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               for (const { questionId, reviewId } of confirms) confirmAsks.set(questionId, reviewId);
               askingId = requestId;
               askingEndsBuild = endsBuild.size > 0;
+              askingConsent = asksConsent(decoded) || !reviewedNoConsent;
+              askingRecommended = recommendedAnswers(decoded);
               handedBackQuestion = undefined;
               const answers = yield* dependencies.askInput(submitted, {
                 requestId,
@@ -6994,12 +7545,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             }).pipe(
               Effect.catchIf(
                 (error) => error.noResponse !== undefined,
-                (error) => questionUnanswered(error, askingId, askingEndsBuild),
+                (error) =>
+                  questionUnanswered(error, askingId, askingEndsBuild, {
+                    consent: askingConsent,
+                    recommended: askingRecommended,
+                  }),
               ),
               Effect.ensuring(
                 Effect.sync(() => {
                   askingId = undefined;
                   askingEndsBuild = false;
+                  askingConsent = true;
+                  askingRecommended = {};
                 }),
               ),
               // error-reporting-allow: typed-recovery an invalid request is the model's to correct, told as its result
@@ -7090,6 +7647,38 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       yield* diagnose({ phase: "blocked", reason: "sign_in_unavailable" });
                       return endedForSignIn;
                     }
+                    // A temporary decline is the site's own refusal for now, so only
+                    // `site_declined` takes it, and the time it names is still ahead.
+                    const temporary = report.temporary === true || report.availableAt !== undefined;
+                    if (temporary && report.reason !== "site_declined")
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "temporary_not_declined",
+                        userInputRequired: false,
+                        instruction:
+                          "temporary and availableAt apply only to site_declined. Remove them, or use site_declined if the site itself turned the request away for now.",
+                      });
+                    // A limit on the build's requests is the site's answer to its volume, which
+                    // only a site_unavailable report names.
+                    if (report.rateLimited === true && report.reason !== "site_unavailable")
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "rate_limited_not_unavailable",
+                        userInputRequired: false,
+                        instruction:
+                          "rateLimited applies only to site_unavailable. Remove it, or use site_unavailable if the site is limiting how many requests this build sends.",
+                      });
+                    if (
+                      report.availableAt !== undefined &&
+                      Date.parse(report.availableAt) <= (yield* Clock.currentTimeMillis)
+                    )
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "available_at_past",
+                        userInputRequired: false,
+                        instruction:
+                          "availableAt is not in the future. Give the next time the site says it takes the request, with its UTC offset, or leave availableAt out.",
+                      });
                     const explanation = redactCallerText(
                       yield* screenMintText(dependencies, report.explanation),
                     );
@@ -7107,16 +7696,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     );
                     if ("refusal" in ending) return ending.refusal;
                     // An ending the checks above accepted, while the build's latest sign-in
-                    // never confirmed, or while the only refusal on record is Guardian's final
-                    // refusal of a sign-in step: the site never got as far as judging the task, so it
-                    // cannot have declined it or lacked it, and a policy or host check that
-                    // stopped it stopped a sign-in. With no failed sign-in pending, whose own
+                    // never confirmed and either no earlier confirmed sign-in still stands
+                    // (`confirmedSignInStands`) or the host saw the site lose its session after
+                    // it (`signInSessionLoss`), or while the only refusal on record is Guardian's
+                    // final refusal of a sign-in step: the site never got as far as judging the
+                    // task, so it cannot have declined it or lacked it, and a policy or host check
+                    // that stopped it stopped a sign-in. With no failed sign-in pending, whose own
                     // refusal above asks the agent to resolve it, the build ends as sign-in
                     // unavailable, worded by what the host saw, and its caller is never told to
                     // change the request. The owner's own no, a question they left unanswered and
                     // their choice to end the build keep their endings, a policy report renamed to
-                    // one included. A host refusal a later finish_build got past is still a
-                    // refusal on record.
+                    // one included, and so does a stop the caller's own request set, which a
+                    // caller_input report cites: such a stop may fall on the sign-in itself. A
+                    // host refusal a later finish_build got past is still a refusal on record.
                     // A host_refused report keeps its reason when a host check stopped the build
                     // apart from the sign-in (`hostRefusalApartFromSignIn`), such as a sign-in
                     // screen refused at its destination after the login went out. One that stands
@@ -7124,21 +7716,30 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // refill or a publication of a recipe nothing verified, ends as sign-in
                     // unavailable, its record naming the checks.
                     const hostRefusals = "hostRefusals" in ending ? ending.hostRefusals : undefined;
+                    const sessionLoss = dependencies.signInSessionLoss?.();
                     if (
                       ending.reason !== "owner_declined" &&
                       ending.reason !== "question_unanswered" &&
                       ending.reason !== "owner_ended" &&
+                      ending.reason !== "caller_input" &&
                       !("apartFromSignIn" in ending && ending.apartFromSignIn === true) &&
-                      (signInUnconfirmed ||
+                      ((signInUnconfirmed &&
+                        (!confirmedSignInStands || sessionLoss !== undefined)) ||
                         (signInRefusalOnly && !hostRefused && !hostRefusalPassed)) &&
                       unresolvedSignIn === undefined &&
                       loginDeclined === undefined &&
                       !signInAbandoned
                     ) {
-                      const sessionLoss = dependencies.signInSessionLoss?.();
+                      // The minter's explanation still says why, kept only as a last answer is:
+                      // once Guardian's review of a blocked outcome allows its caller to read it.
+                      const stopExplanation =
+                        terminal === undefined
+                          ? yield* reviewedStopExplanation(explanation)
+                          : undefined;
                       terminal ??= {
                         build: "incomplete",
                         recoveryReason: "sign_in_unavailable",
+                        ...(stopExplanation === undefined ? {} : { stopExplanation }),
                         summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
                       };
                       yield* diagnose({
@@ -7147,11 +7748,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         reported: report.reason,
                         ...(hostRefusals === undefined ? {} : { hostRefusals }),
                         ...(sessionLoss === undefined ? {} : { sessionLoss }),
+                        explanationShown: stopExplanation !== undefined,
                       });
                       return endedForSignIn;
                     }
                     const submitted = { ...report, reason: ending.reason };
-                    const review = yield* reviewBlockedExplanation(explanation);
+                    // A site-fault report handed back as contradicted, sent again before the
+                    // build ran anything new, stands on the evidence that contradicted it.
+                    if (
+                      contradictedReport !== undefined &&
+                      contradictedReport.executions === executions.length &&
+                      siteFaultReasons.has(submitted.reason)
+                    )
+                      return reportContradictedAnswer(submitted.reason, undefined);
+                    const availableAt =
+                      submitted.reason === "site_declined" ? report.availableAt : undefined;
+                    // Guardian reviews the time beside the words, as the caller reads both.
+                    const review = yield* reviewBlockedExplanation(
+                      availableAt === undefined
+                        ? explanation
+                        : `${explanation}\nAvailable again at: ${availableAt}`,
+                    );
                     yield* active("publication");
                     if (review.outcome === "retry")
                       return reviewUnavailableAnswer(
@@ -7159,6 +7776,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         "Guardian could not review the explanation, so the build has not ended and nothing reached the caller. Call report_blocked again for a fresh review. If Guardian stays unavailable long enough, the build ends blocked and the caller reads only the reason's fixed sentence.",
                         { next: { retryable: true } },
                       );
+                    // Guardian found the build's own evidence contradicts a report that the site
+                    // is at fault, such as a page that only looked blank after an overlay closed
+                    // while it held the data: the report goes back to the minter to keep
+                    // building, once in the attempt, rather than for other words alone.
+                    if (
+                      review.outcome === "reword" &&
+                      review.label === "misdescribed" &&
+                      siteFaultReasons.has(submitted.reason) &&
+                      contradictedReport === undefined
+                    ) {
+                      contradictedReport = { executions: executions.length };
+                      yield* diagnose({
+                        phase: "blocked",
+                        reason: submitted.reason,
+                        explanationReview: "contradicted",
+                      });
+                      return reportContradictedAnswer(
+                        submitted.reason,
+                        yield* screenRationale(review.rationale),
+                      );
+                    }
                     // Guardian asked for other words: the agent revises or withdraws its
                     // explanation, and the build goes on. A reword never ends a build.
                     if (review.outcome !== "allow_business" && review.outcome !== "unavailable") {
@@ -7194,6 +7832,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     const blocked = {
                       reason: submitted.reason,
                       ...(shown ? { explanation } : {}),
+                      ...(temporary && submitted.reason === "site_declined"
+                        ? { temporary: true as const }
+                        : {}),
+                      // Guardian reviewed the time with the words, so it shows only beside them.
+                      ...(shown && availableAt !== undefined ? { availableAt } : {}),
+                      ...(report.rateLimited === true && submitted.reason === "site_unavailable"
+                        ? { rateLimited: true as const }
+                        : {}),
                     };
                     // A report that stood on refused live tests names them and the standing
                     // denial; the outcome keeps the denial's reason and category.
@@ -7299,7 +7945,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           ? [{ setting: "site", origin: change.origin }]
                           : change.setting === "login" && !narrows(change)
                             ? [{ setting: "login", change: change.change }]
-                            : change.setting === "effect"
+                            : change.setting === "effect" && change.effect === "write"
                               ? [{ setting: "effect", effect: change.effect }]
                               : [],
                     );
@@ -7465,6 +8111,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           "This host cannot test a marker. Confirm yourself that it is absent on the signed-out pages you explored before signing in, and present on the signed-in page and on another page you visited signed in.",
                       });
                     const result = yield* check(marker);
+                    // A marker the live page does not show found the site not signed in.
+                    if (!result.signedInNow) confirmedSignInStands = false;
                     const verdict = validateSignedInMarker({ marker, check: result });
                     return JSON.stringify({
                       kind: "host_signed_in_marker",
@@ -7790,8 +8438,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }),
         diagnostics: [...diagnostics],
         ...(example === undefined ? {} : { exampleId: example.executionId }),
-        // A build becoming a write leaves its read example's claim behind.
-        ...(task.effect === "write" && buildEffect !== "write"
+        // A build whose effect changes leaves the earlier effect's example claim behind.
+        ...((task.effect === "write") !== (buildEffect === "write")
           ? { exampleClaimed: false, writeSession: "none" as const }
           : { exampleClaimed, writeSession }),
         unavailableOutputRefusals,
@@ -7868,7 +8516,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                                 return yield* Effect.fail(error);
                               // A rejoined question that went unanswered, such as one that expired
                               // before the takeover, goes on as the live question would have.
-                              return { result: yield* questionUnanswered(error, undefined, false) };
+                              // Guardian's reading of it is not kept, so it counts as asking
+                              // consent, which only a write repair reads.
+                              const started = decodeAgentRequestJson(call.arguments);
+                              return {
+                                result: yield* questionUnanswered(error, undefined, false, {
+                                  consent: true,
+                                  recommended:
+                                    started._tag === "Left" ? {} : recommendedAnswers(started.right),
+                                }),
+                              };
                             }
                             const recoveredTool = rejoined.right;
                             if (recoveredTool === undefined) return undefined;
@@ -7966,6 +8623,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...(dependencies.compactionSkillsNote === undefined
             ? {}
             : { compactionSkillsNote: dependencies.compactionSkillsNote }),
+          ...(dependencies.saveResult === undefined
+            ? {}
+            : { saveResult: dependencies.saveResult }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
               ? (({ retainCapture: _capture, ...available }) => available)(reviewedActions)

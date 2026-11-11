@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import { approvalNumberPattern, type AutofillPopup } from "./autofill-contracts.js";
 import { autofillPageCode } from "./autofill-page-code.js";
 import type { AutofillPage } from "./autofill-step.js";
-import { sameSite } from "../runtime/same-site.js";
+import { hostOnSiteSource, sameSite, siteDomain } from "../runtime/same-site.js";
 
 /** A recorded element on a screen's page, which is read only on the screen's allowed frames. */
 interface ScreenElement {
@@ -61,10 +61,15 @@ return null;`,
     .pipe(Effect.map((result) => (typeof result === "string" ? result : undefined)));
 };
 
-/** Reads only whether a recorded rejection marker is visible on its screen's allowed frames. */
+/**
+ * Reads only whether a recorded rejection marker is visible on its screen's allowed frames, or in
+ * an https frame on the site's registrable domain, where the host types a sign-in too: a sign-in
+ * can sit in a frame on another host of the site.
+ */
 export const autofillMarkerVisible = (input: ScreenElement) => {
   const expected = allowedScreenOrigin(input);
   if (expected === undefined) return Effect.succeed(false);
+  const domain = siteDomain(input.siteOrigin);
   // A known absent recorded popup has no visible marker; opener verification still decides success.
   return input.page
     .execute(
@@ -72,10 +77,12 @@ export const autofillMarkerVisible = (input: ScreenElement) => {
 const expected = ${JSON.stringify(expected)};
 if (new URL(primary.url()).origin !== expected) return false;
 const origins = ${JSON.stringify([expected, ...input.authenticationOrigins])};
+const onSiteHost = ${domain === undefined ? "() => false" : hostOnSiteSource(domain)};
 for (const frame of primary.frames()) {
-  let origin;
-  try { origin = new URL(frame.url()).origin; } catch { continue; }
-  if (!origins.includes(origin)) continue;
+  let url;
+  try { url = new URL(frame.url()); } catch { continue; }
+  if (!origins.includes(url.origin) && !(url.protocol === "https:" && onSiteHost(url.hostname)))
+    continue;
   const marker = frame.locator(${JSON.stringify(input.selector)});
   const count = Math.min(await marker.count(), 100);
   for (let index = 0; index < count; index++)

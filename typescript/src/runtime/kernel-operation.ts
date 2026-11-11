@@ -3,6 +3,7 @@ import { Effect, Either, Schema } from "effect";
 import type { Context } from "effect";
 import { DialogChoice, DialogFailure, DialogType } from "./dialogs.js";
 import { ChallengeFailure, challengeSolverWaitMs } from "./challenge.js";
+import { handsOff } from "./input-request.js";
 import { ScriptInput, ScriptInputFailure } from "./script-input.js";
 import type {
   AskSpecOf,
@@ -20,6 +21,7 @@ import { inspectSignInRejection } from "./sign-in-rejection.js";
 import {
   FileField,
   FileRefused,
+  ScreenshotTarget,
   SiteFileLimits,
   type FileChannel,
   type FileRefusalReason,
@@ -88,6 +90,25 @@ export interface ScriptAsk<Questions extends ScriptQuestionDeclarations> {
   }): Promise<{ readonly [Asked in Id]: ScriptAnswerOf<Questions[Asked]> }>;
 }
 
+/** The ids `Questions` declares as browser hand-offs; any id when the declarations aren't known. */
+export type HandOffId<Questions extends ScriptQuestionDeclarations> = string extends keyof Questions
+  ? string
+  : {
+      [Id in keyof Questions & string]: Questions[Id] extends { readonly type: "browser_handoff" }
+        ? Id
+        : never;
+    }[keyof Questions & string];
+
+/**
+ * The context's `handOff`: asks one declared `browser_handoff` question and resolves once the
+ * person marked the step done.
+ */
+export type ScriptHandOff<Questions extends ScriptQuestionDeclarations> = <
+  Id extends HandOffId<Questions>,
+>(
+  id: Id,
+) => Promise<void>;
+
 /**
  * The context's `askOne`: asks one question through `ask` and returns that answer itself, so
  * `askOne("seat", { options })` gives what `(await ask({ seat: { options } })).seat` does.
@@ -145,6 +166,21 @@ export interface KernelOperationContext<
   /** Asks one declared question and returns its answer itself, not one answer per id. */
   readonly askOne: ScriptAskOne<Questions>;
   /**
+   * Hands the live browser to a person at a step the build's request named, such as reviewing the
+   * filled form before it is submitted, and resolves once they mark it done. The id is a declared
+   * `browser_handoff` question, asked alone; another id throws `ScriptInputFailure` `Undeclared`.
+   * The browser stays open and the deadline pauses while the person works, up to 30 minutes, and
+   * no answer by then throws `NoResponse`. A host that cannot show the browser to a person throws
+   * `Unavailable`. The person may change anything on the page, so read it again before acting:
+   * the same step still waiting, a result such as the site's confirmation, or neither, which is
+   * `errors.HandoffStateChanged`. In a write, every declared commit step not yet confirmed reads
+   * sent once the host opens the hand-off, since the person may submit it; a hand-off the host
+   * refused before showing it marks nothing. Afterwards read the confirmation and call
+   * `verified()`, or, when the same form still waits unsubmitted, call `notCommitted(name)` for
+   * each step the person did not send, then enter it as usual.
+   */
+  readonly handOff: ScriptHandOff<Questions>;
+  /**
    * Types the caller's payment card into the card fields of the site's own checkout, the way the
    * host types a password. Ask for every part of the card in one `ask`, with a declared secret
    * question for each part whose secretKind is card_number, card_expiry, card_cvc or
@@ -156,9 +192,9 @@ export interface KernelOperationContext<
    * field's part and status, and throws `OperationFailure`, with no value in it, when it typed
    * nothing or not every field.
    */
-  readonly fillCard: (step: {
-    readonly fields: readonly { readonly selector: string; readonly handle: string }[];
-  }) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
+  readonly fillCard: (
+    step: ScriptCardFillRequest,
+  ) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
   /**
    * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
    * polling `ready`, a code body that returns true once the page is usable. It throws
@@ -202,12 +238,20 @@ export interface KernelOperationContext<
    * It also fits a click the site's own answer refused as a whole with nothing created, such as a
    * commit response that reports an expired quote and returns no record: call it with
    * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
-   * enter the step for one more click. Pass `siteRefused` only for such a refusal. When the page
-   * flags fields or shows a validation message after the click, call `blockingRequiredFields`
-   * first; when it returns `null` and the same form shows again, still holding the values the step
-   * filled, with no next page or confirmation, the site refused the save as a whole. A host may
+   * enter the step for one more click. Pass `siteRefused` only for such a refusal. The page's own
+   * refusal of that write counts, and so does an answer with an error that is not a server error
+   * when a fresh read of the same view the script read before the mark shows each field whose sent
+   * value differs from that read unchanged, but only to end the run; a timeout, silence or a
+   * missing element never does.
+   * When the page flags fields or shows a validation message after the click, call
+   * `blockingRequiredFields` first; when it returns `null` and the same form shows again, still
+   * holding the values the step filled, with no next page or confirmation, the site refused the
+   * save as a whole. A host may
    * refuse to let a step be entered again when its click had neither that refusal nor
    * `blockingRequiredFields`' fields.
+   * After a browser hand-off (`handOff`), which marks every declared step still unsent as sent, it
+   * puts back a step the person did not send: call it when the page shows the same form still
+   * waiting to be submitted, with no confirmation, before entering that step yourself.
    * It works once per step in a run, and only for a step in the contract's `write.commits` when it
    * declares any: a second call for the same step, another name, a step this run did not enter
    * from unsent, or one confirmed since throws `CommitAlreadySent`, which ends the run with the
@@ -232,8 +276,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on either.
+   * captures a download the page starts, `screenshot` a picture of the page. The bytes stay with
+   * the host. A run without the host's file service, such as an offline run, throws
+   * `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -266,12 +311,65 @@ while (true) {
 }`;
 
 type Declared = ScriptQuestionDeclarations[string];
+
+/** The declared question an ask of exactly one id puts, if it is a browser hand-off. */
+const handOffAsked = (
+  questions: ScriptQuestionDeclarations | undefined,
+  input: Parameters<Context.Tag.Service<ScriptInput>["ask"]>[0],
+): string | undefined => {
+  const ids =
+    typeof input === "string" ? [input] : Array.isArray(input) ? input : Object.keys(input);
+  const [id] = ids;
+  if (ids.length !== 1 || id === undefined || questions === undefined) return undefined;
+  const declaration: unknown = Object.hasOwn(questions, id) ? questions[id] : undefined;
+  return handsOff({ [id]: declaration }) ? id : undefined;
+};
+
+/**
+ * Once a write's browser is handed to a person, who may submit it: every declared commit step
+ * still unsent reads sent, entered from unsent, so the script may put back with `notCommitted`
+ * one the person left unsubmitted. A confirmed step stays confirmed, and a step maintenance
+ * settled stays as it is. A write that declares no steps marks a possible dispatch, unless it
+ * already recorded its confirmation, which then stands as a confirmed step does.
+ */
+const markHandOff = (journal: EffectJournal | undefined, write: WriteDeclaration | undefined) => {
+  if (journal === undefined || write === undefined) return;
+  const declared: unknown = write.commits;
+  const names = Array.isArray(declared)
+    ? declared.filter((name): name is string => typeof name === "string")
+    : [];
+  if (names.length === 0) {
+    if (Effect.runSync(journal.confirmation) === undefined)
+      Effect.runSync(journal.enteringDispatch);
+    return;
+  }
+  const marks = Effect.runSync(journal.commits);
+  for (const name of names)
+    if ((marks.find((mark) => mark.name === name)?.state ?? "not_sent") === "not_sent")
+      Effect.runSync(Effect.ignore(journal.enteringCommit(name)));
+};
+
+/**
+ * Failures after which a hand-off may have been shown to the person: it went unanswered, or the
+ * caller's access ended while it waited. Any other failure means the host could not show it, or
+ * says so by calling `opened` first.
+ */
+const shownBefore: ReadonlySet<string> = new Set(["NoResponse", "Unauthorized"]);
+
 /**
  * The context's `ask` over the runner's script input. The runtime checks every id and option
- * against the contract's declarations; the declared types only guide the script's author.
+ * against the contract's declarations; the declared types only guide the script's author. A
+ * browser hand-off marks a write's commit steps sent (`markHandOff`) once the host opens it, and,
+ * for a host that never says so, once the person answers or the request ends unanswered. A
+ * hand-off the host refused before showing it marks nothing.
  */
 const scriptAsk = (
   scriptInput: Context.Tag.Service<ScriptInput> | undefined,
+  handingOff: {
+    readonly questions?: ScriptQuestionDeclarations;
+    readonly journal?: EffectJournal;
+    readonly write?: WriteDeclaration;
+  } = {},
 ): ScriptAsk<ScriptQuestionDeclarations> => {
   function ask(id: string): Promise<ScriptAnswerOf<Declared>>;
   function ask<const Ids extends ReadonlyArray<string>>(
@@ -283,26 +381,52 @@ const scriptAsk = (
   function ask(
     input: Parameters<Context.Tag.Service<ScriptInput>["ask"]>[0],
   ): Promise<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>> {
-    return settle(
-      scriptInput === undefined
-        ? Effect.fail(new ScriptInputFailure({ code: "Unavailable" }))
-        : scriptInput.ask(input),
+    if (scriptInput === undefined)
+      return settle(Effect.fail(new ScriptInputFailure({ code: "Unavailable" })));
+    if (handOffAsked(handingOff.questions, input) === undefined)
+      return settle(scriptInput.ask(input));
+    let marked = false;
+    const mark = () => {
+      if (marked) return;
+      marked = true;
+      markHandOff(handingOff.journal, handingOff.write);
+    };
+    return settle(scriptInput.ask(input, { opened: mark })).then(
+      (answer) => {
+        mark();
+        return answer;
+      },
+      (error: unknown) => {
+        if (error instanceof ScriptInputFailure && shownBefore.has(error.code)) mark();
+        throw error;
+      },
     );
   }
   return ask;
 };
 
 /** The context's `askOne`, a thin wrapper over `ask` that unwraps the one answer. */
-const scriptAskOne = (
-  scriptInput: Context.Tag.Service<ScriptInput> | undefined,
-): ScriptAskOne<ScriptQuestionDeclarations> => {
-  const ask = scriptAsk(scriptInput);
-  return async (id: string, question: AskSpecOf<Declared> = {}) => {
+const scriptAskOne =
+  (ask: ScriptAsk<ScriptQuestionDeclarations>): ScriptAskOne<ScriptQuestionDeclarations> =>
+  async (id: string, question: AskSpecOf<Declared> = {}) => {
     const answer = (await ask({ [id]: question }))[id];
     if (answer === undefined) throw new ScriptInputFailure({ code: "Unavailable" });
     return answer;
   };
-};
+
+/** The context's `handOff`: `ask` for one declared hand-off, which resolves once it is done. */
+const scriptHandOff =
+  (
+    ask: ScriptAsk<ScriptQuestionDeclarations>,
+    questions: ScriptQuestionDeclarations | undefined,
+  ): ScriptHandOff<ScriptQuestionDeclarations> =>
+  async (id) => {
+    if (handOffAsked(questions, id) === undefined)
+      throw new ScriptInputFailure({ code: "Undeclared" });
+    const answer = await ask(id);
+    if (typeof answer !== "object" || !("done" in answer) || answer.done !== true)
+      throw new ScriptInputFailure({ code: "Unavailable" });
+  };
 
 /** The job's browser a Kernel script runs on, as the runner binds it. */
 interface ScriptBrowser {
@@ -458,6 +582,41 @@ const scriptFiles = (
         throw fileFailure(error, true);
       }
     },
+    screenshot: async (shot = {}) => {
+      const files = channel();
+      if (files.screenshot === undefined)
+        throw new OperationFailure("This run's host takes no screenshots", { dispatch: "not_sent" });
+      // The target is data the host writes into its own locator; anything else names no element.
+      // An option left undefined, such as an absent input passed on, is no option; anything but
+      // an options object, such as a selector passed alone, still names no target.
+      const given =
+        typeof shot === "object" && shot !== null && !Array.isArray(shot)
+          ? Object.fromEntries(Object.entries(shot).filter(([, value]) => value !== undefined))
+          : shot;
+      const target = Schema.decodeUnknownEither(ScreenshotTarget)(given);
+      if (Either.isLeft(target)) throw fileFailure(new FileRefused({ reason: "field_not_found" }));
+      try {
+        return await settle(
+          files.screenshot({
+            ...target.right,
+            timeoutMs: Math.min(
+              shot.timeoutMs ?? downloadWaitMs,
+              Math.max(0, options.deadline.remainingMs()),
+            ),
+          }),
+        );
+      } catch (error) {
+        // A picture over the caps is the host's limit, as a download's is; it sent nothing.
+        const overCap =
+          error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+        if (overCap !== undefined)
+          throw new OperationFailure(overCap.replace("downloaded file", "screenshot"), {
+            cause: error,
+            dispatch: "not_sent",
+          });
+        throw fileFailure(error);
+      }
+    },
   };
 };
 
@@ -478,7 +637,7 @@ const scriptFillCard =
     });
     if (Either.isLeft(request))
       throw new OperationFailure(
-        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
         { dispatch: "not_sent" },
       );
     const resume = options.deadline.suspend();
@@ -507,89 +666,95 @@ const makeKernelOperationContext = <Input>(
     readonly journal?: EffectJournal;
     /** The script's write declaration; the login hooks get none. */
     readonly write?: WriteDeclaration;
+    /** The script's declared questions, which tell a browser hand-off from any other ask. */
+    readonly questions?: ScriptQuestionDeclarations;
   },
-): KernelOperationContext<Input> => ({
-  kernel: options.kernel,
-  sessionId: options.sessionId,
-  siteOrigin: options.siteOrigin,
-  siteDomain: options.siteDomain,
-  input: options.input,
-  // Records how the run proved its effect, a read-back unless the site's message says so.
-  verified: (proof) => {
-    const kind = proof?.confirmation ?? "readback";
-    if (options.write?.confirmation === "unverifiable")
-      throw new WriteConfirmationRefused({ declared: "unverifiable", recorded: kind });
-    if (options.journal !== undefined) Effect.runSync(options.journal.confirmed(kind));
-  },
-  // Marks a named commit step sent just before the execute call that dispatches it.
-  enteringCommit: (name) => {
-    if (options.journal === undefined) return;
-    const entered = Effect.runSync(Effect.either(options.journal.enteringCommit(name)));
-    if (entered._tag === "Left") throw entered.left;
-  },
-  // A host journal without it cannot record the click unsent, so the step stays sent.
-  // `siteRefused` goes to the host only as the script's own word, so a host that checks each
-  // step's proof can tell it from a bare call.
-  notCommitted: (name, said) => {
-    if (options.journal === undefined) return;
-    const revert = options.journal.notCommitted;
-    if (revert === undefined) throw new CommitAlreadySent({ name });
-    const reverted = Effect.runSync(
-      Effect.either(said?.siteRefused === true ? revert(name, { siteRefused: true }) : revert(name)),
-    );
-    if (reverted._tag === "Left") throw reverted.left;
-  },
-  remainingMs: () => options.deadline.remainingMs(),
-  errors: operationErrors,
-  rejectedSignIn: (request) => settle(inspectSignInRejection(options, request)),
-  ensureSignedIn: options.ensureSignedIn,
-  decideDialog: async (shown) => {
-    const decide = options.dialogs;
-    if (decide === undefined) throw new DialogFailure({ reason: "unavailable" });
-    const report = Schema.decodeUnknownEither(DialogReport)(shown);
-    if (Either.isLeft(report)) throw new DialogFailure({ reason: "invalid_request" });
-    const resume = options.deadline.suspend();
-    try {
-      const choice = await settle(
-        decide({
-          interactionId: crypto.randomUUID(),
-          ...report.right,
-          message: report.right.message.slice(0, dialogMessageLimit),
-        }),
+): KernelOperationContext<Input> => {
+  const ask = scriptAsk(options.scriptInput, options);
+  return {
+    kernel: options.kernel,
+    sessionId: options.sessionId,
+    siteOrigin: options.siteOrigin,
+    siteDomain: options.siteDomain,
+    input: options.input,
+    // Records how the run proved its effect, a read-back unless the site's message says so.
+    verified: (proof) => {
+      const kind = proof?.confirmation ?? "readback";
+      if (options.write?.confirmation === "unverifiable")
+        throw new WriteConfirmationRefused({ declared: "unverifiable", recorded: kind });
+      if (options.journal !== undefined) Effect.runSync(options.journal.confirmed(kind));
+    },
+    // Marks a named commit step sent just before the execute call that dispatches it.
+    enteringCommit: (name) => {
+      if (options.journal === undefined) return;
+      const entered = Effect.runSync(Effect.either(options.journal.enteringCommit(name)));
+      if (entered._tag === "Left") throw entered.left;
+    },
+    // A host journal without it cannot record the click unsent, so the step stays sent.
+    // `siteRefused` goes to the host only as the script's own word, so a host that checks each
+    // step's proof can tell it from a bare call.
+    notCommitted: (name, said) => {
+      if (options.journal === undefined) return;
+      const revert = options.journal.notCommitted;
+      if (revert === undefined) throw new CommitAlreadySent({ name });
+      const reverted = Effect.runSync(
+        Effect.either(said?.siteRefused === true ? revert(name, { siteRefused: true }) : revert(name)),
       );
-      return Schema.decodeUnknownSync(DialogChoice)(choice, { onExcessProperty: "error" });
-    } finally {
-      resume();
-    }
-  },
-  // The runtime checks every id and option against the declarations; the types only guide.
-  ask: scriptAsk(options.scriptInput),
-  askOne: scriptAskOne(options.scriptInput),
-  fillCard: scriptFillCard(options),
-  files: scriptFiles(options),
-  waitPastChallenge: async ({ ready }) => {
-    // The SDK accepts only a whole-millisecond request timeout.
-    const limitMs = Math.floor(Math.min(challengeSolverWaitMs, options.deadline.remainingMs()));
-    const answer = await options.kernel.browsers.playwright.execute(
-      options.sessionId,
-      {
-        code: waitPastChallengeCode(ready, limitMs),
-        timeout_sec: kernelTimeoutSec(Math.min(limitMs + 10_000, options.deadline.remainingMs())),
-      },
-      { maxRetries: 0, timeout: limitMs + 20_000 },
-    );
-    if (answer.success !== true)
-      throw new OperationFailure(`waitPastChallenge failed: ${String(answer.error)}`, {
-        stderr: answer.stderr,
-      });
-    const result = Schema.decodeUnknownSync(WaitResult)(answer.result);
-    if (!result.cleared)
-      throw new ChallengeFailure({
-        code: "Unavailable",
-        solverWaitMs: Math.max(0, Math.round(result.waitedMs)),
-      });
-  },
-});
+      if (reverted._tag === "Left") throw reverted.left;
+    },
+    remainingMs: () => options.deadline.remainingMs(),
+    errors: operationErrors,
+    rejectedSignIn: (request) => settle(inspectSignInRejection(options, request)),
+    ensureSignedIn: options.ensureSignedIn,
+    decideDialog: async (shown) => {
+      const decide = options.dialogs;
+      if (decide === undefined) throw new DialogFailure({ reason: "unavailable" });
+      const report = Schema.decodeUnknownEither(DialogReport)(shown);
+      if (Either.isLeft(report)) throw new DialogFailure({ reason: "invalid_request" });
+      const resume = options.deadline.suspend();
+      try {
+        const choice = await settle(
+          decide({
+            interactionId: crypto.randomUUID(),
+            ...report.right,
+            message: report.right.message.slice(0, dialogMessageLimit),
+          }),
+        );
+        return Schema.decodeUnknownSync(DialogChoice)(choice, { onExcessProperty: "error" });
+      } finally {
+        resume();
+      }
+    },
+    // The runtime checks every id and option against the declarations; the types only guide.
+    ask,
+    askOne: scriptAskOne(ask),
+    handOff: scriptHandOff(ask, options.questions),
+    fillCard: scriptFillCard(options),
+    files: scriptFiles(options),
+    waitPastChallenge: async ({ ready }) => {
+      // The SDK accepts only a whole-millisecond request timeout.
+      const limitMs = Math.floor(Math.min(challengeSolverWaitMs, options.deadline.remainingMs()));
+      const answer = await options.kernel.browsers.playwright.execute(
+        options.sessionId,
+        {
+          code: waitPastChallengeCode(ready, limitMs),
+          timeout_sec: kernelTimeoutSec(Math.min(limitMs + 10_000, options.deadline.remainingMs())),
+        },
+        { maxRetries: 0, timeout: limitMs + 20_000 },
+      );
+      if (answer.success !== true)
+        throw new OperationFailure(`waitPastChallenge failed: ${String(answer.error)}`, {
+          stderr: answer.stderr,
+        });
+      const result = Schema.decodeUnknownSync(WaitResult)(answer.result);
+      if (!result.cleared)
+        throw new ChallengeFailure({
+          code: "Unavailable",
+          solverWaitMs: Math.max(0, Math.round(result.waitedMs)),
+        });
+    },
+  };
+};
 
 export const isKernelOperation = (
   value: unknown,
@@ -744,6 +909,7 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
           input,
           ensureSignedIn,
           ...(operation.write === undefined ? {} : { write: operation.write }),
+          ...(operation.questions === undefined ? {} : { questions: operation.questions }),
         });
         const output = await operation.run({
           ...context,

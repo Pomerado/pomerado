@@ -65,6 +65,7 @@ import {
 import { error, mintError } from "./errors.js";
 import { mintSessionSignInFailure, type SessionSignInFailed } from "./session-sign-in.js";
 import { sessionCardFill } from "./card-fill.js";
+import { localHandOffAsker, visibleBrowser } from "./hand-off.js";
 type Execution = Parameters<MintDependencies["reviewAndExecute"]>[0];
 type BeforeDispatch = Parameters<MintDependencies["reviewAndExecute"]>[1];
 /**
@@ -371,6 +372,17 @@ const failedReceipt = (
             effect: execution.target === "pureFiles" ? "not_sent" : "possible",
             commits: [],
           };
+    // A live example on the caller's own input that the tool itself refused as invalid, never
+    // its schema's decode of that input, lets a substitute example run in its place.
+    if (
+      execution.purpose === "example" &&
+      execution.target === "liveBrowser" &&
+      intentDerivedInput === undefined &&
+      failure instanceof LocalOperationFailure &&
+      (failure.tag === "InvalidInput" || failure.code === "InvalidInput") &&
+      failure.inputIssues === undefined
+    )
+      state.refusedCallerExamples.push(input);
     runs.set(id, {
       sources,
       entrypoint: execution.entrypoint,
@@ -626,7 +638,9 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
-                ask: scriptAsk,
+                ask: localHandOffAsker(scriptAsk, {
+                  visible: live && visibleBrowser(state.session.options.browser),
+                }),
                 declaredQuestions: draftQuestionDeclarations(
                   execution.entrypoint,
                   entrypointSource,
@@ -686,7 +700,9 @@ const authoredExecution = (
           id,
           sources,
           input,
-          ...(selected.mark === "intent_derived" ? { intentDerivedInput: selected.input } : {}),
+          ...(selected.mark === "intent_derived" || selected.mark === "substitute"
+            ? { intentDerivedInput: selected.input }
+            : {}),
           reviewed,
           journal,
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),

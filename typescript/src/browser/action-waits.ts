@@ -416,8 +416,10 @@ const outcomeWaitRead = async (candidate, state, key, events) => {
       throw error;
     }
   }
-  return { kind, matched: events.hit(name) !== undefined, seen: events.seen(kind) };
+  return outcomeWaitEventRead(candidate, events);
 };
+// What an outcome the page announces as an event (a response, a dialog or a popup) matched so far.
+const outcomeWaitEventRead = ({ kind, name }, events) => ({ kind, matched: events.hit(name) !== undefined, seen: events.seen(kind) });
 const outcomeWaitInvalidKey = (fields) => JSON.stringify(fields ?? []);
 // Whether an outcome counts at this look. A locator or invalid fields shown before the action, and
 // unchanged, count only once no longer stale; a gone element counts once it stayed gone stableMs.

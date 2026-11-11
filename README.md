@@ -189,7 +189,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 | `typescript/src/` | Minter, Guardian, runtime, browser helpers and the local MCP host |
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
 | `typescript/tests/` | Unit tests and browser tests with local fixture sites |
-| `tools/` | Build helpers and the CI scans |
+| `tools/` | Build helpers, the CI scans and the browser shard planner |
 | `docs/` | Guides for users, agents and maintainers |
 | `third-party/` | Licenses for adapted third-party code |
 

@@ -5,9 +5,11 @@ import type { Deadline } from "./deadline.js";
 import {
   ConfirmQuestion,
   InputRequest,
+  longestPrompt,
   QuestionId,
   questionIdPattern,
   SecretQuestion,
+  ShownInputs,
   TextQuestion,
   validateAnswer,
   type InputAnswers,
@@ -55,6 +57,16 @@ export const ScriptQuestionDeclaration = Schema.Union(
     maxLength: SecretQuestion.fields.maxLength,
   }),
   /**
+   * Hands the live browser to a person, who does the task `prompt` describes, such as reviewing
+   * the filled form before it is submitted, and marks it done. `show_inputs` names the operation
+   * inputs the host may show beside the browser, never a secret or a file. It is asked alone.
+   */
+  Schema.Struct({
+    type: Schema.Literal("browser_handoff"),
+    prompt: Prompt,
+    show_inputs: Schema.optional(ShownInputs),
+  }),
+  /**
    * A required field the site's form adds that no input covers. It has no prompt of its own: each
    * ask passes the field's label from the page, and its options when it is a select, so it is asked
    * as a text question or a choice and never as any other kind.
@@ -91,7 +103,10 @@ export type ScriptQuestionDeclarations = Readonly<Record<string, ScriptQuestionD
 export const ScriptOption = Schema.Struct({
   /** What `ask` returns when the caller picks it. It never leaves the sandbox. */
   value: Schema.String.pipe(Schema.minLength(1)),
-  /** The option as the site shows it. A long one reaches the caller shortened (`shownLabel`). */
+  /**
+   * The option as the site shows it. A long one reaches the caller shortened (`cutTo`), and a
+   * site field's prompt adds its full text (`siteFieldPrompt`).
+   */
   label: Schema.String.pipe(Schema.minLength(1)),
   /**
    * A detail of the caller's own account, such as a saved card, a passenger or an address. Its
@@ -112,24 +127,32 @@ interface AskSpec {
   readonly label?: string;
 }
 
+/** What `ask` returns for a browser hand-off, once the person marked the step done. */
+export interface HandoffDone {
+  readonly done: true;
+}
+
 /** What `ask` returns for one question, by its declaration. */
 export type ScriptAnswerOf<Declaration> = Declaration extends { readonly type: "multi_choice" }
   ? readonly string[]
-  : Declaration extends { readonly type: "confirm" }
-    ? { readonly confirmed: boolean; readonly text?: string }
-    : Declaration extends { readonly type: "text" | "secret" }
-      ? string
-      : "allowOther" extends keyof Declaration
-        ? Declaration extends { readonly allowOther: false }
-          ? string
-          : string | { readonly other: string }
-        : string;
+  : Declaration extends { readonly type: "browser_handoff" }
+    ? HandoffDone
+    : Declaration extends { readonly type: "confirm" }
+      ? { readonly confirmed: boolean; readonly text?: string }
+      : Declaration extends { readonly type: "text" | "secret" }
+        ? string
+        : "allowOther" extends keyof Declaration
+          ? Declaration extends { readonly allowOther: false }
+            ? string
+            : string | { readonly other: string }
+          : string;
 /** Any answer `ask` returns, before its declaration narrows it. */
 export type ScriptAnswer =
   | string
   | { readonly other: string }
   | readonly string[]
-  | { readonly confirmed: boolean; readonly text?: string };
+  | { readonly confirmed: boolean; readonly text?: string }
+  | HandoffDone;
 
 /**
  * What each asked question needs at ask time: the page's options for a choice, a site field's
@@ -138,7 +161,7 @@ export type ScriptAnswer =
 export type AskSpecOf<Declaration> = Declaration extends { readonly type: "site_field" }
   ? { readonly label: string; readonly options?: ReadonlyArray<ScriptOption> }
   : Declaration extends {
-        readonly type: "text" | "secret" | "confirm";
+        readonly type: "text" | "secret" | "confirm" | "browser_handoff";
       }
     ? { readonly options?: never }
     : { readonly options: ReadonlyArray<ScriptOption> };
@@ -159,10 +182,22 @@ export class ScriptInputFailure extends Data.TaggedError("ScriptInputFailure")<{
   readonly message?: string;
 }> {}
 
-/** The runner's way to the host: the request out, the caller's raw answers back. */
+/**
+ * The runner's way to the host: the request out, the caller's raw answers back. The handler calls
+ * `opened` once the host shows the request to its caller, before the caller can act on it: a
+ * browser hand-off marks a write's commit steps sent then, since the person may submit. A host
+ * that refuses the request before showing it never calls it. Calling it again does nothing.
+ */
 export type ScriptQuestionHandler = (
   request: InputRequest,
+  opened: () => void,
 ) => Effect.Effect<InputAnswers, ScriptInputFailure>;
+
+/** What a caller of `ask` learns while its request waits. */
+export interface ScriptAskHooks {
+  /** Told once the host shows the request to its caller (`ScriptQuestionHandler`). */
+  readonly opened?: () => void;
+}
 
 /** The sandbox's own side of one asked question: the option value behind each host id. */
 interface Asked {
@@ -210,22 +245,37 @@ type GivenSpec = AskSpec | ReadonlyArray<ScriptOption>;
 /** The pre-unification call passed a choice's options directly. */
 const isOptionList = (spec: GivenSpec): spec is ReadonlyArray<ScriptOption> => Array.isArray(spec);
 
-/**
- * The longest label the host takes (`InputOption`), and the longest site-field prompt, in UTF-16
- * code units as it counts them.
- */
+/** The longest label the host takes (`InputOption`), in UTF-16 code units as it counts them. */
 export const longestLabel = 256;
 /**
- * A label the host can show: one past `longestLabel` keeps its start and ends in "…". The cut
+ * Text the host can show within `limit`: longer text keeps its start and ends in "…". The cut
  * never splits a surrogate pair, so the start may be one code unit shorter. Options that read
  * the same once cut stay apart, since the host names each by its own id.
  */
-const shownLabel = (label: string) => {
-  if (label.length <= longestLabel) return label;
-  const end = longestLabel - 1;
-  const last = label.charCodeAt(end - 1);
-  return `${label.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}…`;
+const cutTo = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const end = limit - 1;
+  const last = text.charCodeAt(end - 1);
+  return `${text.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}…`;
 };
+
+/**
+ * A site field's prompt: the page's label whole, and after it the full text of each option its
+ * label had to cut, by the option's number from 1, all cut only past `longestPrompt`. An
+ * account-specific option's text never joins it: that label shows only on the protected page.
+ */
+const siteFieldPrompt = (label: string, options: ReadonlyArray<ScriptOption> = []) =>
+  cutTo(
+    [
+      label,
+      ...options.flatMap((option, index) =>
+        option.label.length > longestLabel && option.accountSpecific !== true
+          ? [`Option ${index + 1} in full: ${option.label.trim()}`]
+          : [],
+      ),
+    ].join("\n\n"),
+    longestPrompt,
+  );
 
 /** The page's options with host-opaque ids, and the value behind each id. */
 const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefined) => {
@@ -246,7 +296,7 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
     values: new Map(options.map((option, index) => [`o${index + 1}`, option.value])),
     offered: options.map((option, index) => ({
       id: `o${index + 1}`,
-      label: shownLabel(option.label),
+      label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
       ...(option.maskedLabel === undefined ? {} : { maskedLabel: option.maskedLabel }),
     })),
@@ -297,6 +347,13 @@ const askedQuestion = (
         secretKind: declaration.secretKind,
         ...(declaration.maxLength === undefined ? {} : { maxLength: declaration.maxLength }),
       });
+    case "browser_handoff":
+      return plain({
+        id,
+        type: "browser_handoff",
+        prompt: declaration.prompt,
+        show_inputs: declaration.show_inputs ?? [],
+      });
     case "multi_choice":
       return Either.flatMap(offeredOptions(id, given), ({ values, offered }) => {
         const minSelections = declaration.minSelections ?? 1;
@@ -327,15 +384,20 @@ const askedQuestion = (
         values,
       }));
     case "site_field": {
-      const prompt = shownLabel(typeof label === "string" ? label.trim() : "");
-      if (prompt === "") return Either.left(invalidOptions());
+      const pageLabel = typeof label === "string" ? label.trim() : "";
+      if (pageLabel === "") return Either.left(invalidOptions());
       if (given === undefined)
         return Either.right({
-          question: { id, type: "text" as const, prompt },
+          question: { id, type: "text" as const, prompt: siteFieldPrompt(pageLabel) },
           values: new Map<string, string>(),
         });
       return Either.map(offeredOptions(id, given), ({ values, offered }) => ({
-        question: { id, type: "choice" as const, prompt, options: offered },
+        question: {
+          id,
+          type: "choice" as const,
+          prompt: siteFieldPrompt(pageLabel, given),
+          options: offered,
+        },
         values,
       }));
     }
@@ -366,6 +428,8 @@ const scriptValue = (asked: Asked, answer: ValidAnswer): ScriptAnswer | undefine
     case "text":
     case "secret":
       return answer.value;
+    case "browser_handoff":
+      return { done: true };
     case "credential":
       return undefined;
   }
@@ -386,7 +450,7 @@ export const makeScriptInput = (
   handle: ScriptQuestionHandler | undefined,
   deadline?: Deadline,
 ) => {
-  const askAll = (asked: Readonly<Record<string, GivenSpec>>) =>
+  const askAll = (asked: Readonly<Record<string, GivenSpec>>, hooks: ScriptAskHooks = {}) =>
     Effect.gen(function* () {
       const questions: Asked[] = [];
       for (const [id, spec] of Object.entries(asked)) {
@@ -403,7 +467,14 @@ export const makeScriptInput = (
       if (handle === undefined) return yield* new ScriptInputFailure({ code: "Unavailable" });
       const answers = yield* Effect.acquireUseRelease(
         Effect.sync(() => deadline?.suspend()),
-        () => handle(request),
+        () => {
+          let told = false;
+          return handle(request, () => {
+            if (told) return;
+            told = true;
+            hooks.opened?.();
+          });
+        },
         (resume) => Effect.sync(() => resume?.()),
       );
       // A card answer reaches the script as the run's handle, never the card, so only the host
@@ -431,9 +502,10 @@ export const makeScriptInput = (
     });
   const ask = (
     input: AskInput,
+    hooks: ScriptAskHooks = {},
   ): Effect.Effect<ScriptAnswer | Readonly<Record<string, ScriptAnswer>>, ScriptInputFailure> => {
     if (typeof input === "string")
-      return askAll({ [input]: {} }).pipe(
+      return askAll({ [input]: {} }, hooks).pipe(
         Effect.flatMap((values) => {
           const value = values[input];
           return value === undefined
@@ -441,8 +513,8 @@ export const makeScriptInput = (
             : Effect.succeed(value);
         }),
       );
-    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])));
-    return askAll(input);
+    if (isIdList(input)) return askAll(Object.fromEntries(input.map((id) => [id, {}])), hooks);
+    return askAll(input, hooks);
   };
   return { ask };
 };

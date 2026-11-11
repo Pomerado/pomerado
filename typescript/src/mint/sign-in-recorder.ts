@@ -37,6 +37,7 @@ import {
   provesLogin,
   noteRefill,
   passwordFillsSpent,
+  reasksCode,
   reasksPassword,
   recordResubmit,
   recordStep,
@@ -594,9 +595,13 @@ export const makeSignInRecorder = (input: {
       const open = h.autofillSignIn.current;
       const { state, refund } =
         open === undefined ? openSignIn(at) : { state: open, refund: () => undefined };
-      const reasked = reasksPassword(open, step, refills);
+      const reasked = reasksPassword(open, step, refills)
+        ? ("password" as const)
+        : reasksCode(open, step, refills, inspected.screen.fields)
+          ? ("code" as const)
+          : undefined;
       yield* armStep(state, step, inspected, filled, secretIn);
-      if (reasked) noteRefill(state);
+      if (reasked !== undefined) noteRefill(state, reasked);
       afterSubmit = undefined;
       const report = yield* hooks.fill({ step, values: filled, inspection: inspected });
       settleAutofillValues(h, step, previous, report);

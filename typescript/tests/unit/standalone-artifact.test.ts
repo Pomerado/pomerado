@@ -158,7 +158,7 @@ it("refuses a record of accepted confirms it cannot trust", () =>
   }));
 
 it.each([
-  [{ ...signIn.recipe, version: 11 }, "unknown_version"],
+  [{ ...signIn.recipe, version: 15 }, "unknown_version"],
   [{ ...signIn.recipe, steps: [] }, "invalid"],
   ["not json", "invalid"],
   [undefined, "missing"],
@@ -220,6 +220,34 @@ it("refuses a sign-in origin that is not an https origin", () =>
     expect(await readdir(directory)).toEqual([]);
   }));
 
+// A build's confirmed task update can lower a write to a read, or raise a read to a write, so the
+// integration must serve the effect the build published with, not the one it was asked for.
+it("writes the effect the build published with into deployment.json", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
+  try {
+    const deployed = (name: string, requested: "read" | "write", built?: "read" | "write") =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const publish = yield* prepareIntegration({
+              root,
+              name,
+              request: { url: "https://example.test", intent: "Read page", effect: requested },
+            });
+            yield* publish(source, built);
+          }),
+        ),
+      ).then(async () =>
+        JSON.parse(await readFile(join(await realpath(root), name, "deployment.json"), "utf8")),
+      );
+    expect((await deployed("lowered_reader", "write", "read")).request.effect).toBe("read");
+    expect((await deployed("raised_writer", "read", "write")).request.effect).toBe("write");
+    expect((await deployed("plain_writer", "write")).request.effect).toBe("write");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("merges a sign-in's origins into deployment.json after the request's own", async () => {
   const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
   try {
@@ -264,10 +292,10 @@ it("merges a sign-in's origins into deployment.json after the request's own", as
 it("refuses a recipe it cannot read before writing it", () =>
   scratch(async (directory) => {
     const written = run(
-      writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 11 } } } as never),
+      writeArtifact(directory, { ...source, signIn: { ...signIn, recipe: { ...signIn.recipe, version: 15 } } } as never),
     );
     // The artifact's schema refuses the recipe's version, so nothing is written.
-    await expect(written).rejects.toThrow(/\["recipe"\][\s\S]*Expected 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8 \| 9 \| 10, actual 11/);
+    await expect(written).rejects.toThrow(/\["recipe"\][\s\S]*Expected 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8 \| 9 \| 10 \| 11 \| 12 \| 13 \| 14, actual 15/);
     expect(await readdir(directory)).toEqual([]);
   }));
 

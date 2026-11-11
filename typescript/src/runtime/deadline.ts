@@ -11,6 +11,11 @@ import { Effect } from "effect";
  * - `settle`: the gap between the two looks that must agree on the values a tool returns.
  * - `unchanged`: how long an answer or value from before an action must hold to count as unchanged.
  * - `lateFillCap`: the cap on waiting for values the site fills in after its answer.
+ * - `http`: an HTTP request that names no `timeoutMs` of its own, to its whole body.
+ * - `httpRead`: a read's request that names none, such as each of `batchRead`'s and
+ *   `batchFetch`'s. A site answers a read within a few seconds, and one that holds a read longer
+ *   has stalled, so this ends it while the call can still try another way. A write's request
+ *   keeps `http`, since one cut short after it was sent may still have reached the site.
  */
 export const timeoutDefaults = {
   execution: 20 * 60_000,
@@ -23,6 +28,7 @@ export const timeoutDefaults = {
   unchanged: 2_000,
   lateFillCap: 15_000,
   http: 60_000,
+  httpRead: 8_000,
 } as const;
 
 export class Deadline {

@@ -1,6 +1,6 @@
 ---
 name: cart
-description: Read before building any tool that reads, adds to, changes or checks out a cart: when to sign in or check out as a guest, read the cart before and after, quantity, account values and site limits.
+description: Read before building any tool that reads, adds to, changes or checks out a cart: when to sign in or use a guest cart or checkout, read the cart before and after, quantity, account values and site limits.
 ---
 
 # Carts and checkout
@@ -8,7 +8,7 @@ description: Read before building any tool that reads, adds to, changes or check
 Read this for any tool that reads, adds to, changes or checks out a cart. For a write, the
 writes skill's session, commit and publication rules still apply; this adds what a cart needs.
 
-## Sign in, or check out as a guest
+## Sign in, or use a guest cart or checkout
 
 A cart a later call must find, such as a standalone add-to-cart, view-cart, change-cart or
 checkout tool's, runs on the caller's account, because a signed-out cart lives in one browser
@@ -16,8 +16,15 @@ session. Sign in before reading or changing it (for a write, before the first `a
 auth skill), even when the site lets a guest add to a cart, and judge the account's cart only
 from the account.
 
+A tool that fills a cart and returns its quote in one run, such as the items, totals, shipping,
+tax, fees and any quote or cart number the site shows, and stops before checkout, may use the
+site's guest cart when the build holds no login. No later call must find that cart, so the tool
+needs no sign-in, and the rule above is no reason to ask the caller for one. A tool whose cart the
+caller means to view, change or check out in a later call is not such a tool, even when it returns
+the cart's lines and totals.
+
 A tool that fills the cart and places the order in the same run may use the site's guest
-checkout when the site offers one and the build holds no login. Prefer it to creating an
+checkout when the site offers one and the build holds no login. Prefer either to creating an
 account. Decide before you sign in, since a build that sent a login keeps it. Take the guest's
 contact details as inputs and the card as the caller-input skill says.
 
@@ -42,8 +49,11 @@ by this many".
 
 Read the cart's lines before the write, in the session and in the composed script; never
 assume the cart starts empty. Afterwards, confirm from the cart itself that the line reached
-the expected quantity (the earlier quantity plus the input, or the input) and that every other
-line is unchanged, then return the lines as read and call `verified()`. When comparing lines
+the expected quantity (the earlier quantity plus the input, or the input), then call
+`verified()`, compare every other line with the before read and return the lines as read.
+Prefer needing only each line's identity, chosen options and quantity in that read, with every
+other value optional, so a price the page doesn't show clearly can't fail the read before
+`verified()` (writes skill, "Check the read-back"). When comparing lines
 before and after, such as to list other lines that changed, prefer comparing
 `unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
 skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.
@@ -74,7 +84,9 @@ it shows only to some accounts.
 When the site refuses the order as asked, such as an order under its minimum or an empty cart
 at checkout, the tool throws `new errors.InvalidInput(message, { field })` with the site's
 reason, `field` the input the caller would change, before its commit mark whenever the page shows
-the limit first. A checkout that takes a limit of the caller's, such as
+the limit first. When the page shows a per-item limit and the cart already holds that many of the
+item, prefer refusing the same way before the add's commit mark.
+A checkout that takes a limit of the caller's, such as
 a maximum total, reads the final total and compares it before the order's commit mark, and
 refuses with `InvalidInput`, `field` that input and `kind: "over_price_limit"`, giving the total
 and the limit (the caller-input skill). Never add items, raise a quantity or change the
@@ -83,8 +95,13 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 `report_blocked` and explain the site's limit: a build that only reached the limit never
 completed the write, so it never publishes.
 
+An example item that is out of stock doesn't end the build. The tool returns that as the site's
+refusal for the item, and you ask the caller with `request_input` which item to use instead.
+
 ## Description
 
 The description states the decisions a caller needs to use the tool right (the publication
-skill): that it acts on the signed-in account's cart or checks out as a guest, whether
+skill): that it acts on the signed-in account's cart, checks out as a guest or starts its own
+guest cart that lives only inside one run, which no later call or person must find (such as a
+tool that fills a cart and returns its quote), whether
 quantity adds or sets, what it returns, and what it leaves out, such as placing the order.

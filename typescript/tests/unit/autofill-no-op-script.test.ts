@@ -29,14 +29,30 @@ it.each([
 });
 
 // The React toolkit's placeholders on a form whose submit its own code handles, as its server
-// rendering and its client rendering write them, count as a form's own script submit too.
+// rendering and its client rendering write them, and the one it writes in place of a form action
+// that is a script of the app's own, count as a form's own script submit too.
 it.each([
   "javascript:throw new Error('React form unexpectedly submitted.')",
   'javascript:throw new Error("React form unexpectedly submitted.")',
   "javascript:throw new Error('A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().')",
   'javascript:throw new Error("A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().")',
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.')",
+  'javascript:throw new Error("React has blocked a javascript: URL as a security precaution.")',
 ])("counts %j as a form's own script submit", (address) => {
   expect(noOpScript(address, true)).toBe(true);
+});
+
+// Only the exact placeholder throws and does nothing else: another message, a second statement or
+// a call runs what it says.
+it.each([
+  "javascript:throw new Error('React has blocked a javascript: URL.')",
+  "javascript:throw new TypeError('React has blocked a javascript: URL as a security precaution.')",
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.');send()",
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.'+send())",
+  "javascript:throw new Error(send('React has blocked a javascript: URL as a security precaution.'))",
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.\")",
+])("does not count %j as a form's own script submit", (address) => {
+  expect(noOpScript(address, true)).toBe(false);
 });
 
 it.each([
@@ -65,6 +81,8 @@ it.each([
   "javascript:vo%C2%A0id(0)",
   "javascript:void%E2%80%8B(0)",
   "javascript:void0",
+  // A placeholder counts only as a form's own action, never as a link's address or a formaction.
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.')",
   "https://member.example.test/session",
   "data:,void(0)",
   "",

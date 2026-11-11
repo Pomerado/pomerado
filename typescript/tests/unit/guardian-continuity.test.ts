@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { lunaModel } from "../../src/models/models.js";
 import { GuardianSessionSnapshot } from "../../src/guardian/session.js";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
-import type { ModelRequest, ModelResponse } from "@openai/agents";
+import type { AgentInputItem, ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Either, Fiber, Schema } from "effect";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
@@ -598,7 +598,7 @@ it("continues from provider compaction after takeover without replaying the olde
   expect(JSON.stringify(requests[3]?.input)).not.toContain("opaque-first-review-reasoning");
   expect(requests[3]?.modelSettings.reasoning?.context).toBe("all_turns");
   expect(requests[3]?.modelSettings.providerData).toMatchObject({
-    context_management: [{ type: "compaction", compact_threshold: 240000 }],
+    context_management: [{ type: "compaction", compact_threshold: 268000 }],
   });
 });
 
@@ -736,6 +736,341 @@ it("sends the request unchanged when compaction fails, and does not try compacti
   expect(JSON.stringify(third)).toContain("first");
 });
 
+// The provider's own compaction runs once the context crosses its threshold, also partway through
+// an answer. The session compacts before a request that would reach its own threshold, so the
+// provider's sits higher, by more than one answer's reasoning and output.
+it.each([
+  {
+    case: "an answer that took the conversation past",
+    input: 225_000,
+    output: 16_000,
+    compacts: true,
+  },
+  { case: "a conversation below", input: 200_000, output: 1_000, compacts: false },
+])(
+  "leaves the provider's compaction room above the session's own after $case its threshold",
+  async ({ input, output, compacts }) => {
+    const requests: ModelRequest[] = [];
+    const isTrigger = (request: ModelRequest | undefined) =>
+      JSON.stringify(Array.isArray(request?.input) ? request.input.at(-1) : undefined).includes(
+        "compaction_trigger",
+      );
+    setDefaultModelProvider({
+      getModel: () => ({
+        getResponse: async (request) => {
+          requests.push(request);
+          const first = requests.length === 1;
+          return {
+            usage: new Usage({
+              input_tokens: first ? input : 30_000,
+              output_tokens: first ? output : 1_000,
+              total_tokens: first ? input + output : 31_000,
+              input_tokens_details: { cached_tokens: 0 },
+            }),
+            // The compaction counts as one during the review, so the entrypoint is read again.
+            output: isTrigger(request)
+              ? [{ type: "compaction", id: "cmp_session", encrypted_content: "opaque-session" }]
+              : first
+                ? [reason, message()]
+                : isTrigger(requests.at(-2))
+                  ? [call("entrypoint_after_compaction")]
+                  : [message()],
+          };
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
+    });
+    const guardian = makeGuardian(
+      makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+      undefined,
+      {},
+    );
+    await Effect.runPromise(guardian.review(pending, readCurrent));
+    await Effect.runPromise(guardian.review({ ...pending, attemptId: "next" }, readCurrent));
+    const [backstop] = (requests[0]?.modelSettings.providerData?.["context_management"] ??
+      []) as readonly { readonly compact_threshold?: number }[];
+    expect(backstop).toEqual({ type: "compaction", compact_threshold: 268_000 });
+    // The provider would not have compacted inside the first answer.
+    expect(input + output).toBeLessThan(backstop?.compact_threshold ?? 0);
+    // The session compacts first only once the conversation reaches its own threshold.
+    expect(isTrigger(requests[1])).toBe(compacts);
+    expect(requests).toHaveLength(compacts ? 4 : 2);
+  },
+);
+
+/** The provider's refusal of an encrypted item it cannot read back, as its SDK raises it. */
+const unreadableItem = () =>
+  Object.assign(new Error("400 Synthetic encrypted content could not be verified"), {
+    name: "BadRequestError",
+    status: 400,
+    code: "invalid_encrypted_content",
+  });
+const reasoningItem = (id: string): ModelResponse["output"][number] => ({
+  type: "reasoning",
+  id,
+  content: [],
+  providerData: { encrypted_content: `opaque-${id}` },
+});
+const compactionInAnswer: ModelResponse["output"][number] = {
+  type: "compaction",
+  id: "cmp_in_answer",
+  encrypted_content: "opaque-compacted-in-answer",
+};
+const sourceReadInAnswer: ModelResponse["output"][number] = {
+  ...call("after_compaction"),
+  id: "fc_after_compaction",
+};
+/** The reasoning items the answer holds after its compaction. */
+const afterCompaction = ["rs_after_one", "rs_after_two"];
+const carriesReasoningAfterCompaction = (items: readonly AgentInputItem[]) =>
+  items.some((item) => item.type === "reasoning" && afterCompaction.includes(item.id ?? ""));
+const startsAtCompaction = (items: readonly AgentInputItem[]) => items[0]?.type === "compaction";
+const reasoningIds = (items: readonly unknown[]) =>
+  JSON.stringify(items).match(/opaque-rs_after_\w+/g) ?? [];
+
+/**
+ * A provider whose first answer holds `first`, then refuses each request whose conversation
+ * `refuses` matches as carrying an encrypted item it cannot read back, and allows the rest.
+ */
+const refusingAfter = (
+  first: ModelResponse["output"],
+  refuses: (items: readonly AgentInputItem[]) => boolean,
+) => {
+  const requests: ModelRequest[] = [];
+  setDefaultModelProvider({
+    getModel: () => ({
+      getResponse: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) return { usage: new Usage(), output: first };
+        if (refuses(conversationOf(request))) throw unreadableItem();
+        return { usage: new Usage(), output: [message()] };
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  });
+  return requests;
+};
+/** An answer in which the provider compacted the conversation partway through. */
+const answerCompactedInside = [
+  reasoningItem("rs_before_one"),
+  reasoningItem("rs_before_two"),
+  reasoningItem("rs_before_three"),
+  compactionInAnswer,
+  reasoningItem("rs_after_one"),
+  reasoningItem("rs_after_two"),
+  sourceReadInAnswer,
+];
+
+it("sends a request once more without the reasoning a compaction inside an answer left after its item, when the provider cannot read it back", async () => {
+  const requests = refusingAfter(answerCompactedInside, carriesReasoningAfterCompaction);
+  const checkpoints: GuardianSessionSnapshot[] = [];
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+    undefined,
+    {
+      save: (snapshot) =>
+        Effect.sync(() => {
+          checkpoints.push(snapshot);
+        }),
+    },
+  );
+  const reviewed = await Effect.runPromise(guardian.review(pending, readCurrent));
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(3);
+  const [, refused, resent] = requests;
+  // The refused request starts at the compaction, with the two reasoning items after it.
+  expect(conversationOf(refused).map((item) => item.type)).toEqual([
+    "compaction",
+    "reasoning",
+    "reasoning",
+    "function_call",
+    "function_call_result",
+  ]);
+  expect(reasoningIds(conversationOf(refused))).toEqual([
+    "opaque-rs_after_one",
+    "opaque-rs_after_two",
+  ]);
+  // The request goes once more without them. The compaction, the source read and its result stay;
+  // the read goes without the provider's item ID, which tied it to the reasoning before it.
+  const [compaction, , , read, result] = conversationOf(refused);
+  const { id: _id, ...readWithoutId } = read as typeof sourceReadInAnswer;
+  expect(conversationOf(resent)).toEqual([compaction, readWithoutId, result]);
+  // The conversation the session keeps holds the items without them only once that call succeeded.
+  const holding = checkpoints.findLastIndex((checkpoint) =>
+    JSON.stringify(checkpoint.history).includes("opaque-rs_after_one"),
+  );
+  expect(holding).toBeGreaterThanOrEqual(0);
+  for (const checkpoint of checkpoints.slice(holding + 1))
+    expect(reasoningIds(checkpoint.history)).toEqual([]);
+  const history = guardian.session?.snapshot().history ?? [];
+  expect(history[0]).toMatchObject({ type: "compaction", id: "cmp_in_answer" });
+  expect(reasoningIds(history)).toEqual([]);
+  expect(JSON.stringify(history)).toContain("after_compaction");
+
+  // The next review continues from that conversation, without the unreadable items.
+  const next = await Effect.runPromise(
+    guardian.review({ ...pending, attemptId: "next" }, readCurrent),
+  );
+  expect(next.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(4);
+  expect(conversationOf(requests[3])[0]).toMatchObject({ type: "compaction", id: "cmp_in_answer" });
+  expect(reasoningIds(conversationOf(requests[3]))).toEqual([]);
+});
+
+it("ends a review the provider still refuses without that reasoning, sending it once more only", async () => {
+  const requests = refusingAfter(answerCompactedInside, startsAtCompaction);
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const result = await Effect.runPromise(Effect.either(guardian.review(pending, readCurrent)));
+  expect(result).toMatchObject({ _tag: "Left", left: { code: "InputTooLarge" } });
+  // The refused request and the one without the reasoning, and no more.
+  expect(requests).toHaveLength(3);
+  expect(reasoningIds(conversationOf(requests[2]))).toEqual([]);
+  // Nothing succeeded without the reasoning, so the session keeps it.
+  expect(reasoningIds(guardian.session?.snapshot().history ?? [])).toEqual([
+    "opaque-rs_after_one",
+    "opaque-rs_after_two",
+  ]);
+  // Once per compaction: a later review that is refused again is not sent once more.
+  const later = await Effect.runPromise(
+    Effect.either(guardian.review({ ...pending, attemptId: "later" }, readCurrent)),
+  );
+  expect(later).toMatchObject({ _tag: "Left", left: { code: "InputTooLarge" } });
+  expect(requests).toHaveLength(4);
+});
+
+it.each([
+  {
+    case: "no compaction",
+    first: [reasoningItem("rs_after_one"), sourceReadInAnswer],
+    error: unreadableItem,
+    code: "InputTooLarge",
+  },
+  {
+    case: "a compaction with no reasoning after it",
+    first: [reasoningItem("rs_after_one"), compactionInAnswer, sourceReadInAnswer],
+    error: unreadableItem,
+    code: "InputTooLarge",
+  },
+  {
+    case: "a compaction inside an answer, for another refusal",
+    first: answerCompactedInside,
+    error: () =>
+      Object.assign(new Error("400 Synthetic invalid request"), {
+        name: "BadRequestError",
+        status: 400,
+        code: "invalid_value",
+      }),
+    code: "Unavailable",
+  },
+])("ends a refusal after $case at once, as before", async ({ first, error, code }) => {
+  const requests: ModelRequest[] = [];
+  setDefaultModelProvider({
+    getModel: () => ({
+      getResponse: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) return { usage: new Usage(), output: first };
+        throw error();
+      },
+      getStreamedResponse: () => {
+        throw new Error("Unused stream");
+      },
+    }),
+  });
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const result = await Effect.runPromise(Effect.either(guardian.review(pending, readCurrent)));
+  expect(result).toMatchObject({ _tag: "Left", left: { code } });
+  expect(requests).toHaveLength(2);
+});
+
+it("reads the provider's refusal from the wire and sends the source read on without its item ID", async () => {
+  type WireItem = { readonly type?: string; readonly role?: string };
+  const bodies: { readonly input: readonly WireItem[] }[] = [];
+  const conversation = (index: number) =>
+    (bodies[index]?.input ?? []).filter((item) => item.role !== "developer");
+  const respond = (output: readonly unknown[]) =>
+    new Response(
+      JSON.stringify({
+        id: `resp_${bodies.length}`,
+        object: "response",
+        created_at: 1,
+        status: "completed",
+        model: lunaModel,
+        output,
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  const client = new OpenAI({
+    apiKey: "synthetic-key",
+    maxRetries: 0,
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
+      if (bodies.length === 1)
+        return respond([
+          { type: "reasoning", id: "rs_wire_before", summary: [], encrypted_content: "opaque" },
+          { type: "compaction", id: "cmp_wire", encrypted_content: "opaque-wire-compacted" },
+          { type: "reasoning", id: "rs_wire_after", summary: [], encrypted_content: "opaque" },
+          {
+            type: "function_call",
+            id: "fc_wire",
+            call_id: "read_wire",
+            name: "read_source",
+            arguments: JSON.stringify({ path: pending.entrypoint, offset: 0 }),
+            status: "completed",
+          },
+        ]);
+      if (conversation(bodies.length - 1).some((item) => item.type === "reasoning"))
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: "Synthetic encrypted content could not be verified",
+              type: "invalid_request_error",
+              code: "invalid_encrypted_content",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      return respond([message()]);
+    },
+  });
+  setDefaultModelProvider(new OpenAIProvider({ openAIClient: client }));
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("Synthetic policy {{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const reviewed = await Effect.runPromise(guardian.review(pending, readCurrent));
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(bodies).toHaveLength(3);
+  expect(conversation(1).map((item) => item.type)).toEqual([
+    "compaction",
+    "reasoning",
+    "function_call",
+    "function_call_output",
+  ]);
+  expect(conversation(1)[2]).toMatchObject({ id: "fc_wire", call_id: "read_wire" });
+  expect(conversation(2).map((item) => item.type)).toEqual([
+    "compaction",
+    "function_call",
+    "function_call_output",
+  ]);
+  expect(conversation(2)[0]).toMatchObject({ id: "cmp_wire" });
+  expect(conversation(2)[1]).toMatchObject({ call_id: "read_wire", name: "read_source" });
+  expect(conversation(2)[1]).not.toHaveProperty("id");
+});
+
 it("serializes concurrent reviews without forking the conversation", async () => {
   const requests: ModelRequest[] = [];
   provide([[call("first")], [reason, message()], [call("second")], [message()]], requests);
@@ -839,7 +1174,7 @@ it.each(["all_turns", "current_turn", undefined] as const)(
       store: false,
       reasoning: { context: "all_turns" },
       include: ["reasoning.encrypted_content"],
-      context_management: [{ type: "compaction", compact_threshold: 240000 }],
+      context_management: [{ type: "compaction", compact_threshold: 268000 }],
     });
     expect(reported).toEqual([
       expect.objectContaining({

@@ -90,6 +90,26 @@ const race = async (page: Page, outcomes: string, options = "", after = "undefin
   return answer.result as Raced;
 };
 
+/**
+ * A Save the site refuses: the POST answers 422, and the site's script, still running a few ms
+ * later, says why in a native alert. Page scripts stop while the alert is open.
+ */
+const refusedSave = recordForm(`
+  const answer = await fetch("/api/records", { method: "POST", body: "{}" });
+  const until = Date.now() + 20;
+  while (Date.now() < until);
+  if (!answer.ok) alert("Record limit reached for today");`);
+const refuses = (request: Request): Reply | undefined =>
+  request.method() === "POST" ? { status: 422, body: '{"error":"limit"}' } : undefined;
+
+/** A Save the site takes: the POST answers 201, and the site's script then says so in an alert. */
+const savedThenAlert = recordForm(`
+  const answer = await fetch("/api/records", { method: "POST", body: "{}" });
+  const until = Date.now() + 20;
+  while (Date.now() < until);
+  if (answer.ok) alert("Record saved");`);
+const saves = (request: Request): Reply | undefined => (request.method() === "POST" ? { status: 201, body: "{}" } : undefined);
+
 // The common outcomes of a save, highest priority first.
 const saveOutcomes = `
   invalid: { invalid: form },
@@ -487,12 +507,12 @@ test.describe("outcome race after an action", () => {
     expect(answer).toMatchObject({ outcome: "alerted", evidence: { type: "alert", message: "Record saved" }, extra: "ok" });
   });
 
-  test("a dialog that opens after another outcome won is still handed back, not left to freeze the page", async ({
-    page,
-  }) => {
+  test("a dialog that opens after another outcome won is not held, so it never freezes the page", async ({ page }) => {
     await site(
       page,
-      { "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" }); alert("Saved");`) },
+      {
+        "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" }); setTimeout(() => alert("Saved"), 300);`),
+      },
       (request) => (request.method() === "POST" ? { status: 201, body: "{}" } : undefined),
     );
     const answer = await race(
@@ -500,13 +520,201 @@ test.describe("outcome race after an action", () => {
       `committed: { response: { method: "POST", status: 201 } }, alerted: { dialog: true },`,
       "",
       `(async () => {
-        // An alert that opened while the wait listened is handed back; one that opened after it
-        // stopped listening was dismissed by Playwright. Either way the page stays readable.
-        await result.dialog?.dismiss();
-        return { readable: await page.evaluate(() => 1 + 1) };
+        // The alert opens once the wait returned and stopped listening, so Playwright dismisses it
+        // and the page stays readable. One that opens while the wait listens is held instead.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { held: result.dialog !== undefined, readable: await page.evaluate(() => 1 + 1) };
       })()`,
     );
-    expect(answer).toMatchObject({ outcome: "committed", extra: { readable: 2 } });
+    expect(answer).toMatchObject({ outcome: "committed", extra: { held: false, readable: 2 } });
+  });
+
+  test("a response listed before a dialog still wins when the site answers and then opens an alert, with the alert held and named", async ({
+    page,
+  }) => {
+    // Code written for the listed order: on the save's response it reads the answer, and any other
+    // outcome means the publish went through. The code hands the held alert over before it reads.
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `saved: { response: (answer) => answer.request().method() === "POST" && new URL(answer.url()).pathname === "/api/records" },
+      dialog: { dialog: true },`,
+      "",
+      `(async () => {
+        if (result.outcome !== "saved") {
+          await result.dialog?.dismiss();
+          return { outcome: result.outcome };
+        }
+        const finished = (promise) =>
+          Promise.race([promise.then(() => "finished"), new Promise((resolve) => setTimeout(() => resolve("still waiting"), 1500))]);
+        const summary = waitReport().at(-1).summary;
+        const alert = result.dialog?.message() ?? null;
+        const observed = result.observations.dialog;
+        await result.dialog?.dismiss();
+        let body;
+        const next = await finished(Promise.all([result.response.text().then((text) => { body = text; }), page.evaluate(() => document.title)]));
+        return { status: result.response.status(), body, alert, observed, next, summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "saved",
+      kind: "response",
+      evidence: { method: "POST", status: 422 },
+      extra: {
+        status: 422,
+        body: '{"error":"limit"}',
+        alert: "Record limit reached for today",
+        observed: { kind: "dialog", matched: true, seen: 1 },
+        next: "finished",
+        summary: expect.stringMatching(
+          /^waitForOutcome: "saved" \(response\) showed after \d+ ms \(\d+ looks?\); "dialog" \(dialog\) also matched; a native alert dialog is left open on the result's dialog; /u,
+        ),
+      },
+    });
+  });
+
+  test("a save that answered 201 before an informational alert wins when listed first, with the alert held and named", async ({
+    page,
+  }) => {
+    // The save lands, then the site's script, a few ms later, shows an informational alert: the
+    // response listed first wins, and the alert is on the result for the code to hand over.
+    await site(page, { "/": savedThenAlert }, saves);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records", status: 201 } }, refused: { dialog: true },`,
+      "",
+      `(async () => {
+        const alert = result.dialog?.message() ?? null;
+        const { saved, refused } = result.observations;
+        await result.dialog?.dismiss();
+        return { alert, saved, refused, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "saved",
+      kind: "response",
+      evidence: { status: 201 },
+      extra: {
+        alert: "Record saved",
+        saved: { kind: "response", matched: true },
+        refused: { kind: "dialog", matched: true, seen: 1 },
+        summary: expect.stringMatching(
+          /^waitForOutcome: "saved" \(response\) showed after \d+ ms \(\d+ looks?\); "refused" \(dialog\) also matched; a native alert dialog is left open on the result's dialog; /u,
+        ),
+      },
+    });
+  });
+
+  test("a dialog listed before a response wins once both matched, and keeps that response on the result and in the summary", async ({
+    page,
+  }) => {
+    await site(page, { "/": savedThenAlert }, saves);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, refused: { dialog: true }, saved: { response: { method: "POST", url: "/api/records", status: 201 } },`,
+      "",
+      `(async () => {
+        const status = result.response?.status() ?? null;
+        const { saved, refused } = result.observations;
+        await result.dialog.dismiss();
+        return { status, saved, refused, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "refused",
+      kind: "dialog",
+      evidence: { type: "alert", message: "Record saved" },
+      extra: {
+        status: 201,
+        saved: { kind: "response", matched: true },
+        refused: { kind: "dialog", matched: true, seen: 1 },
+        summary: expect.stringMatching(
+          /^waitForOutcome: "refused" \(dialog\) showed after \d+ ms \(\d+ looks?\); "saved" \(response\) also matched; a native alert dialog is left open on the result's dialog; /u,
+        ),
+      },
+    });
+  });
+
+  test("a dialog wins at once when a response listed before it has not matched, so the next read does not hang", async ({ page }) => {
+    // The site refuses in an alert before it posts anything: the response listed first cannot match
+    // while the alert stops the page, so the dialog decides.
+    await site(page, { "/": recordForm(`alert("Enter a price first");`) }, refuses);
+    const answer = await race(
+      page,
+      `saved: { response: { method: "POST", url: "/api/records" } }, refused: { dialog: true },`,
+      "",
+      `(async () => {
+        await result.dialog.dismiss();
+        return { readable: await page.evaluate(() => 1 + 1), held: result.response !== undefined };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "refused",
+      kind: "dialog",
+      evidence: { type: "alert", message: "Enter a price first" },
+      extra: { readable: 2, held: false },
+    });
+    expect(answer.ms).toBeLessThan(2000);
+  });
+
+  test("a dialog of a type no outcome names keeps the listed order: a response that matched first still wins", async ({
+    page,
+  }) => {
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records" } }, confirmed: { dialog: "confirm" },`,
+      "",
+      `(async () => {
+        const held = result.dialog?.type() ?? null;
+        await result.dialog?.dismiss();
+        return { held, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "saved",
+      kind: "response",
+      evidence: { status: 422 },
+      extra: { held: "alert", summary: expect.stringContaining("; a native alert dialog is left open on the result's dialog") },
+    });
+  });
+
+  test("with no dialog outcome named the wait leaves dialogs alone and the response wins", async ({ page }) => {
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records" } },`,
+      "",
+      `(async () => ({ held: result.dialog !== undefined, summary: waitReport().at(-1).summary }))()`,
+    );
+    expect(answer).toMatchObject({ outcome: "saved", extra: { held: false, summary: expect.not.stringContaining("dialog") } });
+  });
+
+  test("a beforeunload dialog of a type no outcome names still fails at once, held for the code", async ({ page }) => {
+    await site(page, {
+      "/": recordForm(
+        `location.href = "/next";`,
+        `<script>addEventListener("beforeunload", (event) => { event.preventDefault(); event.returnValue = ""; });</script>`,
+      ),
+      "/next": "<h1>Next</h1>",
+    });
+    const answer = await call(
+      page,
+      `try {
+        await waitForOutcomeResult({ left: { url: "/next" }, alerted: { dialog: "alert" } },
+          { action: () => page.locator("#save").click(), noProgressMs: 2000, timeout: 4000 });
+        return "returned";
+      } catch (error) {
+        const type = error.dialog?.type() ?? null;
+        await error.dialog?.dismiss();
+        return { reason: error.reason, type, message: error.message };
+      }`,
+    );
+    expect(answer.result).toMatchObject({
+      reason: "outcome_unknown",
+      type: "beforeunload",
+      message: expect.stringMatching(/a native beforeunload dialog opened that no outcome names$/u),
+    });
   });
 
   test("a native dialog no outcome names fails at once, naming its type", async ({ page }) => {

@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { signInMethodChoices } from "../runtime/authentication.js";
+import { trustedUrl } from "../runtime/sign-in-origins.js";
 
 /** A supported two-factor method; a run call may pick one. */
 export const SignInMethod = Schema.Literal("sms", "call", "email", "totp", "push");
@@ -7,6 +8,35 @@ export type SignInMethod = typeof SignInMethod.Type;
 /** `SignInMethod` or a recovery code; see `signInMethodChoices`. The shared contract's choice. */
 export const SignInMethodChoice = Schema.Literal(...signInMethodChoices);
 export type SignInMethodChoice = typeof SignInMethodChoice.Type;
+/**
+ * A way into the account that a sign-in screen's method choice may offer beside a code the site
+ * sends: a password, or the identifier a control switches the screen to ask for. A run takes the
+ * way its recorded sign-in picked, and asks nothing about it.
+ */
+const wayMethods = [
+  "password",
+  "identifier_username",
+  "identifier_email",
+  "identifier_phone",
+  "identifier_account_number",
+] as const;
+/** Whether a method choice's method is a way in rather than a two-factor method. */
+export const isWayMethod = Schema.is(Schema.Literal(...wayMethods));
+/** A recorded method choice's method: a two-factor method, or from recipe version 14 a way in. */
+export const RecipeMethodChoice = Schema.Literal(...signInMethodChoices, ...wayMethods);
+export type RecipeMethodChoice = typeof RecipeMethodChoice.Type;
+/**
+ * The value a native select lists for a sign-in method, when that select is the method's control:
+ * the host chooses it with the browser's own select action, which fires the page's change handler.
+ */
+export const MethodOption = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/**
+ * A sign-in screen's action with a lasting effect on the account, which each run's caller allows
+ * or not: signing out another device or session, or trusting this browser for later sign-ins. A
+ * run presses such a screen's control only when its caller allowed that choice.
+ */
+export const SignInChoice = Schema.Literal("sign_out_other_device", "trust_this_device");
+export type SignInChoice = typeof SignInChoice.Type;
 
 /**
  * How a `date_of_birth` field takes the date: a whole date in one of these layouts, or, for a
@@ -173,6 +203,38 @@ export type SubmitKey = typeof SubmitKey.Type;
 /** An off-page sign-in the owner completes before confirming through the protected input. */
 export const AutofillApproval = Schema.Literal("email_link", "device");
 export type AutofillApproval = typeof AutofillApproval.Type;
+
+/**
+ * How an email-link approval reaches the browser: `paste` for a site whose emailed link signs in
+ * only the browser that opens it. The owner pastes the link into the host's protected question,
+ * and the host opens it in its own browser (`pastedSignInLink`). Without it, the owner opens the
+ * link and confirms.
+ */
+export const AutofillApprovalDelivery = Schema.Literal("paste");
+export type AutofillApprovalDelivery = typeof AutofillApprovalDelivery.Type;
+
+/** The owner's protected question for an emailed sign-in link (`delivery: "paste"`). */
+export const pastedLinkPrompt = (site: string) =>
+  `Paste the newest sign-in link ${site} emailed you, without opening it. Pomerado keeps it private and opens it only in its own browser.`;
+
+/**
+ * The link an owner pasted for an email-link approval, as the host opens it, without the angle
+ * brackets or quotes around it: an https address with no user name or password, on the site or one
+ * of the sign-in origins the approval screen's inspection trusted (`trustedUrl`). Anything else is
+ * undefined, and the host never opens it.
+ */
+export const pastedSignInLink = (
+  pasted: string,
+  trust: { readonly siteOrigin: string; readonly authenticationOrigins: readonly string[] },
+) => {
+  // A link pasted from an email may come inside angle brackets or quotes.
+  const url = URL.parse(pasted.trim().replace(/^[<"']+|[>"']+$/gu, ""));
+  return url !== null &&
+    url.protocol === "https:" &&
+    trustedUrl(trust.siteOrigin, trust.authenticationOrigins, url.href)
+    ? url.href
+    : undefined;
+};
 
 /**
  * The number a device approval's screen shows for the owner to pick on their device, as its

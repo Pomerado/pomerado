@@ -514,9 +514,10 @@ const pickerPageCode = String.raw`(element, args) => {
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
- * that opens a list, typing into the search box the list brings when its first view lacks an
- * exact match) or `dialog` (the same, for a launcher that opens a dialog; it clicks the dialog's
- * Select or OK button, or double-clicks the row, when a click alone leaves the dialog open).
+ * that opens a list, typing into the search box the list brings when the options it read lack an
+ * exact match or are only part of a longer list) or `dialog` (the same, for a launcher that opens a
+ * dialog; it clicks the dialog's Select or OK button, or double-clicks the row, when a click alone
+ * leaves the dialog open).
  *
  * Matching (see `rankChoices`): a name or value as written, then ignoring case and spacing, then
  * accents and punctuation, then, only for `pickValue` with `tie: "first"`, a name whose text
@@ -527,7 +528,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * Harbor Street Station, Example City for Example City Harbor Street Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
- * Dentistry for Dentist (rank `stem`). An option's names are its text, first line, accessible name,
+ * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
+ * value with no digit, a name holding every word of the value, in any order and among words the
+ * value lacks, each as written or in its singular or plural form, such as Green Seedless Grapes
+ * for green grape but not Lemonade for lemon (rank `extraWords`). An option's names are its text, first line, accessible name,
  * `title` and, for a table row, each cell, and its value is `data-value`, `value`, `data-id`,
  * `data-key` or `data-code` (put others first with `options.valueAttributes`). At each rank, once
  * the value as given matches no name there, its other written forms (`spellingsOf`: 5th and Fifth,
@@ -548,8 +552,15 @@ const pickerPageCode = String.raw`(element, args) => {
  * with no row `option` keeps, as on a page still starting up that dropped the typing, is typed
  * once more, once a call, after the page's own requests go quiet (2 s at most), when
  * more than a third of the budget is left; never with `create` or `type`. A list that renders or loads
- * as it scrolls is read to its end before matching, so a tie further down is never missed; one too
- * long for two thirds of the budget is narrowed with its search box, or fails as `options_loading`.
+ * as it scrolls is read to its end before matching, so a tie further down is never missed; a scroll
+ * that shows no new option counts as its end only once no loading sign shows and the requests the
+ * scroll caused have ended and held quiet for `settleMs`. A list with a search box is read up to 50
+ * options instead: when it may hold more, the search box narrows it and the narrowed list is read to
+ * its end, so options that tie show there, unless `tie: "first"` takes one of those 50 that matches
+ * as written or ignoring case and spacing. A narrowed list that lacks the value leaves a match among
+ * the options first read, so a tie the search box does not show can then be missed. A list without
+ * a search box that is not read to its end within two thirds of the budget fails as
+ * `options_loading`, never as `option_missing`.
  * Requests count only when the action caused them: a repeat of an earlier identical request, such
  * as a heartbeat or poller, never holds a wait open.
  * A native select's or datalist's list that lacks the value or holds it greyed out, or shows a
@@ -611,7 +622,7 @@ const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
-const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: s.tie === true, stem: s.options.stem === true, spellings: pickerSpellings });
+const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: s.tie === true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -619,6 +630,7 @@ const pickerLimits = Object.freeze(${JSON.stringify({
   settle: timeoutDefaults.settle,
   inflight: timeoutDefaults.answer,
   quiet: 2_000,
+  beforeSearch: 50,
 })});
 // A Playwright action that ran out of the call's budget fails as the fixed reason "timeout".
 const pickerTimedOut = (error, s) =>
@@ -843,12 +855,15 @@ const pickerChoices = (options) => options.map((option) => ({ names: option.name
 // Waits for the picker's options to answer an action: no loading sign, no request the action
 // started in flight, the author's answered() true, and the list unchanged for settleMs (or for
 // idleMs when nothing reacted at all), counted from the action's end, so typing a long query
-// uses none of it. Returns the last scan and whether anything reacted.
+// uses none of it. Returns the last scan and whether anything reacted. answered() looks after
+// each scan, so an answer that lands between the two makes it true for options read before the
+// answer: a scan counts only when answered() was already true at the look before it.
 const pickerSettle = async (s, since, before, query) => {
   let last = null;
   let changedAt = Date.now();
   let reacted = false;
   let looks = 0;
+  let answeredBefore = !s.options.answered;
   while (true) {
     const scan = await pickerEval(s, "scan", { near: s.kind === "dropdown" });
     looks++;
@@ -861,8 +876,10 @@ const pickerSettle = async (s, since, before, query) => {
     const busy = scan.loading || s.net.inflight(since) > 0;
     const quiet = now - Math.max(changedAt, s.net.lastAt(since));
     const answered = s.options.answered ? scan.popup && Boolean(await s.options.answered(pickerTag(s, "data-pomerado-pick-popup", s.token), query)) : true;
+    const scannedAnswered = answered && answeredBefore;
+    answeredBefore = answered;
     // No reaction needs a few looks across the idle window, so one slow read cannot end it.
-    if (!busy && answered && quiet >= (reacted ? s.settleMs : s.idleMs) && (reacted || looks >= 3)) return { scan, reacted };
+    if (!busy && scannedAnswered && quiet >= (reacted ? s.settleMs : s.idleMs) && (reacted || looks >= 3)) return { scan, reacted };
     if (now >= s.until) {
       if (busy || !answered) throw pickerLoadingFailure(s, scan, since, answered);
       return { scan, reacted };
@@ -870,11 +887,11 @@ const pickerSettle = async (s, since, before, query) => {
     await pickerSleep(40);
   }
 };
-// Every option the list holds: a list that renders or loads as it scrolls is scrolled a page at a
-// time to its end, remembering where each option showed, so a tie further down is never missed.
-// complete says the whole list was read; scrolling stops with a third of the budget left, for
-// the pick itself.
-const pickerCollect = async (s, scan, wanted) => {
+// Every option the list holds, up to cap: a list that renders or loads as it scrolls is scrolled a
+// page at a time to its end, remembering where each option showed, so a tie further down is never
+// missed. complete says the whole list was read; scrolling stops at cap, or with a third of the
+// budget left, for the pick itself.
+const pickerCollect = async (s, scan, wanted, cap = Infinity) => {
   const seen = new Map();
   const add = (found) => {
     for (const option of found.options) if (!seen.has(option.key)) seen.set(option.key, option);
@@ -884,7 +901,7 @@ const pickerCollect = async (s, scan, wanted) => {
   let latest = scan;
   let stuck = 0;
   let complete = !scan.scroll || scan.scroll.end;
-  while (!complete && Date.now() < reserve && seen.size < 2000) {
+  while (!complete && Date.now() < reserve && seen.size < cap) {
     const size = seen.size;
     const at = latest.scroll.top;
     const scrolledAt = pickerMark(s);
@@ -896,14 +913,22 @@ const pickerCollect = async (s, scan, wanted) => {
       if (latest.loading || s.net.inflight(scrolledAt) > 0) continue;
       if (latest.options.some((option) => !seen.has(option.key)) || look >= 3) break;
     }
+    // With none new, the site may still be asked for more a moment late: as pickerSettle waits,
+    // the scroll counts as the end only once no loading sign shows, no request it caused is in
+    // flight, and none has started or ended for settleMs.
+    const settled = () => !latest.loading && s.net.inflight(scrolledAt) === 0 && Date.now() - Math.max(scrolledAt, s.net.lastAt(scrolledAt)) >= s.settleMs;
+    while (!latest.options.some((option) => !seen.has(option.key)) && !settled() && Date.now() < reserve) {
+      await pickerSleep(40);
+      latest = await pickerEval(s, "scan");
+    }
     add(latest);
     if (latest.scroll === null) complete = true;
     else if (seen.size > size) stuck = 0;
-    else if (latest.scroll.end || latest.scroll.top === at || ++stuck >= 3) complete = !latest.loading;
+    else if (latest.scroll.end || latest.scroll.top === at || ++stuck >= 3) complete = settled();
   }
   const list = [...seen.values()].filter((option) => !option.creation);
   const ranking = wanted ? pickerRank(s, pickerChoices(list), wanted) : { status: "missing" };
-  return { list, ranking, scan: latest, complete: complete || seen.size >= 2000 };
+  return { list, ranking, scan: latest, complete };
 };
 // The enabled options as shown, never a native select's empty-valued prompt such as "Choose...".
 // For a value it lacks (wanted given), those closest to it first, so they survive the cap.
@@ -1058,14 +1083,19 @@ const pickerFind = async (s, wanted) => {
     return { ...outcome, field, scan: found.scan };
   }
   const scan = await pickerOpen(s);
-  const found = await pickerCollect(s, scan, wanted);
-  const strong = found.complete && found.ranking.status !== "missing" && ["exact", "normalized"].includes(found.ranking.rank);
+  // A list with a search box is read up to its first 50 options; one that may hold more is narrowed
+  // with the search box, where options that tie show, unless tie "first" takes one of those 50 that
+  // matches as written or ignoring case and spacing.
+  const found = await pickerCollect(s, scan, wanted, s.options.search || scan.search ? pickerLimits.beforeSearch : Infinity);
+  const strong =
+    (found.complete || (s.tie && found.ranking.status === "picked")) && found.ranking.status !== "missing" && ["exact", "normalized"].includes(found.ranking.rank);
   const search = s.options.search ?? (found.scan.search || scan.search ? pickerTag(s, "data-pomerado-pick-search", s.token) : null);
   // A list too long to read whole is narrowed with its search box, or not judged at all.
   if (!found.complete && search === null) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
   if (strong || search === null) return { ...pickerOutcome(found, wanted, s.tie), field: s.control, scan: found.scan, popupKind: scan.kind };
   const queried = await pickerQuery(s, search, wanted, pickerAvailable(found.list, wanted));
-  const outcome = pickerOutcome(queried.found.ranking.status === "missing" && found.complete && found.ranking.status !== "missing" ? found : queried.found, wanted, s.tie);
+  // A search that finds nothing leaves the match the list's first read held.
+  const outcome = pickerOutcome(queried.found.ranking.status === "missing" && found.ranking.status !== "missing" ? found : queried.found, wanted, s.tie);
   if (outcome.status === "refused" && queried.available && outcome.refusal.reason === "option_missing")
     outcome.refusal.available = pickerClosest([...outcome.refusal.available, ...queried.available], wanted);
   return { ...outcome, field: search, scan: queried.found.scan ?? found.scan, popupKind: scan.kind };
@@ -1420,7 +1450,7 @@ const pickValues = async (control, values, options = {}) => {
         let found = await pickerFind(s, wanted);
         // A free-entry value is created rather than replaced by a suggestion that only holds it
         // or shares its stem.
-        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "stem"].includes(found.rank))
+        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "stem", "extraWords"].includes(found.rank))
           found = { status: "refused", field: found.field, refusal: { picked: false, reason: "option_missing", wanted: wanted[0], available: [], matches: [] } };
         const since = pickerMark(s);
         const showsChip = (label) => async () => {

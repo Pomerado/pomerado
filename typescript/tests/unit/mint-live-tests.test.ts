@@ -20,6 +20,7 @@ import type { MintAgentSnapshot, MintRecoveryFactory } from "../../src/mint/reco
 import { Deadline } from "../../src/runtime/deadline.js";
 import type { FieldFill } from "../../src/runtime/output-lint.js";
 import { validateAnswer } from "../../src/runtime/input-request.js";
+import { resultHardCapBytes } from "../../src/mint/result-digest.js";
 import { makeMintContinuationFixture, readAllow } from "../support/mint-fixtures.js";
 import { portableJobSession } from "../support/portable-mint.js";
 
@@ -350,14 +351,27 @@ it("runs the cases a read designed as one batch and hands publication the host's
   );
 });
 
-it("marks results stale in the publication record when the source changed after they ran", async () => {
+/*
+ * A live test's result is tied to the code that ran, never to what a schema tells readers: an
+ * edit of a description, a comment or the formatting keeps it current, on either version, so a
+ * publication review that asks for a field's description costs no batch. Ways this fails:
+ * - a code change keeps an earlier result current;
+ * - a reworded description, a comment or a reflowed line stales every result.
+ */
+const describedTool = (description: string, extra = "") =>
+  `import { Schema } from "effect";\nexport default { name: 'search_catalog', input: Schema.Struct({ query: Schema.String.annotations({ description: ${JSON.stringify(description)} }) }) };\n${extra}`;
+it.each([
+  ["a code change", `${describedTool("What to search for.")}export const edited = 1;\n`, "stale"],
+  ["a reworded description", describedTool("The words to search the catalog for."), "pass"],
+  ["a comment and a reflowed line", describedTool("What to search for.", "// edited\n").replace("{ name", "{\n  name"), "pass"],
+])("judges results against the code that ran after %s", async (_edit, edited, status) => {
   const { host } = liveTestHost({});
   const published = publications();
   let root = "";
   const f = await fixture(
     async (_request, index) => {
       // The agent edits the source after the batch and publishes without running it again.
-      if (index === 3) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// edited\n` });
+      if (index === 3) await writeWorkspace(root, { "src/tool.ts": edited });
       return (
         [
           call("execute", example, "example"),
@@ -377,15 +391,16 @@ it("marks results stale in the publication record when the source changed after 
     read,
   );
   root = (f.workspace as unknown as { root: string }).root;
-  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+  await writeWorkspace(root, {
+    "src/tool.ts": describedTool("What to search for."),
+    "test/cases.json": JSON.stringify(cases),
+  });
   await f.run();
   const record = published.seen[0]?.liveTests as { cases: { results: { playwright: { status: string } } }[] };
-  expect(record.cases.map((testCase) => testCase.results.playwright.status)).toEqual([
-    "stale",
-    "stale",
-    "stale",
-    "stale",
-  ]);
+  const statuses = record.cases.map((testCase) => testCase.results.playwright.status);
+  expect(statuses).toHaveLength(4);
+  if (status === "stale") expect(statuses).toEqual(["stale", "stale", "stale", "stale"]);
+  else expect(statuses).not.toContain("stale");
 });
 
 it("gives the example's review each judged batch, and whether its source is still the one it ran", async () => {
@@ -410,7 +425,7 @@ it("gives the example's review each judged batch, and whether its source is stil
   const f = await fixture(
     async (_request, index) => {
       // After the first example passes, the agent edits the source and runs the example again.
-      if (index === 2) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// edited\n` });
+      if (index === 2) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "edited";\n` });
       return (
         [
           call("live_tests", runAll, "run"),
@@ -540,7 +555,7 @@ const failuresSeenByExample = async (
   root = (f.workspace as unknown as { root: string }).root;
   await writeWorkspace(root, {
     "src/tool.ts": toolSource,
-    "src/other.ts": `${toolSource}// another version\n`,
+    "src/other.ts": `${toolSource}void "another version";\n`,
     "test/cases.json": JSON.stringify(cases),
   });
   await f.run();
@@ -574,7 +589,7 @@ it("keeps a failure in review when the case passes only on another entrypoint", 
 });
 
 it("shows the failure on the current source when the same case also failed on another", async () => {
-  const edited = `${toolSource}// edited\n`;
+  const edited = `${toolSource}void "edited";\n`;
   const failures = await failuresSeenByExample(
     [
       // `nothing` fails on the original source, again on the edited one, then the agent reverts
@@ -589,7 +604,7 @@ it("shows the failure on the current source when the same case also failed on an
 });
 
 it("keeps a failure in review when the source goes back to the one it failed on", async () => {
-  const edited = `${toolSource}// edited\n`;
+  const edited = `${toolSource}void "edited";\n`;
   const onEdited = (ids: readonly string[]) => ({ entrypoint: "src/tool.ts", cases: ids, source: edited });
   const failures = await failuresSeenByExample(
     [
@@ -975,7 +990,7 @@ it("excuses a failure only by a case passing its input and expectation after the
     [
       { "src/tool.ts": toolSource, "test/cases.json": otherStore("result") },
       {
-        "src/tool.ts": `${toolSource}// fixed\n`,
+        "src/tool.ts": `${toolSource}void "fixed";\n`,
         "test/cases.json": otherStore("result").replace('"other-store"', '"second-store"'),
       },
     ],
@@ -1068,7 +1083,7 @@ const retiredUnder = (input: object, published: ToolSchemas, first: ToolSchemas 
     [
       { "src/tool.ts": toolSource, "test/cases.json": oneCase("old-input", "result", input) },
       {
-        "src/tool.ts": `${toolSource}// schema changed\n`,
+        "src/tool.ts": `${toolSource}void "schema changed";\n`,
         "test/cases.json": JSON.stringify(withPassing({ cases: [] }, 3)),
       },
     ],
@@ -1163,7 +1178,7 @@ it("excuses a failure that expected error by a later InvalidInput for the same i
     [
       { "src/tool.ts": toolSource, "test/cases.json": oneCase("store-refused", "error", input) },
       {
-        "src/tool.ts": `${toolSource}// refuses an unlisted store\n`,
+        "src/tool.ts": `${toolSource}void "refuses an unlisted store";\n`,
         "test/cases.json": oneCase("store-not-listed", "invalid_input", input),
       },
     ],
@@ -1206,7 +1221,7 @@ it("never excuses an invalid_input failure by an InputNotApplied pass", async ()
     [
       { "src/tool.ts": toolSource, "test/cases.json": oneCase("store-unlisted", "invalid_input", input) },
       {
-        "src/tool.ts": `${toolSource}// reports the store unapplied\n`,
+        "src/tool.ts": `${toolSource}void "reports the store unapplied";\n`,
         "test/cases.json": oneCase("store-not-applied", "error", input),
       },
     ],
@@ -1240,7 +1255,7 @@ it("says how a retired failure that still counts can be cleared", async () => {
           ],
         }),
       },
-      { "src/tool.ts": `${toolSource}// edited\n`, "test/cases.json": otherStore("empty") },
+      { "src/tool.ts": `${toolSource}void "edited";\n`, "test/cases.json": otherStore("empty") },
     ],
   );
   const retired = record.retired as Retired[];
@@ -1292,7 +1307,7 @@ it("never lets a case relabelled to a regression's result excuse the failure", a
     [
       { "src/tool.ts": toolSource, "test/cases.json": oneCase("listed-store", "result", input) },
       {
-        "src/tool.ts": `${toolSource}// edited\n`,
+        "src/tool.ts": `${toolSource}void "edited";\n`,
         "test/cases.json": oneCase("listed-store", "invalid_input", input),
       },
     ],
@@ -1321,7 +1336,7 @@ it("names the site's own refusal, by an input-shaped status only, as what a refu
     [
       { "src/tool.ts": toolSource, "test/cases.json": oneCase("long-query", "result", longQuery) },
       {
-        "src/tool.ts": `${toolSource}// refuses what the site refuses\n`,
+        "src/tool.ts": `${toolSource}void "refuses what the site refuses";\n`,
         "test/cases.json": oneCase("long-query", "error", longQuery),
       },
     ],
@@ -1391,6 +1406,56 @@ it("refuses a batch as no_time when less than the host's case limit is left, and
   };
   expect(await attempt(90_000)).toEqual({ batches: 0, status: "no_time" });
   expect(await attempt(150_000)).toEqual({ batches: 1, status: "ran" });
+});
+
+// A slow site's case can need longer than the host's own limit, so a batch may ask for more, up to
+// the host's maximum; the minter reads the limit each case ran with.
+it("runs a batch's cases at the longer limit it asks for, cut to the host's maximum", async () => {
+  const attempt = async (
+    caseSeconds: number | null | undefined,
+    maxCaseTimeoutMs?: number,
+    batchMs = 28 * 60_000,
+  ) => {
+    const { host, batches } = liveTestHost({});
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("live_tests", caseSeconds === undefined ? runAll : { ...runAll, caseSeconds }, "run"),
+          call("execute", example, "example"),
+          call("finish_build", finish, "finish"),
+        ][index] ?? prose(),
+      {
+        liveTests: {
+          ...host,
+          caseTimeoutMs: 120_000,
+          ...(maxCaseTimeoutMs === undefined ? {} : { maxCaseTimeoutMs }),
+        },
+        // The attempt keeps two minutes after the batch; `batchMs` is what the batch may use.
+        deadline: Deadline.after(2 * 60_000 + batchMs),
+        reviewAndExecute: completedExample,
+        publish: publications().publish,
+      },
+      read,
+    );
+    const root = (f.workspace as unknown as { root: string }).root;
+    await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": JSON.stringify(cases) });
+    await f.run();
+    const result = resultOf(f.requests[1], "run");
+    // Every attempt runs its batch; only the limit differs.
+    expect({ status: result["status"], batches: batches.length }).toEqual({ status: "ran", batches: 1 });
+    return { batchMs: batches[0]?.caseTimeoutMs, reported: result["caseSeconds"] };
+  };
+  expect(await attempt(160, 180_000)).toEqual({ batchMs: 160_000, reported: 160 });
+  expect(await attempt(240, 180_000)).toEqual({ batchMs: 180_000, reported: 180 });
+  // No longer than the host's own limit, or a host that takes no longer one: the host's own.
+  expect(await attempt(90, 180_000)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160)).toEqual({ batchMs: undefined, reported: 120 });
+  expect(await attempt(160, 100_000)).toEqual({ batchMs: undefined, reported: 120 });
+  // No request: the host's own limit, reported as no limit asked for.
+  expect(await attempt(null, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  expect(await attempt(undefined, 180_000)).toEqual({ batchMs: undefined, reported: undefined });
+  // Too little left for the longer limit: the host's own, so its shorter cases still run.
+  expect(await attempt(160, 180_000, 150_000)).toEqual({ batchMs: undefined, reported: 120 });
 });
 
 it("says time ran out only when the attempt's end, not the batch's own cap, stopped a case", async () => {
@@ -1521,6 +1586,65 @@ it("never counts a case the site blocked on the browser's egress against the too
   );
   expect(blocked).toMatchObject({ status: "inconclusive", got: "site_block" });
   expect(published.seen[0]?.coverage).toContain("3 pass, 1 fail, 1 inconclusive;");
+});
+
+// A request that says to stop at blocks speaks of the tool's own runs, not of a test browser the
+// host opened on its own exit, so a site block there never ends the build as caller_input.
+it("refuses caller_input after the site blocked a test browser, and the build goes on to publish", async () => {
+  const { host } = liveTestHost({
+    "sort-price": { status: "inconclusive", reason: "site_block" },
+    nothing: { status: "completed", output: { results: [], has_next_page: false, next_cursor: null } },
+  });
+  const published = publications();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        // Two lanes: only the second lane's first case, sort-price, runs cold.
+        call("live_tests", { ...runAll, maxWorkers: 2 }, "run"),
+        call("execute", example, "example"),
+        call(
+          "report_blocked",
+          {
+            reason: "caller_input",
+            explanation: "The site blocked one test search, and the request says to stop at a block.",
+            intent: "The request says if the site shows a robot check, stop without getting around it.",
+          },
+          "blocked",
+        ),
+        call("finish_build", finish, "finish"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    {
+      ...read,
+      intent:
+        "Search the catalog for a query. If the site shows a robot check or blocks access, stop without getting around it.",
+    },
+  );
+  const root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify(withPassing(cases, 1)),
+  });
+  const outcome = await f.run();
+
+  const ran = resultOf(f.requests[1], "run")["cases"] as { id: string; status: string }[];
+  expect(ran.filter((testCase) => testCase.status === "pass")).toHaveLength(4);
+  expect(ran.find((testCase) => testCase.id === "sort-price")).toMatchObject({
+    status: "inconclusive",
+    got: "site_block",
+    start: "cold",
+  });
+  expect(resultOf(f.requests[3], "blocked")).toMatchObject({
+    status: "blocked_refused",
+    reason: "caller_input_site_block",
+  });
+  expect(published.seen).toHaveLength(1);
+  expect(outcome.build).toBe("published");
 });
 
 it("runs nothing when Guardian denies the batch, and says why", async () => {
@@ -1873,6 +1997,199 @@ it("keeps a case marked noMatch in the publication record, and marking a passed 
   );
 });
 
+// A whole-catalog read can return megabytes. The plan shows a named case's output
+// whole only while it is small; a larger one is saved as a workspace file and the plan shows its
+// digest, so one plan never carries more than the host returns for any result.
+it("shows a named case's multi-megabyte output as a digest naming the file that holds it", async () => {
+  const catalog = {
+    results: Array.from({ length: 12_000 }, (_unused, index) => ({
+      name: `Synthetic item ${index}`,
+      description: `A synthetic description of item ${index}. `.repeat(8),
+      price: { amount: 5 + (index % 40), currency: "USD" },
+    })),
+    has_next_page: false,
+    next_cursor: null,
+  };
+  const { host } = liveTestHost({
+    "repeat-1": { status: "completed", output: catalog },
+    nothing: { status: "completed", output: { results: [], has_next_page: false, next_cursor: null } },
+  });
+  const saved = new Map<string, string>();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "example"),
+        call("live_tests", runAll, "run"),
+        call("live_tests", { ...plan, cases: ["repeat-1", "nothing"] }, "plan"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      saveResult: (path, text) =>
+        Effect.sync(() => {
+          saved.set(path, text);
+        }),
+    },
+    read,
+  );
+  await writeWorkspace((f.workspace as unknown as { root: string }).root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify(cases),
+  });
+  await f.run();
+
+  const catalogBytes = new TextEncoder().encode(JSON.stringify(catalog)).byteLength;
+  expect(catalogBytes).toBeGreaterThan(4_000_000);
+  const afterPlan = f.requests.find((request) =>
+    JSON.stringify(request.input).includes('"callId":"plan"'),
+  );
+  const planned = resultOf(afterPlan, "plan");
+  // The whole plan stays within the most the host returns for one result.
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  const shown = planned["cases"] as Record<string, unknown>[];
+  // A small output comes back whole, as before.
+  expect(shown.find((testCase) => testCase["id"] === "nothing")).toMatchObject({
+    output: { results: [], has_next_page: false, next_cursor: null },
+  });
+  // A large one comes back as its size, shape and first items, naming the file with all of it.
+  const large = shown.find((testCase) => testCase["id"] === "repeat-1");
+  expect(large).not.toHaveProperty("output");
+  const digest = large?.["outputDigest"] as { totalBytes: number; path: string; shape: unknown };
+  expect(digest.totalBytes).toBe(catalogBytes);
+  expect(digest.shape).toMatchObject({ fields: { results: { type: "array", length: 12_000 } } });
+  expect(JSON.parse(saved.get(digest.path) ?? "null")).toEqual(catalog);
+  // Cases the plan did not name show no output at all.
+  expect(shown.find((testCase) => testCase["id"] === "sort-price")).not.toHaveProperty(
+    "outputDigest",
+  );
+});
+
+/** A list output of `count` synthetic items, about 190 bytes each. */
+const itemsOutput = (count: number, tag: string) => ({
+  results: Array.from({ length: count }, (_unused, index) => ({
+    name: `Synthetic ${tag} item ${index}`,
+    description: `A synthetic description of ${tag} item ${index}. `.repeat(3),
+  })),
+  has_next_page: false,
+  next_cursor: null,
+});
+
+/**
+ * Runs every case in `ids` once, each returning `outputs[id]`, then a plan naming them all, and
+ * returns the plan's cases by id and the files the host saved (none without `saveResult`).
+ */
+const planNaming = async (
+  outputs: Readonly<Record<string, unknown>>,
+  options: { readonly saves: boolean },
+) => {
+  const ids = Object.keys(outputs);
+  const { host } = liveTestHost(
+    Object.fromEntries(
+      ids.map((id) => [id, { status: "completed" as const, output: outputs[id] }]),
+    ),
+  );
+  const saved = new Map<string, string>();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", example, "example"),
+        call("live_tests", runAll, "run"),
+        call("live_tests", { ...plan, cases: ids }, "plan"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      ...(options.saves
+        ? {
+            saveResult: (path: string, text: string) =>
+              Effect.sync(() => {
+                saved.set(path, text);
+              }),
+          }
+        : {}),
+    },
+    read,
+  );
+  await writeWorkspace((f.workspace as unknown as { root: string }).root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify({
+      cases: ids.map((id) => ({
+        id,
+        purpose: "A query that returns many results.",
+        input: { query: id },
+        expect: "result",
+      })),
+    }),
+  });
+  await f.run();
+  const afterPlan = f.requests.find((request) =>
+    JSON.stringify(request.input).includes('"callId":"plan"'),
+  );
+  const planned = resultOf(afterPlan, "plan");
+  const byId = new Map(
+    (planned["cases"] as Record<string, unknown>[]).map((testCase) => [
+      String(testCase["id"]),
+      testCase,
+    ]),
+  );
+  return { planned, byId, saved };
+};
+
+it("shows a plan's outputs whole until their budget is spent, then only where each is saved", async () => {
+  // Four outputs of about 12 KiB, each small enough to come back whole on its own.
+  const outputs = Object.fromEntries(
+    ["first", "second", "third", "fourth"].map((id) => [id, itemsOutput(64, id)]),
+  );
+  const { planned, byId, saved } = await planNaming(outputs, { saves: true });
+
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  expect(byId.get("first")?.["output"]).toEqual(outputs["first"]);
+  expect(byId.get("second")?.["output"]).toEqual(outputs["second"]);
+  // Past the budget a case shows its size and the file holding all of it, never the output.
+  for (const id of ["third", "fourth"]) {
+    const testCase = byId.get(id);
+    expect(testCase).not.toHaveProperty("output");
+    const digest = testCase?.["outputDigest"] as { kind: string; path: string };
+    expect(digest.kind).toBe("result_saved");
+    expect(JSON.parse(saved.get(digest.path) ?? "null")).toEqual(outputs[id]);
+  }
+});
+
+it("shows a large output's first part when the host saves no results, and omits it past the budget", async () => {
+  const outputs = { large: itemsOutput(20_000, "large"), later: itemsOutput(20_000, "later") };
+  const { planned, byId } = await planNaming(outputs, { saves: false });
+
+  expect(new TextEncoder().encode(JSON.stringify(planned)).byteLength).toBeLessThan(
+    resultHardCapBytes,
+  );
+  const first = byId.get("large")?.["outputDigest"] as { kind: string; excerpt: string };
+  expect(first.kind).toBe("result_truncated");
+  expect(first.excerpt).toContain("Synthetic large item 0");
+  // The first part fills most of the budget, so the next case shows only its size.
+  const next = byId.get("later")?.["outputDigest"] as { kind: string; totalBytes: number };
+  expect(next.kind).toBe("result_omitted");
+  expect(next.totalBytes).toBe(new TextEncoder().encode(JSON.stringify(outputs.later)).byteLength);
+  expect(byId.get("later")).not.toHaveProperty("output");
+});
+
+it("saves the outputs of two cases whose ids differ only in punctuation to files of their own", async () => {
+  const outputs = { "store.one": itemsOutput(200, "dotted"), store_one: itemsOutput(200, "plain") };
+  const { byId, saved } = await planNaming(outputs, { saves: true });
+
+  const paths = ["store.one", "store_one"].map(
+    (id) => (byId.get(id)?.["outputDigest"] as { path: string }).path,
+  );
+  expect(new Set(paths).size).toBe(2);
+  expect(JSON.parse(saved.get(paths[0] ?? "") ?? "null")).toEqual(outputs["store.one"]);
+  expect(JSON.parse(saved.get(paths[1] ?? "") ?? "null")).toEqual(outputs.store_one);
+});
+
 it("keeps a case's noMatch in its result across a takeover", async () => {
   const { host } = liveTestHost(
     { "busy-month": monthCount(4, 351), "quiet-month": monthCount(2, 0) },
@@ -1975,7 +2292,7 @@ it("runs a signed-in read's combined filter case on its signed-in browser and re
           "test/cases.json": JSON.stringify({ ...combined, cases: [...combined.cases, ...overLimitCases] }),
         });
       // The fix for the ignored filter.
-      if (index === 4) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// fixed\n` });
+      if (index === 4) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "fixed";\n` });
       return (
         [
           call("execute", signInStep, "sign_in"),
@@ -3011,8 +3328,8 @@ const pastTheCap = async (
   const published = publications();
   let root = "";
   const edits: Readonly<Record<number, Readonly<Record<string, string>>>> = {
-    1: { "src/tool.ts": `${toolSource}// pages fixed\n`, "test/cases.json": pageCases("page-30") },
-    2: { "src/tool.ts": `${toolSource}// pages fixed\n// filters fixed\n` },
+    1: { "src/tool.ts": `${toolSource}void "pages fixed";\n`, "test/cases.json": pageCases("page-30") },
+    2: { "src/tool.ts": `${toolSource}void "pages fixed";\nvoid "filters fixed";\n` },
   };
   const steps = [
     call("live_tests", runAll, "first"),
@@ -3115,7 +3432,7 @@ it("keeps the reserve while a case's failure is on the current source, and runs 
   ];
   const f = await fixture(
     async (_request, index) => {
-      if (index === 2) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// pages fixed\n` });
+      if (index === 2) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
       return steps[index] ?? prose();
     },
     {
@@ -3325,7 +3642,7 @@ it("refuses host_refused while the host's reserved batch would still run, and en
   const f = await fixture(
     async (_request, index) => {
       // The fix after the failure, so its case is one a failure is pending on.
-      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// pages fixed\n` });
+      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
       return steps[index] ?? prose();
     },
     {
@@ -3380,7 +3697,7 @@ it("refuses host_refused while the reserve is open with its case failing on the 
   const f = await fixture(
     async (_request, index) => {
       // The fix comes only after the refused report.
-      if (index === 5) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// pages fixed\n` });
+      if (index === 5) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
       return steps[index] ?? prose();
     },
     {
@@ -3415,6 +3732,39 @@ it("refuses host_refused while the reserve is open with its case failing on the 
   expect(outcome.blocked).toEqual({ reason: "host_refused", explanation: spentExplanation });
 });
 
+// A reserve batch keeps its own small limit: a longer one a batch asks for would not fit the
+// reserve's time, so the host's maximum never applies to it.
+it("runs a reserve batch at the reserve's own limit, whatever longer limit it asks for", async () => {
+  const { host, batches } = liveTestHost((batch) => (batch === 0 ? { "page-30": pageTimeout } : {}));
+  const capped = cappedWithReserve({ ...host, maxCaseTimeoutMs: 180_000 }, batches, { regular: 1 });
+  let root = "";
+  const steps = [
+    call("live_tests", runAll, "first"),
+    call("live_tests", { ...runCases(["page-30"]), caseSeconds: 160 }, "reserved"),
+    call("execute", example, "example"),
+    call("finish_build", finish, "finish"),
+  ];
+  const f = await fixture(
+    async (_request, index) => {
+      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
+      return steps[index] ?? prose();
+    },
+    {
+      liveTests: capped,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: publications().publish,
+    },
+    read,
+  );
+  root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, { "src/tool.ts": toolSource, "test/cases.json": pageCases("page-30") });
+  await f.run();
+  expect(resultOf(f.requests[2], "reserved")).toMatchObject({ status: "ran", caseSeconds: 60 });
+  expect(batches).toHaveLength(2);
+  expect(batches[1]?.caseTimeoutMs).toBeUndefined();
+});
+
 // The reserve being open decides the report alone, so a cases file that cannot be read when the
 // minter reports never lets it stand: the minter fixes the file and runs the reserve first.
 it("refuses host_refused while the reserve is open and the cases file cannot be read", async () => {
@@ -3431,7 +3781,7 @@ it("refuses host_refused while the reserve is open and the cases file cannot be 
   ];
   const f = await fixture(
     async (_request, index) => {
-      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// pages fixed\n` });
+      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "pages fixed";\n` });
       if (index === 4) await writeWorkspace(root, { "test/cases.json": "{ not json" });
       return steps[index] ?? prose();
     },
@@ -3601,7 +3951,7 @@ it("counts no result that ran on an earlier source", async () => {
   const f = await fixture(
     async (_request, index) => {
       // The agent edits the source after the batch, then runs the example again on it.
-      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}// edited\n` });
+      if (index === 1) await writeWorkspace(root, { "src/tool.ts": `${toolSource}void "edited";\n` });
       return (
         [
           call("live_tests", runAll, "run"),

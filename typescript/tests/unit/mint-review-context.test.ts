@@ -99,7 +99,7 @@ describe("allowedEffectsFor", () => {
     // A date or place the request gives as context must not become a filter Guardian enforces.
     for (const purpose of ["explore", "test", "example", "inspect", "residual"] as const)
       expect(allowedEffectsFor(live(purpose))).toEqual([
-        "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Clicking the site's own sign-in link or button to open its sign-in screen or dialog is navigation, even when the page says results need a login. Entering or submitting a username, email, phone number, password or code, submitting a sign-in step, or switching accounts is not: credential submission belongs only to the host-owned authenticate step. After the host has signed in, entering the caller's own input into a context step that asks for no username, email, phone number, password, code, date of birth, ZIP or security answer and does not verify who the user is, such as choosing a supplier, company, client or language, and continuing past it is navigation, not a sign-in step or an account switch. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.",
+        "Authorized repeatable reads, navigation, observation and transient search/query interactions, including query submission when its read semantics are established. Respect constraints the request states, such as a date range, filter, sort or limit. Context it gives, such as the current date or the caller's location, is not a constraint unless the request applies it. Navigating to and observing the site's public sign-in pages, including the site's own redirects to its sign-in origin, is allowed. Clicking the site's own sign-in link or button to open its sign-in screen or dialog is navigation, even when the page says results need a login. Entering or submitting a username, email, phone number, password or code, submitting a sign-in step, or switching to a different login is not: credential submission belongs only to the host-owned authenticate step. After the host has signed in, entering the caller's own input into a context step that asks for no username, email, phone number, password, code, date of birth, ZIP or security answer and does not verify who the user is, such as choosing a supplier, company, client or language, and continuing past it is navigation, not a sign-in step or a switch to a different login. No autosave, holds, drafts, uploads, business commitments, account changes or other writes, even for exploration/test setup.",
       ]);
   });
 
@@ -125,6 +125,20 @@ describe("allowedEffectsFor", () => {
 });
 
 describe("mintReviewContext", () => {
+  // Guardian judges a setup step by what it sends, so the review must see which step claims it.
+  it("gives Guardian the recorded write path with its setup steps", async () => {
+    const { host } = fakeHost();
+    const path = {
+      steps: [
+        { commit: "open-cart", does: "starts the site's empty cart", setup: true as const },
+        { commit: "add-items", does: "adds the requested items" },
+      ],
+      ends: "The cart's priced items",
+    };
+    const reviewed = await context({ ...host, writePath: () => path }, live("act"));
+    expect(reviewed.writePath).toEqual(path);
+  });
+
   it("gives Guardian the page the host last observed", async () => {
     const { state, host } = fakeHost();
     const pages: unknown[] = [];

@@ -1,21 +1,27 @@
 import { Effect, Either, Option, Schema } from "effect";
 import type {
   AutofillApproval,
+  AutofillApprovalDelivery,
   AutofillPopup,
   RejectedMarker,
+  SignInChoice,
   SubmitKey,
 } from "./autofill-contracts.js";
 import {
   autofillRecipe,
   autofillRecipePath,
+  ClickLayerAutofillRecipe,
   DismissAutofillRecipe,
   KeyboardSubmitAutofillRecipe,
   KeySubmitAutofillRecipe,
   LegacyAutofillRecipe,
+  MethodOptionAutofillRecipe,
   NationalPhoneAutofillRecipe,
   PopupAutofillRecipe,
   PrivateIdentifierAutofillRecipe,
   publishedAutofillRecipe,
+  SignInChoiceAutofillRecipe,
+  SignInWayAutofillRecipe,
   WildcardAutofillRecipe,
   WorkspaceAutofillRecipe,
   type AutofillRecipeOrigins,
@@ -32,6 +38,7 @@ import type {
   AutofillStepReport,
 } from "./autofill-step.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
+import type { TypedBox } from "./autofill-fill.js";
 import { recordedScreenPage } from "../runtime/workspace-origin.js";
 
 /**
@@ -52,8 +59,8 @@ export const SignInRecipeV3 = Schema.Struct({
   ),
 );
 /**
- * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9 or 10 as every host writes it, or
- * this host's version 3.
+ * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 or 14 as every host
+ * writes it, or this host's version 3.
  */
 export const SignInRecipe = Schema.Union(
   LegacyAutofillRecipe,
@@ -66,6 +73,10 @@ export const SignInRecipe = Schema.Union(
   KeyboardSubmitAutofillRecipe,
   PrivateIdentifierAutofillRecipe,
   NationalPhoneAutofillRecipe,
+  ClickLayerAutofillRecipe,
+  MethodOptionAutofillRecipe,
+  SignInChoiceAutofillRecipe,
+  SignInWayAutofillRecipe,
 );
 export type SignInRecipe = typeof SignInRecipe.Type;
 export type SignInRecipeStep = AutofillRecipeStep;
@@ -76,12 +87,12 @@ export const resolvedPage = (step: SignInRecipeStep, workspace: string | undefin
     ? undefined
     : recordedScreenPage(step, workspace);
 
-const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9 and 10 decode as every host reads
- * them; version 3 is read only here.
+ * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 and 14 decode as every
+ * host reads them; version 3 is read only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
   const shared = publishedAutofillRecipe(new Map([[autofillRecipePath, text]]));
@@ -109,6 +120,8 @@ export interface RecordedSignInStep {
   readonly approval?: AutofillApproval | undefined;
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string | undefined;
+  /** `paste` for an email-link approval whose link the owner pastes for the host to open. */
+  readonly delivery?: AutofillApprovalDelivery | undefined;
   readonly rejectedMarkers?: readonly RejectedMarker[] | undefined;
   /** With each identifier field's accepted kinds, never a value. */
   readonly fields: readonly AutofillField[];
@@ -116,14 +129,19 @@ export interface RecordedSignInStep {
   /** The key pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
   readonly submittedBy?: "host" | "minter" | undefined;
-  /** `keyboard` when the host pressed the step's covered submit from the keyboard. */
-  readonly submitVia?: "keyboard" | undefined;
+  /**
+   * `keyboard` when the host pressed the step's covered submit from the keyboard, `click_layer`
+   * when it clicked through the site's own control over it.
+   */
+  readonly submitVia?: "keyboard" | "click_layer" | undefined;
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillStep["methods"];
   /** The secrets an earlier screen took that this one asks for again with a second factor. */
   readonly refills?: SignInRecipeStep["refills"];
   /** The covering notice's own control the host clicked on this screen. */
   readonly dismiss?: string | undefined;
+  /** The action with a lasting effect on the account the screen's submit takes. */
+  readonly choice?: SignInChoice | undefined;
   /** The page the step ran on, origin and path only. */
   readonly page: string;
   /** The segments of `page`'s path written as `*`, which any one segment matches. */
@@ -156,6 +174,7 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
   ...(step.anySegments === undefined ? {} : { anySegments: step.anySegments }),
   ...(step.approval === undefined ? {} : { approval: step.approval }),
   ...(step.matchSelector === undefined ? {} : { matchSelector: step.matchSelector }),
+  ...(step.delivery === undefined ? {} : { delivery: step.delivery }),
   ...(step.popup === undefined ? {} : { popup: step.popup }),
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
   fields: step.fields.map((field) =>
@@ -183,10 +202,11 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
   ...(step.submitVia === undefined ? {} : { submitVia: step.submitVia }),
   ...(step.methods === undefined ? {} : { methods: step.methods }),
   ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+  ...(step.choice === undefined ? {} : { choice: step.choice }),
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 10's `workspace`, then each
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 14's `workspace`, then each
  * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
  * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
@@ -201,7 +221,11 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
         recipe.version !== 7 &&
         recipe.version !== 8 &&
         recipe.version !== 9 &&
-        recipe.version !== 10) ||
+        recipe.version !== 10 &&
+        recipe.version !== 11 &&
+        recipe.version !== 12 &&
+        recipe.version !== 13 &&
+        recipe.version !== 14) ||
       recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),
@@ -220,11 +244,15 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
 export interface SignInBrowser<E> {
   /** Finds the step's controls and judges where they submit, before anything is typed. */
   readonly inspect: (step: AutofillStep) => Effect.Effect<AutofillRefusal | AutofillInspection, E>;
-  /** Fills the step's values into the inspected controls and clicks its submit. */
+  /**
+   * Fills the step's values into the inspected controls and clicks its submit, keeping a box a
+   * run's earlier screen typed the same identifier into when given its record (`typedBoxes`).
+   */
   readonly fill: (input: {
     readonly step: AutofillStep;
     readonly values: readonly string[];
     readonly inspection: AutofillInspection;
+    readonly typedBoxes?: TypedBox[];
   }) => Effect.Effect<AutofillStepReport>;
   /**
    * Clicks again the submit of a screen whose fill reported `blocked`, typing nothing, after the

@@ -36,6 +36,9 @@ importers:
         specifier: 7.4.16
         version: 7.4.16
     devDependencies:
+      '@actions/expressions':
+        specifier: 0.3.61
+        version: 0.3.61
       '@modelcontextprotocol/client':
         specifier: 2.3.1
         version: 2.3.1
@@ -62,6 +65,10 @@ importers:
         version: 5.0.5(@types/node@24.13.4)(vite@8.3.5(@types/node@24.13.4))
 
 packages:
+
+  '@actions/expressions@0.3.61':
+    resolution: {integrity: sha512-Ig+tXELvTjlqxQAWBQnLNn2dPpNraLMdSnT+vDzDPmJtbNUhIAH/Z9kVT8pZ8UtJi9vUGs8hwHE8JFJmbOnLEA==}
+    engines: {node: '>= 20'}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -918,6 +925,8 @@ packages:
     resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
 snapshots:
+
+  '@actions/expressions@0.3.61': {}
 
   '@jridgewell/resolve-uri@3.1.2': {}
 

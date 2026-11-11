@@ -13,8 +13,13 @@ import type {
   IdentifierKind,
   SecretSlot,
 } from "../destinations/autofill-step.js";
-import { type AutofillRecipeStep, isSecondFactor } from "../destinations/autofill-recipe.js";
+import {
+  type AutofillRecipeStep,
+  isSecondFactor,
+  type RefillSlot,
+} from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
+import type { TypedBox } from "../destinations/autofill-fill.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
 
 /**
@@ -55,6 +60,8 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
     readonly step: AutofillStep;
     readonly values: readonly string[];
     readonly inspection: AutofillInspection;
+    /** The open sign-in's record of the identifier boxes it typed (core's fill `typedBoxes`). */
+    readonly typedBoxes?: TypedBox[];
   }) => Effect.Effect<AutofillStepReport>;
   /**
    * Clicks again the submit of the open sign-in's `blocked` screen, typing nothing, after its
@@ -87,6 +94,12 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
   ) => Effect.Effect<AutofillSignedInCheck, E>;
   /** Opens a page on the sign-in's tab, as a replay starts from the login URL. */
   readonly open: (url: string) => Effect.Effect<void, E>;
+  /**
+   * Runs `effect`, the opening of a sign-in link the owner pasted (`delivery: "paste"`), with no
+   * recording of the browser's screen or requests, since the address holds the link. A host that
+   * records neither leaves it out.
+   */
+  readonly withoutRecording?: <A, E2, R>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
   /** Reads a recorded error marker without reading a field's value or verifying a login. */
   readonly markerVisible?: (
     selector: string,
@@ -151,7 +164,9 @@ export type RegisteredEntity =
   | "ZIP"
   | "RECOVERY_CODE"
   | "ONE_TIME_CODE"
-  | "SECURITY_ANSWER";
+  | "SECURITY_ANSWER"
+  /** A sign-in link the owner pasted for the host to open (`delivery: "paste"`). */
+  | "SIGN_IN_LINK";
 
 /**
  * A host's record of the security answers it typed from the login's saved answers, which it keeps
@@ -176,6 +191,8 @@ interface AutofillRecordedStep {
   readonly approval?: AutofillRecipeStep["approval"];
   /** A device approval's element that shows the number the owner picks on their device. */
   readonly matchSelector?: string;
+  /** `paste` for an email-link approval whose link the owner pasted for the host to open. */
+  readonly delivery?: AutofillRecipeStep["delivery"];
   readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"];
   /**
    * With each identifier field's accepted, held and sent kinds, never a value, and what named each
@@ -186,14 +203,24 @@ interface AutofillRecordedStep {
   /** The key the host pressed in the last field to submit its form, on a form with no submit. */
   readonly submitKey?: AutofillRecipeStep["submitKey"];
   readonly submittedBy?: "host" | "minter";
-  /** `keyboard` once the host pressed the screen's covered submit from the keyboard. */
+  /**
+   * `keyboard` once the host pressed the screen's covered submit from the keyboard, `click_layer`
+   * once it clicked through the site's own control over it.
+   */
   readonly submitVia?: AutofillRecipeStep["submitVia"];
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillRecipeStep["methods"];
-  /** The password an earlier screen took that this one asked for again beside a second factor. */
+  /** The picked method's `option`, with `submit`, when it was chosen from a native select. */
+  readonly option?: string;
+  /**
+   * The password an earlier screen took that this one asked for again beside a second factor, or
+   * the code, on a second code screen.
+   */
   readonly refills?: AutofillRecipeStep["refills"];
   /** The covering notice's own control the host clicks on this screen (`AutofillStep.dismiss`). */
   readonly dismiss?: string;
+  /** The action with a lasting effect on the account the submit takes (`AutofillStep.choice`). */
+  readonly choice?: AutofillRecipeStep["choice"];
   /** The page the step ran on, origin and path only. */
   readonly page: string;
 }
@@ -416,6 +443,13 @@ const namedControl = (
     return identity;
   });
 
+/**
+ * The `dismiss` a recorded step keeps for runs: none when the step cites the owner's answers that
+ * allowed it to accept a notice (`confirmedBy`), so a run never accepts it by itself.
+ */
+const recordedDismiss = (step: Pick<AutofillStep, "dismiss" | "confirmedBy">) =>
+  (step.confirmedBy ?? []).length > 0 ? undefined : step.dismiss;
+
 /** `armStep` once what named each control is screened (`identities`, per field). */
 const armScreened = (
   state: AutofillSignInState,
@@ -437,6 +471,7 @@ const armScreened = (
     const identity = identities[index];
     return identity === undefined ? field : { ...field, identity };
   };
+  const dismiss = recordedDismiss(step);
   state.steps.push({
     ...(step.popup === undefined ? {} : { popup: step.popup }),
     ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
@@ -449,7 +484,9 @@ const armScreened = (
     ...(step.submit === undefined ? {} : { submit: step.submit }),
     ...(step.submitKey === undefined ? {} : { submitKey: step.submitKey }),
     ...(step.methods === undefined ? {} : { methods: step.methods }),
-    ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+    ...(step.option === undefined ? {} : { option: step.option }),
+    ...(dismiss === undefined ? {} : { dismiss }),
+    ...(step.choice === undefined ? {} : { choice: step.choice }),
     page: inspection.page,
   });
   state.securityAnswers?.arm(step, values);
@@ -496,17 +533,95 @@ export const reasksPassword = (
   );
 };
 
-/** Marks the screen just armed as asking for the password again (`reasksPassword`). */
-export const noteRefill = (state: AutofillSignInState) => {
+/** What named a control when the host found it: its `id` and `name` attributes. */
+type ControlNames = Pick<ControlIdentity, "id" | "name">;
+/** A screen's fields, each with what named its control when the host found it, if known. */
+export interface NamedFields {
+  readonly fields: readonly {
+    readonly slot: string;
+    readonly selector: string;
+    readonly identity?: ControlNames | undefined;
+  }[];
+}
+
+/** A step's fields with what named each control on the screen the host inspected, in order. */
+export const namedFields = (
+  step: Pick<AutofillStep, "fields">,
+  screen: readonly ControlNames[],
+): NamedFields => ({
+  fields: step.fields.map((field, index) => ({ ...field, identity: screen[index] })),
+});
+
+/** An `id` or `name` a control showed, never an empty one. */
+const shown = (value: string | null | undefined) =>
+  value !== undefined && value !== null && value !== "";
+
+/**
+ * Whether two code boxes are the same field: the same selector, `id` or `name`. A box named under
+ * another selector is still the same box, and so is one whose `id` or `name` the sign-in kept
+ * none of, as when its naming held a secret.
+ */
+const sameBox = (here: NamedFields["fields"][number], before: NamedFields["fields"][number]) => {
+  const a = here.identity;
+  const b = before.identity;
+  return (
+    here.selector === before.selector ||
+    (shown(a?.id) && a?.id === b?.id) ||
+    (shown(a?.name) && a?.name === b?.name)
+  );
+};
+
+/**
+ * Whether `step` takes a code in boxes the earlier code screen (`earlier`) did not: none of its
+ * code boxes is one of the earlier screen's (`sameBox`), so the same code screen shown again never
+ * reads as a second one. Two codes typed into the same box are not told apart.
+ */
+export const takesAnotherCode = (step: NamedFields, earlier: NamedFields | undefined) => {
+  const codes = (fields: NamedFields | undefined) =>
+    (fields?.fields ?? []).filter((field) => field.slot === "code");
+  const before = codes(earlier);
+  const here = codes(step);
+  return (
+    before.length > 0 &&
+    here.length > 0 &&
+    here.every((box) => !before.some((previous) => sameBox(box, previous)))
+  );
+};
+
+/**
+ * Whether a screen of the open sign-in (`open`) asks for a second, different code after the code
+ * an earlier screen took went out (`refills`, the secrets filled before, is the code alone): its
+ * code boxes, as the host found them on the screen (`screen`), are not the last code screen's
+ * (`takesAnotherCode`), as a sign-in that sends one code by text and then another by email does.
+ * The recipe records the refill there, and only there a run's replay makes it, once.
+ */
+export const reasksCode = (
+  open: AutofillSignInState | undefined,
+  step: AutofillStep,
+  refills: readonly AutofillSlot[],
+  screen: readonly ControlNames[],
+) =>
+  refills.includes("code") &&
+  refills.every((slot) => slot === "code") &&
+  takesAnotherCode(
+    namedFields(step, screen),
+    open?.steps.findLast((taken) => taken.fields.some((field) => field.slot === "code")),
+  );
+
+/**
+ * Marks the screen just armed as asking again for the password (`reasksPassword`), or for a
+ * second code (`reasksCode`).
+ */
+export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "password") => {
   const armed = state.steps.at(-1);
-  if (armed !== undefined)
-    state.steps[state.steps.length - 1] = { ...armed, refills: ["password"] };
+  if (armed !== undefined) state.steps[state.steps.length - 1] = { ...armed, refills: [slot] };
 };
 
 /**
  * Records what a fill did once it returns: a field it did not fill is not held as filled, nor a
  * saved security answer typed, a step that reached nothing leaves the recipe, a step the host
- * clicked records it, with `submitVia` when it pressed the submit from the keyboard, and one whose
+ * clicked records it, with `submitVia` when it pressed the submit from the keyboard or clicked
+ * through the site's own control over it, and one whose
  * click another element caught is the open sign-in's `blocked` screen. Returns whether anything
  * reached the page.
  */
@@ -542,13 +657,16 @@ export const recordStep = (
 
 /**
  * The open sign-in's `blocked` screen when `request` names it again, by its popup, its fields'
- * selectors in order, its submit, submit key and methods, with the request's `dismiss`: the host
- * clicks its submit again and types nothing (`resubmitAutofillStep`). Undefined for any other
- * screen, which is a fill of its own.
+ * selectors in order, its submit, submit key and methods, with the request's `dismiss` and
+ * `confirmedBy`: the host clicks its submit again and types nothing (`resubmitAutofillStep`).
+ * Undefined for any other screen, which is a fill of its own.
  */
 export const blockedScreen = (
   state: AutofillSignInState | undefined,
-  request: Pick<AutofillStep, "popup" | "submit" | "submitKey" | "methods" | "dismiss"> & {
+  request: Pick<
+    AutofillStep,
+    "popup" | "submit" | "submitKey" | "methods" | "dismiss" | "confirmedBy"
+  > & {
     readonly fields: readonly { readonly selector: string }[];
   },
 ): AutofillStep | undefined => {
@@ -563,14 +681,19 @@ export const blockedScreen = (
     blocked.fields.some((field, index) => field.selector !== request.fields[index]?.selector)
   )
     return undefined;
-  const { dismiss: _dismiss, ...screen } = blocked;
-  return request.dismiss === undefined ? screen : { ...screen, dismiss: request.dismiss };
+  const { dismiss: _dismiss, confirmedBy: _confirmedBy, ...screen } = blocked;
+  return {
+    ...screen,
+    ...(request.dismiss === undefined ? {} : { dismiss: request.dismiss }),
+    ...(request.confirmedBy === undefined ? {} : { confirmedBy: request.confirmedBy }),
+  };
 };
 
 /**
  * Records the host's click again of the `blocked` screen (`resubmitAutofillStep`) once it returns:
  * the screen's recorded step, the open sign-in's last, takes the `dismiss` the host clicks there,
- * which a run's replay clicks too, and the report settles it as a fill's would (`recordStep`). A
+ * which a run's replay clicks too, unless the step cites the owner's answers that allowed it
+ * (`recordedDismiss`), and the report settles it as a fill's would (`recordStep`). A
  * refusal clicked nothing, so the screen stays blocked with what it holds. A field found empty
  * before the click clicked nothing either, and nothing of the screen was sent: its step leaves the
  * recipe, so the screen filled again records it once, with its dismiss, and what the blocked fill
@@ -591,8 +714,9 @@ export const recordResubmit = (
     return typed;
   }
   const last = state.steps.at(-1);
-  if (last !== undefined && step.dismiss !== undefined)
-    state.steps[state.steps.length - 1] = { ...last, dismiss: step.dismiss };
+  const dismiss = recordedDismiss(step);
+  if (last !== undefined && dismiss !== undefined)
+    state.steps[state.steps.length - 1] = { ...last, dismiss };
   recordStep(state, step, stepReport);
   return [];
 };

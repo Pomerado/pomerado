@@ -388,7 +388,13 @@ describe("run outcomes", () => {
             .map((outcome) => outcome.code),
         ),
       ].sort(),
-    ).toEqual(["credentials_rejected", "input_rejected", "no_response", "outcome_unknown"]);
+    ).toEqual([
+      "credentials_rejected",
+      "handoff_state_changed",
+      "input_rejected",
+      "no_response",
+      "outcome_unknown",
+    ]);
     for (const outcome of classifiedOutcomes())
       if ("possible_commit" in outcome.details)
         expect(outcome.possibleCommit).toBe(outcome.details["possible_commit"]);
@@ -468,6 +474,51 @@ describe("a refusal a write declares in its output", () => {
     Schema.Struct({ status: Schema.Literal("refused"), reason, total: Schema.String });
   const overLimit = refused(Schema.Literal("over_price_limit", "out_of_stock"));
   const schemaOf = <A, I>(schema: Schema.Schema<A, I>) => contractJsonSchema(schema);
+  // A free-form JSON value, which Effect writes as a definition that refers to itself.
+  type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+  const JsonData: Schema.Schema<Json> = Schema.suspend(
+    (): Schema.Schema<Json> =>
+      Schema.Union(
+        Schema.String,
+        Schema.Number,
+        Schema.Boolean,
+        Schema.Null,
+        Schema.Array(JsonData),
+        Schema.Record({ key: Schema.String, value: JsonData }),
+      ),
+  ).annotations({ identifier: "JsonData" });
+  const PlacedWithDetails = Schema.Struct({ ...Placed.fields, details: JsonData });
+  /**
+   * Fifteen definitions, each two references to the one before, so inlining them all grows past
+   * its limit.
+   */
+  const doubling = Object.fromEntries(
+    Array.from({ length: 15 }, (_, level) => [
+      `D${level}`,
+      level === 0
+        ? { type: "string" }
+        : { anyOf: [{ $ref: `#/$defs/D${level - 1}` }, { $ref: `#/$defs/D${level - 1}` }] },
+    ]),
+  );
+  /** An object branch with a `status` and a `reason`, each as given, and no other property. */
+  const branch = (status: unknown, reason: unknown) => ({
+    type: "object",
+    required: ["status", "reason"],
+    properties: { status, reason },
+    additionalProperties: false,
+  });
+  const listed = (...values: readonly string[]) => ({ type: "string", enum: values });
+  /** A placed order's branch whose `details` property is the schema given. */
+  const placedWith = (details: unknown) => ({
+    type: "object",
+    required: ["status", "details"],
+    properties: { status: listed("placed"), details },
+    additionalProperties: false,
+  });
+  /** A `status` definition that is a union holding itself. */
+  const recursiveStatus = {
+    Status: { anyOf: [listed("refused"), { $ref: "#/$defs/Status" }] },
+  };
 
   it.each([
     { case: "a union branch", schema: schemaOf(Schema.Union(Placed, overLimit)) },
@@ -498,6 +549,36 @@ describe("a refusal a write declares in its output", () => {
           refused(Schema.Literal("out_of_stock")),
         ),
       ),
+    },
+    // Refusals are read from the output's branches and their `status` and `reason` only, so a
+    // reference anywhere else never hides them.
+    {
+      case: "a recursive type in another branch",
+      schema: schemaOf(Schema.Union(PlacedWithDetails, overLimit)),
+    },
+    {
+      case: "a recursive type beside the refusal's reason",
+      schema: schemaOf(
+        Schema.Union(
+          Placed,
+          Schema.Struct({ ...overLimit.fields, details: JsonData }).annotations({
+            identifier: "Refused",
+          }),
+        ),
+      ),
+    },
+    {
+      case: "a reference in another property that does not resolve",
+      schema: {
+        anyOf: [placedWith({ $ref: "#/$defs/Missing" }), schemaOf(overLimit)],
+      },
+    },
+    {
+      case: "references in another property that grow past inlining's limit",
+      schema: {
+        $defs: doubling,
+        anyOf: [placedWith({ $ref: "#/$defs/D14" }), schemaOf(overLimit)],
+      },
     },
   ])("reads the reasons of $case", ({ schema }) => {
     expect([...declaredRefusalReasons(schema)].sort()).toEqual(["out_of_stock", "over_price_limit"]);
@@ -583,6 +664,34 @@ describe("a refusal a write declares in its output", () => {
       },
     },
     { case: "a reference that does not resolve", schema: { $ref: "#/$defs/Missing" } },
+    // A reference that recurses or does not resolve where refusals are read leaves them unread.
+    {
+      case: "a refusal whose status reference recurses",
+      schema: {
+        $defs: recursiveStatus,
+        anyOf: [schemaOf(Placed), branch({ $ref: "#/$defs/Status" }, listed("over_price_limit"))],
+      },
+    },
+    {
+      case: "another branch whose status reference recurses",
+      schema: {
+        $defs: recursiveStatus,
+        anyOf: [branch({ $ref: "#/$defs/Status" }, listed("placed")), schemaOf(overLimit)],
+      },
+    },
+    {
+      case: "a refusal whose reason reference does not resolve",
+      schema: {
+        anyOf: [schemaOf(Placed), branch(listed("refused"), { $ref: "#/$defs/Missing" })],
+      },
+    },
+    {
+      case: "an output union behind a reference that recurses",
+      schema: {
+        $defs: { Output: { anyOf: [schemaOf(overLimit), { $ref: "#/$defs/Output" }] } },
+        $ref: "#/$defs/Output",
+      },
+    },
     { case: "no schema", schema: undefined },
   ])("declares none with $case", ({ schema }) => {
     expect(declaredRefusalReasons(schema).size).toBe(0);
@@ -709,6 +818,24 @@ describe("a refusal a write declares in its output", () => {
       schema: { $ref: "#/$defs/Missing" },
       unreadable: false,
     },
+    {
+      case: "a refusal with a free-text reason beside a recursive type",
+      schema: schemaOf(Schema.Union(PlacedWithDetails, refused(Schema.String))),
+      unreadable: true,
+    },
+    {
+      case: "refusals beside a recursive type",
+      schema: schemaOf(Schema.Union(PlacedWithDetails, overLimit)),
+      unreadable: false,
+    },
+    {
+      case: "a refused status whose reference recurses",
+      schema: {
+        $defs: recursiveStatus,
+        anyOf: [schemaOf(Placed), branch({ $ref: "#/$defs/Status" }, { type: "string" })],
+      },
+      unreadable: false,
+    },
     { case: "no schema", schema: undefined, unreadable: false },
   ])("finds an unreadable refusal in $case: $unreadable", ({ schema, unreadable }) => {
     expect(unreadableRefusal(schema)).toBe(unreadable);
@@ -740,6 +867,17 @@ describe("a refusal a write declares in its output", () => {
       ).toBe(refusal);
     },
   );
+
+  it("counts a refusal from a write whose output holds a recursive type in another branch", () => {
+    expect(
+      returnedRefusal({
+        outputSchema: schemaOf(Schema.Union(PlacedWithDetails, overLimit)),
+        output,
+        commits: "not_entered",
+        runnerEffect: "may_have_dispatched",
+      }),
+    ).toEqual({ reason: "over_price_limit" });
+  });
 
   it("settles a write that returned its declared refusal as not applied, with no failure", () => {
     const refusedRun = evidence({

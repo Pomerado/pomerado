@@ -141,6 +141,7 @@ const operationReasons: Readonly<Record<string, string>> = {
   NoResponse: "no_response",
   InvalidInput: "invalid_input",
   InputNotApplied: "input_not_applied",
+  HandoffStateChanged: "handoff_state_changed",
   CredentialsRejected: "credentials_rejected",
 };
 

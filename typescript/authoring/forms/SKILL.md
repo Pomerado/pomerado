@@ -101,6 +101,10 @@ fills an ISO date into whatever date control the page has: a native date input, 
 `MMMM`, `D`, `YYYY` and so on) in a text box, a select or a dropdown, whose option it matches by
 number or month name. It throws an `Error` named `FormControlFailure` whose message is a fixed
 reason, never a value.
+A date box inside a calendar picker can show a typed date the page hasn't taken. Prefer
+`fillDate(control, iso, format, { commit: "keyboard", blur: "tab", committed })`, where
+`committed` reads the picker's own selected date, such as its button's label, and prefer
+confirming the dates from the site's next request before reading results.
 
 `pickValue(control, wanted, options)` chooses one value in any picker: a native select, a
 datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from divs, or a
@@ -166,7 +170,8 @@ skill) to close the banner before the action, and one that opens later.
 
 Decide whether each pop-up, banner or interstitial is conditional or always triggered. A
 conditional one shows only for some accounts, states or visits, such as a cookie banner, a
-one-time promotion or a membership upsell shown only to non-members: name its close control as
+one-time promotion, an app-download or location prompt, or a membership upsell shown only to
+non-members: name its close control as
 `dismiss` of `waitForReady` (core skill), which closes it whenever it opens, rather than checking
 for it at one point. Never wait for it or require it. One the page always opens in answer to an action,
 such as a confirmation dialog a button always opens, may be expected, and the script accepts it
@@ -203,7 +208,8 @@ the file and puts it there, and never anywhere else. When the site states a file
 declaring it on the input, as `fileInputWithin({ maxBytes: 5_242_880, extensions: [".pdf"] })`,
 and passing it to `files.place`, rather than checking the file in code. Return a download as a
 `FileOutput` from `files.collect(trigger)`, where `trigger` makes the execute call that starts
-it; you see only its name, type, size and sha256. While the tool is being built, the file has
+it, and a screenshot of the page, or of one element, from `files.screenshot({ selector })`; you
+see only its name, type, size and sha256. While the tool is being built, the file has
 no download_url or expires_at; the published tool's runs add them. Prefer returning the file as
 collected, and never require those fields in code. The host refuses a result whose `$file`
 differs from the file it collected: `download_url` and `expires_at` are the host's own link to

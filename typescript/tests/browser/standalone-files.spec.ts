@@ -154,6 +154,64 @@ test("an MCP tool call uploads the caller's file and returns the downloaded stat
   }
 });
 
+test("an MCP tool call returns screenshots of the page and of one element as files", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "One native run that takes four screenshots through Chromium",
+  });
+  const site = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
+  const served = await serve(
+    site.url,
+    join(directory, "downloads"),
+    {
+      source: `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"send_receipt",input:Schema.Struct({}),output:Schema.Unknown},
+async ({files}) => ({
+  page: await files.screenshot({ fullPage: true }),
+  link: await files.screenshot({ selector: "a" }),
+  viewport: await files.screenshot({ selector: undefined, fullPage: undefined }),
+  missing: await files.screenshot({ selector: "#missing", timeoutMs: 500 }).then(() => null, (error) => error.message),
+  positional: await files.screenshot("a").then(() => null, (error) => error.message),
+}));`,
+    },
+    contractJsonSchema(Schema.Struct({})),
+  );
+  try {
+    const result = await settled(
+      served.client,
+      served.client.callTool({ name: "send_receipt", arguments: { input: {} } }),
+    );
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const output = result.structuredContent as Record<string, { $file: Record<string, unknown> }>;
+    // Each picture comes back as a PNG file object; its bytes wait at its URL, not in the result.
+    const png = async (file: { $file: Record<string, unknown> } | undefined) => {
+      expect(file?.$file, JSON.stringify(result)).toMatchObject({
+        name: "screenshot.png",
+        media_type: "image/png",
+      });
+      const bytes = await readFile(fileURLToPath(String(file?.$file["download_url"])));
+      expect(bytes.subarray(1, 4).toString()).toBe("PNG");
+      expect(file?.$file["sha256"]).toBe(createHash("sha256").update(bytes).digest("hex"));
+      return { width: bytes.readUInt32BE(16), base64: bytes.toString("base64") };
+    };
+    const page = await png(output["page"]);
+    const link = await png(output["link"]);
+    expect(link.width).toBeLessThan(page.width);
+    // An option a tool leaves undefined, such as an absent input passed on, is no option.
+    expect((await png(output["viewport"])).width).toBe(page.width);
+    expect(JSON.stringify(result)).not.toContain(page.base64.slice(0, 64));
+    expect(String(output["missing"])).toContain("field_not_found");
+    // A selector passed alone, as to page.locator, names no target, never the viewport.
+    expect(String(output["positional"])).toContain("field_not_found");
+  } finally {
+    await served.close();
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a run places only a file its caller's input names, only when its bytes, the input and the caps allow it, and returns only files it collected", async () => {
   test.info().annotations.push({
     type: "slow",
@@ -218,7 +276,15 @@ async () => ({ statement: { $file: { id: "made-up", name: "other.txt", media_typ
     // The script sees why: a file the caller must replace is invalid input, and a refusal before
     // the page sent nothing.
     for (const [tool, reference, refused] of [
-      [unnamed, file, { refused: "The host refused the file: unknown_reference", dispatch: "not_sent" }],
+      [
+        unnamed,
+        file,
+        {
+          refused:
+            "The host refused the file: unknown_reference. Only files sent with the request can be used, so another file needs a new request that includes it.",
+          dispatch: "not_sent",
+        },
+      ],
       [receiptField, fakePdf, { refused: "The host refused the file: type_mismatch", dispatch: null }],
       [receiptField, script, { refused: "The host refused the file: executable", dispatch: null }],
       [receiptField, table, { refused: "The host refused the file: not_accepted", dispatch: null }],

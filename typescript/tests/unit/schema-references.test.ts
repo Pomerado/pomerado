@@ -1,8 +1,13 @@
 import { Ajv, AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import { JSONSchema, Schema } from "effect";
 import { expect, it } from "vitest";
-import { canonicalSchema, inlineLocalRefs } from "../../src/registry/schema-references.js";
-import type { CanonicalSchema } from "../../src/registry/schema-references.js";
+import {
+  canonicalSchema,
+  inlineLocalRefs,
+  inlineLocalRefsAlong,
+  UnresolvedSchemaReference,
+} from "../../src/registry/schema-references.js";
+import type { CanonicalSchema, SchemaPath } from "../../src/registry/schema-references.js";
 
 // Every surface reads a tool's schema in one canonical form; a run checks the published one. Each
 // case's values must validate the same against both.
@@ -288,4 +293,40 @@ it("never merges a Draft-07 tuple with items beside it into a schema that accept
       draft7(published, value),
     );
   }
+});
+
+it("inlines only along a path, leaving every other part as written", () => {
+  const published = {
+    type: "object",
+    $defs: {
+      Code: { type: "string", minLength: 3 },
+      Tree: { type: "array", items: { $ref: "#/$defs/Tree" } },
+    },
+    properties: {
+      code: { $ref: "#/$defs/Code" },
+      tree: { $ref: "#/$defs/Tree" },
+      missing: { $ref: "#/$defs/Missing" },
+    },
+  };
+  const all: SchemaPath = () => all;
+  const property =
+    (name: string): SchemaPath =>
+    (key) =>
+      key === "properties" ? (listed) => (listed === name ? all : undefined) : undefined;
+  expect(inlineLocalRefsAlong(published, property("code"))).toEqual({
+    type: "object",
+    properties: {
+      code: { type: "string", minLength: 3 },
+      tree: { $ref: "#/$defs/Tree" },
+      missing: { $ref: "#/$defs/Missing" },
+    },
+  });
+  // A reference on the path that recurses or names nothing throws, as inlining the whole does.
+  expect(() => inlineLocalRefsAlong(published, property("tree"))).toThrow(
+    UnresolvedSchemaReference,
+  );
+  expect(() => inlineLocalRefsAlong(published, property("missing"))).toThrow(
+    UnresolvedSchemaReference,
+  );
+  expect(() => inlineLocalRefs(published)).toThrow(UnresolvedSchemaReference);
 });

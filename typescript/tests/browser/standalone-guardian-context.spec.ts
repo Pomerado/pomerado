@@ -936,7 +936,8 @@ test("a write build refuses a repeat of a write no outcome review showed did not
 });
 
 // Fails when the repeat guard keys only on the step's path, so a copy of the write under another
-// name runs it again, or when Guardian's execution review does not see the earlier write.
+// name, or with only a comment added, runs it again, or when Guardian's execution review does not
+// see the earlier write before a rewrite of its code.
 test("a write build refuses a copy of a write, and Guardian sees the write before a rewrite of it", async () => {
   test.setTimeout(90_000);
   const fixture = saveSite();
@@ -960,17 +961,25 @@ test("a write build refuses a copy of a write, and Guardian sees the write befor
           patch({
             "src/act.mjs": saveStep,
             "src/act-copy.mjs": saveStep,
-            "src/act-rewritten.mjs": `// The same save, rewritten.\n${saveStep}`,
+            "src/act-commented.mjs": `// The same save, commented.\n${saveStep}`,
+            "src/act-rewritten.mjs": probe(
+              "await page.locator('button#save').click(); await page.waitForFunction(() => document.title === 'Saved'); return true;",
+            ),
           }),
         () => [call("execute", execution("act", "src/act.mjs", { writePath: writePath("save") }), "act_1")],
         () => [call("execute", execution("act", "src/act-copy.mjs"), "act_copy")],
+        () => [call("execute", execution("act", "src/act-commented.mjs"), "act_commented")],
         () => [call("execute", execution("act", "src/act-rewritten.mjs"), "act_rewritten")],
       ],
     });
     expect(fixture.writes()).toBe(1);
     expect(toolResult(last, "act_1")).toMatchObject({ status: "completed" });
-    // The copy is refused before review; the rewrite reaches Guardian, which sees the write.
-    expect(toolResult(last, "act_copy")).toMatchObject({ status: "unsupported" });
+    // The copy, and the copy with only a comment added, are refused before review; the rewrite
+    // reaches Guardian, which sees the write.
+    for (const id of ["act_copy", "act_commented"]) {
+      expect(toolResult(last, id), id).toMatchObject({ status: "unsupported" });
+      expect(JSON.stringify(toolResult(last, id)), id).toContain("repeats a write");
+    }
     expect(toolResult(last, "act_rewritten")).not.toMatchObject({ status: "completed" });
     const acts = executions(guardian.reviews);
     expect(acts).toHaveLength(2);

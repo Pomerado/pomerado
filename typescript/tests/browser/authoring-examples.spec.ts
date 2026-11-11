@@ -8,7 +8,7 @@ import type { Page, Route } from "playwright";
 import { Effect, Either, Exit, Schema, Scope } from "effect";
 import authEntry from "../../authoring/examples/auth-entry.js";
 import chooseAirport from "../../authoring/examples/custom-selection.js";
-import setDeparture from "../../authoring/examples/dates-and-dropdowns.js";
+import setDeparture, { setStartDate } from "../../authoring/examples/dates-and-dropdowns.js";
 import attachDocument, {
   downloadStatement,
   pickTravelDate,
@@ -1019,6 +1019,48 @@ test("date and dropdown example fills a split date and a custom dropdown by labe
     ),
   ).toMatchObject({ _tag: "OperationFailure", message: "option_missing", dispatch: "not_sent" });
   expect(await form()).toEqual({ month: "6", day: "9", year: "2027", cabin: "Business class" });
+});
+
+test("calendar picker example commits a typed date and reads the picker's label back", async ({
+  page,
+}) => {
+  // The box takes a typed date only on Enter or blur; `lose` drops it instead.
+  const picker = (lose: boolean) => `
+    <form>
+      <input name="text" aria-label="Start date" aria-haspopup="dialog" value="10/01/2026">
+      <input type="hidden" name="start" value="2026-10-01">
+      <button type="button" aria-label="Choose start date, selected date is Oct 1, 2026">Calendar</button>
+    </form>
+    <script>
+    (() => {
+      const box = document.querySelector("[name=text]"); const kept = document.querySelector("[name=start]");
+      let shown = box.value;
+      const take = () => {
+        const [month, day, year] = box.value.split("/");
+        if (${lose} || !year) { box.value = shown; return; }
+        shown = box.value; kept.value = year + "-" + month + "-" + day;
+        const named = new Date(Date.UTC(+year, +month - 1, +day)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+        document.querySelector("button").setAttribute("aria-label", "Choose start date, selected date is " + named);
+      };
+      box.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); take(); } };
+      box.onblur = take;
+    })();
+    </script>`;
+  const form = () => page.evaluate(() => Object.fromEntries(new FormData(document.forms[0])));
+  await page.setContent(picker(false));
+  expect((await runExample(page, setStartDate, { date: "2026-11-14" })).result).toEqual(
+    Either.right({ date: "2026-11-14" }),
+  );
+  expect(await form()).toEqual({ text: "11/14/2026", start: "2026-11-14" });
+  // A date the picker drops fails once fillDate's 10 s timeout passes.
+  await page.setContent(picker(true));
+  expect(
+    failure(
+      (await runExample(page, setStartDate, { date: "2026-11-14" }, { deadlineMs: 20_000 }))
+        .result,
+    ),
+  ).toMatchObject({ _tag: "OperationFailure", message: "not_committed" });
+  expect(await form()).toEqual({ text: "10/01/2026", start: "2026-10-01" });
 });
 
 test("ARIA listbox example waits for this query's delayed options and reads the committed choice", async ({

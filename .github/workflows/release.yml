@@ -37,7 +37,7 @@ concurrency:
 jobs:
   version:
     if: github.event_name == 'push' && github.repository == 'Pomerado/pomerado'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
       run:
@@ -89,6 +89,10 @@ jobs:
     needs: version
     if: needs.version.outputs.publish == 'true'
     uses: ./.github/workflows/check.yml
+    # Check's browser plan reads the test durations earlier Release runs recorded.
+    permissions:
+      contents: read
+      actions: read
     with:
       version: ${{ needs.version.outputs.version }}
   canary:
@@ -109,14 +113,17 @@ jobs:
         with:
           node-version: 24.22.1
           package-manager-cache: false
+      # By the ID the check job recorded, not by name, so no other job of the run can swap the
+      # artifact for its own.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pomerado-package
+          artifact-ids: ${{ needs.check.outputs.package-artifact-id }}
           path: package-artifact
       - name: Verify the tested tarball
         id: tarball
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          SHA256: ${{ needs.check.outputs.package-sha256 }}
         run: |
           shopt -s nullglob
           tarballs=(package-artifact/*.tgz)
@@ -126,6 +133,11 @@ jobs:
           fi
           # Keep the ./ prefix. npm reads dir/file.tgz as a GitHub owner/repo.
           tarball="./${tarballs[0]}"
+          # The bytes the check job built and tested, and no others.
+          if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || ! echo "$SHA256  $tarball" | sha256sum --check --strict --quiet; then
+            echo "::error::The tarball isn't the one the check job built: its SHA-256 doesn't match ${SHA256:-(none)}."
+            exit 1
+          fi
           manifest="$(tar -xzOf "$tarball" package/package.json)"
           name="$(jq -r .name <<<"$manifest")"
           version="$(jq -r .version <<<"$manifest")"
@@ -353,10 +365,11 @@ jobs:
           gh release edit "$tag" --repo "$REPOSITORY" --latest
   # Posts to the maintainers' alerts channel when a canary or a promotion fails. The slack-alerts
   # environment deploys only from main and holds the incoming webhook and the on-call mention.
+  # It holds a secret, so it runs on a GitHub-hosted runner, a fresh machine for every job.
   alert:
     needs: [version, check, canary, promote]
     if: failure() && github.repository == 'Pomerado/pomerado'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: slack-alerts
     steps:

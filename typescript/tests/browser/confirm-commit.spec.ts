@@ -69,7 +69,7 @@ const run = async (browserPage: Page, code: string) => {
 };
 
 /** Serves the form at `/`, answers the commit with `reply`, and runs the commit call. */
-const confirm = async (browserPage: Page, each: Case) => {
+const confirm = async (browserPage: Page, each: Case, code = commitCall) => {
   await browserPage.context().route(`${origin}/**`, async (route) => {
     const request = route.request();
     if (request.method() === "GET")
@@ -82,7 +82,7 @@ const confirm = async (browserPage: Page, each: Case) => {
     });
   });
   await browserPage.goto(`${origin}/`);
-  return (await run(browserPage, commitCall)) as { outcome: string; confirmed: Record<string, unknown> };
+  return (await run(browserPage, code)) as { outcome: string; confirmed: Record<string, unknown>; kept?: number | null };
 };
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -106,6 +106,19 @@ const cases: readonly Case[] = [
     expected: notDone,
   },
   { name: "a 422 is not done", reply: { status: 422, body: json({ message: "Email is not valid" }) }, expected: notDone },
+  { name: "a 400 is still not done", reply: { status: 400, body: json({ error: "Bad request" }) }, expected: notDone },
+  {
+    // A server can fail after it saved, so a 5xx proves nothing either way.
+    name: "a 500 is unclear",
+    reply: { status: 500, body: json({ message: "Internal server error" }) },
+    expected: { ...unclear, reason: expect.stringContaining("answered 500") },
+  },
+  {
+    name: "a 503 followed by an error message on the page is unclear",
+    reply: { status: 503, body: "Service unavailable", contentType: "text/plain" },
+    after: `say('<div role="alert" class="alert alert-danger">Something went wrong. Please try again.</div>');`,
+    expected: unclear,
+  },
   {
     name: "a 200 followed by the page marking a field invalid is not done",
     reply: saved,
@@ -325,6 +338,68 @@ const cases: readonly Case[] = [
   },
 ];
 
+// The commit call with a dialog outcome, as a write whose site may raise a native alert after its
+// save: the response, listed first, wins and the alert is held on the result beside it.
+const dialogCall = `${waitCode}
+  const form = page.getByRole("form", { name: "Edit record" });
+  ${confirmCommitCode}
+  const answer = await waitForOutcomeResult({
+    invalid: { invalid: form },
+    saved: { response: { method: "POST", url: "/api/records" } },
+    alerted: { dialog: true },
+  }, { action: () => page.locator("#save").click(), noProgressMs: 600, timeout: 4000, unchangedMs: 300 });
+  const confirmed = await confirmCommit(answer, page);
+  const kept = answer.response?.status() ?? null;
+  await answer.dialog?.dismiss().catch(() => undefined);
+  return { outcome: answer.outcome, kept, confirmed };`;
+
+// The site's script shows its alert a few ms after the save answered, once the response matched.
+const alertAfterSave = (message: string) => `const until = Date.now() + 20;
+      while (Date.now() < until);
+      alert(${JSON.stringify(message)});`;
+
+const dialogCases: readonly Case[] = [
+  {
+    name: "a 201 whose Location names the new record, then an alert with an error word, is unclear and names both",
+    reply: { status: 201, body: "", headers: { location: "/records/r-7" } },
+    after: alertAfterSave("Saved, but the confirmation email failed"),
+    expected: {
+      ...unclear,
+      reason: expect.stringMatching(/answered 201 with Location \/records\/r-7.*the confirmation email failed/u),
+    },
+  },
+  {
+    name: "a 500, then an alert saying the save failed, is unclear and names both",
+    reply: { status: 500, body: json({ message: "Internal server error" }) },
+    after: alertAfterSave("Save failed. Please try again."),
+    expected: { ...unclear, reason: expect.stringMatching(/answered 500.*Save failed/u) },
+  },
+  {
+    name: "a 201 whose Location names the new record, then an alert saying it saved, is done",
+    reply: { status: 201, body: "", headers: { location: "/records/r-7" } },
+    after: alertAfterSave("Record saved"),
+    expected: done,
+  },
+  {
+    name: "a 200, then an alert saying the save failed, is still not done",
+    reply: { status: 200, body: "{}" },
+    after: alertAfterSave("Save failed. Please try again."),
+    expected: notDone,
+  },
+  {
+    name: "a 201 with no Location, then an alert saying the save failed, is still not done",
+    reply: { status: 201, body: "{}" },
+    after: alertAfterSave("Save failed. Please try again."),
+    expected: notDone,
+  },
+  {
+    name: "a 422, then an alert saying the save failed, is still not done",
+    reply: { status: 422, body: json({ message: "Email is not valid" }) },
+    after: alertAfterSave("Save failed. Please try again."),
+    expected: notDone,
+  },
+];
+
 /** Serves `pages` by path and query, or path alone, and answers each POST by its path. */
 const localSite = async (
   pages: Record<string, string>,
@@ -439,6 +514,16 @@ test.describe("confirmCommit", () => {
       expect(confirmed).toMatchObject(each.expected);
       expect(confirmed["reason"]).toEqual(expect.any(String));
       if (each.expected["status_label"] === undefined) expect(confirmed).not.toHaveProperty("status_label");
+    });
+
+  // A native alert after the save: the response listed first wins the wait, and confirmCommit reads
+  // the alert held beside it.
+  for (const each of dialogCases)
+    test(each.name, async ({ page: browserPage }) => {
+      const { outcome, kept, confirmed } = await confirm(browserPage, each, dialogCall);
+      expect({ outcome, kept }).toEqual({ outcome: "saved", kept: each.reply.status });
+      expect(confirmed).toMatchObject(each.expected);
+      expect(confirmed["reason"]).toEqual(expect.any(String));
     });
 
   // Form posts answered with a redirect, on a local server so the browser follows them.

@@ -13,6 +13,7 @@ import {
   armStep,
   type AutofillSecret,
   isSecret,
+  namedFields,
   recordStep,
   registeredSecretIn,
   screenSubmit,
@@ -66,7 +67,14 @@ const recordFilledValues = <E extends YieldableError, V extends string, L extend
  */
 const codeRejectedAgain = (codeAgain: "rejected" | undefined, unanswered: Unanswered) =>
   codeAgain === "rejected" && unanswered.cause !== credentialUnavailable;
-/** Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap. */
+/** Whether a step fills a code. */
+const takesCode = (step: Pick<AutofillStep, "fields">) =>
+  step.fields.some((field) => field.slot === "code");
+/**
+ * Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap.
+ * Once a recorded screen's planned code refill went out (`codeRefilled`), a code screen that came
+ * back takes no third code unless the site showed it refused the code (`explicitCodeRejection`).
+ */
 const retryRefusal = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
   asked: AutofillStep,
@@ -74,15 +82,32 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
   explicitCodeRejection: boolean,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[],
+  inspection: AutofillInspection,
 ) => {
-  const { retryState, sent, progress } = session;
+  const { retryState, sent, progress, state } = session;
+  if (codeAgain === "rejected" && takesCode(asked) && retryState.codeAttempts.current >= 2)
+    return "code_rejected" as const;
   if (
     codeAgain === "rejected" &&
-    asked.fields.some((field) => field.slot === "code") &&
-    retryState.codeAttempts.current >= 2
+    takesCode(asked) &&
+    progress.codeRefilled &&
+    !explicitCodeRejection
   )
-    return "code_rejected" as const;
-  if (refillRefused(asked, sent.maySent, progress.refilled, codeAgain, corrected, planned))
+    return "credential_already_filled" as const;
+  if (
+    refillRefused(
+      asked,
+      sent.maySent,
+      progress.refilled,
+      codeAgain,
+      corrected,
+      planned,
+      {
+        shown: namedFields(asked, inspection.screen.fields),
+        earlier: state.steps.findLast(takesCode),
+      },
+    )
+  )
     return codeAgain === "rejected" && explicitCodeRejection
       ? "code_rejected"
       : "credential_already_filled";
@@ -159,8 +184,16 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       explicitCodeRejection,
       corrected,
       planned,
+      inspection,
     );
     if (refused !== undefined) return refused;
+    // Admitted past a code that may have gone out with no refusal: the screen's planned code
+    // refill, which is spent now, however the screen sends (a code box that sends itself reports
+    // no send).
+    if (codeAgain === undefined && takesCode(asked) && sent.maySent.has("code")) {
+      progress.refilled.add("code");
+      progress.codeRefilled = true;
+    }
     const resolved = yield* valuesFor(
       input,
       values,
@@ -203,7 +236,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     session.firstCause.submitted();
     const stepReport = yield* closedInPlace(
       session,
-      yield* hooks.fill({ step, values: filled, inspection }),
+      yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
     );
     yield* timeExecutionStage(
       input.latency,
@@ -222,6 +255,8 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     }
     yield* input.emit(stepDiagnostic(step, stepReport));
     progress.ran.push(step);
+    // A step run after a screen's wait ended in place, such as a code retried, leaves that page.
+    progress.landedInPlace = false;
     return fillFailure(stepReport);
   });
 

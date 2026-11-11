@@ -10,11 +10,13 @@ import type {
 } from "../destinations/autofill-step.js";
 import { callFailure } from "../destinations/autofill-refusal-evidence.js";
 import { pageCallFailure, report } from "./sign-in-telemetry.js";
-import type { AutofillHooks } from "./autofill-state.js";
+import { isIdentifier, provesLogin, type AutofillHooks } from "./autofill-state.js";
 import type { AutofillReplayInput, AutofillReplayTiming } from "./autofill-replay-steps.js";
+import { unrecordedCodeStep } from "./autofill-unrecorded-code.js";
 
 import {
   cantTell,
+  cantTellInPlace,
   landingSettleMs,
   leftSignInScreens,
   stillOff,
@@ -284,8 +286,72 @@ type ScreenWaitProgress<V extends string> = {
   alreadySignedIn?: boolean;
   /** The first screen's wait ended on a login entry that can't tell (`entryCantTell`). */
   entryCantTell?: boolean;
+  /** A screen's wait ended on the shared entry address, which can't tell (`inPlaceShape`). */
+  landedInPlace?: boolean;
   readonly screenGone?: boolean;
 };
+
+/** Any password box the page shows, whether or not the sign-in recorded it. */
+const passwordBox = { selector: 'input[type="password" i]', slot: "password" } as const;
+
+/**
+ * Whether a step's controls show: anything but their absence (`not_found`, or `popup_missing` for
+ * a popup that closed) counts, as a control the host cannot read or tell apart may still be one.
+ */
+const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) =>
+  Effect.map(
+    hooks.inspect(step),
+    (found) =>
+      !("outcome" in found) || (found.reason !== "not_found" && found.reason !== "popup_missing"),
+  );
+
+/**
+ * A sign-in whose screens all sit on the page it opened, as one in a dialog, never leaves that
+ * address, so no page off the screens can show it went past them (`landedCantTell`). Once the
+ * login's password or code went in, a wait for a screen that asks for nothing secret, such as a
+ * prompt the site showed once, with no secret or approval recorded after it (`later`), may end
+ * there instead: the page can't tell on the address every
+ * recorded screen shares (`cantTellInPlace`) and shows none of the recorded screens' fields, no
+ * password box and no code box. The page's shape (`pageState`, else its address), unchanged
+ * `landingSettleMs`, then reads as its landing, and the last check decides as for a page off the
+ * screens. Undefined while any of that fails.
+ */
+const inPlaceShape = <E extends YieldableError, V extends string>(
+  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe" | "entryUrl">,
+  progress: ScreenWaitProgress<V>,
+  awaited: AutofillStep,
+  later: readonly AutofillRecipeStep[],
+  here: AutofillSignedInCheck,
+  screens: ReplayScreens,
+  resolve: (request: AutofillStepRequest) => AutofillStep,
+) =>
+  Effect.gen(function* () {
+    const { hooks, recipe } = input;
+    if (
+      later.some(
+        (recorded) =>
+          recorded.approval !== undefined || recorded.fields.some((field) => "slot" in field),
+      ) ||
+      hooks.confirmCantTell === undefined ||
+      !progress.anythingSent ||
+      !progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) ||
+      !awaited.fields.every((field) => isIdentifier(field.slot)) ||
+      !cantTellInPlace(here, recipe, screens.matches, input.entryUrl)
+    )
+      return undefined;
+    const probes = [
+      ...recipe.steps.flatMap((recorded) => {
+        const { fields, popup } = resolve(recorded);
+        return fields.map((field) => ({ fields: [field], ...(popup === undefined ? {} : { popup }) }));
+      }),
+      { fields: [passwordBox] },
+      { fields: unrecordedCodeStep.fields },
+    ];
+    for (const probe of probes) if (yield* shows(hooks, probe)) return undefined;
+    const state = hooks.pageState === undefined ? undefined : yield* hooks.pageState();
+    if (state?.parsed === false) return undefined;
+    return state?.shape ?? here.url;
+  });
 
 /**
  * Whether the wait holds a screen it found before the replay acts on it: one with fields, with
@@ -332,6 +398,19 @@ const holdShown = <V extends string>(
     });
 };
 
+/**
+ * Whether a screen whose step matched more than one visible element (`ambiguous_match`) waits as a
+ * screen not yet shown does: only once a recorded screen ran, since a page that redraws after a
+ * submit may show the old screen's control beside the new one for a moment, and only before the
+ * wait's deadline (`due`), where it refuses as it would have at once. Nothing is typed or clicked
+ * while a step matches more than one element.
+ */
+const ambiguousWhileRedrawn = <V extends string>(
+  progress: ScreenWaitProgress<V>,
+  refusal: AutofillRefusal,
+  due: boolean,
+) => refusal.reason === "ambiguous_match" && progress.ran.length > 0 && !due;
+
 /** What a screen's wait reads of the replay's input. */
 type ScreenWaitInput<E extends YieldableError, V extends string> = Pick<
   AutofillReplayInput<E, V>,
@@ -349,6 +428,8 @@ const markerHere = <E extends YieldableError, V extends string>({ hooks, recipe 
  * Waits for the recorded stage to become ready, or for evidence of a later stage or landing, and
  * at its deadline lets the challenge gate look for a challenge hiding the screen (`atDeadline`).
  * A value-free check's first screen may end on a login entry that can't tell (`entryCantTell`).
+ * Once a screen ran, a step that matches more than one element waits too, until its deadline
+ * (`ambiguousWhileRedrawn`).
  */
 export const makeReplayScreenWait = <
   E extends YieldableError,
@@ -384,7 +465,8 @@ export const makeReplayScreenWait = <
       if (
         inspected.reason !== "not_found" &&
         inspected.reason !== "not_editable" &&
-        inspected.reason !== "popup_missing"
+        inspected.reason !== "popup_missing" &&
+        !ambiguousWhileRedrawn(progress, inspected, due)
       )
         return { found: inspected } as const;
       if (rejection !== undefined) {
@@ -423,6 +505,7 @@ export const makeReplayScreenWait = <
       const current = typeof currentPage === "string" ? { page: currentPage } : currentPage;
       const left = { off: undefined as OffScreens | undefined };
       const entry = { at: undefined as OffScreens | undefined };
+      let inPlace: OffScreens | undefined;
       let waitUntil = until;
       const held = holdShown(input, progress, timing);
       while (true) {
@@ -436,9 +519,16 @@ export const makeReplayScreenWait = <
         const here = yield* checkHere;
         const at = yield* now;
         left.off = stillOff(left.off, leftSignIn(here.url) ? here.url : undefined, at);
+        inPlace = stillOff(
+          inPlace,
+          yield* inPlaceShape(input, progress, step, later, here, screens, resolve),
+          at,
+        );
+        const landedInPlace = inPlace !== undefined && at - inPlace.since >= landingSettleMs;
+        if (landedInPlace) progress.landedInPlace = true;
         const landed = landedReason(
           here.signedIn,
-          landedCantTell(input, step, left.off, at, waitUntil, here, screens),
+          landedCantTell(input, step, left.off, at, waitUntil, here, screens) || landedInPlace,
           entryCantTell(
             progress,
             entry,

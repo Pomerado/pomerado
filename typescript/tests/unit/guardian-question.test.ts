@@ -234,7 +234,56 @@ it("allows a blocked report that names the caller input at fault and why", async
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user.',
+    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any.',
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    " Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user.",
+  );
+});
+
+// A repair reported that the caller's value broke a limit the published tool's own input
+// description states, an email the tool only checks and never changes. The question review
+// reworded it into lifting that limit through the site's change control, and the repair then
+// rewrote the tool to change the email.
+it("allows a caller-input report whose reason is a limit the tool's input description states", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    " in the site's own words where the site showed any. The reason may also be a limit the published tool's input description states for that input, such as a value the tool only checks and never changes; prefer allowing such a report over asking the agent to lift that limit, which changes what the tool does. Saying what kind of value would work,",
+  );
+});
+
+// A requested change asked to leave every checkbox as the page sets it, a preselected marketing
+// opt-in included. The question review read that request as trusted intent to keep the opt-in on:
+// it told the agent asking about turning it off that no question was needed, and reworded the
+// agent's decline until the reason, the safety default, was gone.
+it("tells the question review a requested change's request to keep a safety default on is not trusted intent", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  const rules = reviewPolicyOf(requests[0]).split("\n");
+  const alreadyRequested = rules.find((rule) =>
+    rule.startsWith("- asks permission to do what trusted intent already requests"),
+  );
+  expect(alreadyRequested).toContain(
+    "a requested change's request to keep on an option a safety default turns off doesn't count as trusted intent unless the site refuses to submit with it off",
+  );
+  const blockedReport = rules.find((rule) =>
+    rule.startsWith("- question_review.blockedOutcome is true:"),
+  );
+  expect(blockedReport).toMatch(
+    /build agent itself declined.*That the tool keeps a safety default is a true reason it may state\./u,
   );
 });
 
@@ -261,8 +310,8 @@ it("keeps a repair's caller-input question to invalid or real", async () => {
 // A write build's one real write was done and confirmed when it found the site offers one of the
 // requested outputs by email only. Outside maintenance nothing allowed a question about publishing
 // without it, so the build ended blocked with no tool. After a confirmed write only, that question
-// is the caller's decision.
-it("allows asking, after a confirmed write, whether to publish without an output the site does not offer", async () => {
+// is the caller's decision, and so is one about an optional input the site has no field for.
+it("allows asking, after a confirmed write, whether to publish without an output or optional input the site does not offer", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -272,7 +321,7 @@ it("allows asking, after a confirmed write, whether to publish without an output
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason; prefer allow.\n- question_review.blockedOutcome is true:",
+    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional, that neither submitted_call.input, trusted intent nor an earlier answer gives a value for, and the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
   );
 });
 
@@ -293,7 +342,26 @@ it("tells the question review the read-or-write question is required and its lab
   );
 });
 
-// The question review saw no build effect, since its allowedEffects is empty on purpose, so it
+// A host may name the build's read grant in a question review, which runs no step, so the policy
+// must not call the list empty: whatever it holds authorizes nothing about the question.
+it("tells the question review its allowedEffects authorize nothing, though the host names some", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(JSON.parse(userText(requests[0]))).toMatchObject({
+    trusted_authority: { allowedEffects: ["read plans"] },
+  });
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "In a question review, trusted_authority.allowedEffects authorizes nothing. A question performs no action on the site, so the host has nothing to authorize and those effects, empty or not, say nothing about this question.",
+  );
+});
+
+// The question review saw no build effect, since its allowedEffects authorizes nothing, so it
 // rejected the true statement that a write build publishes only after it does the task for real.
 it.each(["read", "write"] as const)(
   "gives the question review a %s build's effect as host context",
@@ -955,4 +1023,56 @@ it("gives a review the owner's confirm answer beside a notice", async () => {
   expect(reviewed).toEqual([
     { id: "approve", question: "Do you approve the site's terms?", answer: { confirmed: true } },
   ]);
+});
+
+it("reviews a browser hand-off's screened prompt with its shown inputs, and never its answer", async () => {
+  const handOff: InputRequest = {
+    id: "7f3b8d0a-4c5e-4a91-9d2c-3e4f5a6b7c8d",
+    source: "script",
+    questions: [
+      {
+        id: "review_claim",
+        type: "browser_handoff",
+        prompt: "Check the claim for P-100, then mark this step done.",
+        show_inputs: ["policy_number"],
+      },
+    ],
+  };
+  const screen = (text: string) => Effect.succeed(text.replaceAll("P-100", "[policy]"));
+  const reviewed = await Effect.runPromise(
+    questionForReview(handOff, { credentialsAvailable: false, scriptAsk: true }, screen),
+  );
+  expect(reviewed.questions).toEqual([
+    {
+      id: "review_claim",
+      type: "browser_handoff",
+      prompt: "Check the claim for [policy], then mark this step done.",
+      show_inputs: ["policy_number"],
+    },
+  ]);
+  expect(
+    await Effect.runPromise(
+      answersForReview(
+        handOff,
+        { review_claim: { type: "browser_handoff", value: { done: true } } },
+        screen,
+      ),
+    ),
+  ).toEqual([]);
+});
+
+// A script's hand-off gives the user the run's live browser, so the question review holds its
+// prompt to a step someone asked a person to do, and never to a CAPTCHA, a bot check or a sign-in.
+it("tells the question review when a browser hand-off is allowed", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "\n- a browser_handoff question, which a script asks to hand the run's live browser to the user, who does the step its prompt describes and marks it done: allow it when trusted intent or an answer asks for a person to review or do that step and the prompt describes that step; reword one whose step nobody asked a person to do, one that asks the user to solve a CAPTCHA or bot check, and one that asks the user to sign in when nobody asked for a person to sign in.\nReturn reword when the question:",
+  );
 });

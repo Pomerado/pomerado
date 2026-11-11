@@ -1,13 +1,30 @@
-# Runners. Trusted runs use Blacksmith runners, which are faster. Every run in this repository is
-# trusted except a pull request from a fork: the release workflow's call on each push to main, and
-# pull requests from branches here, which only people with write access can push. A fork's pull
-# request runs on a free GitHub-hosted runner by default. That default is not a boundary: a fork's
-# pull request runs its own copy of this file, so it can name any runner.
-# Every outside contributor's runs wait for a maintainer, who checks workflow edits first.
-# Forks of this repository run on GitHub-hosted runners too. Approved outside code can still reach
-# a Blacksmith runner, and release publishes the tarball the check job builds, so no job here
-# restores a cache: setup-node's package manager cache is off, and nothing uses actions/cache or a
-# Blacksmith sticky disk. Publish runs on a GitHub-hosted runner, which npm provenance needs.
+# Runners. Each job's runs-on picks its runner from GitHub's facts about the run:
+# - A pull request from a fork, or from any author who isn't a maintainer, runs on a GitHub-hosted
+#   runner. So does a run outside this repository, since other repositories can call this file.
+# - A pull request from a branch of this repository by a maintainer runs on the runner the
+#   CI_RUNNER_MAINTAINER repository variable names. A maintainer is a login the CI_MAINTAINERS
+#   variable lists, as a JSON array. The pull request's author, the account whose push started the
+#   run and the account that started this attempt, a re-run included, must all be listed; any
+#   other pull request runs on a GitHub-hosted runner. A self-hosted maintainer runner admits the
+#   same accounts, so no job waits for a runner that would refuse it.
+# - On a push to main, through the release workflow, the browser jobs use the runner the
+#   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
+#   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
+# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 and the
+# browser plan's --workers 4 expect.
+# An unset variable falls back to a Blacksmith runner. The scans, test selection's record jobs and
+# the `CI` job are short and always run on GitHub-hosted runners.
+# typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
+# maintainers and pushes.
+# This routing is not a security boundary: a fork's pull request runs its own copy of this file, so
+# it can name any runner. Every outside contributor's runs wait for a maintainer, who checks
+# workflow edits first. A self-hosted runner must also refuse, on its own side, any job its route
+# doesn't allow. docs/RELEASING.md describes what such a runner must do.
+# Approved outside code can still reach a non-GitHub runner, and release publishes the tarball the
+# check job builds, so no job here restores a cache: setup-node's package manager cache is off, and
+# nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on a GitHub-hosted runner,
+# which npm provenance needs. The browser plan reads test durations that Release runs on main
+# record, and they decide only how the tests are split across shards, never what is built or run.
 name: Check
 on:
   # Pushes to main run this through the release workflow, which publishes the tarball it tests.
@@ -19,8 +36,23 @@ on:
         required: false
         type: string
         default: ""
+    # The release workflow publishes exactly this artifact, and checks these bytes before it does.
+    outputs:
+      package-artifact-id:
+        description: ID of the packed package artifact the check job uploaded
+        value: ${{ jobs.check.outputs.package-artifact-id }}
+      package-sha256:
+        description: SHA-256 of the packed package tarball the check job built and tested
+        value: ${{ jobs.check.outputs.package-sha256 }}
 permissions:
   contents: read
+# Whether this run selects its tests (see the test-selection job): every pull request does, unless
+# the repository variable TEST_SELECTION_DISABLED is `true` or it carries the `ci:full` label.
+# Pushes to main, through the release workflow, always run every test.
+env:
+  SELECT_TESTS: >-
+    ${{ github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+    && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
 jobs:
   # Secret scan with gitleaks and .gitleaks.toml. Every event scans the checked-out tree. A pull
   # request also scans the diff of each of its commits, and a push to main of each pushed commit.
@@ -29,10 +61,7 @@ jobs:
   # tools/ci-scan.sh holds the steps, and typescript/tests/unit/ci-scan.test.ts tests them.
   secret-scan:
     name: Secret scan
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,10 +94,7 @@ jobs:
   # like GitHub's merge or squash of a pull request is that pull request's merge commit.
   content-scan:
     name: Public content scan
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,14 +117,30 @@ jobs:
         run: bash tools/ci-scan.sh content
   # Typecheck, build, unit tests and the packed package check. The browser tests run apart, in the
   # browser job's shards, so the two run at once.
+  # On a push to main it builds the tarball the release workflow publishes, so there it runs on a
+  # GitHub-hosted runner, a fresh machine, never on CI_RUNNER_TRUSTED.
   check:
     runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+      ${{ github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login)
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.actor)
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.triggering_actor)
+      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      || 'ubuntu-latest' }}
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      package-artifact-id: ${{ steps.package.outputs.artifact-id }}
+      package-sha256: ${{ steps.package-digest.outputs.sha256 }}
     steps:
+      # Enforced test selection compares the pull request with its base, so it needs the history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '1' }}
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
@@ -112,12 +154,69 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
       - run: corepack pnpm build
-      - run: corepack pnpm test
+      # On a pull request with test selection (see the test-selection job), only the selected unit
+      # test files run. Everything else here always runs.
+      - name: Select unit tests
+        id: select
+        if: env.SELECT_TESTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
+          ENFORCE: "true"
+        run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
+      # The JSON results feed test selection's report on pull requests.
+      - name: Unit tests
+        shell: bash
+        env:
+          RUN: ${{ steps.select.outputs.run || 'full' }}
+          UNIT: ${{ steps.select.outputs.unit || '[]' }}
+        run: |
+          results=(--reporter=default --reporter=json --outputFile.json=test-results/unit-results.json)
+          if [ "$RUN" != selected ]; then
+            corepack pnpm test "${results[@]}"
+            exit
+          fi
+          # A failure to read the list fails the step rather than running fewer tests.
+          files_json=$(node -e 'for (const file of JSON.parse(process.env.UNIT)) console.log(file)')
+          if [ -z "$files_json" ]; then
+            # The test script's checks still run; Vitest finds no test file under this filter.
+            echo "Test selection chose no unit test file."
+            corepack pnpm test --passWithNoTests __no_selected_unit_test__
+          else
+            mapfile -t files <<<"$files_json"
+            corepack pnpm test "${results[@]}" "${files[@]}"
+          fi
+      # Pack, hash and upload the tarball before anything installs packages without a lockfile. The
+      # validation below installs its consumer's dependencies fresh from the registry, so the bytes
+      # release publishes, which it checks against this hash, are fixed before that code runs.
+      - name: Pack the package
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pomerado-artifact"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+      - name: Record the tarball's SHA-256
+        id: package-digest
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
+            exit 1
+          fi
+          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: package
+        with:
+          name: pomerado-package
+          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
       - name: Validate packed package outside the checkout
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/pomerado-artifact" "$RUNNER_TEMP/pomerado-consumer"
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+          mkdir -p "$RUNNER_TEMP/pomerado-consumer"
           cd "$RUNNER_TEMP/pomerado-consumer"
           npm init -y
           npm install --ignore-scripts "$RUNNER_TEMP/pomerado-artifact/"*.tgz @types/node@24.13.4 vitest@5.0.2
@@ -157,24 +256,156 @@ jobs:
           void expectFailure;
           TS
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck --target ES2024 --module NodeNext --moduleResolution NodeNext consumer.mts
+      - if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-unit
+          path: test-results/unit-results.json
+          retention-days: 7
+          if-no-files-found: ignore
+  # Splits the browser tests into shards of about equal duration. tools/browser-shards.ts plans them
+  # from each test's duration in the latest successful Release run on main, which the browser job
+  # records there, and picks the shard count that keeps each shard near the target. The durations
+  # only weigh the split: every listed test runs, and each shard fails when a test it was given
+  # reports no result. Without durations, the plan splits by test count. The token reads the
+  # Release run's artifacts, which only pushes to main write. The plan is short and runs on a
+  # GitHub-hosted runner, like the scans.
+  browser-plan:
+    name: Plan browser shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      none: ${{ steps.plan.outputs.none }}
+      repeat-browser: ${{ steps.plan.outputs.repeat }}
+      repeat-unit: ${{ steps.changes.outputs.unit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A pull request checks out its merge with the base branch, whose first parent is the base;
+          # test selection also needs the history back to the test map's commit.
+          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '2' }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Find the latest recorded durations
+        id: durations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          run_id="$(gh api "repos/$REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')" || run_id=""
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.durations.outputs.run-id != ''
+        continue-on-error: true
+        with:
+          pattern: browser-durations-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/browser-durations
+          run-id: ${{ steps.durations.outputs.run-id }}
+          github-token: ${{ github.token }}
+      # On a pull request with test selection (see the test-selection job), only the selected spec
+      # files are planned, and each planned test must still report a result.
+      - name: Select browser tests
+        id: select
+        if: env.SELECT_TESTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
+          ENFORCE: "true"
+        run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
+      - name: List the browser tests
+        id: list
+        env:
+          RUN: ${{ steps.select.outputs.run || 'full' }}
+          BROWSER: ${{ steps.select.outputs.browser || '[]' }}
+        run: |
+          if [ "$RUN" != selected ]; then
+            corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
+            exit
+          fi
+          filters_json=$(node -e 'for (const filter of JSON.parse(process.env.BROWSER)) console.log(filter)')
+          if [ -z "$filters_json" ]; then
+            echo "Test selection chose no browser test file."
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            exit
+          fi
+          mapfile -t filters <<<"$filters_json"
+          corepack pnpm exec playwright test --list --reporter=json "${filters[@]}" > "$RUNNER_TEMP/browser-tests.json"
+      - name: Find the tests this pull request changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-shards"
+          git diff --unified=0 HEAD^1 HEAD -- typescript/tests/browser > "$RUNNER_TEMP/browser-changes.diff"
+          git diff --name-only -z --diff-filter=d HEAD^1 HEAD -- 'typescript/tests/unit/*.test.ts' \
+            > "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
+          if [ -s "$RUNNER_TEMP/browser-shards/unit-repeat.txt" ]; then echo "unit=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Plan the shards
+        id: plan
+        env:
+          NONE: ${{ steps.list.outputs.none }}
+        run: |
+          if [ "$NONE" = true ]; then
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            echo "shards=[1]" >> "$GITHUB_OUTPUT"
+            mkdir -p "$RUNNER_TEMP/browser-shards"
+            exit
+          fi
+          changes=()
+          if [ -f "$RUNNER_TEMP/browser-changes.diff" ]; then changes=(--diff "$RUNNER_TEMP/browser-changes.diff"); fi
+          node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json" \
+            --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards" \
+            --target-seconds 80 --workers 4 --max-shards 16 \
+            --quarantine typescript/tests/browser/quarantine.json "${changes[@]}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pomerado-package
-          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
-  # The browser tests, split by test across parallel shards. fullyParallel in playwright.config.ts
-  # lets Playwright give each shard an equal number of tests. Each shard builds dist/ itself, since
-  # the tests run the built package. Every shard runs to the end, so one run reports every failure.
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards/
+          # A week, so a shard re-run days later still finds its list.
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: ignore
+  # The browser tests, in the planned shards. Each shard builds dist/ itself, since the tests run the
+  # built package. Every shard runs to the end, so one run reports every failure. A push to main
+  # records each test's duration for the next plans.
+  # A test that fails runs once more in a fresh process. If it passes then, it is flaky: the shard
+  # passes and names it in a warning and the job summary. A test that fails twice fails the shard,
+  # unless typescript/tests/browser/quarantine.json lists it with an owner and an issue.
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: browser-plan
+    # The plan has no browser test only when test selection chose none; CI then accepts this job
+    # as skipped.
+    if: needs.browser-plan.outputs.none != 'true'
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
+      || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login)
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.actor)
+      && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.triggering_actor)
+      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(needs.browser-plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -189,26 +420,207 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build
-      - run: corepack pnpm exec playwright install --with-deps chromium
-      # One worker per vCPU. Both runners this job uses have 4 vCPUs.
-      - run: corepack pnpm test:browser --shard=${{ matrix.shard }}/${{ strategy.job-total }} --workers=4
+      # A runner that can't install packages, neither as root nor through sudo, must already hold
+      # Chromium's system libraries, as a self-hosted runner's image does, so only Chromium itself
+      # is installed there.
+      - name: Install Chromium
+        shell: bash
+        run: |
+          if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
+            corepack pnpm exec playwright install --with-deps chromium
+          else
+            corepack pnpm exec playwright install chromium
+          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards
+      # One worker per vCPU. Every runner this job uses has 4 vCPUs, as the plan assumes.
+      - name: Run the shard's tests
+        id: tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if ! corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-$SHARD.txt" --workers=4; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+          cp test-results/browser-results.json "$RUNNER_TEMP/browser-results.json"
+      - name: Run the failed tests again in a fresh process
+        if: steps.tests.outputs.failed == 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-$SHARD.txt" --last-failed --workers=4 || true
+          cp test-results/browser-results.json "$RUNNER_TEMP/browser-rerun.json"
+      - name: Judge the results
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          rerun=()
+          if [ -f "$RUNNER_TEMP/browser-rerun.json" ]; then rerun=(--rerun "$RUNNER_TEMP/browser-rerun.json"); fi
+          mkdir -p "$RUNNER_TEMP/browser-durations"
+          node tools/browser-shards.ts record --results "$RUNNER_TEMP/browser-results.json" "${rerun[@]}" \
+            --expected "$RUNNER_TEMP/browser-shards/shard-$SHARD.json" \
+            --quarantine typescript/tests/browser/quarantine.json \
+            --out "$RUNNER_TEMP/browser-durations/durations-$SHARD.json" --budget-seconds 80
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          name: browser-durations-${{ matrix.shard }}
+          path: ${{ runner.temp }}/browser-durations/durations-${{ matrix.shard }}.json
+          retention-days: 30
+          overwrite: true
+      - if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-browser-${{ matrix.shard }}
+          path: ${{ runner.temp }}/browser-results.json
+          retention-days: 7
+          if-no-files-found: ignore
+  # Runs the tests a pull request adds or changes several times over, so a new flaky test fails
+  # here, before it merges, rather than in later runs. Browser tests whose own lines in a spec file
+  # change run three times each, as many as fit about 80 s (tools/browser-shards.ts says how lines
+  # map to tests). Each test in a changed unit test file runs three times too.
+  repeat-changed:
+    name: Repeat changed tests
+    needs: browser-plan
+    if: needs.browser-plan.outputs.repeat-browser == 'true' || needs.browser-plan.outputs.repeat-unit == 'true'
+    # Off the critical path, so a GitHub-hosted runner, with 4 vCPUs, for every author.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards
+      - name: Repeat the changed unit test files
+        if: needs.browser-plan.outputs.repeat-unit == 'true'
+        run: |
+          mapfile -d '' -t files < "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
+          corepack pnpm exec vitest run --repeats 2 "${files[@]}"
+      - if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm build
+      - if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm exec playwright install --with-deps chromium
+      - name: Repeat the changed browser tests
+        if: needs.browser-plan.outputs.repeat-browser == 'true'
+        run: corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/repeat.txt" --repeat-each 3 --workers=4
+  # Test selection (tools/test-map.ts). On a pull request the check job and the browser plan each
+  # select, from the newest test map main's test-map.yml built, the test files the change needs and
+  # run only those; their guard fails a run whose selection tests nothing for a change beyond
+  # documentation, and anything the map can't attribute runs every test. This job records the
+  # selection and its reasons, and the report job the results' test-seconds; neither is in CI's
+  # `needs`. Pushes to main always run every test, as does a pull request labelled `ci:full`, from
+  # its next push, since a re-run keeps the labels of the run it repeats. The repository variable
+  # TEST_SELECTION_DISABLED=true turns selection off, so every pull request runs every test again.
+  # A pull request never builds a map; tools/test-map-select.sh reads it from a trusted run.
+  test-selection:
+    name: Test selection
+    if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - name: Select tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
+        run: bash tools/test-map-select.sh .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-selection
+          path: selection.json
+          retention-days: 30
+  test-selection-report:
+    name: Test selection report
+    needs: [test-selection, check, browser]
+    if: always() && needs.test-selection.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-selection
+          path: ${{ runner.temp }}/selection
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: test-results-*
+          path: ${{ runner.temp }}/results
+      - run: |
+          shopt -s nullglob
+          node tools/test-map.ts report --selection "$RUNNER_TEMP/selection/selection.json" \
+            --out test-selection-report.json "$RUNNER_TEMP"/results/*/*.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-selection-report
+          path: test-selection-report.json
+          retention-days: 30
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
-  # skipped or cancelled job never passes for a green one. Add every new job to `needs`.
+  # skipped or cancelled job never passes for a green one. Add every new job to `needs`. The
+  # exceptions are repeat-changed, which skips when a run changes no tests, and test selection's
+  # record jobs, which never decide a run.
   ci:
     name: CI
     if: always()
-    needs: [check, browser, secret-scan, content-scan]
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    needs: [check, browser-plan, browser, repeat-changed, secret-scan, content-scan]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The facts the check and browser jobs chose their runners from.
+      - name: Show the runner route
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          echo "Event $EVENT on $REF."
+          if [ "$EVENT" = pull_request ]; then
+            echo "Head in this repository: $SAME_REPOSITORY. Author $AUTHOR, actor $ACTOR, triggered by $TRIGGERING_ACTOR."
+          fi
       - name: Require every job to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
+          NO_BROWSER_TESTS: ${{ needs.browser-plan.result == 'success' && needs.browser-plan.outputs.none == 'true' }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          # The browser job counts as passed when skipped only because the plan, which succeeded,
+          # held no browser test.
+          failed=$(jq -r --arg none "$NO_BROWSER_TESTS" 'to_entries[]
+            | select(.value.result != "success")
+            | select(.key != "browser" or .value.result != "skipped" or $none != "true")
+            | select(.key != "repeat-changed" or .value.result != "skipped")
+            | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Jobs that didn't succeed: ${failed//$'\n'/, }"
             exit 1

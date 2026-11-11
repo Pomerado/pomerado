@@ -1,7 +1,12 @@
 import { Option, Schema } from "effect";
 import type { CommitMark } from "./context.js";
 import { commitMarkMaxLength, commitMarkPattern } from "./operation.js";
-import { inlineLocalRefs, UnresolvedSchemaReference } from "../registry/schema-references.js";
+import {
+  inlineLocalRefs,
+  inlineLocalRefsAlong,
+  UnresolvedSchemaReference,
+  type SchemaPath,
+} from "../registry/schema-references.js";
 
 /*
  * What a finished or failed run did to the website, and what its caller is told. These functions
@@ -238,6 +243,39 @@ const outputBranches = (branches: readonly unknown[], depth: number): readonly u
     return nested === undefined ? [branch] : outputBranches(nested, depth + 1);
   });
 
+/** Where a branch's refusal is read: its unions and `allOf`, and its `status` and `reason`. */
+const refusalBranchPath: SchemaPath = (key) =>
+  key === "properties"
+    ? refusalPropertiesPath
+    : key === "anyOf" || key === "oneOf" || key === "allOf"
+      ? refusalBranchPath
+      : undefined;
+const refusalPropertiesPath: SchemaPath = (key) =>
+  key === "status" || key === "reason" ? listedValuesPath : undefined;
+const listedValuesPath: SchemaPath = (key) =>
+  key === "anyOf" || key === "oneOf" ? listedValuesPath : undefined;
+
+/**
+ * The output schema with its local references resolved where refusals are read; undefined when
+ * one there recurses or does not resolve. A schema that inlines whole is read as it always was.
+ * Otherwise only the root, its union and `allOf` branches, and each one's `status` and `reason`
+ * are inlined, so a reference anywhere else, such as a free-form JSON type that refers to itself,
+ * or references that grow past inlining's limit, never hide a refusal.
+ */
+const refusalSchema = (outputSchema: Readonly<Record<string, unknown>>) => {
+  try {
+    return inlineLocalRefs({ ...outputSchema });
+  } catch (error) {
+    if (!(error instanceof UnresolvedSchemaReference)) throw error;
+  }
+  try {
+    return inlineLocalRefsAlong({ ...outputSchema }, refusalBranchPath);
+  } catch (error) {
+    if (error instanceof UnresolvedSchemaReference) return undefined;
+    throw error;
+  }
+};
+
 /**
  * The refusal reasons a tool's output JSON Schema declares, as it publishes it. A write declares
  * a refusal as a branch of its output, the root schema or one of the root's `anyOf` or `oneOf`
@@ -257,16 +295,15 @@ const outputBranches = (branches: readonly unknown[], depth: number): readonly u
  * status, such as one whose `status` is free text, since a matching output would not show which
  * branch it is. A `status` that lists other strings, or is a string whose `pattern` does not
  * match `refused`, cannot.
+ *
+ * Only the branches and their `status` and `reason` need their references to resolve: a
+ * reference in any other property, such as a free-form JSON type that refers to itself, is never
+ * read. Empty when one of those recurses or does not resolve.
  */
 export const declaredRefusalReasons = (outputSchema: unknown): ReadonlySet<string> => {
   if (!isJsonRecord(outputSchema)) return new Set();
-  let root: Record<string, unknown>;
-  try {
-    root = inlineLocalRefs({ ...outputSchema });
-  } catch (error) {
-    if (error instanceof UnresolvedSchemaReference) return new Set();
-    throw error;
-  }
+  const root = refusalSchema(outputSchema);
+  if (root === undefined) return new Set();
   const union = root["anyOf"] ?? root["oneOf"];
   const branches = Array.isArray(union) ? outputBranches(union, 0) : [root];
   const refusals = branches.map(refusalBranchReasons);
@@ -294,16 +331,13 @@ const listsRefusedStatus = (schema: unknown, depth: number): boolean => {
  * Whether a write's output schema has a refusal the host cannot read: some branch lists
  * `refused` as its `status`, so the write means to return refusals, and `declaredRefusalReasons`
  * finds none. A run that returns one is not a declared refusal, so it ends as an unknown outcome,
- * like any other unconfirmed write. A schema whose references do not resolve has none.
+ * like any other unconfirmed write. A schema whose references on its branches or their `status`
+ * and `reason` do not resolve has none; a reference anywhere else is never read.
  */
 export const unreadableRefusal = (outputSchema: unknown): boolean => {
   if (!isJsonRecord(outputSchema) || declaredRefusalReasons(outputSchema).size > 0) return false;
-  try {
-    return listsRefusedStatus(inlineLocalRefs({ ...outputSchema }), 0);
-  } catch (error) {
-    if (error instanceof UnresolvedSchemaReference) return false;
-    throw error;
-  }
+  const root = refusalSchema(outputSchema);
+  return root !== undefined && listsRefusedStatus(root, 0);
 };
 
 /** A refusal a write returned as its output: the reason code its output schema declares. */
@@ -427,6 +461,7 @@ export const runOutcomeCodes = [
   "credentials_rejected",
   "input_rejected",
   "input_not_applied",
+  "handoff_state_changed",
   "login_identity_conflict",
   "website_sign_in_unavailable",
   "worker_lost",
@@ -442,6 +477,7 @@ export const runOutcomeRetry: { readonly [Code in RunOutcomeCode]: RunRetryClass
   credentials_rejected: "fix_input",
   input_rejected: "fix_input",
   input_not_applied: "same_key",
+  handoff_state_changed: "new_key",
   login_identity_conflict: "fix_input",
   website_sign_in_unavailable: "same_key",
   worker_lost: "same_key",
@@ -559,6 +595,9 @@ export const runError = (view: RunEvidence): RunFailure => {
             }),
       });
     }
+    // The page changed while a person held the browser; a write may have been submitted then.
+    case "handoff_state_changed":
+      return failure("handoff_state_changed", { possible_commit: possibleCommit(view) });
     case "login_identity_conflict":
       return failure("login_identity_conflict", {});
     case "login_check_unavailable":

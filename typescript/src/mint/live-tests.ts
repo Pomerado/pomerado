@@ -526,7 +526,7 @@ const inconclusiveDetail: Readonly<Record<LiveTestInconclusiveReason, string>> =
   deadline: "The batch ran out of time before this case ran. Run it again.",
   asked: "The script asked a question, which nobody answers during a test. A read that needs an answer from its caller declares the question; run cases that do not need one.",
   no_next_page: "Page 1 returned no cursor, so the host could not run a next page. Use a query with more than one page of results, or fix how the tool returns its cursor.",
-  site_block: "The site blocked this browser's network egress, by refusing the page's own data call or with a bot vendor's block page, so the case tested nothing about the tool. It is an egress problem, not a script failure: do not change the script for it. Run the case again later.",
+  site_block: "The site refused this test browser the page or its data call, or showed a block page, so the case tested nothing about the tool. That is the site's refusal, not a script failure, and the script needs no change for it. It counts neither as a pass nor a fail toward review. The host opened this browser for testing, so a caller's rule about stopping at blocks, which is about the tool's own runs, does not cover it. Prefer going on: publish with this case inconclusive and say so in coverage.",
 };
 
 /**

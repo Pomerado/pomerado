@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { call, callFailure, serve, submitted } from "./picker-fixture.js";
+import { type Api, call, callFailure, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper, run as a Kernel call body runs it, on synthetic pages that each model one
 // kind of picker or one way a picker misbehaves. Chromium must generate the events: the widgets
@@ -956,6 +956,85 @@ list.addEventListener("click", (event) => { button.textContent = event.target.te
   await expect(page.getByRole("button", { name: "Region" })).toHaveText("Region 87");
 });
 
+/**
+ * A dropdown of `total` locations the site sends 100 at a time, the next page once the list scrolls
+ * to its bottom, asked for `lateMs` after it does. With a search box, it lists the locations holding
+ * the box's text. `window.pages` counts the pages of the whole list it asked for.
+ */
+const locations = (search: boolean, lateMs = 0, total = 3000) => `<form><button type="button" aria-label="Location" aria-haspopup="listbox" aria-controls="location-popup" aria-expanded="false">Choose</button>
+<div id="location-popup" hidden>${search ? '<input aria-label="Find location" autocomplete="off">' : ""}
+<ul role="listbox" id="locations" style="height:200px;overflow-y:auto;margin:0;padding:0"></ul></div></form>
+<script>
+const button = document.querySelector("button"), popup = document.getElementById("location-popup"), list = document.getElementById("locations"), search = popup.querySelector("input");
+const rows = async (from, q) => (await (await fetch("/api/locations?from=" + from + "&q=" + encodeURIComponent(q))).json())
+  .map((name) => '<li role="option" style="height:20px">' + name + "</li>").join("");
+window.pages = 0;
+let next = 0, busy = false;
+const more = async () => {
+  if (busy || next >= ${total} || search?.value) return;
+  busy = true;
+  if (next > 0) await new Promise((resolve) => setTimeout(resolve, ${lateMs}));
+  window.pages++;
+  list.insertAdjacentHTML("beforeend", await rows(next, ""));
+  next += 100;
+  busy = false;
+};
+list.addEventListener("scroll", () => { if (list.scrollTop + list.clientHeight >= list.scrollHeight - 10) more(); });
+button.addEventListener("click", () => { popup.hidden = false; button.setAttribute("aria-expanded", "true"); if (next === 0) more(); });
+search?.addEventListener("input", async () => { list.innerHTML = await rows(0, search.value); });
+list.addEventListener("click", (event) => { button.textContent = event.target.textContent; popup.hidden = true; button.setAttribute("aria-expanded", "false"); });
+</script>`;
+const locationApi: Api = (params) => {
+  const query = (params.get("q") ?? "").toLowerCase();
+  const from = Number(params.get("from"));
+  const names = Array.from({ length: 3000 }, (_, index) => `Location ${index + 1}`).filter((name) => name.toLowerCase().includes(query));
+  return { body: names.slice(from, from + 100) };
+};
+
+test("pickValue reads a long list with no search box to its end, or fails as options_loading, never refusing from part of it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await serve(page, locations(false), locationApi);
+  // Read to its end, the list gives the value; a slower machine may run out of time first.
+  const read = await call(
+    page,
+    `try { const { picked, label } = await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", { ...fast, timeout: 40000 }); return { picked, label }; }
+    catch (error) { return { failed: error.message }; }`,
+    60,
+  );
+  expect([{ picked: true, label: "Location 2500" }, { failed: "options_loading" }]).toContainEqual(read.result);
+  await page.reload();
+  expect(
+    await call(
+      page,
+      `try { return await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", { ...fast, timeout: 3000 }); }
+      catch (error) { return { name: error.name, message: error.message, listRead: error.loading?.listRead > 0 }; }`,
+    ),
+  ).toEqual({ result: { name: "PickerFailure", message: "options_loading", listRead: true } });
+});
+
+test("pickValue narrows a list longer than 50 options with its search box once the first lack the value", async ({ page }) => {
+  await serve(page, locations(true), locationApi);
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 2500", fast);`)).toMatchObject({
+    result: { picked: true, label: "Location 2500", rank: "exact" },
+  });
+  await expect(page.getByRole("button", { name: "Location" })).toHaveText("Location 2500");
+  // One page of the whole list, then the search: never scrolled on through it.
+  expect(await page.evaluate(() => (window as unknown as { pages: number }).pages)).toBe(1);
+  // A value among the first 50 is still searched for, so an option that ties further down shows.
+  await page.reload();
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 20", fast);`)).toMatchObject({
+    result: { picked: true, label: "Location 20", rank: "exact" },
+  });
+  expect(await page.getByLabel("Find location").inputValue()).toBe("Location 20");
+});
+
+test("pickValue waits for the next page a scroll asks for a moment late before calling the list's end", async ({ page }) => {
+  await serve(page, locations(false, 250, 300), locationApi);
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 250");`)).toMatchObject({
+    result: { picked: true, label: "Location 250" },
+  });
+});
+
 test("pickValue works inside a shadow root", async ({ page }) => {
   await serve(page, `<form><picker-box></picker-box></form>
 <script>
@@ -1200,6 +1279,32 @@ list.addEventListener("click", (event) => { input.value = event.target.textConte
     await call(
       page,
       `return await pickValue(page.getByLabel("Code"), "ZX9", { ...fast, answered: async (popup, query) => (await popup.getAttribute("data-query")) === query });`,
+    ),
+  ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
+});
+
+// The answer can land after the picker read the list and before answered() looks at the marker:
+// answered() is then true while the options read are still the older answer's. Here the site's
+// answer lands exactly then, as answered() starts its look, once the older answer has held still.
+test("pickValue never ranks options it read before the site's answered signal turned true", async ({ page }) => {
+  await serve(page, `<label>Code <input id="code" role="combobox" aria-controls="codes" autocomplete="off"></label>
+<ul id="codes" role="listbox" data-query=""></ul>
+<script>
+const input = document.getElementById("code"), list = document.getElementById("codes");
+const show = (query, names) => { list.innerHTML = names.map((name) => '<li role="option">' + name + "</li>").join(""); list.dataset.query = query; };
+let typed = "", typedAt = 0;
+// An older query's answer shows at once; the answer for what was typed waits for answerLate.
+input.addEventListener("input", () => { typed = input.value; typedAt = Date.now(); show("ZX", ["ZX10", "ZX9 Legacy"]); });
+window.answerLate = () => { if (list.dataset.query !== typed && Date.now() - typedAt >= 1000) show(typed, [typed, typed + " Legacy"]); };
+list.addEventListener("click", (event) => { input.value = event.target.textContent; list.innerHTML = ""; });
+</script>`);
+  expect(
+    await call(
+      page,
+      `return await pickValue(page.getByLabel("Code"), "ZX9", { ...fast, answered: async (popup, query) => {
+        await popup.evaluate(() => window.answerLate());
+        return (await popup.getAttribute("data-query")) === query;
+      } });`,
     ),
   ).toMatchObject({ result: { picked: true, label: "ZX9", rank: "exact" } });
 });

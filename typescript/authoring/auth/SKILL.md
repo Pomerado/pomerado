@@ -23,6 +23,14 @@ remember-this-device box with its checked state. Then send the code step at once
 minutes, so send that step before any other probing.
 
 Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
+When the task turns out to need a sign-in after steps you ran signed out, decide which case it is,
+and ask the caller with request_input when you can't tell. (1) The steps are separate tools, such
+as a search that works signed out and an add to cart that needs the account; signed-out reads stay
+their own tool so they can run in parallel. Build the one the request names and suggest the other
+as a new build. (2) The whole task needs the account: sign in first and run it from its start
+signed in; once a write went out signed out, suggest that as a new build instead. (3) Rarely, one write needs a signed-out part and then a signed-in part: go on signed
+in after it, and follow the host's notice for where its runs sign in. A write already sent signed
+out never runs again.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
 or settings the task does not concern.
 
@@ -84,6 +92,10 @@ query, fragment or path, since a host refuses such a link for a workspace site.
    another page. The banner's own control counts even when it sits in the sign-in form or has no
    type, as on a page wrapped in one form: it sends nothing typed, since the host empties the
    step's fields and cancels that click's own submission.
+   When a notice that is not a cookie banner covers the sign-in and its only way out commits the
+   account, ask the owner once whether to accept it; on yes, prefer putting its accept control in
+   the sign-in step's `dismiss` with the answered question cited in `confirmedBy`, and keep the
+   build a read.
    Reopening the login route in an `explore` to read it again is fine, after a failed sign-in too.
    `references/auth-entry.ts` shows a bounded second probe that reads a login form's controls.
 
@@ -185,12 +197,13 @@ attribute.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
     otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
-    into one-character boxes is one `code` field per box, every box from the first to the last, in
-    order, as a split date is one field per part (below), even when the page moves the focus to
-    the next box or takes a pasted code in the first. Count the boxes on the screen before you
-    send the step. A step field never carries `codeBox` or any box number: the host reads each
-    box's place from the page, so send only `selector` and `slot` for each box. The host asks
-    once, types one character into each and submits only once each box holds one. A step that
+    into one-character boxes is one code, one `code` field per box, every box from the first to
+    the last, in order, as a split date is one field per part (below), even when the page moves the
+    focus to the next box, switches each box on only after the one before it holds a digit, or
+    takes a pasted code in the first. Count the boxes on the screen before you send the step. A
+    step field never carries `codeBox` or any box number: the host reads each box's place from the
+    page, so send only `selector` and `slot` for each box. The host asks once, types one character
+    into each, waiting for each box as it types, and submits only once each box holds one. A step that
     names only some of the boxes, or names them out of order, comes back refused as
     `code_boxes_incomplete`, typing nothing: its `codeBoxes` says how many boxes the screen shows
     and which ones the step named; send the step again with all of them. When a code screen asks
@@ -227,6 +240,16 @@ attribute.
   method order above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
+  A screen that offers a password route beside a code the site sends is a method choice too: list
+  `password` with each code method it offers, each with its own control, and name this login's
+  route as `submit`. So is a control that switches which identifier the screen asks for, when this
+  login's identifier needs it: list it as `identifier_username`, `identifier_email`,
+  `identifier_phone` or `identifier_account_number`, by the identifier it brings up. The tool's
+  runs keep the route each recorded sign-in took.
+  A method choice in a native drop-down (a `select`) names the drop-down as each method's selector
+  and as `submit`, the value it lists for each method as that method's `option`, and the one to
+  pick now as the step's own `option`; the host chooses that option. Prefer this over clicking the
+  drop-down.
 - `submitKey: "Enter"`, in place of `submit`: a code or password screen whose form has no submit
   control and submits on Enter. The host presses Enter in the step's last field.
 - Every selector and submit you send publishes with the tool, as does each screen's page address.
@@ -365,6 +388,13 @@ When the page right after a sign-in step is optional setup and shows no decline 
 bounded wait, prefer loading the site's own start page and checking the signed-in indicator there
 before anything else. Record no step for that page: a run skips it once the check verifies the
 session. A setup page that never loads is not the site being unavailable.
+
+When a sign-in screen asks to sign out another device or session, or to trust this browser,
+before the site goes on, send it as a `signInStep` with no fields, its control as `submit`, and
+`choice` naming that kind (`sign_out_other_device` or `trust_this_device`). Ask the owner first,
+as for any step that changes the account. Their yes covers this build. Each later run presses the
+control when its caller allows that choice and stops before it otherwise. When the screen offers
+a decline that still finishes the sign-in, prefer recording that decline as a plain step.
 
 # Signed in
 

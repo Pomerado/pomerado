@@ -252,9 +252,37 @@ describe("a site-field question's label", () => {
     expect(result).toEqual(Either.right({ extra: "initials-value" }));
   });
 
-  it("shortens a label over 256 characters, as it does an option's", () => {
-    const label = "Engraving detail ".repeat(20);
-    expect(sent({ extra: { label } }).question?.prompt).toBe(`${label.slice(0, 255)}…`);
+  // A form's own question can have a long label and long choices, such as legal wording. The
+  // caller reads the label whole, and the full text of a choice cut to fit its label.
+  it("asks a long label whole, with each option cut to fit its label in full after it", () => {
+    const label = "Synthetic consent wording ".repeat(20).trim();
+    const long = "Synthetic choice wording ".repeat(15).trim();
+    const saved = "Synthetic saved detail ".repeat(15).trim();
+    expect(sent({ extra: { label: "x".repeat(2100) } }).question?.prompt).toBe(`${"x".repeat(1999)}…`);
+    expect(
+      sent({
+        extra: {
+          label,
+          options: [
+            { value: "short", label: "Short choice" },
+            { value: "long", label: long },
+            // Its label shows only on the protected page, so the prompt never repeats it.
+            { value: "saved", label: saved, accountSpecific: true, maskedLabel: "Saved detail" },
+          ],
+        },
+      }).question,
+    ).toEqual({
+      id: "extra",
+      type: "choice",
+      prompt: `${label}\n\nOption 2 in full: ${long}`,
+      options: [
+        { id: "o1", label: "Short choice" },
+        { id: "o2", label: `${long.slice(0, 255)}…` },
+        { id: "o3", label: `${saved.slice(0, 255)}…`, accountSpecific: true, maskedLabel: "Saved detail" },
+      ],
+    });
+    const short = sent({ extra: { label: "Engraving", options: [{ value: "a", label: "Initials" }] } });
+    expect(short.question).toEqual({ id: "extra", type: "choice", prompt: "Engraving", options: [{ id: "o1", label: "Initials" }] });
   });
 
   it("refuses a missing or empty label, and a label on a question that is not a site field", () => {

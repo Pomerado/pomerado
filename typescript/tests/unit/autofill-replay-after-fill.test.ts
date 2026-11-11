@@ -1,6 +1,8 @@
 import { Clock, Data, Duration, Effect, Fiber, Option, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipe } from "../../src/destinations/autofill-recipe.js";
+import { locatedRefusal } from "../../src/destinations/autofill-refusal.js";
+import { refusalEvidence } from "../../src/destinations/autofill-refusal-evidence.js";
 import type { AutofillSignedInCheck, AutofillStep } from "../../src/destinations/autofill-step.js";
 import { replayAutofillRecipe } from "../../src/runtime/autofill-replay.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
@@ -139,6 +141,73 @@ it("ends a failed fill whose screen still shows as before", async () => {
   const { outcome, events } = await replay(recipe, goneUnderFill(true));
   expect(outcome).toMatchObject({ outcome: "unsent", reason: "fill_failed" });
   expect(events).not.toContainEqual({ stage: "retried", reason: "screen_gone" });
+});
+
+/**
+ * A login form whose submit the page takes away once a field was typed, sending nothing, as a site
+ * that turns its Continue into its single sign-on control once it knows the login does. Enter in
+ * the last field sends the form and signs the session in; `pressed` holds each step that took it.
+ */
+const submitGoneOnTyping = () => {
+  let typed = false;
+  let signedIn = false;
+  const pressed: AutofillStep[] = [];
+  const here = (): AutofillSignedInCheck =>
+    signedIn
+      ? { signedIn: true, url: `${origin}/home` }
+      : { signedIn: false, failed: "indicator_not_visible", url: login };
+  const hooks: AutofillHooks<TestFailure> = {
+    open: () => Effect.void,
+    check: () => Effect.sync(here),
+    confirm: () => Effect.sync(here),
+    inspect: (step) =>
+      Effect.sync(() =>
+        signedIn || (typed && step.submit !== undefined)
+          ? ({ outcome: "refused", reason: "not_found", target: "submit" } as const)
+          : shownAt(login, step),
+      ),
+    fill: ({ step }) =>
+      Effect.sync(() => {
+        typed = true;
+        if (step.submitKey !== undefined) {
+          pressed.push(step);
+          signedIn = true;
+        }
+        return {
+          outcome: "filled" as const,
+          fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+          submit: step.submitKey === undefined ? ("refused" as const) : ("clicked" as const),
+          url: login,
+        };
+      }),
+  };
+  return { hooks, pressed };
+};
+
+it("presses Enter once in an identifier field whose submit went once it was typed, with nothing sent", async () => {
+  const { hooks, pressed } = submitGoneOnTyping();
+  const { outcome, events } = await replay(
+    {
+      version: 2,
+      steps: [
+        { page: login, fields: [{ selector: "#email", accepts: ["username"] }], submit: "#continue" },
+      ],
+      signedIn: { selector: "#identity" },
+    },
+    hooks,
+  );
+  expect(outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(pressed).toHaveLength(1);
+  expect(pressed[0]).toMatchObject({ fields: [{ selector: "#email" }], submitKey: "Enter" });
+  expect(pressed[0]).not.toHaveProperty("submit");
+  expect(events).toContainEqual({ stage: "retried", reason: "submit_gone_after_typing" });
+});
+
+it("never presses Enter in a password field whose submit went once it was typed", async () => {
+  const { hooks, pressed } = submitGoneOnTyping();
+  const { outcome } = await replay(recipe, hooks);
+  expect(outcome).toMatchObject({ outcome: "unsent", reason: "not_found" });
+  expect(pressed).toEqual([]);
 });
 
 it("signs in on an account picker that can't tell in place of a code screen, once the code screen's wait ran out", async () => {
@@ -316,4 +385,130 @@ it("waits for a recorded code screen through an unrecorded page that can't tell,
   expect(outcome).not.toHaveProperty("cantTell");
   expect(events).not.toContainEqual({ stage: "skipped", reason: "cant_tell_landing" });
   expect(confirmed).toHaveLength(0);
+});
+
+// A page that redraws after a submit may show the old screen's button beside the new screen's for
+// a moment, so the next step's submit matches both. Once a screen ran, the step waits as a screen
+// not yet shown does, and refuses as it always did only if it still matches both at its deadline.
+// Before any screen ran, it refuses at once. Nothing is typed or clicked while it matches two.
+const ambiguous = locatedRefusal({
+  error: "ambiguous_match",
+  target: "submit",
+  searched: { frames: 1, matches: [{ frameUrl: origin, count: 2, visible: 2 }] },
+});
+const codeRecipe: AutofillRecipe = {
+  version: 2,
+  steps: [
+    passwordScreen,
+    { page: `${origin}/verify`, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+  ],
+  signedIn: { selector: "#identity" },
+};
+
+/**
+ * The password screen, then a code screen whose step matches two buttons from the password's
+ * submit until `twoForMs` later (always, when undefined; from the start, when `fromStart`), with
+ * when each screen was filled and when each code-screen look ran, in the test clock's time.
+ */
+const redrawn = (twoForMs: number | undefined, fromStart = false) => {
+  const filled: { step: string; at: number }[] = [];
+  const looks: number[] = [];
+  let sentAt: number | undefined;
+  let signedIn = false;
+  const here = (): AutofillSignedInCheck =>
+    signedIn
+      ? { signedIn: true, url: `${origin}/home` }
+      : { signedIn: false, failed: "indicator_not_visible", url: login };
+  const isCode = (step: AutofillStep) => step.fields.some((field) => field.slot === "code");
+  const hooks: AutofillHooks<TestFailure> = {
+    open: () => Effect.void,
+    check: () => Effect.sync(here),
+    confirm: () => Effect.sync(here),
+    inspect: (step) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          if (fromStart) return ambiguous;
+          if (isPassword(step)) return sentAt === undefined ? shownAt(login, step) : ambiguous;
+          if (sentAt === undefined) return { outcome: "refused", reason: "not_found" } as const;
+          looks.push(now - sentAt);
+          return twoForMs === undefined || now - sentAt < twoForMs
+            ? ambiguous
+            : shownAt(`${origin}/verify`, step);
+        }),
+      ),
+    fill: ({ step }) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          filled.push({ step: isCode(step) ? "code" : "password", at: now });
+          if (isCode(step)) signedIn = true;
+          else sentAt = now;
+          return {
+            outcome: "filled" as const,
+            fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+            submit: "clicked" as const,
+            url: login,
+          };
+        }),
+      ),
+  };
+  return { hooks, filled, looks };
+};
+
+const refusedAmbiguous = {
+  stage: "step",
+  outcome: "refused",
+  reason: "ambiguous_match",
+  ...refusalEvidence(ambiguous),
+};
+
+it("waits after a submit through a step that matches two buttons while the page redraws, then fills it once it matches one", async () => {
+  const { hooks, filled, looks } = redrawn(400);
+  const { outcome, events } = await replay(codeRecipe, hooks, "246810");
+  expect(outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(filled.map(({ step }) => step)).toEqual(["password", "code"]);
+  expect(looks.filter((at) => at < 400).length).toBeGreaterThan(0);
+  expect(filled[1]!.at - filled[0]!.at).toBe(400);
+  expect(events).not.toContainEqual(refusedAmbiguous);
+});
+
+it("fills a step found with one match right after a submit with no added wait", async () => {
+  const { hooks, filled, looks } = redrawn(0);
+  const { outcome } = await replay(codeRecipe, hooks, "246810");
+  expect(outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(looks).toEqual([0]);
+  expect(filled.map(({ step, at }) => [step, at])).toEqual([
+    ["password", 0],
+    ["code", 0],
+  ]);
+});
+
+it("refuses a step that still matches two buttons at its deadline after a submit, as it did at once before", async () => {
+  const { hooks, filled, looks } = redrawn(undefined);
+  const { outcome, events } = await replay(codeRecipe, hooks, "246810");
+  expect(outcome).toEqual({ outcome: "unclear", reason: "ambiguous_match" });
+  expect(filled.map(({ step }) => step)).toEqual(["password"]);
+  // The screen's wait is 5 s from the submit here; its last look runs at the first poll past it.
+  expect(looks.at(-1)).toBe(5_000);
+  expect(events).toContainEqual(refusedAmbiguous);
+});
+
+it("refuses a step that matches two buttons before any screen ran at once, as before", async () => {
+  const { hooks, filled } = redrawn(undefined, true);
+  const started: number[] = [];
+  const { outcome, events } = await replay(
+    codeRecipe,
+    {
+      ...hooks,
+      inspect: (step) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.tap((now) => started.push(now)),
+          Effect.zipRight(hooks.inspect(step)),
+        ),
+    },
+    "246810",
+  );
+  expect(outcome).toEqual({ outcome: "unsent", reason: "ambiguous_match" });
+  expect(filled).toEqual([]);
+  expect(started).toEqual([0]);
+  expect(events).toContainEqual(refusedAmbiguous);
 });
