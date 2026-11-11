@@ -135,7 +135,6 @@ const shown = (answer: ReturnType<typeof result>): SignInStepResult => ({
 /** What says a control takes another value than its slot, in the minter's words. */
 const slotControlEvidence = {
   autocomplete: "its autocomplete attribute",
-  code_boxes: "its place among the screen's one-character code boxes",
   name: "its name or id",
   label: "its own label, aria-label or placeholder",
 } as const;

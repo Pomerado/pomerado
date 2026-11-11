@@ -1162,10 +1162,10 @@ export const codeBoxesRefusal = (
 
 /**
  * What says a control takes another kind of value than the slot a step gave it: its `autocomplete`
- * token, its place among the screen's one-character code boxes (`code_boxes`), words in its own
- * name or id (`name`), or its own label, aria-label or placeholder (`label`).
+ * token, words in its own name or id (`name`), or its own label, aria-label or placeholder
+ * (`label`).
  */
-export type SlotControlEvidence = "autocomplete" | "code_boxes" | "name" | "label";
+export type SlotControlEvidence = "autocomplete" | "name" | "label";
 
 /** The words of a control's name or id: split at anything but letters and digits, and at case. */
 const nameWords = (text: string | null) =>
@@ -1176,16 +1176,14 @@ const nameWords = (text: string | null) =>
     .filter((word) => word !== "");
 /** Words of a name or id that alone name a one-time code. */
 const codeNameWords = new Set(["otp", "totp", "mfa", "2fa"]);
+/** Words of a name or id that name the account's own secret: a password, passcode or PIN. */
+const passwordNameWords = new Set(["password", "passwd", "pwd", "pass", "passcode", "pin"]);
 /**
  * Words of a name or id that name another kind of value, which win over `codeNameWords`, so a
- * field such as `mfa-password` or `otp-email` is never read as a code.
+ * field such as `otp-email` is never read as a code.
  */
 const otherNameWords = new Set([
-  "password",
-  "passwd",
-  "pwd",
-  "pass",
-  "pin",
+  ...passwordNameWords,
   "email",
   "username",
   "phone",
@@ -1200,54 +1198,69 @@ const otherNameWords = new Set([
   "cvc",
 ]);
 /**
- * A control's own words that name a one-time code: one-time, verification, authentication,
- * authenticator, sign-in, login, two-factor or two-step code, or an authenticator app. A security
- * code (a card's), a passcode or a PIN alone never is.
+ * A control's own words that name a one-time code: a one-time, verification, authentication,
+ * authenticator, two-factor or two-step code, or an authenticator app. A security code (a card's),
+ * a passcode or a PIN never is.
  */
 const codeLabel = new RegExp(
   [
-    String.raw`\b(?:one[- ]?time|verification|authentication|authenticator|sign[- ]?in|log[- ]?in`,
-    String.raw`|2fa|(?:two|2)[- ](?:factor|step))\s+(?:pass)?code\b|\bauthenticator app\b`,
+    String.raw`\b(?:one[- ]?time|verification|authentication|authenticator|2fa`,
+    String.raw`|(?:two|2)[- ](?:factor|step))\s+code\b|\bauthenticator app\b`,
   ].join(""),
   "iu",
 );
+/** A control's own words that name the account's own secret: a password, passcode or PIN. */
+const passwordLabel = /\bpass(?:word|phrase|code)s?\b|\bpin\b/iu;
 /** The `autocomplete` tokens that mark a control as the account's password. */
 const passwordTokens = new Set(["current-password", "new-password"]);
 const autocompleteTokens = (control: { readonly autocomplete: string | null }) =>
   (control.autocomplete ?? "").toLowerCase().split(/\s+/u);
+
+type ControlWords = Pick<
+  typeof Described.Type,
+  "autocomplete" | "name" | "id" | "label" | "ariaLabel" | "placeholder"
+>;
+const ownTexts = (control: ControlWords) =>
+  [control.label, control.ariaLabel, control.placeholder].filter((text) => text !== null);
 
 /**
  * What says a control, as the inspection read it, is a one-time code field, by the strongest
  * evidence first; undefined when nothing does. It reads the markup alone: a numeric box, a short
  * one or a masked one is no code by itself, as a PIN that stands in for a password is all three.
  */
-export const oneTimeCodeEvidence = (
-  control: Pick<
-    typeof Described.Type,
-    "autocomplete" | "name" | "id" | "label" | "ariaLabel" | "placeholder" | "codeBox"
-  >,
-): SlotControlEvidence | undefined => {
+export const oneTimeCodeEvidence = (control: ControlWords): SlotControlEvidence | undefined => {
   if (autocompleteTokens(control).includes("one-time-code")) return "autocomplete";
-  if (control.codeBox !== undefined) return "code_boxes";
   const words = [...nameWords(control.name), ...nameWords(control.id)];
   const named = words.some((word) => codeNameWords.has(word));
   if (named && !words.some((word) => otherNameWords.has(word))) return "name";
-  return [control.label, control.ariaLabel, control.placeholder].some(
-    (text) => text !== null && codeLabel.test(text),
-  )
-    ? "label"
-    : undefined;
+  return ownTexts(control).some((text) => codeLabel.test(text)) ? "label" : undefined;
 };
+
+/**
+ * Whether a control's own markup names the account's own secret: an `autocomplete` of
+ * `current-password` or `new-password`, a name or id word such as `password` or `pin`, or a label,
+ * aria-label or placeholder naming a password, passcode or PIN.
+ */
+const passwordControl = (control: ControlWords) =>
+  autocompleteTokens(control).some((token) => passwordTokens.has(token)) ||
+  [...nameWords(control.name), ...nameWords(control.id)].some((word) =>
+    passwordNameWords.has(word),
+  ) ||
+  ownTexts(control).some((text) => passwordLabel.test(text));
 
 /**
  * A step that gives a field a credential slot its control contradicts: a refusal before anything
  * is typed, reviewed or asked, naming the field (`target`), its slot, what its control takes and
  * the evidence (`slotControl`), so the step can be sent again with the slot the control takes. A
- * `password` field whose control is a one-time code field (`oneTimeCodeEvidence`) would type the
- * login's password into a code box, or ask the owner for a password the screen never wants; a
- * `code` field whose `autocomplete` marks the account's password (`current-password` or
- * `new-password`) would ask the owner for a code the screen never sends. Undefined when every
- * field's slot agrees with its control, or its control says nothing either way.
+ * `password` field whose control is a one-time code field (`oneTimeCodeEvidence`) and names no
+ * password would type the login's password into a code box, or ask the owner for a password the
+ * screen never wants; a `code` field whose `autocomplete` marks the account's password
+ * (`current-password` or `new-password`) and that nothing else names a code would ask the owner
+ * for a code the screen never sends. Only evidence that points one way refuses, so a control that
+ * names both, such as a code box a site marks `new-password` to keep password managers out or a
+ * field labelled for a password followed by a code, is left to the review, and no slot is refused
+ * both ways. Undefined when every field's slot agrees with its control, or its control says
+ * nothing either way.
  */
 export const slotControlRefusal = (
   step: Pick<AutofillStep, "fields">,
@@ -1256,18 +1269,17 @@ export const slotControlRefusal = (
   for (const [index, field] of step.fields.entries()) {
     const control = inspection.screen.fields[index];
     if (control === undefined) continue;
-    const evidence =
-      field.slot === "password"
-        ? oneTimeCodeEvidence(control)
-        : field.slot === "code" &&
-            autocompleteTokens(control).some((token) => passwordTokens.has(token))
-          ? ("autocomplete" as const)
-          : undefined;
-    if (evidence === undefined) continue;
+    const code = oneTimeCodeEvidence(control);
+    const password = passwordControl(control);
     const slotControl =
-      field.slot === "password"
-        ? { slot: "password" as const, control: "code" as const, evidence }
-        : { slot: "code" as const, control: "password" as const, evidence };
+      field.slot === "password" && code !== undefined && !password
+        ? { slot: "password" as const, control: "code" as const, evidence: code }
+        : field.slot === "code" &&
+            code === undefined &&
+            autocompleteTokens(control).some((token) => passwordTokens.has(token))
+          ? ({ slot: "code", control: "password", evidence: "autocomplete" } as const)
+          : undefined;
+    if (slotControl === undefined) continue;
     return {
       ...withCheck(refused("slot_control_mismatch", index), "slot_control", slotControl),
       slotControl,

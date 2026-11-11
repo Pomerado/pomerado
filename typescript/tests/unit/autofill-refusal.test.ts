@@ -138,9 +138,7 @@ it("sends back a code step that names part of its screen's one-character boxes, 
 // nothing by itself.
 it("refuses a password slot only on a control its markup names a one-time code, and a code slot only on a marked password", () => {
   type Named = "type" | "name" | "id" | "autocomplete" | "inputmode" | "label" | "placeholder";
-  type Attributes = Partial<Record<Named | "ariaLabel", string>> & {
-    readonly codeBox?: { readonly box: number; readonly of: number };
-  };
+  type Attributes = Partial<Record<Named | "ariaLabel", string>>;
   const control = (attributes: Attributes) => ({
     tag: "input",
     role: null,
@@ -175,7 +173,6 @@ it("refuses a password slot only on a control its markup names a one-time code, 
     control: "code",
     evidence: "autocomplete",
   });
-  expect(password({ codeBox: { box: 1, of: 6 } })?.evidence).toBe("code_boxes");
   expect(password({ name: "totpToken" })?.evidence).toBe("name");
   expect(password({ id: "mfa_code" })?.evidence).toBe("name");
   expect(password({ type: "password", label: "Authentication code" })?.evidence).toBe("label");
@@ -192,6 +189,15 @@ it("refuses a password slot only on a control its markup names a one-time code, 
     { name: "promo-code", label: "Promo code" },
     { name: "mfa-password", label: "Password" },
     { type: "password", autocomplete: "current-password", label: "Password" },
+    // A passcode the site names for signing in is the account's own secret.
+    { type: "password", label: "Login passcode" },
+    { type: "password", label: "Sign-in passcode" },
+    // A control whose own words also name a password points both ways, so it stands.
+    { type: "password", label: "Password or one-time code" },
+    { type: "password", label: "Password followed by your authentication code" },
+    { type: "password", label: "Authenticator app password" },
+    { type: "password", autocomplete: "one-time-code", label: "Password" },
+    { type: "password", autocomplete: "one-time-code", name: "password" },
   ];
   for (const attributes of neverCodes) expect(password(attributes)).toBeUndefined();
   // A code slot is refused only on a control marked as the account's password.
@@ -203,4 +209,13 @@ it("refuses a password slot only on a control its markup names a one-time code, 
   expect(check("code", { autocomplete: "section-login new-password" })?.control).toBe("password");
   expect(check("code", { type: "password", label: "Verification code" })).toBeUndefined();
   expect(check("code", { autocomplete: "one-time-code" })).toBeUndefined();
+  // A code box a site marks new-password to keep password managers out is a code by its other
+  // words: the evidence points both ways, so neither slot is refused and no step is trapped.
+  for (const attributes of [
+    { autocomplete: "new-password", name: "otp" },
+    { autocomplete: "new-password", label: "Verification code" },
+  ]) {
+    expect(check("code", attributes)).toBeUndefined();
+    expect(check("password", attributes)).toBeUndefined();
+  }
 });
