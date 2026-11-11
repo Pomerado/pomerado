@@ -442,6 +442,54 @@ it("asks the owner for a code as given, masked with and without its separators, 
   expect(given.current).toEqual({});
 });
 
+// A code an authenticator app shows is not one the site sent, so the owner is asked for it by
+// where it comes from, as a TOTP code a host never answers with a texted one: when the code
+// field's own words say so, or the host's method in force is the app.
+it("asks for an authenticator app's code as such, from the field's own words or the method in force", async () => {
+  const shown = (label: string) => [
+    { label, ariaLabel: null, placeholder: null, name: null, id: null, autocomplete: null },
+  ];
+  const asked = async (
+    screen: ReturnType<typeof shown> | undefined,
+    extra: { readonly codeSource?: "authenticator_app"; readonly codeAgain?: "rejected" } = {},
+  ) => {
+    const { autofill } = values();
+    const owner = scripted(["482913"]);
+    await Effect.runPromise(
+      autofill.valuesFor(
+        codeStep,
+        {
+          ...login({ username: "synthetic-user" }, owner.ask),
+          ...extra,
+          ...(extra.codeAgain === undefined ? {} : { codeRequests: { current: 0 } }),
+        },
+        screen,
+      ),
+    );
+    return owner.requests[0]?.questions[0];
+  };
+  const fromApp = {
+    id: "code",
+    type: "secret",
+    secretKind: "totp",
+    prompt: "Enter the code from your authenticator app for example.test.",
+  };
+  expect(await asked(shown("Code from your authenticator app"))).toEqual(fromApp);
+  expect(await asked(undefined, { codeSource: "authenticator_app" })).toEqual(fromApp);
+  expect(
+    await asked(undefined, { codeSource: "authenticator_app", codeAgain: "rejected" }),
+  ).toMatchObject({
+    secretKind: "totp",
+    prompt:
+      "The site refused the last code. Enter the current code from your authenticator app for example.test.",
+  });
+  // A code field that names no app keeps the code the site sent.
+  expect(await asked(shown("Verification code"))).toMatchObject({
+    secretKind: "one_time_code",
+    prompt: "Enter the sign-in code example.test sent you.",
+  });
+});
+
 it("asks again for the newest code after a refusal, spending the sign-in's code re-asks", async () => {
   const { autofill } = values();
   const owner = scripted(["111111", "222222"]);

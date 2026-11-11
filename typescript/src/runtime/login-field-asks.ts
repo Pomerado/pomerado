@@ -44,12 +44,50 @@ const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
 /**
+ * Where a sign-in code comes from, when the host knows: an authenticator app, from the method in
+ * force (`totp`) or the code field's own words (`authenticatorCodeField`). Otherwise it is a code
+ * the site sends.
+ */
+export type CodeSource = "authenticator_app";
+
+/** Words that name an authenticator app's code: in a field's label, placeholder or instruction. */
+const authenticatorWords = /\bauthenticator\b|\bauthentication app\b|\btotp\b/iu;
+/** The words of a field's name or id, split at anything but letters and digits, and at case. */
+const nameWords = (text: string | null | undefined) =>
+  (text ?? "")
+    .replaceAll(/([a-z])([A-Z])/gu, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u);
+
+/**
+ * Whether a code field, as the inspection read it, asks for an authenticator app's code: its own
+ * label, aria-label, placeholder or the screen's instruction for it names an authenticator app or
+ * TOTP, or its name or id holds `totp` or `authenticator`. A two-factor or verification code alone
+ * may be one the site texts or emails, so it names none.
+ */
+export const authenticatorCodeField = (shown: ShownAnswerField) =>
+  [shown.label, shown.ariaLabel, shown.placeholder, shown.questionText].some(
+    (text) => text !== null && text !== undefined && authenticatorWords.test(text),
+  ) ||
+  [...nameWords(shown.name), ...nameWords(shown.id)].some(
+    (word) => word === "totp" || word === "authenticator",
+  );
+
+/**
  * The code question's prompt. With the screen's own instruction for the code (`instruction`), such
  * as to call a number or approve in an app, it quotes that, cut to fit, so the owner does what the
- * site asks; without one it names the code the site sent.
+ * site asks; without one it names where the code comes from: an authenticator app (`source`), else
+ * the site, which sent it.
  */
-const codePrompt = (site: string, notice: string | undefined, instruction: string | undefined) => {
+const codePrompt = (
+  site: string,
+  notice: string | undefined,
+  instruction: string | undefined,
+  source: CodeSource | undefined,
+) => {
   const lead = notice === undefined ? "" : `${notice} `;
+  if (instruction === undefined && source === "authenticator_app")
+    return `${lead}Enter the ${notice === undefined ? "" : "current "}code from your authenticator app for ${site}.`;
   if (instruction === undefined)
     return notice === undefined
       ? `Enter the sign-in code ${site} sent you.`
@@ -59,12 +97,17 @@ const codePrompt = (site: string, notice: string | undefined, instruction: strin
   return `${opening}${cutTo(instruction, promptLimit - opening.length - closing.length)}${closing}`;
 };
 
-/** The question for a value the login does not hold; a code's with its screen's instruction. */
+/**
+ * The question for a value the login does not hold; a code's with its screen's instruction and
+ * where it comes from (`source`): an authenticator app's code is asked as a TOTP code, which a host
+ * never answers with a code the site texted or emailed.
+ */
 const question = (
   asked: Asked,
   site: string,
   notice?: string,
   instruction?: string,
+  source?: CodeSource,
 ): Question => {
   const withNotice = (prompt: string) => (notice === undefined ? prompt : `${notice} ${prompt}`);
   // A code asked with a notice is asked again, so it asks for the newest code the site sent.
@@ -74,8 +117,8 @@ const question = (
     return {
       id: "code",
       type: "secret",
-      secretKind: "one_time_code",
-      prompt: codePrompt(site, notice, instruction),
+      secretKind: source === "authenticator_app" ? "totp" : "one_time_code",
+      prompt: codePrompt(site, notice, instruction, source),
     };
   if (asked === "recovery_code")
     return {
@@ -174,8 +217,9 @@ const askedQuestions = (
   notice: string | undefined,
   offered: Question | undefined,
   instruction: string | undefined,
+  source: CodeSource | undefined,
 ): Question[] => [
-  question(asked, site, notice, instruction),
+  question(asked, site, notice, instruction, source),
   ...(offered !== undefined && asked !== "code" && asked !== "recovery_code" ? [offered] : []),
 ];
 
@@ -209,6 +253,9 @@ export interface ShownAnswerField {
   readonly label: string | null;
   readonly ariaLabel: string | null;
   readonly placeholder: string | null;
+  /** The field's own name and id, which may say a code comes from an authenticator app. */
+  readonly name?: string | null | undefined;
+  readonly id?: string | null | undefined;
 }
 
 /** The caller's own failure for a host dependency that did not answer. */
@@ -290,6 +337,8 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     codeBoxes?: number,
     /** A code screen's own instruction for the code, as the host read it (`codeInstruction`). */
     instruction?: string,
+    /** Where a code comes from, when the host knows (`CodeSource`). */
+    source?: CodeSource,
   ): Effect.Effect<Unanswered | { slot: AskedSlot; value: string }, E> =>
     Effect.gen(function* () {
       const questions = askedQuestions(
@@ -298,6 +347,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
         notice,
         offerSave ? saveOffer?.field : undefined,
         asked === "code" ? instruction : undefined,
+        asked === "code" ? source : undefined,
       );
       const response = yield* Effect.either(
         asker({
@@ -315,7 +365,16 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
       const misfit = misfitCode(kept, codeBoxes);
       if (kept === undefined || misfit) {
         if (attempt < 2)
-          return yield* ask(asker, asked, notice, offerSave, attempt + 1, codeBoxes, instruction);
+          return yield* ask(
+            asker,
+            asked,
+            notice,
+            offerSave,
+            attempt + 1,
+            codeBoxes,
+            instruction,
+            source,
+          );
         return misfit
           ? new Unanswered(codeDoesNotFit)
           : yield* fail("autofill.ask", { check: "answer_kind" });

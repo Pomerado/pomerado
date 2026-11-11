@@ -24,8 +24,10 @@ import {
 import type { SecretBroker, SecurityAnswerFills } from "./autofill-state.js";
 import { makeFreshAutofillValues } from "./autofill-fresh-values.js";
 import {
+  authenticatorCodeField,
   type AutofillValueFailure,
   bareCode,
+  type CodeSource,
   codeDoesNotFit,
   fitsCodeBoxes,
   makeLoginFieldAsk,
@@ -146,12 +148,17 @@ const valuesInOrder =
     // read once. A screen that asked for two different codes would get the first in both.
     const boxes = step.fields.filter((field) => field.slot === "code").length;
     const instruction = codeInstruction(step, screen);
+    const fromApp = step.fields.some((field, index) => {
+      const shown = screen?.[index];
+      return field.slot === "code" && shown !== undefined && authenticatorCodeField(shown);
+    });
     const codeLogin =
-      boxes > 1 || instruction !== undefined
+      boxes > 1 || instruction !== undefined || fromApp
         ? {
             ...login,
             ...(boxes > 1 ? { codeBoxes: boxes } : {}),
             ...(instruction === undefined ? {} : { codeInstruction: instruction }),
+            ...(fromApp ? { codeSource: "authenticator_app" as const } : {}),
           }
         : login;
     return Effect.gen(function* () {
@@ -262,6 +269,12 @@ export interface AutofillLogin {
    * which the owner is asked for the code with.
    */
   readonly codeInstruction?: string;
+  /**
+   * Where the code comes from, when the host knows: an authenticator app (`authenticator_app`),
+   * from the method in force or the code field's own words (`authenticatorCodeField`), which the
+   * owner is asked for by name. Absent, the code is one the site sent.
+   */
+  readonly codeSource?: CodeSource;
   /** Whether an asked field may be kept with the login, with the owner's yes (`SaveOffer`). */
   readonly offerSave?: boolean;
   /** Whether a corrected answer to a rejected field may be kept, with the owner's yes. */

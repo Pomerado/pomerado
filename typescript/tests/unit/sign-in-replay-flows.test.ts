@@ -767,6 +767,24 @@ it("reads the login before it picks a method on a recipe whose first screen is t
   ]);
 });
 
+// The owner picked the authenticator app: the code question names the app, not a code the site
+// sent, and the texted method keeps the sent-code wording.
+it.each([
+  ["option_1", "Enter the code from your authenticator app for example.test."],
+  ["option_0", "Enter the sign-in code example.test sent you."],
+] as const)("asks for the code of the method picked as %s by where it comes from", async (method, prompt) => {
+  const fake = scriptedSite({
+    entry: "method",
+    screens: { method: ["#by-text", "#by-app"], code: ["#code", "#verify"], account: [] },
+    fill: (page, values) =>
+      page === "method" ? { next: "code" } : { next: "account", signIn: values[0] === code },
+  });
+  const { result, prompts } = await signIn(recipe(methodStep, codeStep), fake, { method });
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(steps(fake).at(-2)).toBe("ask:code");
+  expect(prompts.at(-1)).toBe(prompt);
+});
+
 // An approval off the page: on another device, by an email link, or a push the owner picked.
 const approvalSite = (then: string, shown?: string) =>
   scriptedSite({
