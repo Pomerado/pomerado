@@ -23,6 +23,7 @@
  * first, as entries were written by hand before. A fragment's age is when it reached the current
  * branch's first-parent history, which for `main` is when its pull request merged. An uncommitted
  * fragment counts as newest. Fragments git can't tell apart, as in a shallow clone, go by file name.
+ * Dotfiles and editor backups in changes/, such as .DS_Store or fix.md~, are ignored.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -117,7 +118,8 @@ export const release = (changelog: string, version: string): string => {
     throw new Error(`${version} is not a plain X.Y.Z release version.`);
   const lines = changelog.replace(/\n$/u, "").split("\n");
   if (lines.includes(`## ${version}`)) throw new Error(`CHANGELOG.md already has a ## ${version} heading.`);
-  const { start } = unreleased(lines);
+  const { start, end } = unreleased(lines);
+  if (lines.slice(start + 1, end).every(isBlank)) throw new Error("CHANGELOG.md's Unreleased lists no change to release.");
   lines.splice(start, 1, "## Unreleased", "", `## ${version}`);
   return `${lines.join("\n")}\n`;
 };
@@ -129,7 +131,8 @@ const addedAt = (): Map<string, number> => {
   try {
     log = execFileSync(
       "git",
-      ["log", "--first-parent", "--diff-filter=A", "--name-only", "--format=%x00%ct", "--", "changes"],
+      // --no-renames, so a renamed fragment counts as added when it took its new name.
+      ["log", "--first-parent", "--no-renames", "--diff-filter=A", "--name-only", "--format=%x00%ct", "--", "changes"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
   } catch {
@@ -150,7 +153,8 @@ const readFragments = () => {
   const fragments: Fragment[] = [];
   const problems: string[] = [];
   const names = (existsSync(changes) ? readdirSync(changes, { withFileTypes: true }) : [])
-    .filter((entry) => entry.name !== "README.md")
+    // README.md, and files an editor or the operating system leaves, such as .DS_Store or fix.md~.
+    .filter((entry) => entry.name !== "README.md" && !/^\.|~$|\.swp$/u.test(entry.name))
     .map((entry) => (entry.isFile() ? entry.name : `${entry.name}/`));
   for (const name of names) {
     try {
@@ -166,7 +170,15 @@ const readFragments = () => {
 };
 
 if (import.meta.main) {
-  const [command, version] = process.argv.slice(2);
+  const [command, version, ...extra] = process.argv.slice(2);
+  const known =
+    command === "release"
+      ? version !== undefined && extra.length === 0
+      : (command === "check" || command === "assemble") && version === undefined;
+  if (!known) {
+    console.error("Usage: node tools/changelog.ts check | assemble | release X.Y.Z");
+    process.exit(2);
+  }
   const { fragments, problems } = readFragments();
   if (problems.length > 0) {
     for (const problem of problems) console.error(problem);
@@ -178,7 +190,7 @@ if (import.meta.main) {
     if (command === "check") {
       assemble(changelog, fragments);
       console.log(`${fragments.length} changelog fragment${fragments.length === 1 ? " is" : "s are"} well formed.`);
-    } else if (command === "assemble" || (command === "release" && version !== undefined)) {
+    } else {
       const assembled = assemble(changelog, fragments);
       writeFileSync("CHANGELOG.md", command === "release" ? release(assembled, version ?? "") : assembled);
       for (const fragment of fragments) rmSync(join(changes, fragment.name));
@@ -186,9 +198,6 @@ if (import.meta.main) {
         `Moved ${fragments.length} changelog fragment${fragments.length === 1 ? "" : "s"} into CHANGELOG.md` +
           (command === "release" ? `, under ## ${version}.` : "."),
       );
-    } else {
-      console.error("Usage: node tools/changelog.ts check | assemble | release X.Y.Z");
-      process.exit(2);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

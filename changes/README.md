@@ -17,4 +17,4 @@ section: Breaking changes
 - Every entry starts with `- `, and its other lines are indented under it. A breaking change lists its migration steps.
 - One file holds the entries of one section. A change with entries in two sections uses two files.
 
-`node tools/changelog.ts check` checks every fragment, and `corepack pnpm test` runs it. Each canary's packed CHANGELOG.md lists the fragments under Unreleased, and the pull request that starts a new release line moves them into CHANGELOG.md. [Releasing](../docs/RELEASING.md#changes-and-versions) has the details.
+`node tools/changelog.ts check` checks every fragment, and `corepack pnpm test` runs it. Each canary's packed CHANGELOG.md lists the fragments under Unreleased, and the pull request that bumps `version` moves them into CHANGELOG.md under the outgoing version with `node tools/changelog.ts release X.Y.Z`. [Releasing](../docs/RELEASING.md#changes-and-versions) has the details.

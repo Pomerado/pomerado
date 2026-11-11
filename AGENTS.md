@@ -46,7 +46,7 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - Maintainers merge by hand with a merge commit until a merge queue takes over.
 - A push after a review needs a new independent review.
 - Write the failing test first for a change in behavior.
-- Record a user-facing change in a new changelog fragment under `changes/`, as [changes/README.md](changes/README.md) describes, never by editing CHANGELOG.md. A fragment starts with a header naming its section (`Breaking changes`, `Other changes` or `Fixes`), and `corepack pnpm test` fails on one that is malformed. Only the pull request that cuts a release edits CHANGELOG.md.
+- Record a user-facing change in a new changelog fragment under `changes/`, as [changes/README.md](changes/README.md) describes, never by editing CHANGELOG.md. A fragment starts with a header naming its section (`Breaking changes`, `Other changes` or `Fixes`), and `corepack pnpm test` fails on one that is malformed. Only the pull request that bumps `version` edits CHANGELOG.md, through `node tools/changelog.ts release`, as [docs/RELEASING.md](docs/RELEASING.md#changes-and-versions) describes.
 - Add to this package only code the local host runs, or a hook interface another host implements.
 - Keep `#N` style references out of commit messages, where N is a number. The content scan rejects them. Link a public issue by its full URL.
 - Public text stays generic. Keep customer data, credentials, incidents, internal hostnames and internal references out of code, tests, commit messages and pull request text.

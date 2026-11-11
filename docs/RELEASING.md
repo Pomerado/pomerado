@@ -120,15 +120,15 @@ Record user-facing changes in the pull request that makes them, as a changelog f
 
 A pull request that removes a `./core/*` export hosts use, or changes one incompatibly, also raises `pomerado.hostProtocol` in `package.json` by one. `tools/check-host-protocol.ts` runs first in `pnpm test` and fails when a `./core/*` export that the `canary` or `latest` version on npm has is gone and the protocol didn't rise above theirs, or when the protocol is lower than theirs. It can't see an incompatible change inside a module, so raise the number by hand for that. A release run fails when it can't read npm; a pull request or a local run warns and goes on.
 
-`node tools/changelog.ts assemble` moves every fragment into CHANGELOG.md under `Unreleased` and deletes it. Each goes at the top of its section, above the entries already there, and a missing section is added. Fragments go newest merge first, or by file name where git has no history, as in Check's shallow checkout. Check runs it for each canary, so a canary's packed CHANGELOG.md lists every change merged since the last release. Only that checkout changes: on `main` the fragments stay in `changes/`.
+`node tools/changelog.ts assemble` moves every fragment into CHANGELOG.md under `Unreleased` and deletes it. Each goes at the top of its section, above the entries already there, and a missing section is added. Fragments go newest merge first, by when each reached `main`'s first-parent history, and an uncommitted one goes first. Check runs it for each canary, with the full history, so a canary's packed CHANGELOG.md lists every change merged since the last release. Only that checkout changes: on `main` the fragments stay in `changes/`.
 
-A maintainer cuts the changelog for a release line in a pull request of its own, from current `main`:
+The pull request that bumps `version` also closes the outgoing release line in CHANGELOG.md. On a branch from current `main`, before it adds its own fragment, it runs:
 
 ```sh
 node tools/changelog.ts release X.Y.Z
 ```
 
-`X.Y.Z` is the version of the canaries that shipped those changes, as in `X.Y.Z-canary.N`. The command moves every fragment under `Unreleased`, renames `Unreleased` to `X.Y.Z` and starts a new, empty `Unreleased` above it. Add the release's summary under its heading by hand. Merge it just before the pull request that bumps `version`, which records its own changes in a fragment like any other: a change merged between the two ships in an `X.Y.Z` canary but is listed under the next release.
+`X.Y.Z` is the outgoing version, the one the canaries that shipped those changes carry, as in `X.Y.Z-canary.N`. The command moves every fragment under `Unreleased`, renames `Unreleased` to `X.Y.Z` and starts a new, empty `Unreleased` above it. It refuses a version CHANGELOG.md already has, and an `Unreleased` with no change in it. Add the release's summary under its heading by hand. The pull request's own changes then go in a fragment like any other, for the new release line.
 
 ## Failures
 

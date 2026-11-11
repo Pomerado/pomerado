@@ -137,9 +137,10 @@ jobs:
       package-sha256: ${{ steps.package-digest.outputs.sha256 }}
     steps:
       # Enforced test selection compares the pull request with its base, so it needs the history.
+      # A release run needs it too, to list the changelog fragments in the order they merged.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '1' }}
+          fetch-depth: ${{ (env.SELECT_TESTS == 'true' || inputs.version != '') && '0' || '1' }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -151,8 +152,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: npm pkg set version="$VERSION"
       # A canary's packed CHANGELOG.md lists the fragments in changes/ under Unreleased, as
-      # tools/changelog.ts describes. Only this checkout changes, and main keeps its fragments. The
-      # checkout is shallow, so the fragments go in file name order.
+      # tools/changelog.ts describes. Only this checkout changes, and main keeps its fragments.
       - name: Assemble the changelog
         if: inputs.version != ''
         run: node tools/changelog.ts assemble
