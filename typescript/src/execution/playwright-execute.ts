@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { Worker } from "node:worker_threads";
 import type { Browser, BrowserServer } from "playwright";
 import { Cause, Effect, Exit, Fiber, Schema, type Scope } from "effect";
@@ -417,8 +418,9 @@ export const makePlaywrightExecutor = (
             import.meta.url,
           ),
           {
-            // Generated browser code must not inherit host model or provider credentials.
-            env: {},
+            // Generated browser code must not inherit host model or provider credentials. On
+            // Windows, os.tmpdir() reads TEMP from this environment, and without it names no real folder.
+            env: process.platform === "win32" ? { TEMP: tmpdir() } : {},
             // Parent entrypoint flags such as --input-type do not apply to this file entrypoint.
             execArgv: [],
             workerData: {

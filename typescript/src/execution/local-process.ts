@@ -1,7 +1,8 @@
 import { StringDecoder } from "node:string_decoder";
 import { spawn, type ChildProcess } from "node:child_process";
-import { Cause, Deferred, Effect, Exit, Fiber, type Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, type Scope } from "effect";
 import { localError, localOutputLimit } from "./local-path.js";
+import { hostPlatform, windowsSystemProgram, type LocalPlatform } from "./local-platform.js";
 
 export interface LocalProcessResult {
   readonly exitCode: number | null;
@@ -28,7 +29,46 @@ const signalGroup = (child: ChildProcess) =>
     catch: localError,
   });
 
-/** Each command owns a process group. Local execution is caller compute, not an OS sandbox. */
+/** taskkill's exit code when no process has the ID, such as one that has already ended. */
+const taskkillNotFound = 128;
+
+/**
+ * How long taskkill may take. It stays well inside the close's 5 s confirmation, so the fallback
+ * kill still runs when taskkill hangs.
+ */
+const taskkillTimeoutMs = 2_000;
+/** How long the close waits for a command's own output to end before it stops reading it. */
+const outputGraceMs = 500;
+
+/**
+ * Windows has no process groups. While the command runs, `taskkill /T /F` ends it and every
+ * process it started, as Playwright stops a browser; when taskkill cannot, the command itself
+ * still ends. Once it has ended, its ID may belong to another program, so nothing is killed by ID.
+ * A process it left running is no longer linked to it and can hold its output open, so when the
+ * output has not ended shortly after, the host stops reading it, and the close completes as it
+ * does on macOS and Linux.
+ */
+const killTree = (platform: LocalPlatform, child: ChildProcess, closed: Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    if (child.pid === undefined) return;
+    if (child.exitCode === null && child.signalCode === null) {
+      const taskkill = windowsSystemProgram(platform, "taskkill.exe");
+      const args = ["/pid", String(child.pid), "/T", "/F"];
+      const { exitCode } = yield* Effect.promise(() =>
+        platform.run(taskkill, args, taskkillTimeoutMs),
+      );
+      if (exitCode !== 0 && exitCode !== taskkillNotFound) child.kill("SIGKILL");
+    }
+    if (Option.isNone(yield* closed.pipe(Effect.timeoutOption(outputGraceMs)))) {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }
+  });
+
+/**
+ * Each command owns a process group on macOS and Linux, and a process tree with no window on
+ * Windows. Local execution is caller compute, not an OS sandbox.
+ */
 export const createLocalProcess = (options: {
   readonly command: string;
   readonly args: readonly string[];
@@ -36,17 +76,18 @@ export const createLocalProcess = (options: {
   readonly environment: Readonly<Record<string, string>>;
   readonly ipc?: boolean;
   readonly outputLimit?: number;
+  readonly platform?: LocalPlatform;
 }): Effect.Effect<LocalProcess, Error, Scope.Scope> =>
   Effect.gen(function* () {
-    if (process.platform === "win32")
-      return yield* Effect.fail(new Error("Local process-group execution requires macOS or Linux"));
+    const platform = options.platform ?? hostPlatform;
     const ended = yield* Deferred.make<LocalProcessResult, Error>();
     const child = yield* Effect.try({
       try: () =>
         spawn(options.command, [...options.args], {
           cwd: options.cwd,
           env: { ...options.environment },
-          detached: true,
+          // A detached Windows child gets its own console window; it needs no group to stop.
+          ...(platform.windows ? { windowsHide: true } : { detached: true }),
           serialization: "advanced",
           stdio: options.ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
         }),
@@ -60,7 +101,10 @@ export const createLocalProcess = (options: {
     let closeFiber: Fiber.RuntimeFiber<void, Error> | undefined;
     const close = Effect.suspend(() => {
       closeFiber ??= Effect.runFork(
-        signalGroup(child).pipe(
+        (platform.windows
+          ? killTree(platform, child, Deferred.await(ended).pipe(Effect.either, Effect.asVoid))
+          : signalGroup(child)
+        ).pipe(
           Effect.zipRight(Deferred.await(ended).pipe(Effect.either, Effect.asVoid)),
           Effect.timeoutFail({
             duration: 5_000,
