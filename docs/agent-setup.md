@@ -17,8 +17,9 @@ uname -s
 node --version
 ```
 
-- Continue on macOS, where `uname -s` prints `Darwin`, or on Linux.
-- Stop on any other platform. Tell the user Pomerado supports macOS and Linux.
+- Continue on macOS, where `uname -s` prints `Darwin`, or on Linux, WSL included.
+- On Windows, where PowerShell and cmd have no `uname`, continue and follow [Windows](windows.md) beside these steps. Building integrations natively needs Git for Windows; ask before you install it.
+- Stop on any other platform. Tell the user Pomerado supports macOS, Linux and Windows.
 - Continue if Node prints `v24.21.0` or a later `v24` release.
 - Otherwise stop and ask. Tell the user Pomerado needs Node 24.21 or a later Node 24 release, and ask how they want to install it. Don't install or switch Node without their answer.
 

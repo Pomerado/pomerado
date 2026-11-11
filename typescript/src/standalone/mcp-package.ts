@@ -38,6 +38,7 @@ const reserved = new Set([
   "auth-fill.json",
   "mcp.mjs",
   "mcp.json",
+  "mcp.windows.json",
   "readme.md",
   "codex-mcp.toml",
   ".jobs",
@@ -128,9 +129,23 @@ export const prepareIntegration = (options: {
           mcpServers: { [deployment.name]: { command: process.execPath, args } },
         };
         const command = [process.execPath, ...args].map(quoteFor(platform.windows)).join(" ");
+        // Inside WSL, a client on the Windows side starts the same server through wsl.exe.
+        const distro = platform.windows ? undefined : platform.environment["WSL_DISTRO_NAME"];
+        const windowsEntry =
+          distro === undefined || distro === ""
+            ? undefined
+            : {
+                command: "wsl.exe",
+                args: ["--distribution", distro, "--exec", process.execPath, ...args],
+              };
         yield* workspace.write("deployment.json", `${JSON.stringify(deployed, null, 2)}\n`);
         yield* workspace.write("mcp.mjs", launcher);
         yield* workspace.write("mcp.json", `${JSON.stringify(configuration, null, 2)}\n`);
+        if (windowsEntry !== undefined)
+          yield* workspace.write(
+            "mcp.windows.json",
+            `${JSON.stringify({ mcpServers: { [deployment.name]: windowsEntry } }, null, 2)}\n`,
+          );
         yield* workspace.write(
           "README.md",
           `# ${deployment.name}
@@ -161,7 +176,15 @@ launcher and your installed Pomerado runtime.
 
 - Cursor, VS Code, Claude Desktop and other clients that read an mcpServers JSON file take the
   entry from mcp.json.
-
+${
+  windowsEntry === undefined
+    ? ""
+    : `
+This integration was built inside WSL. A client that runs on the Windows side, such as Claude
+Desktop, Cursor or VS Code on Windows, takes the entry from mcp.windows.json instead. It starts
+the same server inside the ${distro} distribution through wsl.exe.
+`
+}
 ## Model key
 
 The server needs no model key. Guardian reviewed this integration when it was minted, so a call
