@@ -13,6 +13,7 @@ import {
   NativeWorkerReply,
   NativeWorkerRequest,
   PlaywrightLibrary,
+  makeCallGate,
 } from "./playwright-protocol.js";
 
 type WithoutId<A> = A extends { readonly id: string } ? Omit<A, "id"> : never;
@@ -46,6 +47,15 @@ export interface PlaywrightOptions {
    * and names the limit. Console output keeps its own 1 MiB limit.
    */
   readonly resultLimitBytes?: number;
+  /**
+   * How many plain page calls (`execute`, `executeResponse`) may run on the page at once, for a
+   * caller whose calls don't depend on each other, such as several fetches each in a context of its
+   * own. An integer from 1 to 64; 1 when absent, so calls take turns. A typing watch or credential
+   * call always runs alone, and calls sent after it wait for it. The calls share one `page`, so give
+   * each its own context and don't navigate the shared page. A call that runs past its time still
+   * stops the executor, and every other call running on it then fails as uncertain, never replayed.
+   */
+  readonly callsAtOnce?: number;
 }
 /**
  * An answered script and which watched values its typing calls delivered, by index, each with the
@@ -104,6 +114,12 @@ const resultLimit = (value: number) => {
   return value;
 };
 
+const callsLimit = (value: number) => {
+  if (!Number.isInteger(value) || value < 1 || value > 64)
+    throw new Error("callsAtOnce must be an integer from 1 to 64");
+  return value;
+};
+
 type PendingResponse = (result: Effect.Effect<unknown, Error>) => void;
 interface NativeOwnership {
   readonly remote: boolean;
@@ -150,7 +166,8 @@ const verifyOwnedContextClosed = (owner: NativeOwnership) =>
     );
   });
 
-const releaseNativeOwnership = (owner: NativeOwnership, reason: Error) =>
+/** Stops the executor for `reason`; any other call still running on it fails with `others`. */
+const releaseNativeOwnership = (owner: NativeOwnership, reason: Error, others: Error) =>
   Effect.gen(function* () {
     const failures: Error[] = [];
     const release = (run: Effect.Effect<unknown, Error>, operation: string) =>
@@ -190,20 +207,21 @@ const releaseNativeOwnership = (owner: NativeOwnership, reason: Error) =>
         "Owned Chromium shutdown",
       );
     }
-    const failure =
+    const unconfirmed = (error: Error) =>
       failures.length > 0
-        ? new AggregateError([reason, ...failures], "Native execution stopped; cleanup unconfirmed")
-        : reason;
-    for (const resume of owner.pending.values()) resume(Effect.fail(failure));
+        ? new AggregateError([error, ...failures], "Native execution stopped; cleanup unconfirmed")
+        : error;
+    const othersFailure = unconfirmed(others);
+    for (const resume of owner.pending.values()) resume(Effect.fail(othersFailure));
     owner.pending.clear();
-    if (failures.length > 0) return yield* Effect.fail(failure);
+    if (failures.length > 0) return yield* Effect.fail(unconfirmed(reason));
   });
 
-const stopNative = (owner: NativeOwnership, reason: Error) =>
+const stopNative = (owner: NativeOwnership, reason: Error, others = reason) =>
   Effect.suspend(() => {
     owner.stopped = true;
     owner.stopFiber ??= Effect.runFork(
-      releaseNativeOwnership(owner, reason).pipe(Effect.interruptible),
+      releaseNativeOwnership(owner, reason, others).pipe(Effect.interruptible),
     );
     return Fiber.join(owner.stopFiber);
   }).pipe(Effect.uninterruptible);
@@ -212,8 +230,9 @@ const stopFromCallback = <A>(
   owner: NativeOwnership,
   reason: Error,
   resume: (result: Effect.Effect<A, Error>) => void,
+  others = reason,
 ) =>
-  Effect.runCallback(stopNative(owner, reason), {
+  Effect.runCallback(stopNative(owner, reason, others), {
     onExit: (exit) =>
       resume(Effect.fail(Exit.isFailure(exit) ? asError(Cause.squash(exit.cause)) : reason)),
   });
@@ -284,13 +303,18 @@ const dispatchNative = (
     });
     return yield* Effect.async<unknown, Error>((resume) => {
       const id = randomUUID();
+      // A call that ends early stops the executor; the other calls running on it say why.
       const timer = setTimeout(() => {
+        owner.pending.delete(id);
         stopFromCallback(
           owner,
           new Error(
             "Native browser execution timed out; completion uncertain; call was not replayed",
           ),
           resume,
+          new Error(
+            "Native browser execution stopped because another call timed out; completion uncertain; call was not replayed",
+          ),
         );
       }, timeoutSec * 1_000);
       owner.pending.set(id, (result) => {
@@ -304,12 +328,18 @@ const dispatchNative = (
         owner.pending.delete(id);
         stopFromCallback(owner, asError(cause), resume);
       }
-      return Effect.sync(() => clearTimeout(timer)).pipe(
+      return Effect.sync(() => {
+        clearTimeout(timer);
+        owner.pending.delete(id);
+      }).pipe(
         Effect.zipRight(
           stopNative(
             owner,
             new Error(
               "Native browser execution cancelled; completion uncertain; call was not replayed",
+            ),
+            new Error(
+              "Native browser execution stopped because another call was cancelled; completion uncertain; call was not replayed",
             ),
           ),
         ),
@@ -339,6 +369,10 @@ export const makePlaywrightExecutor = (
     const resultLimitBytes = yield* Effect.try({
       try: () =>
         options.resultLimitBytes === undefined ? undefined : resultLimit(options.resultLimitBytes),
+      catch: asError,
+    });
+    const callsAtOnce = yield* Effect.try({
+      try: () => callsLimit(options.callsAtOnce ?? 1),
       catch: asError,
     });
     if (options.endpoint !== undefined && options.cdp !== undefined)
@@ -392,6 +426,7 @@ export const makePlaywrightExecutor = (
               startupTimeoutMs,
               library,
               ...(resultLimitBytes === undefined ? {} : { resultLimitBytes }),
+              ...(callsAtOnce === 1 ? {} : { callsAtOnce }),
               ...(options.cdp === undefined
                 ? {}
                 : {
@@ -405,9 +440,10 @@ export const makePlaywrightExecutor = (
     });
     owner.worker = worker;
     const ready = yield* bindNativeWorker(owner, worker, startupTimeoutMs);
-    const semaphore = yield* Effect.makeSemaphore(1);
+    // A plain call takes one place; a typing watch or credential call takes them all and runs alone.
+    const gate = yield* makeCallGate(callsAtOnce);
     const call = (payload: NativePayload, timeoutSec: number) =>
-      dispatchNative(owner, worker, payload, timeoutSec).pipe(semaphore.withPermits(1));
+      dispatchNative(owner, worker, payload, timeoutSec).pipe(gate(payload));
     const executeResponse: BrowserExecute = (code, timeoutSec = 60) =>
       call({ kind: "execute", code }, timeoutSec).pipe(
         Effect.flatMap((response) => Schema.decodeUnknown(BrowserExecuteResponse)(response)),
