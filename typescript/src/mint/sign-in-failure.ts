@@ -1,6 +1,11 @@
 import type { HostRefusal } from "../destinations/autofill-refusal.js";
 import type { InsertionRefusal } from "../destinations/credential-keyboard.js";
-import { MintFailure, type SessionLoss, type SpentSignIn } from "./contracts.js";
+import {
+  MintFailure,
+  type SessionLoss,
+  type SignInBlockedReason,
+  type SpentSignIn,
+} from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 
 /**
@@ -339,6 +344,16 @@ export const signInAnswer = (
   notice: `${feedback.notice}${endingNotice[ending]}`,
 });
 
+/** What a blocked report the harness ended as sign-in unavailable said stopped the sign-in. */
+const reportedStop: Record<SignInBlockedReason, string> = {
+  site_lacks_capability: "the website's sign-in offers no way in it can use",
+  site_declined: "the website declined the sign-in",
+  site_unavailable: "the website was unavailable",
+  policy: "a policy check stopped the sign-in",
+  host_refused: "a host check refused a sign-in step",
+  agent_declined: "it declined to continue",
+};
+
 /**
  * The build's result once sign-in is unavailable, as its owner reads it: what happened in plain
  * words, whether the login reached the site, what spent the attempt's sign-ins, and a session the
@@ -349,9 +364,13 @@ export const signInUnavailableSummary = (
   failure: SignInDiagnostic | undefined,
   spent: SpentSignIn | undefined,
   sessionLoss?: SessionLoss,
+  reported?: SignInBlockedReason,
 ) => {
   const stopped =
     "The build stopped without publishing because the website could not be signed in.";
+  // The minter's own report is the last thing that stopped a sign-in that never confirmed.
+  if (failure === undefined && sessionLoss === undefined && reported !== undefined)
+    return `${stopped} Before the sign-in confirmed, the build reported that ${reportedStop[reported]}. Nothing was sent again.`;
   if (failure?.code === "AccountLocked")
     return `${stopped} After the login was sent, the website said the account is locked, suspended or disabled. Unlock the account on the website, then build again.`;
   if (failure?.code === "LoginIdentityConflict")

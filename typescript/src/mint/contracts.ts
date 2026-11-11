@@ -1583,6 +1583,20 @@ export const BuildBlocked = Schema.Struct({
   explanation: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(blockedExplanationLimit)),
 });
 /**
+ * A blocked report's reason the harness may end as sign-in unavailable, which it then records as
+ * the sign-in's cause (`MintOutcome.signInBlockedReason`): an owner's or caller's own ending keeps
+ * its reason instead.
+ */
+export const SignInBlockedReason = Schema.Literal(
+  "site_lacks_capability",
+  "site_declined",
+  "site_unavailable",
+  "policy",
+  "host_refused",
+  "agent_declined",
+);
+export type SignInBlockedReason = typeof SignInBlockedReason.Type;
+/**
  * What the minter sends `report_blocked`: a blocked ending's reason, or `host_unavailable` when the
  * host has ended live execution and what the build still needs, such as a fresh example a review
  * asked for, cannot run without it. That one ends the attempt as the host's failure, never as a
@@ -1930,6 +1944,13 @@ export type MintOutcome = {
    * its caller to read it, as a blocked explanation is.
    */
   readonly stopExplanation?: string;
+  /**
+   * Set by the harness when it ended the minter's blocked report as sign-in unavailable
+   * (`recoveryReason: "sign_in_unavailable"`): the reason the minter reported, the last thing that
+   * stopped the sign-in. A host names it as the sign-in's cause before any earlier challenge or
+   * failure the sign-in had already got past.
+   */
+  readonly signInBlockedReason?: SignInBlockedReason;
   /** Host-only references: preserve first execution independently of build success. */
   readonly example?: ExecutionEvidence;
   readonly currentInvocation?: CurrentInvocation;
@@ -2335,6 +2356,7 @@ export interface MintHarnessSnapshot {
     | "rejectedCredential"
     | "stopReason"
     | "stopExplanation"
+    | "signInBlockedReason"
   > & {
     /** Only the minter's blocked ending; the intake refusal ends a build before any harness. */
     readonly blocked?: BuildBlockedOutcome;
@@ -2553,6 +2575,8 @@ const HarnessTerminal = Schema.Struct({
   // Optional, and dropped by an older worker's decode.
   stopReason: Schema.optionalWith(MintStopReason, { exact: true }),
   stopExplanation: Schema.optionalWith(Schema.String, { exact: true }),
+  // Optional, and dropped by an older worker's decode.
+  signInBlockedReason: Schema.optionalWith(SignInBlockedReason, { exact: true }),
 });
 
 export const MintHarnessSnapshot: Schema.Schema<MintHarnessSnapshot> = Schema.Struct({

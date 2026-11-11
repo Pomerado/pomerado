@@ -2100,6 +2100,27 @@ it.each([
   },
 );
 
+// The minter's own report is the last thing that stopped an unconfirmed sign-in, such as a
+// second-factor screen it found no way past, so the outcome records it as the sign-in's cause and
+// its summary says so, rather than that no further sign-in could run. A host names it before any
+// earlier challenge or failure the sign-in already got past.
+it("records the minter's blocked reason as the cause of a sign-in that never confirmed", async () => {
+  const f = await signInThenDecline([submittedScreen], {}, {
+    reason: "site_lacks_capability",
+    explanation: "The sign-in asks for a second factor this host cannot complete.",
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    signInBlockedReason: "site_lacks_capability",
+  });
+  expect(outcome.summary).toContain(
+    "the build reported that the website's sign-in offers no way in it can use",
+  );
+  expect(outcome.summary).not.toContain("No further sign-in could run");
+});
+
 // A sign-in that confirmed still stands when a later sign-in goes unchecked, so the site gap the
 // build then reports keeps its own reason, until something shows the site signed out: a signed-in
 // check that did not confirm, a session the host saw lost, a step whose automatic sign-in failed,

@@ -60,6 +60,7 @@ import {
   PublicationRequest,
   publicReasonLimit,
   SignedInMarkerCheckRequest,
+  SignInBlockedReason,
   TaskUpdateRequest,
   withOwnWords,
 } from "./contracts.js";
@@ -192,6 +193,8 @@ import {
   skillPagePath,
   skillReadLength,
 } from "./workspace.js";
+
+const isSignInBlockedReason = Schema.is(SignInBlockedReason);
 
 /**
  * The output fields this build's accepted updates added and none removed since. The registered
@@ -7755,11 +7758,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         terminal === undefined
                           ? yield* reviewedStopExplanation(explanation)
                           : undefined;
+                      // The minter's own report is the sign-in's recorded cause: the last thing
+                      // that stopped it, not an earlier step it got past.
+                      const signInBlockedReason = isSignInBlockedReason(ending.reason)
+                        ? ending.reason
+                        : undefined;
                       terminal ??= {
                         build: "incomplete",
                         recoveryReason: "sign_in_unavailable",
                         ...(stopExplanation === undefined ? {} : { stopExplanation }),
-                        summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
+                        ...(signInBlockedReason === undefined ? {} : { signInBlockedReason }),
+                        summary: signInUnavailableSummary(
+                          undefined,
+                          undefined,
+                          sessionLoss,
+                          signInBlockedReason,
+                        ),
                       };
                       yield* diagnose({
                         phase: "blocked",

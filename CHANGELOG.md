@@ -307,6 +307,10 @@
   - `credentialPrompt` in `pomerado/core/runtime/credential-prompts` takes an optional third argument, the screen (`AskingScreen`: its `identifierKinds`, `password` and optional `code`), and then starts with a sentence such as "The website's sign-in screen asks for your email address and your password." `askingScreen(step)` reads it from a sign-in step's slots and accepted kinds. Without a screen the prompt is unchanged.
   - `SignInLogin` adds the optional `valuesFor(screen)`, which the local recorder calls in place of `values` when a screen first needs the login, and the local host's login asks with that screen. A host without it asks as before.
   - Migrate a host that words its own login question by passing the screen it asks for, such as its `currentStep` with whether the screen also asks for a code. A recorded owner answer keyed on the exact login prompt needs recording again.
+- A build whose minter reported a block while its sign-in never confirmed now records the minter's reason as the sign-in's cause. The harness ends such a report as sign-in unavailable, and its outcome said only that no further sign-in could run, so a host naming the cause fell back to whatever it had recorded earlier, such as a challenge the sign-in had already got past.
+  - `MintOutcome` and a checkpoint's terminal add `signInBlockedReason` (`SignInBlockedReason` in `pomerado/core/mint/contracts`: `site_lacks_capability`, `site_declined`, `site_unavailable`, `policy`, `host_refused` or `agent_declined`), beside `recoveryReason: "sign_in_unavailable"` and `stopReason: "sign_in_failed"`, which are unchanged. An older worker's decode drops it.
+  - The outcome's summary says what the report said stopped the sign-in, such as "Before the sign-in confirmed, the build reported that the website's sign-in offers no way in it can use.", unless the host saw the site lose its session. `signInUnavailableSummary` takes the reason as an optional last argument.
+  - Migrate a host that words a sign-in-unavailable cause by naming `signInBlockedReason` when it is set, before any earlier challenge or failure it recorded.
 
 ### Other changes
 
