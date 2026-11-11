@@ -9,6 +9,7 @@ import {
   rename,
   rm,
   unlink,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -55,13 +56,40 @@ export const windowsShellMissing =
  */
 const workspaceShell = (platform: LocalPlatform) => {
   if (!platform.windows) return Effect.succeed("/bin/sh");
-  let found: Promise<string | undefined> | undefined;
-  return Effect.promise(() => (found ??= findWindowsShell(platform))).pipe(
-    Effect.flatMap((shell) =>
-      shell === undefined ? Effect.fail(new Error(windowsShellMissing)) : Effect.succeed(shell),
-    ),
-  );
+  let found: { readonly shell: string | undefined } | undefined;
+  return Effect.suspend(() => {
+    found ??= { shell: findWindowsShell(platform) };
+    return found.shell === undefined
+      ? Effect.fail(new Error(windowsShellMissing))
+      : Effect.succeed(found.shell);
+  });
 };
+
+/**
+ * What Git for Windows' sh needs beside the workspace's environment: no globbing of its own
+ * arguments by the MSYS runtime, and a login shell that stays in the working folder.
+ */
+const windowsShellEnvironment = { MSYS: "noglob", CHERE_INVOKING: "1" } as const;
+
+/**
+ * The shell's arguments for one command. On Windows the MSYS runtime parses sh.exe's command line
+ * with its own quoting and glob rules before sh runs, so the command could differ from the one
+ * reviewed. There sh reads the command, byte for byte, from a temporary file instead.
+ */
+const commandArguments = (platform: LocalPlatform, cmd: string, login: boolean | undefined) =>
+  Effect.gen(function* () {
+    if (!platform.windows) return [login ? "-lc" : "-c", cmd];
+    const folder = yield* Effect.acquireRelease(
+      localPromise(() => mkdtemp(join(tmpdir(), "pomerado-command-"))),
+      (folder) =>
+        localPromise(() =>
+          rm(folder, { recursive: true, force: true, ...removalRetries(platform) }),
+        ).pipe(Effect.orDie),
+    );
+    const script = join(folder, "command.sh");
+    yield* localPromise(() => writeFile(script, cmd, { flag: "wx", mode: 0o600 }));
+    return login ? ["-l", script] : [script];
+  });
 export interface LocalWorkspace {
   readonly root: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -283,11 +311,16 @@ const workspaceCommand =
           args.workdir === undefined || args.workdir === "/workspace"
             ? root
             : yield* localFilePath(root, args.workdir);
+        // On Windows a requested shell, such as bash, could name WSL's or another program, so
+        // commands always run in the shell the host found.
+        const command = platform.windows ? yield* shell : (args.shell ?? (yield* shell));
         const process = yield* createLocalProcess({
-          command: args.shell ?? (yield* shell),
-          args: [args.login ? "-lc" : "-c", args.cmd],
+          command,
+          args: yield* commandArguments(platform, args.cmd, args.login),
           cwd,
-          environment,
+          environment: platform.windows
+            ? { ...environment, ...windowsShellEnvironment }
+            : environment,
           platform,
         });
         yield* register(process);
