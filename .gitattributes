@@ -1,0 +1,6 @@
+# Check out text files with LF line endings on every platform, Windows included. The authoring
+# section parser and the digests the host takes over source text expect LF, so a checkout made with
+# Git for Windows' default core.autocrlf=true must not turn them into CRLF.
+* text=auto eol=lf
+# Third-party license texts stay byte for byte as their authors ship them.
+third-party/** -text
